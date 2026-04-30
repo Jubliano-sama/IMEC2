@@ -1,0 +1,56 @@
+#ifndef REPORT_H
+#define REPORT_H
+
+#include "protocol.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define REPORT_DEFAULT_TTL 4u
+
+struct range_report_fields {
+    uint64_t clicker_id;
+    uint64_t anchor_id;
+    uint32_t event_seq;
+    int32_t distance_mm;
+    uint8_t quality;
+    enum range_status range_status;
+};
+
+struct self_test_report_fields {
+    uint64_t clicker_id;
+    uint32_t event_seq;
+    uint8_t failure_code;
+    uint16_t battery_mv;
+};
+
+int report_append_range_tlvs(uint8_t *payload,
+                                  size_t payload_cap,
+                                  size_t *offset,
+                                  const struct range_report_fields *fields);
+int report_append_self_test_tlvs(uint8_t *payload,
+                                      size_t payload_cap,
+                                      size_t *offset,
+                                      const struct self_test_report_fields *fields);
+int report_init_click_packet(struct proto_packet *packet,
+                                  uint64_t anchor_id,
+                                  uint64_t gateway_id,
+                                  uint32_t session_id,
+                                  uint16_t seq,
+                                  uint8_t payload_len);
+int report_init_self_test_packet(struct proto_packet *packet,
+                                      uint64_t clicker_id,
+                                      uint64_t gateway_id,
+                                      uint32_t session_id,
+                                      uint16_t seq,
+                                      uint8_t payload_len);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -1,0 +1,31 @@
+description: Qorvo DWM3000 SPI device
+
+compatible: "qorvo,dwm3000"
+
+include: spi-device.yaml
+
+properties:
+  slow-spi-frequency:
+    type: int
+    required: true
+    description: SPI clock used before and during DW3000 reset or soft-reset. Must stay at or below 7 MHz.
+
+  fast-spi-frequency:
+    type: int
+    required: true
+    description: Runtime SPI clock used after the DW3000 is initialized and in IDLE. The hardware target is 32 MHz.
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: DWM3000 reset pin.
+
+  wakeup-gpios:
+    type: phandle-array
+    required: true
+    description: DWM3000 wakeup pin.
+
+  irq-gpios:
+    type: phandle-array
+    required: false
+    description: Optional DWM3000 IRQ pin. Current v1 firmware supports SPI polling when this is absent.

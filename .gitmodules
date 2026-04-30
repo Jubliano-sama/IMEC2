@@ -1,0 +1,3 @@
+[submodule "dwm3000 examples and sdk"]
+	path = dwm3000 examples and sdk
+	url = https://github.com/foldedtoad/dwm3000/

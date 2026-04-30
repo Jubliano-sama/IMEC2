@@ -1,0 +1,18 @@
+# West workspace metadata and downloaded dependencies
+.codex
+.west/
+.venv/
+.uv-cache/
+bootloader/
+modules/
+nrf/
+nrfxlib/
+old code/
+test/
+tools/
+zephyr/
+
+# Build outputs
+build/
+firmware/build/
+firmware/app/build/
