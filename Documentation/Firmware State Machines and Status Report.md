@@ -221,6 +221,7 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 - Implemented gateway route beaconing and command routing through the BLE mesh.
 - Implemented gateway ACK generation for received gateway-bound packets, including hop ACK tracking on the return path.
 - Implemented gateway command-result timeout tracking for one outstanding gateway-originated command.
+- Added selected-route telemetry to anchor `CMD_GET_STATUS` command results for mesh debug over USB.
 - Added repository contributor guide in `AGENTS.md`.
 
 ## Verified

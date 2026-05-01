@@ -219,6 +219,70 @@ static void test_duplicate_cache_expires_by_time_window(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
 }
 
+static void test_status_tlvs_report_selected_route(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(ANCHOR_B, 44u, 77u);
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    route.hop_count = 1u;
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 44u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_HOP_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_HOP_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
+
+    assert(mesh_relay_append_status_tlvs(&relay, payload, sizeof(payload), &payload_len) == PROTO_OK);
+
+    assert(tlv_find(payload, payload_len, TLV_GATEWAY_ID, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint64_t));
+    assert(proto_get_u64_le(value) == GATEWAY);
+
+    assert(tlv_find(payload, payload_len, TLV_NEXT_HOP_ID, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint64_t));
+    assert(proto_get_u64_le(value) == ANCHOR_B);
+
+    assert(tlv_find(payload, payload_len, TLV_ROUTE_EPOCH, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint32_t));
+    assert(proto_get_u32_le(value) == 44u);
+
+    assert(tlv_find(payload, payload_len, TLV_HOP_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 2u);
+
+    assert(tlv_find(payload, payload_len, TLV_QUALITY, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 77u);
+
+    assert(tlv_find(payload, payload_len, TLV_RETRY_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 2u);
+}
+
+static void test_status_tlvs_report_missing_route_reason(void)
+{
+    struct mesh_relay relay;
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 44u);
+
+    assert(mesh_relay_append_status_tlvs(&relay, payload, sizeof(payload), &payload_len) == PROTO_OK);
+
+    assert(tlv_find(payload, payload_len, TLV_GATEWAY_ID, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint64_t));
+    assert(proto_get_u64_le(value) == GATEWAY);
+
+    assert(tlv_find(payload, payload_len, TLV_REASON, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == (uint8_t)(-PROTO_ERR_NOT_FOUND));
+    assert(tlv_find(payload, payload_len, TLV_NEXT_HOP_ID, &value, &value_len) == PROTO_ERR_NOT_FOUND);
+}
+
 static void test_gateway_caches_downlink_and_returns_gateway_ack(void)
 {
     struct mesh_relay gateway;
@@ -1020,6 +1084,8 @@ int main(void)
     test_route_adv_forms_upstream_route_and_readvertises();
     test_relay_forwards_gateway_bound_packet_and_suppresses_duplicate();
     test_duplicate_cache_expires_by_time_window();
+    test_status_tlvs_report_selected_route();
+    test_status_tlvs_report_missing_route_reason();
     test_gateway_caches_downlink_and_returns_gateway_ack();
     test_downlink_routes_expire_when_not_refreshed();
     test_downlink_route_selection_uses_weighted_quality();

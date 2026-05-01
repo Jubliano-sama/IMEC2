@@ -1,10 +1,14 @@
 #internship #imec #architecture #documentation #UWB #BLE
 
-Version: 0.4.6
+Version: 0.4.7
 
 Previous version: [[UWB+BLE Architecture 0.2] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
 
 ## Changelog
+
+### 2026-05-01 - 0.4.7
+
+- Document anchor status route telemetry: `CMD_GET_STATUS` responses now include selected route TLVs, or a missing-route reason when no upstream path is selected.
 
 ### 2026-05-01 - 0.4.6
 
@@ -382,6 +386,8 @@ Command responses use the same acknowledgement standard as other mesh messages:
 1. The next hop sends a hop ACK.
 2. The final command target executes or rejects the command and returns a command result.
 3. The gateway sends an end-to-end gateway ACK for results it accepts.
+
+For `CMD_GET_STATUS`, an anchor includes the normal role, uptime, and status fields plus mesh route telemetry. If a route is selected, the response includes `GATEWAY_ID`, `NEXT_HOP_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, and `RETRY_COUNT`. If no upstream route is currently selected, the response includes `GATEWAY_ID` and `REASON=7`, where 7 maps to `PROTO_ERR_NOT_FOUND`.
 
 Unsupported commands must return `UNSUPPORTED_COMMAND`, not be silently ignored.
 

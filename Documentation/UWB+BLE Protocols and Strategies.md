@@ -279,6 +279,8 @@ To send a command, the gateway does not broadcast to everyone. It sends a unicas
 
 Gateway commands do not use `GATEWAY_ACK_REQUIRED` because the gateway is the sender. A command is considered complete when the target anchor returns `COMMAND_RESULT`; that result is gateway-bound and does use `GATEWAY_ACK_REQUIRED`.
 
+`CMD_GET_STATUS` is also the first route-debug command. A successful status result includes role, uptime, status bits, `GATEWAY_ID`, and either selected-route fields (`NEXT_HOP_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, `RETRY_COUNT`) or `REASON=7` when no upstream route is currently selected.
+
 The gateway tracks one outstanding command-result wait. While that wait is active, a second USB command is rejected as `COMMAND_BUSY`; this keeps v1 deterministic and avoids ambiguous host-side completion. The wait clears when a `COMMAND_RESULT` arrives from the target anchor with the same gateway ID, target ID, session ID, and sequence number.
 
 If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands. If an already-started gateway command loses every downlink candidate during retries, or if the target accepts delivery but no matching result arrives within 5 s, the gateway emits a local `COMMAND_RESULT` over USB with `COMMAND_TIMEOUT`.

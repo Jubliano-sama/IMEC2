@@ -935,6 +935,67 @@ int mesh_relay_build_route_status(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
+                                  uint8_t *payload,
+                                  size_t payload_cap,
+                                  size_t *offset)
+{
+    const struct route_candidate *selected;
+    int ret;
+
+    if (relay == NULL || payload == NULL || offset == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_GATEWAY_ID, relay->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
+        ret = tlv_append_u32(payload,
+                             payload_cap,
+                             offset,
+                             TLV_ROUTE_EPOCH,
+                             relay->upstream.current_epoch);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = tlv_append_u8(payload, payload_cap, offset, TLV_HOP_COUNT, 0u);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        return tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, 100u);
+    }
+
+    selected = route_selected(&relay->upstream);
+    if (selected == NULL || selected->hop_count == UINT8_MAX) {
+        return tlv_append_u8(payload,
+                             payload_cap,
+                             offset,
+                             TLV_REASON,
+                             (uint8_t)(-PROTO_ERR_NOT_FOUND));
+    }
+
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_NEXT_HOP_ID, selected->next_hop_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_ROUTE_EPOCH, selected->route_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_HOP_COUNT, selected->hop_count + 1u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, selected->link_quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u8(payload, payload_cap, offset, TLV_RETRY_COUNT, selected->failure_count);
+}
+
 bool mesh_relay_tx_active(const struct mesh_relay *relay)
 {
     return relay != NULL && relay->pending.state != MESH_RELAY_TX_IDLE;

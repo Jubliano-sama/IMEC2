@@ -450,7 +450,11 @@ static int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_
     if (ret != PROTO_OK) {
         return ret;
     }
-    return tlv_append_u32(payload, payload_cap, payload_len, TLV_STATUS_BITS, 0u);
+    ret = tlv_append_u32(payload, payload_cap, payload_len, TLV_STATUS_BITS, 0u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return mesh_relay_append_status_tlvs(&mesh_runtime, payload, payload_cap, payload_len);
 }
 
 static int anchor_send_command_result(const struct proto_packet *command,
