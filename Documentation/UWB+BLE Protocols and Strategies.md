@@ -147,7 +147,7 @@ That is the whole mesh model. Gateway advertisements teach anchors how to send u
 | --- | --- | --- | --- |
 | Gateway-bound report | `msg_type=CLICK_REPORT`, `SELF_TEST_REPORT`, `SURVEY_RESULT`, or other report; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=reporting anchor`; `dst_id=gateway`; `ttl=4` | Report-specific TLVs such as `CLICKER_ID`, `ANCHOR_ID`, `EVENT_SEQ`, `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS` | Carries measured data toward the gateway. A real click also sets `COUNT_AS_CLICK`; diagnostic traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. |
 | Hop ACK | `msg_type=MESH_ACK`; `flags=HOP_ACK`; `src_id=receiver`; `dst_id=previous hop`; `ttl=1` | `REQUESTED_MSG_SEQ` | Confirms one radio hop only. It does not mean the gateway received the packet. |
-| Gateway ACK | `msg_type=GATEWAY_ACK`; `flags=GATEWAY_ACK`; `src_id=gateway`; `dst_id=original source`; `ttl=4` | `REQUESTED_MSG_SEQ` | Confirms the gateway received the original gateway-bound packet. This ACK can itself travel through the mesh and receive hop ACKs on the way back. |
+| Gateway ACK | `msg_type=GATEWAY_ACK`; `flags=ACK_REQUESTED | GATEWAY_ACK`; `src_id=gateway`; `dst_id=original source`; `ttl=4` | `REQUESTED_MSG_SEQ` | Confirms the gateway received the original gateway-bound packet. It is routed back like a normal reliable packet, so every return-path hop ACKs custody. |
 | Gateway command | `msg_type=COMMAND`; `flags=ACK_REQUESTED`; `src_id=gateway`; `dst_id=target anchor`; `ttl=4` | `COMMAND_ID` plus command-specific TLVs | Sends an extensible command to one anchor. Delivery is confirmed hop by hop; target acceptance is confirmed by `COMMAND_RESULT`. |
 | Command result | `msg_type=COMMAND_RESULT`; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=target anchor`; `dst_id=gateway`; `ttl=4` | `COMMAND_ID`, `COMMAND_STATUS`, optional `ERROR_CODE` or result TLVs | Returns the command outcome to the gateway using the same reliable gateway-bound path as reports. |
 | Route advertisement | `msg_type=ROUTE_ADV`; `src_id=advertising node`; `dst_id=broadcast or neighbor`; `ttl=1` for local advertisements | `GATEWAY_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, optional `NEXT_HOP_ID` | Announces a possible route to the gateway. Anchors use this to populate their route tables. |
@@ -167,7 +167,10 @@ sequenceDiagram
  B-->>A: MESH_ACK requested_seq=42, ttl=1
  B->>G: same CLICK_REPORT seq=42, dst=Gateway, ttl=3
  G-->>B: MESH_ACK requested_seq=42, ttl=1
- G->>A: GATEWAY_ACK requested_seq=42, dst=Anchor A, ttl=4
+ G->>B: GATEWAY_ACK requested_seq=42, dst=Anchor A, ttl=4, ACK_REQUESTED
+ B-->>G: MESH_ACK requested_seq=<gateway_ack_seq>, ttl=1
+ B->>A: same GATEWAY_ACK requested_seq=42, dst=Anchor A, ttl=3
+ A-->>B: MESH_ACK requested_seq=<gateway_ack_seq>, ttl=1
 ```
 
 The first ACK tells Anchor A that Anchor B accepted the packet. The gateway ACK tells Anchor A that the gateway eventually received it. If the gateway ACK is routed back through Anchor B, that return packet uses the same hop-ACK rules in the reverse direction.
@@ -175,14 +178,17 @@ The first ACK tells Anchor A that Anchor B accepted the packet. The gateway ACK 
 ### Forwarding Rules
 
 1. Validate magic, version, payload length, and CRC. Invalid packets are dropped.
-2. Detect duplicates by `msg_type`, `src_id`, `dst_id`, `session_id`, and `seq`. If a duplicate requested a hop ACK, ACK it again but do not process the payload twice. Duplicate cache entries expire after 60 s.
-3. If `dst_id` is local, handle the packet locally. A gateway emits `GATEWAY_ACK` for gateway-bound packets that requested it. An anchor receiving a command emits `COMMAND_RESULT`.
-4. If `dst_id` is not local and `ttl` is zero, drop the packet and record a route failure.
-5. Expire stale route candidates older than 7 s, then select the local next hop from the route table. Routes use `effective_cost = hop_count * 100 + (100 - quality)`, then prefer higher quality, fewer hops, newer observation time, and lower next-hop ID for deterministic tie breaking.
-6. Forward the same packet with `ttl - 1`. Relays do not rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload.
-7. If `ACK_REQUESTED` is set, wait up to `ROUTE_HOP_ACK_TIMEOUT_MS` for `MESH_ACK` with matching `REQUESTED_MSG_SEQ`.
-8. Retry the current route until its failure count reaches `ROUTE_MAX_FAILURES`. Then invalidate that candidate and try an alternate route. If no alternate exists, return to route discovery and report the reason. For gateway-originated commands, that final failure is emitted to USB as `COMMAND_TIMEOUT`.
-9. For gateway-bound packets with `GATEWAY_ACK_REQUIRED`, keep the packet pending until the gateway ACK arrives or `ROUTE_GATEWAY_ACK_TIMEOUT_MS` expires.
+2. Detect duplicates by `msg_type`, `src_id`, `dst_id`, `session_id`, and `seq`. If a duplicate requested a hop ACK, ACK it again but do not process the payload twice. A duplicate gateway-bound packet at the gateway can also re-emit the gateway ACK. Duplicate cache entries expire after 60 s.
+3. If a new packet would require forwarding or an immediate local response while the node already has a tracked transmission in flight, do not send a hop ACK and do not cache it as a duplicate. The previous sender will retry.
+4. If `dst_id` is local, handle the packet locally. A gateway emits `GATEWAY_ACK` for gateway-bound packets that requested it. An anchor receiving a command emits `COMMAND_RESULT`.
+5. If `dst_id` is not local and `ttl` is zero, drop the packet without a hop ACK and record a route failure.
+6. Expire stale route candidates older than 7 s, then select the local next hop from the route table. Routes use `effective_cost = hop_count * 100 + (100 - quality)`, then prefer higher quality, fewer hops, newer observation time, and lower next-hop ID for deterministic tie breaking.
+7. Forward the same packet with `ttl - 1`. Relays do not rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload.
+8. Send `MESH_ACK` only after the packet is accepted for local handling or the relay has selected a next hop and can track the forward.
+9. If `ACK_REQUESTED` is set, wait up to `ROUTE_HOP_ACK_TIMEOUT_MS` for `MESH_ACK` with matching `REQUESTED_MSG_SEQ`.
+10. Retry the current route until its failure count reaches `ROUTE_MAX_FAILURES`. Then invalidate that candidate and try an alternate route. If no alternate exists, return to route discovery and report the reason. For gateway-originated commands, that final delivery failure is emitted to USB as `COMMAND_TIMEOUT`.
+11. For gateway-bound packets with `GATEWAY_ACK_REQUIRED`, keep the packet pending until the gateway ACK arrives or `ROUTE_GATEWAY_ACK_TIMEOUT_MS` expires. The `GATEWAY_ACK` return packet also requests hop ACKs while traveling back.
+12. For gateway-originated commands, keep one application-level command wait after the command is routed. A matching `COMMAND_RESULT` clears it; no result within 5 s emits `COMMAND_TIMEOUT` over USB.
 
 ### Route Formation
 
@@ -271,7 +277,9 @@ To send a command, the gateway does not broadcast to everyone. It sends a unicas
 
 Gateway commands do not use `GATEWAY_ACK_REQUIRED` because the gateway is the sender. A command is considered complete when the target anchor returns `COMMAND_RESULT`; that result is gateway-bound and does use `GATEWAY_ACK_REQUIRED`.
 
-If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands. If an already-started gateway command loses every downlink candidate during retries, the gateway emits a local `COMMAND_RESULT` over USB with `COMMAND_TIMEOUT`.
+The gateway tracks one outstanding command-result wait. While that wait is active, a second USB command is rejected as `COMMAND_BUSY`; this keeps v1 deterministic and avoids ambiguous host-side completion. The wait clears when a `COMMAND_RESULT` arrives from the target anchor with the same gateway ID, target ID, session ID, and sequence number.
+
+If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands. If an already-started gateway command loses every downlink candidate during retries, or if the target accepts delivery but no matching result arrives within 5 s, the gateway emits a local `COMMAND_RESULT` over USB with `COMMAND_TIMEOUT`.
 
 This keeps mesh communication symmetric for v1 testing: every important sender knows whether the next hop received the packet, and every gateway-bound sender can also know whether the gateway received it.
 
@@ -301,7 +309,7 @@ If I explain the gateway-to-anchor path to myself, it is:
 
 The message is therefore a chain of local unicast handoffs, not a hail-mary broadcast. Broadcast is reserved for route advertisements and discovery-like control traffic. Operational commands, reports, command results, route status packets, and ACKs are sent to one selected next hop at a time.
 
-If a next hop does not ACK, the sender retries and eventually invalidates that next-hop route. If no alternate route exists, the gateway gets a `COMMAND_TIMEOUT` locally over USB for gateway-originated commands, or the anchor marks route discovery needed for gateway-bound packets.
+If a next hop does not ACK, the sender retries and eventually invalidates that next-hop route. No ACK can mean "out of range," "route missing," "TTL exhausted," or "neighbor is temporarily busy"; the sender does not need to know which one to behave correctly. If no alternate route exists, the gateway gets a `COMMAND_TIMEOUT` locally over USB for gateway-originated commands, or the anchor marks route discovery needed for gateway-bound packets.
 
 The live Zephyr runtime buffers up to 8 decoded mesh frames in a receive queue before processing. This avoids losing route/status/report bursts just because one work item was already busy.
 

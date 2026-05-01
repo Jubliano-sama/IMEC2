@@ -162,7 +162,7 @@ stateDiagram-v2
  RouteDiscoveryNeeded --> Idle
 ```
 
-Route candidates expire after 7 s without a fresh advertisement, route status, or successful ACK refresh. Duplicate suppression entries expire after 60 s. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
+Route candidates expire after 7 s without a fresh advertisement, route status, or successful ACK refresh. Duplicate suppression entries expire after 60 s. A hop ACK is a custody ACK: relays send it only after they can accept local handling or track the forward. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
 
 ## Gateway Mesh Runtime
 
@@ -182,15 +182,19 @@ stateDiagram-v2
  HandleMeshRx --> SendGatewayAck: gateway-bound packet requested gateway ACK
  UpdateRoutes --> RouteBeaconLoop
  EmitUsbPacket --> RouteBeaconLoop
- SendGatewayAck --> RouteBeaconLoop
+ SendGatewayAck --> WaitGatewayAckHopAck: gateway ACK return packet is routed
+ WaitGatewayAckHopAck --> RouteBeaconLoop: hop ACK received
+ WaitGatewayAckHopAck --> RouteBeaconLoop: retries exhausted
  RouteBeaconLoop --> RouteUsbCommand: USB COMMAND received
  RouteUsbCommand --> WaitHopAck: fresh downlink route exists
  RouteUsbCommand --> EmitUsbTimeout: no route / route lost after retries
- WaitHopAck --> RouteBeaconLoop: hop ACK received
+ WaitHopAck --> WaitCommandResult: hop ACK received
  WaitHopAck --> EmitUsbTimeout: retries exhausted and no alternate downlink
+ WaitCommandResult --> RouteBeaconLoop: matching COMMAND_RESULT received
+ WaitCommandResult --> EmitUsbTimeout: 5 s command-result timeout
 ```
 
-The gateway is the active mesh root: it advertises the route epoch, learns downlinks from `ROUTE_STATUS`, routes USB commands through selected next hops, emits delivered mesh packets over USB COBS, and returns structured timeout results for failed gateway-originated commands.
+The gateway is the active mesh root: it advertises the route epoch, learns downlinks from `ROUTE_STATUS`, routes USB commands through selected next hops, emits delivered mesh packets over USB COBS, and returns structured timeout results for failed gateway-originated commands. v1 tracks one outstanding command-result wait at a time.
 
 ## Completed Work
 
@@ -201,7 +205,7 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 - Implemented click/self-test report builders.
 - Implemented status LED pattern selection and button/self-test gesture FSM.
 - Implemented route candidate helpers, mesh hop ACK packet builders, gateway ACK packet builders, and survey command/result structures.
-- Implemented BLE mesh relay runtime with local next-hop addressing, hop ACKs, gateway ACKs, retry/backoff, upstream route fallback, downlink alternate fallback, route freshness expiry, duplicate cache expiry, and route status/advertisement handling.
+- Implemented BLE mesh relay runtime with local next-hop addressing, custody hop ACKs, hop-ACKed gateway ACK return packets, retry/backoff, upstream route fallback, downlink alternate fallback, route freshness expiry, duplicate cache expiry, and route status/advertisement handling.
 - Added Zephyr app skeleton with role selection for clicker, anchor, and gateway.
 - Configured all firmware BLE traffic for LE Coded PHY/S=8 intent, coded-only scanning, extended advertising, and +8 dBm nRF52 TX power.
 - Added ANNA-B402/DWM3000 devicetree overlay, DWM3000 binding, and 32 MHz SPIM3 runtime SPI configuration.
@@ -214,7 +218,8 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 - Routed serial console/logging to USB CDC ACM for prototype debug over the USB-C port.
 - Implemented gateway USB COBS input/output for command packets and delivered mesh packets.
 - Implemented gateway route beaconing and command routing through the BLE mesh.
-- Implemented gateway ACK generation for received gateway-bound packets.
+- Implemented gateway ACK generation for received gateway-bound packets, including hop ACK tracking on the return path.
+- Implemented gateway command-result timeout tracking for one outstanding gateway-originated command.
 - Added repository contributor guide in `AGENTS.md`.
 
 ## Verified
@@ -248,7 +253,6 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 
 ### Gateway
 
-- Add command-result timeout tracking at the USB host/application layer if the target anchor accepts delivery but never returns `COMMAND_RESULT`.
 - Expand command handlers beyond ping/status as hardware needs mature.
 
 ### Anchor Survey

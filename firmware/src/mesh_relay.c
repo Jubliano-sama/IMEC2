@@ -255,22 +255,36 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
     return PROTO_OK;
 }
 
-static bool duplicate_seen_and_store(struct mesh_relay *relay,
-                                     const struct proto_packet *packet,
-                                     uint32_t now_ms)
+static bool duplicate_tracked(const struct proto_packet *packet)
+{
+    return packet->msg_type != MSG_MESH_ACK;
+}
+
+static void duplicate_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry;
-
-    if (packet->msg_type == MSG_MESH_ACK || packet->msg_type == MSG_GATEWAY_ACK) {
-        return false;
-    }
 
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
         if (entry->valid && (uint32_t)(now_ms - entry->last_seen_ms) > ROUTE_DEDUP_WINDOW_MS) {
             entry->valid = false;
-            continue;
         }
+    }
+}
+
+static bool duplicate_seen(struct mesh_relay *relay,
+                           const struct proto_packet *packet,
+                           uint32_t now_ms)
+{
+    struct mesh_duplicate_entry *entry;
+
+    if (!duplicate_tracked(packet)) {
+        return false;
+    }
+
+    duplicate_expire_stale(relay, now_ms);
+    for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
+        entry = &relay->duplicates[i];
         if (entry->valid &&
             entry->msg_type == packet->msg_type &&
             entry->src_id == packet->src_id &&
@@ -280,7 +294,20 @@ static bool duplicate_seen_and_store(struct mesh_relay *relay,
             return true;
         }
     }
+    return false;
+}
 
+static void duplicate_store(struct mesh_relay *relay,
+                            const struct proto_packet *packet,
+                            uint32_t now_ms)
+{
+    struct mesh_duplicate_entry *entry;
+
+    if (!duplicate_tracked(packet)) {
+        return;
+    }
+
+    duplicate_expire_stale(relay, now_ms);
     entry = &relay->duplicates[relay->duplicate_next];
     entry->msg_type = packet->msg_type;
     entry->src_id = packet->src_id;
@@ -290,7 +317,6 @@ static bool duplicate_seen_and_store(struct mesh_relay *relay,
     entry->seq = packet->seq;
     entry->valid = true;
     relay->duplicate_next = (uint8_t)((relay->duplicate_next + 1u) % MESH_RELAY_DUP_CACHE_SIZE);
-    return false;
 }
 
 static int requested_seq_from_ack(const uint8_t *payload, size_t payload_len, uint16_t *requested_seq)
@@ -541,6 +567,65 @@ static int build_forward(const struct mesh_relay *relay,
     out->payload_len = (uint8_t)payload_len;
     out->next_hop_id = next_hop_id;
     return PROTO_OK;
+}
+
+static bool packet_needs_forward(const struct mesh_relay *relay, const struct proto_packet *packet)
+{
+    return packet->dst_id != relay->local_id && packet->dst_id != MESH_BROADCAST_ID;
+}
+
+static bool local_delivery_needs_response(const struct mesh_relay *relay,
+                                          const struct proto_packet *packet)
+{
+    if (packet->dst_id != relay->local_id) {
+        return false;
+    }
+    if (relay->role == MESH_RELAY_ROLE_GATEWAY &&
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u) {
+        return true;
+    }
+    return relay->role == MESH_RELAY_ROLE_ANCHOR && packet->msg_type == MSG_COMMAND;
+}
+
+static int add_hop_ack_action(struct mesh_relay *relay,
+                              const struct proto_packet *packet,
+                              uint64_t previous_hop_id,
+                              struct mesh_relay_result *result)
+{
+    int ret;
+
+    if ((packet->flags & FLAG_ACK_REQUESTED) == 0u || !id_is_unicast(previous_hop_id)) {
+        return PROTO_OK;
+    }
+
+    ret = build_hop_ack(relay, packet, previous_hop_id, &result->hop_ack);
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_SEND_HOP_ACK;
+    } else if (result->status == PROTO_OK) {
+        result->status = ret;
+    }
+    return ret;
+}
+
+static int add_gateway_ack_action(struct mesh_relay *relay,
+                                  const struct proto_packet *packet,
+                                  uint64_t previous_hop_id,
+                                  struct mesh_relay_result *result)
+{
+    int ret;
+
+    if (relay->role != MESH_RELAY_ROLE_GATEWAY ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return PROTO_OK;
+    }
+
+    ret = build_gateway_ack(relay, packet, previous_hop_id, &result->gateway_ack);
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ACK;
+    } else if (result->status == PROTO_OK) {
+        result->status = ret;
+    }
+    return ret;
 }
 
 static int handle_route_adv(struct mesh_relay *relay,
@@ -1028,21 +1113,25 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     result_reset(result);
     (void)mesh_relay_expire_routes(relay, now_ms);
 
-    if ((packet->flags & FLAG_ACK_REQUESTED) != 0u && id_is_unicast(previous_hop_id)) {
-        ret = build_hop_ack(relay, packet, previous_hop_id, &result->hop_ack);
-        if (ret == PROTO_OK) {
-            result->actions |= MESH_RELAY_ACTION_SEND_HOP_ACK;
-        }
-    }
-
     if (packet->msg_type == MSG_MESH_ACK || packet->msg_type == MSG_GATEWAY_ACK) {
         (void)handle_local_ack(relay, packet, payload, payload_len, now_ms, result);
     }
 
-    duplicate = duplicate_seen_and_store(relay, packet, now_ms);
+    duplicate = duplicate_seen(relay, packet, now_ms);
     if (duplicate) {
+        (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
+        if (packet->dst_id == relay->local_id) {
+            (void)add_gateway_ack_action(relay, packet, previous_hop_id, result);
+        }
         result->actions |= MESH_RELAY_ACTION_DROP;
         result->status = PROTO_ERR_STALE;
+        return PROTO_OK;
+    }
+
+    if ((packet_needs_forward(relay, packet) || local_delivery_needs_response(relay, packet)) &&
+        mesh_relay_tx_active(relay)) {
+        result->status = PROTO_ERR_BUSY;
+        result->actions |= MESH_RELAY_ACTION_DROP;
         return PROTO_OK;
     }
 
@@ -1059,6 +1148,8 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         if (ret != PROTO_OK) {
             result->status = ret;
             result->actions |= MESH_RELAY_ACTION_DROP;
+        } else {
+            duplicate_store(relay, packet, now_ms);
         }
         return PROTO_OK;
     }
@@ -1077,26 +1168,24 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     }
 
     if (packet->dst_id == relay->local_id) {
+        duplicate_store(relay, packet, now_ms);
+        (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
-        if (relay->role == MESH_RELAY_ROLE_GATEWAY &&
-            (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u) {
-            ret = build_gateway_ack(relay, packet, previous_hop_id, &result->gateway_ack);
-            if (ret == PROTO_OK) {
-                result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ACK;
-            } else if (result->status == PROTO_OK) {
-                result->status = ret;
-            }
-        }
+        (void)add_gateway_ack_action(relay, packet, previous_hop_id, result);
         return PROTO_OK;
     }
 
     if (packet->dst_id == MESH_BROADCAST_ID) {
+        duplicate_store(relay, packet, now_ms);
+        (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
         return PROTO_OK;
     }
 
     ret = build_forward(relay, packet, payload, payload_len, &result->forward);
     if (ret == PROTO_OK) {
+        duplicate_store(relay, packet, now_ms);
+        (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
         result->actions |= MESH_RELAY_ACTION_FORWARD;
         return PROTO_OK;
     }

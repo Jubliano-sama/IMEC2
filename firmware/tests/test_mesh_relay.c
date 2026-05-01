@@ -272,6 +272,8 @@ static void test_gateway_caches_downlink_and_returns_gateway_ack(void)
     assert(downlink->quality == 70u);
 
     assert(result.gateway_ack.packet.msg_type == MSG_GATEWAY_ACK);
+    assert((result.gateway_ack.packet.flags & FLAG_ACK_REQUESTED) != 0u);
+    assert((result.gateway_ack.packet.flags & FLAG_GATEWAY_ACK) != 0u);
     assert(result.gateway_ack.next_hop_id == ANCHOR_B);
     assert(result.gateway_ack.packet.dst_id == ANCHOR_A);
     assert(tlv_find(result.gateway_ack.payload,
@@ -284,6 +286,20 @@ static void test_gateway_caches_downlink_and_returns_gateway_ack(void)
 
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_OK);
     assert(next_hop_id == ANCHOR_B);
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &status_packet,
+                                status_payload,
+                                status_packet.payload_len,
+                                ANCHOR_B,
+                                70u,
+                                3001u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
 }
 
 static void test_downlink_routes_expire_when_not_refreshed(void)
@@ -573,7 +589,7 @@ static void test_downlink_hop_ack_refreshes_route_age(void)
     assert(downlink->last_seen_ms == 7450u);
 }
 
-static void test_ttl_zero_packet_is_acknowledged_but_not_forwarded(void)
+static void test_ttl_zero_packet_is_dropped_without_ack(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
@@ -596,9 +612,71 @@ static void test_ttl_zero_packet_is_acknowledged_but_not_forwarded(void)
                                 &result) == PROTO_OK);
 
     assert(result.status == PROTO_ERR_STALE);
-    assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
     assert(has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+}
+
+static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
+    struct proto_packet local_report;
+    struct proto_packet incoming_report;
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    uint8_t local_payload[1] = {0x33u};
+    uint8_t incoming_payload[1] = {0x44u};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&local_report,
+                                    ANCHOR_B,
+                                    GATEWAY,
+                                    78u,
+                                    2u,
+                                    sizeof(local_payload)) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &local_report,
+                               local_payload,
+                               sizeof(local_payload),
+                               4100u,
+                               &tx) == PROTO_OK);
+    assert(mesh_relay_tx_active(&relay));
+
+    assert(report_init_click_packet(&incoming_report,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    79u,
+                                    3u,
+                                    sizeof(incoming_payload)) == PROTO_OK);
+    incoming_report.ttl = 4u;
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &incoming_report,
+                                incoming_payload,
+                                sizeof(incoming_payload),
+                                ANCHOR_A,
+                                80u,
+                                4110u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_BUSY);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+
+    mesh_relay_cancel_tx(&relay);
+    assert(mesh_relay_handle_rx(&relay,
+                                &incoming_report,
+                                incoming_payload,
+                                sizeof(incoming_payload),
+                                ANCHOR_A,
+                                80u,
+                                4120u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
 static void test_local_gateway_bound_tx_waits_for_hop_then_gateway_ack(void)
@@ -745,9 +823,12 @@ static void test_gateway_reaches_anchor_behind_relay_and_receives_result(void)
     struct mesh_relay_result gateway_result;
     struct proto_packet command = {0};
     struct proto_packet command_result = {0};
+    struct proto_packet gateway_hop_ack = {0};
     uint8_t command_payload[16];
+    uint8_t gateway_hop_ack_payload[16];
     uint8_t result_payload[32];
     size_t command_payload_len = 0u;
+    size_t gateway_hop_ack_payload_len = 0u;
     size_t result_payload_len = 0u;
     const struct mesh_downlink_entry *downlink;
 
@@ -843,6 +924,27 @@ static void test_gateway_reaches_anchor_behind_relay_and_receives_result(void)
     assert(has_action(&relay_result, MESH_RELAY_ACTION_FORWARD));
     assert(relay_result.forward.next_hop_id == ANCHOR_A);
 
+    assert(mesh_append_requested_seq(gateway_hop_ack_payload,
+                                     sizeof(gateway_hop_ack_payload),
+                                     &gateway_hop_ack_payload_len,
+                                     command.seq) == PROTO_OK);
+    assert(mesh_init_hop_ack(&gateway_hop_ack,
+                             ANCHOR_B,
+                             GATEWAY,
+                             command.session_id,
+                             9u,
+                             (uint8_t)gateway_hop_ack_payload_len) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&gateway,
+                                &gateway_hop_ack,
+                                gateway_hop_ack_payload,
+                                gateway_hop_ack_payload_len,
+                                ANCHOR_B,
+                                85u,
+                                2015u,
+                                &gateway_result) == PROTO_OK);
+    assert(has_action(&gateway_result, MESH_RELAY_ACTION_TX_HOP_CONFIRMED));
+    assert(!mesh_relay_tx_active(&gateway));
+
     assert(mesh_relay_handle_rx(&anchor,
                                 &relay_result.forward.packet,
                                 relay_result.forward.payload,
@@ -914,7 +1016,8 @@ int main(void)
     test_start_tx_rejects_stale_upstream_route();
     test_downlink_failure_retries_alternate_route();
     test_downlink_hop_ack_refreshes_route_age();
-    test_ttl_zero_packet_is_acknowledged_but_not_forwarded();
+    test_ttl_zero_packet_is_dropped_without_ack();
+    test_busy_relay_does_not_ack_or_cache_new_forward();
     test_local_gateway_bound_tx_waits_for_hop_then_gateway_ack();
     test_relayed_tx_completes_after_hop_ack_only();
     test_hop_ack_timeout_retries_then_requests_route_discovery();

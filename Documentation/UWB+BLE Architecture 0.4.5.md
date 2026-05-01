@@ -1,10 +1,18 @@
 #internship #imec #architecture #documentation #UWB #BLE
 
-Version: 0.4.3
+Version: 0.4.5
 
 Previous version: [[UWB+BLE Architecture 0.2] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
 
 ## Changelog
+
+### 2026-05-01 - 0.4.5
+
+- Document custody-ACK mesh behavior: a node sends a hop ACK only after it can accept local handling or forwarding, busy relays stay silent so senders retry, and gateway ACKs now use hop ACKs on the return path.
+
+### 2026-05-01 - 0.4.4
+
+- Document gateway command-result timeout tracking: a routed command now remains pending until the target returns `COMMAND_RESULT` or a 5 s timeout emits `COMMAND_TIMEOUT` over USB.
 
 ### 2026-05-01 - 0.4.3
 
@@ -253,15 +261,15 @@ All routed packets use a versioned binary envelope. The detailed field list is d
 
 Every routed packet that matters sets:
 
-- `ACK_REQUESTED`: the next hop must reply with a hop ACK.
+- `ACK_REQUESTED`: the next hop must reply with a hop ACK only after it can accept custody of the packet for local handling or forwarding.
 
 Every gateway-bound packet that matters also sets:
 
 - `GATEWAY_ACK_REQUIRED`: the gateway must send an end-to-end gateway ACK back to the original sender.
 
-This means reports, route status packets, survey results, heartbeats, and command results require gateway ACKs. Gateway-originated commands do not, because the gateway is already the sender. A command is complete when the target anchor returns `COMMAND_RESULT`.
+This means reports, route status packets, survey results, heartbeats, and command results require gateway ACKs. Gateway-originated commands do not, because the gateway is already the sender. A command is complete when the target anchor returns `COMMAND_RESULT`; if no matching result arrives within 5 s, the gateway emits a local USB `COMMAND_TIMEOUT`.
 
-For gateway-bound packets, the sender considers the message successful only after receiving the gateway ACK. A hop ACK only proves that the next relay received the message; it does not prove gateway delivery.
+For gateway-bound packets, the sender considers the message successful only after receiving the gateway ACK. A hop ACK only proves that the next relay accepted custody; it does not prove gateway delivery. The gateway ACK itself is routed back with `ACK_REQUESTED`, so every return-path hop is acknowledged too.
 
 Default retry behavior:
 
@@ -273,6 +281,7 @@ Default retry behavior:
 | Retry backoff | 100 ms, 250 ms, 500 ms |
 | Route freshness window | 7 s since last route advertisement, route status, or successful ACK refresh |
 | Duplicate suppression window | 60 s per message identity |
+| Gateway command-result timeout | 5 s for one outstanding gateway-originated command |
 
 ### Link Quality Weighting
 
@@ -327,12 +336,16 @@ Route selection uses the weighted cost above. Upstream candidates older than 7 s
 
 An anchor marks its current upstream route suspect when hop ACK or gateway ACK repeatedly fails. After three failed delivery attempts for the selected route, the anchor invalidates that candidate and tries the next known route. If no candidate exists, it reports that route discovery is needed and stops the pending transmission.
 
+If a relay already has a tracked transmission in flight, it does not hop-ACK a new packet that would require forwarding or an immediate local response such as `COMMAND_RESULT` or `GATEWAY_ACK`. The previous sender therefore sees no ACK and retries later. Packets rejected this way are not placed in the duplicate cache.
+
 For gateway-to-anchor commands, the gateway or relay keeps multiple downlink candidates for the same target when route status packets arrive through different next hops. If the selected downlink next hop misses three hop ACK deadlines, that next-hop candidate is invalidated and the pending command is retransmitted through the next best downlink candidate. If no alternate exists, a gateway-originated command is completed locally as `COMMAND_TIMEOUT` over USB serial.
+
+The gateway also tracks one outstanding command-result wait. Once a USB command is accepted for routing, another USB command is rejected as `COMMAND_BUSY` until the first command returns a matching `COMMAND_RESULT`, fails route delivery, or reaches the 5 s command-result timeout. Matching uses the target anchor ID, gateway ID, session ID, and sequence number.
 
 ### Data Forwarding (every click)
 Anchor calculates ToF data, forwards it to `my_next_hop`, waits for a hop ACK, then waits for a gateway ACK. Intermediate anchors relay onward. Packets carry a TTL (decremented per hop, dropped at zero) to prevent loops during route convergence.
 
-If hop ACK fails, the sender retries with backoff. If gateway ACK fails after the packet was hop-acknowledged, the sender retries through the selected route first, then invalidates it and attempts another candidate.
+If hop ACK fails, the sender retries with backoff. If a packet has no TTL left, no usable route, or reaches a busy relay, it is not hop-ACKed. If gateway ACK fails after the packet was hop-acknowledged, the sender retries through the selected route first, then invalidates it and attempts another candidate.
 
 ### Self-Healing
 If an anchor dies, its neighbors stop hearing route advertisements and route status refreshes. After 7 s without refresh, upstream and downlink candidates through that node are expired before they can be selected for new traffic. Missing ACKs can remove a bad selected route faster: after three missed hop ACKs, the sender either switches to an alternate candidate or reports route discovery needed. Duplicate suppression is also time-bounded; message identities expire after 60 s so old cache entries do not block later sessions forever.

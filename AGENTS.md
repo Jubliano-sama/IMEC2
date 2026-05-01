@@ -38,7 +38,7 @@ Zephyr role builds:
 
 ## Coding Style & Naming Conventions
 
-Code is C using Zephyr conventions: 4-space indentation, braces on the same line for functions/control blocks, `snake_case` for functions and variables, and `IMEC_*` for constants, flags, and enums. Keep hardware-independent logic in `firmware/src`; keep Zephyr, GPIO, BLE, and SPI code in `firmware/app`.
+Code is C using Zephyr conventions: 4-space indentation, braces on the same line for functions/control blocks, and `snake_case` for functions and variables. Do not add project-wide prefixes such as `IMEC_` to new identifiers; use descriptive module-scoped names and the existing protocol/route/status naming style. Keep hardware-independent logic in `firmware/src`; keep Zephyr, GPIO, BLE, and SPI code in `firmware/app`.
 
 ## Testing Guidelines
 

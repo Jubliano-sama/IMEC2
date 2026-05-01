@@ -90,7 +90,7 @@ int mesh_init_gateway_ack(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_GATEWAY_ACK;
-    packet->flags = FLAG_GATEWAY_ACK;
+    packet->flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK;
     packet->src_id = gateway_id;
     packet->dst_id = original_src_id;
     packet->session_id = session_id;

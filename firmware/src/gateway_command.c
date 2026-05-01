@@ -4,6 +4,11 @@
 
 #include <string.h>
 
+static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id)
@@ -128,4 +133,82 @@ int gateway_command_build_failure_result(const struct proto_packet *command,
     result->ttl = 1u;
     result->payload_len = (uint8_t)*payload_len;
     return PROTO_OK;
+}
+
+void gateway_command_pending_clear(struct gateway_command_pending *pending)
+{
+    if (pending != NULL) {
+        memset(pending, 0, sizeof(*pending));
+    }
+}
+
+int gateway_command_pending_start(struct gateway_command_pending *pending,
+                                  const struct proto_packet *command,
+                                  enum command_id command_id,
+                                  uint32_t now_ms,
+                                  uint32_t timeout_ms)
+{
+    if (pending == NULL || command == NULL || timeout_ms == 0u ||
+        command->msg_type != MSG_COMMAND ||
+        command->src_id == 0u ||
+        command->dst_id == 0u ||
+        command->src_id == command->dst_id ||
+        command->session_id == 0u ||
+        command->seq == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    if (pending->active) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(pending, 0, sizeof(*pending));
+    pending->command = *command;
+    pending->command_id = command_id;
+    pending->deadline_ms = now_ms + timeout_ms;
+    pending->active = true;
+    return PROTO_OK;
+}
+
+bool gateway_command_pending_matches_result(const struct gateway_command_pending *pending,
+                                            const struct proto_packet *result)
+{
+    if (pending == NULL || result == NULL || !pending->active) {
+        return false;
+    }
+
+    return result->msg_type == MSG_COMMAND_RESULT &&
+           result->src_id == pending->command.dst_id &&
+           result->dst_id == pending->command.src_id &&
+           result->session_id == pending->command.session_id &&
+           result->seq == pending->command.seq;
+}
+
+bool gateway_command_pending_complete_result(struct gateway_command_pending *pending,
+                                             const struct proto_packet *result)
+{
+    if (!gateway_command_pending_matches_result(pending, result)) {
+        return false;
+    }
+
+    gateway_command_pending_clear(pending);
+    return true;
+}
+
+bool gateway_command_pending_expired(struct gateway_command_pending *pending,
+                                     uint32_t now_ms,
+                                     struct proto_packet *command,
+                                     enum command_id *command_id)
+{
+    if (pending == NULL || !pending->active || !deadline_reached(now_ms, pending->deadline_ms)) {
+        return false;
+    }
+
+    if (command != NULL) {
+        *command = pending->command;
+    }
+    if (command_id != NULL) {
+        *command_id = pending->command_id;
+    }
+    gateway_command_pending_clear(pending);
+    return true;
 }

@@ -27,6 +27,7 @@ enum result {
     PROTO_ERR_NOT_FOUND = -7,
     PROTO_ERR_MALFORMED = -8,
     PROTO_ERR_STALE = -9,
+    PROTO_ERR_BUSY = -10,
 };
 
 enum msg_type {

@@ -103,6 +103,7 @@ static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable gateway_route_adv_work;
 static struct k_work_delayable gateway_serial_rx_work;
+static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_spinlock anchor_ble_lock;
 static struct k_spinlock clicker_ready_lock;
 static struct ble_discovery_req anchor_pending_request;
@@ -153,6 +154,7 @@ static uint8_t gateway_serial_rx_frame[SERIAL_FRAME_MAX_LEN];
 static size_t gateway_serial_rx_len;
 static bool gateway_serial_rx_overflow;
 static uint16_t gateway_command_seq;
+static struct gateway_command_pending gateway_command_pending_state;
 
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 
@@ -529,6 +531,86 @@ static void gateway_emit_serial_command_result(const struct proto_packet *comman
     }
 }
 
+static bool gateway_pending_command_matches(const struct proto_packet *command)
+{
+    if (command == NULL || !gateway_command_pending_state.active) {
+        return false;
+    }
+
+    return gateway_command_pending_state.command.dst_id == command->dst_id &&
+           gateway_command_pending_state.command.session_id == command->session_id &&
+           gateway_command_pending_state.command.seq == command->seq;
+}
+
+static void gateway_clear_pending_command_result(const struct proto_packet *command)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY || !gateway_pending_command_matches(command)) {
+        return;
+    }
+
+    gateway_command_pending_clear(&gateway_command_pending_state);
+    (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
+}
+
+static void gateway_command_result_timeout_handler(struct k_work *work)
+{
+    struct proto_packet command = {0};
+    enum command_id command_id = CMD_VENDOR_BASE;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    if (!gateway_command_pending_expired(&gateway_command_pending_state,
+                                         k_uptime_get_32(),
+                                         &command,
+                                         &command_id)) {
+        return;
+    }
+
+    LOG_WRN("gateway command result timeout: cmd=0x%04x dst=0x%016llx session=%u seq=%u",
+            (unsigned int)command_id,
+            (unsigned long long)command.dst_id,
+            command.session_id,
+            command.seq);
+    gateway_emit_serial_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
+}
+
+static void gateway_note_command_result(const struct proto_packet *packet)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY ||
+        !gateway_command_pending_complete_result(&gateway_command_pending_state, packet)) {
+        return;
+    }
+
+    (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
+    LOG_INF("gateway command result received: src=0x%016llx session=%u seq=%u",
+            (unsigned long long)packet->src_id,
+            packet->session_id,
+            packet->seq);
+}
+
+static int gateway_begin_command_result_wait(const struct proto_packet *command,
+                                             enum command_id command_id)
+{
+    int ret;
+
+    ret = gateway_command_pending_start(&gateway_command_pending_state,
+                                        command,
+                                        command_id,
+                                        k_uptime_get_32(),
+                                        GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
+    if (ret != PROTO_OK) {
+        return ret == PROTO_ERR_MALFORMED ? -EBUSY : mesh_errno_from_proto(ret);
+    }
+
+    (void)k_work_reschedule(&gateway_command_result_timeout_work,
+                            K_MSEC(GATEWAY_COMMAND_RESULT_TIMEOUT_MS));
+    return 0;
+}
+
 static void anchor_handle_local_command(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len)
@@ -600,8 +682,22 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
         return mesh_errno_from_proto(ret);
     }
 
+    ret = gateway_begin_command_result_wait(&outbound.packet, command_id);
+    if (ret < 0) {
+        LOG_WRN("gateway command result tracker busy: cmd=0x%04x dst=0x%016llx ret=%d",
+                (unsigned int)command_id,
+                (unsigned long long)outbound.packet.dst_id,
+                ret);
+        gateway_emit_serial_command_result(&outbound.packet,
+                                           command_id,
+                                           ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                           (uint8_t)(-ret));
+        return ret;
+    }
+
     ret = mesh_start_tracked_tx(&outbound, "usb-command");
     if (ret < 0) {
+        gateway_clear_pending_command_result(&outbound.packet);
         LOG_WRN("gateway USB command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
                 (unsigned int)command_id,
                 (unsigned long long)outbound.packet.dst_id,
@@ -1429,7 +1525,7 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         (void)mesh_send_outbound(&result->hop_ack, "hop-ack");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
-        (void)mesh_send_outbound(&result->gateway_ack, "gateway-ack");
+        (void)mesh_start_tracked_tx(&result->gateway_ack, "gateway-ack");
     }
     if (result->actions & MESH_RELAY_ACTION_FORWARD) {
         (void)mesh_start_tracked_tx(&result->forward, "forward");
@@ -1492,6 +1588,9 @@ static void mesh_rx_work_handler(struct k_work *work)
         mesh_handle_result_actions(&result);
         if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             DEVICE_ROLE == ROLE_GATEWAY) {
+            if (pending.packet.msg_type == MSG_COMMAND_RESULT) {
+                gateway_note_command_result(&pending.packet);
+            }
             ret = gateway_emit_serial_packet(&pending.packet,
                                              pending.payload,
                                              pending.payload_len);
@@ -1541,6 +1640,7 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                                        &command_id) != PROTO_OK) {
             command_id = CMD_VENDOR_BASE;
         }
+        gateway_clear_pending_command_result(&pending_packet);
         gateway_emit_serial_command_result(&pending_packet,
                                            command_id,
                                            COMMAND_TIMEOUT,
@@ -1969,6 +2069,8 @@ int main(void)
     button_fsm_init(&button_fsm);
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
+    k_work_init_delayable(&gateway_command_result_timeout_work,
+                          gateway_command_result_timeout_handler);
     LOG_INF("UWB/BLE firmware starting as %s", role_name());
     LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_ready_anchors=%u ready_scan_ms=%u anchor_uwb_window_ms=%u",
             (unsigned long long)DEVICE_ID,

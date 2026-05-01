@@ -191,6 +191,103 @@ static void test_build_failure_result_is_host_visible(void)
     assert(value[0] == 7u);
 }
 
+static void test_pending_command_completes_on_matching_result(void)
+{
+    struct gateway_command_pending pending = {0};
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 123u,
+        .seq = 44u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    struct proto_packet wrong_result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = 0x2222333344445555ull,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 123u,
+        .seq = 44u,
+    };
+    struct proto_packet result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = ANCHOR_ID_TEST,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 123u,
+        .seq = 44u,
+    };
+
+    assert(gateway_command_pending_start(&pending,
+                                         &command,
+                                         CMD_GET_STATUS,
+                                         1000u,
+                                         GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
+    assert(pending.active);
+    assert(pending.deadline_ms == 6000u);
+    assert(!gateway_command_pending_matches_result(&pending, &wrong_result));
+    assert(!gateway_command_pending_complete_result(&pending, &wrong_result));
+    assert(pending.active);
+
+    assert(gateway_command_pending_matches_result(&pending, &result));
+    assert(gateway_command_pending_complete_result(&pending, &result));
+    assert(!pending.active);
+}
+
+static void test_pending_command_expires_with_original_context(void)
+{
+    struct gateway_command_pending pending = {0};
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 124u,
+        .seq = 45u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    struct proto_packet expired_command = {0};
+    enum command_id expired_id = CMD_VENDOR_BASE;
+
+    assert(gateway_command_pending_start(&pending,
+                                         &command,
+                                         CMD_PING,
+                                         1000u,
+                                         GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
+    assert(!gateway_command_pending_expired(&pending, 5999u, &expired_command, &expired_id));
+    assert(pending.active);
+
+    assert(gateway_command_pending_expired(&pending, 6000u, &expired_command, &expired_id));
+    assert(!pending.active);
+    assert(expired_command.msg_type == MSG_COMMAND);
+    assert(expired_command.dst_id == ANCHOR_ID_TEST);
+    assert(expired_command.session_id == 124u);
+    assert(expired_command.seq == 45u);
+    assert(expired_id == CMD_PING);
+}
+
+static void test_pending_command_rejects_second_start(void)
+{
+    struct gateway_command_pending pending = {0};
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 125u,
+        .seq = 46u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+
+    assert(gateway_command_pending_start(&pending,
+                                         &command,
+                                         CMD_PING,
+                                         1000u,
+                                         GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
+    assert(gateway_command_pending_start(&pending,
+                                         &command,
+                                         CMD_PING,
+                                         1000u,
+                                         GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_ERR_MALFORMED);
+}
+
 int main(void)
 {
     test_prepare_outbound_normalizes_host_command();
@@ -198,5 +295,8 @@ int main(void)
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
     test_build_failure_result_is_host_visible();
+    test_pending_command_completes_on_matching_result();
+    test_pending_command_expires_with_original_context();
+    test_pending_command_rejects_second_start();
     return 0;
 }

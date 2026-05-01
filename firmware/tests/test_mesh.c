@@ -45,7 +45,8 @@ static void test_gateway_ack_is_end_to_end(void)
                                       (uint8_t)payload_len) == PROTO_OK);
 
     assert(packet.msg_type == MSG_GATEWAY_ACK);
-    assert(packet.flags == FLAG_GATEWAY_ACK);
+    assert((packet.flags & FLAG_GATEWAY_ACK) != 0u);
+    assert((packet.flags & FLAG_ACK_REQUESTED) != 0u);
     assert(packet.src_id == 0x9999888877776666ull);
     assert(packet.dst_id == 0x1111222233334444ull);
     assert(packet.ttl == MESH_ACK_TTL);
