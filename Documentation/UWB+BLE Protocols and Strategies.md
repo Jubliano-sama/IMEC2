@@ -287,6 +287,8 @@ If a gateway has no current directory entry for an anchor, that anchor is not co
 
 This keeps mesh communication symmetric for v1 testing: every important sender knows whether the next hop received the packet, and every gateway-bound sender can also know whether the gateway received it.
 
+Duplicate handling follows the same custody rule. If a relay sees the same directed packet again, that usually means an ACK was lost somewhere. The relay re-forwards it when it is idle and still has a route, then sends another hop ACK. If it is busy, it stays silent so the sender retries later instead of believing the relay has custody. If the duplicate is already at its final destination, it is not delivered to the application twice; the gateway can repeat the end-to-end ACK, and anchors do not re-run a command.
+
 ### What Each Device Stores
 
 The firmware does not make every anchor hold a full all-to-all map. It stores only the pieces needed for the next decision:

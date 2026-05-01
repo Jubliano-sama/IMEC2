@@ -1180,12 +1180,36 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
 
     duplicate = duplicate_seen(relay, packet, now_ms);
     if (duplicate) {
-        (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
         if (packet->dst_id == relay->local_id) {
+            (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
             (void)add_gateway_ack_action(relay, packet, previous_hop_id, result);
+            result->actions |= MESH_RELAY_ACTION_DROP;
+            result->status = PROTO_ERR_STALE;
+            return PROTO_OK;
         }
+        if (packet->dst_id == MESH_BROADCAST_ID) {
+            (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
+            result->actions |= MESH_RELAY_ACTION_DROP;
+            result->status = PROTO_ERR_STALE;
+            return PROTO_OK;
+        }
+
+        if (mesh_relay_tx_active(relay)) {
+            result->actions |= MESH_RELAY_ACTION_DROP;
+            result->status = PROTO_ERR_BUSY;
+            return PROTO_OK;
+        }
+
+        ret = build_forward(relay, packet, payload, payload_len, &result->forward);
+        if (ret == PROTO_OK) {
+            (void)add_hop_ack_action(relay, packet, previous_hop_id, result);
+            result->actions |= MESH_RELAY_ACTION_FORWARD;
+            result->status = PROTO_ERR_STALE;
+            return PROTO_OK;
+        }
+
         result->actions |= MESH_RELAY_ACTION_DROP;
-        result->status = PROTO_ERR_STALE;
+        result->status = ret;
         return PROTO_OK;
     }
 
