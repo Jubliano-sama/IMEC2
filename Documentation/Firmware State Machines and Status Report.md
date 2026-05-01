@@ -162,7 +162,7 @@ stateDiagram-v2
  RouteDiscoveryNeeded --> Idle
 ```
 
-Route candidates expire after 7 s without a fresh advertisement, route status, or successful ACK refresh. Duplicate suppression entries expire after 60 s. A hop ACK is a custody ACK: relays send it only after they can accept local handling or track the forward. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
+Route candidates expire after 7 s without a fresh advertisement, route status, or successful ACK refresh. Duplicate suppression entries expire after 60 s. A hop ACK is a custody ACK: relays send it only after they can accept local handling or track the forward. Coded advertisements use a 30-60 ms interval, mesh advertisements last 120 ms, hop ACK replies wait 130 ms to avoid half-duplex collisions, and hop ACK timeout is 500 ms. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
 
 ## Gateway Mesh Runtime
 
@@ -206,6 +206,7 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 - Implemented status LED pattern selection and button/self-test gesture FSM.
 - Implemented route candidate helpers, mesh hop ACK packet builders, gateway ACK packet builders, and survey command/result structures.
 - Implemented BLE mesh relay runtime with local next-hop addressing, custody hop ACKs, hop-ACKed gateway ACK return packets, retry/backoff, upstream route fallback, downlink alternate fallback, route freshness expiry, duplicate cache expiry, and route status/advertisement handling.
+- Tuned BLE mesh timing for low-duty anchor scans: 30-60 ms coded advertisement interval, 120 ms mesh advertisements, 130 ms ACK turn-around delay, and 500 ms hop ACK timeout.
 - Added Zephyr app skeleton with role selection for clicker, anchor, and gateway.
 - Configured all firmware BLE traffic for LE Coded PHY/S=8 intent, coded-only scanning, extended advertising, and +8 dBm nRF52 TX power.
 - Added ANNA-B402/DWM3000 devicetree overlay, DWM3000 binding, and 32 MHz SPIM3 runtime SPI configuration.

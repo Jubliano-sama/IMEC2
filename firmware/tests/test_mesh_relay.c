@@ -492,15 +492,19 @@ static void test_downlink_failure_retries_alternate_route(void)
                                &tx) == PROTO_OK);
     assert(tx.next_hop_id == ANCHOR_B);
 
-    assert(mesh_relay_tick(&gateway, 2251u, &result) == PROTO_OK);
+    uint32_t now_ms = 2000u + ROUTE_HOP_ACK_TIMEOUT_MS + route_retry_backoff_ms(0u) + 1u;
+
+    assert(mesh_relay_tick(&gateway, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.next_hop_id == ANCHOR_B);
 
-    assert(mesh_relay_tick(&gateway, 2501u, &result) == PROTO_OK);
+    now_ms += ROUTE_HOP_ACK_TIMEOUT_MS + route_retry_backoff_ms(1u) + 1u;
+    assert(mesh_relay_tick(&gateway, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.next_hop_id == ANCHOR_B);
 
-    assert(mesh_relay_tick(&gateway, 2901u, &result) == PROTO_OK);
+    now_ms += ROUTE_HOP_ACK_TIMEOUT_MS + route_retry_backoff_ms(2u) + 1u;
+    assert(mesh_relay_tick(&gateway, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(!has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     assert(result.retransmit.next_hop_id == ANCHOR_A);
@@ -790,21 +794,27 @@ static void test_hop_ack_timeout_retries_then_requests_route_discovery(void)
     uint8_t payload[1] = {0x44u};
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 9u);
+    route.last_seen_ms = 7000u;
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
     assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 90u, 9u, sizeof(payload)) == PROTO_OK);
 
-    assert(mesh_relay_start_tx(&relay, &report, payload, sizeof(payload), 7000u, &tx) == PROTO_OK);
+    uint32_t now_ms = 7000u;
 
-    assert(mesh_relay_tick(&relay, 7251u, &result) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay, &report, payload, sizeof(payload), now_ms, &tx) == PROTO_OK);
+
+    now_ms += ROUTE_HOP_ACK_TIMEOUT_MS + route_retry_backoff_ms(0u) + 1u;
+    assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.next_hop_id == GATEWAY);
     assert(mesh_relay_tx_active(&relay));
 
-    assert(mesh_relay_tick(&relay, 7651u, &result) == PROTO_OK);
+    now_ms += ROUTE_HOP_ACK_TIMEOUT_MS + route_retry_backoff_ms(1u) + 1u;
+    assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(mesh_relay_tx_active(&relay));
 
-    assert(mesh_relay_tick(&relay, 8301u, &result) == PROTO_OK);
+    now_ms += ROUTE_HOP_ACK_TIMEOUT_MS + route_retry_backoff_ms(2u) + 1u;
+    assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     assert(!mesh_relay_tx_active(&relay));
     assert(route_selected(&relay.upstream) == NULL);

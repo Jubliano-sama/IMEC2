@@ -40,7 +40,7 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 
 | Status | Task | Output |
 | --- | --- | --- |
-| Completed | Implement mesh packet relay with hop ACK | Relay runtime, custody hop ACKs, retries, 60 s duplicate suppression, and burst RX queue |
+| Completed | Implement mesh packet relay with hop ACK | Relay runtime, custody hop ACKs, low-duty scan-safe mesh timing, retries, 60 s duplicate suppression, and burst RX queue |
 | Completed | Implement gateway ACK handling | End-to-end gateway ACK runtime for gateway-bound reports/status/results, with hop ACK tracking on the return path |
 | Completed | Implement route advertisements and route status | Self-organizing upstream route discovery, 7 s route freshness expiry, RSSI-weighted route choice, and gateway/relay downlink candidates |
 | In progress | Implement gateway command dispatcher | USB command routing, basic anchor ping/status, unsupported-command responses, route timeout reporting, and 5 s command-result timeout tracking; broader command set pending |

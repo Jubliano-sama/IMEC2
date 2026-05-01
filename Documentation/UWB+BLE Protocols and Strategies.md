@@ -21,6 +21,8 @@ This document describes the v1 firmware wire protocol and the implementation str
 
 BLE traffic uses LE Coded PHY/S=8 intent through non-connectable extended advertising and coded-only scanning. The nRF52 BLE transmit power is configured as `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm.
 
+Anchors keep mesh scanning low duty cycle: 100 ms interval, 10 ms window. Coded advertisements use a 30-60 ms interval, and mesh advertisements stay active for 120 ms, giving each transmission multiple overlap opportunities with that scan cadence. Hop ACK replies wait 130 ms before advertising, which avoids replying while the original sender is still in its own half-duplex advertisement window. Senders wait 500 ms for hop ACKs.
+
 UWB ranging uses DWM3000 channel 5 for click, self-test, and survey DS-TWR. The current DWM3000 TX RF register settings are `PGdly=0x34`, `TX_POWER=0xFDFDFDFD`, and `PGcount=0x0`. `TX_POWER` is the raw DW3000 register value; the final measured UWB output power must be validated/calibrated on hardware.
 
 ## Packet Envelope
@@ -185,7 +187,7 @@ The first ACK tells Anchor A that Anchor B accepted the packet. The gateway ACK 
 6. Expire stale route candidates older than 7 s, then select the local next hop from the route table. Routes use `effective_cost = hop_count * 100 + (100 - quality)`, then prefer higher quality, fewer hops, newer observation time, and lower next-hop ID for deterministic tie breaking.
 7. Forward the same packet with `ttl - 1`. Relays do not rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload.
 8. Send `MESH_ACK` only after the packet is accepted for local handling or the relay has selected a next hop and can track the forward.
-9. If `ACK_REQUESTED` is set, wait up to `ROUTE_HOP_ACK_TIMEOUT_MS` for `MESH_ACK` with matching `REQUESTED_MSG_SEQ`.
+9. If `ACK_REQUESTED` is set, wait up to `ROUTE_HOP_ACK_TIMEOUT_MS` for `MESH_ACK` with matching `REQUESTED_MSG_SEQ`. The current timeout is 500 ms to cover the low-duty scan cadence, ACK reply delay, and ACK advertisement duration.
 10. Retry the current route until its failure count reaches `ROUTE_MAX_FAILURES`. Then invalidate that candidate and try an alternate route. If no alternate exists, return to route discovery and report the reason. For gateway-originated commands, that final delivery failure is emitted to USB as `COMMAND_TIMEOUT`.
 11. For gateway-bound packets with `GATEWAY_ACK_REQUIRED`, keep the packet pending until the gateway ACK arrives or `ROUTE_GATEWAY_ACK_TIMEOUT_MS` expires. The `GATEWAY_ACK` return packet also requests hop ACKs while traveling back.
 12. For gateway-originated commands, keep one application-level command wait after the command is routed. A matching `COMMAND_RESULT` clears it; no result within 5 s emits `COMMAND_TIMEOUT` over USB.

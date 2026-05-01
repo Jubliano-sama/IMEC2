@@ -122,7 +122,8 @@ static struct bt_le_ext_adv *ble_ext_adv;
 #define ANCHOR_SCAN_INTERVAL_100MS 160u
 #define ANCHOR_SCAN_WINDOW_10MS 16u
 #define ANCHOR_ERROR_BACKOFF_MS 5u
-#define MESH_ADV_TX_MS 30u
+#define MESH_ADV_TX_MS 120u
+#define MESH_ACK_REPLY_DELAY_MS (MESH_ADV_TX_MS + 10u)
 #define GATEWAY_ROUTE_ADV_INTERVAL_MS 2000u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
@@ -130,6 +131,8 @@ static struct bt_le_ext_adv *ble_ext_adv;
 #define BLE_CODED_SCAN_OPTIONS (BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M)
 #define BLE_CODED_ADV_OPTIONS (BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_CODED | \
                                BT_LE_ADV_OPT_USE_TX_POWER)
+#define BLE_CODED_ADV_INTERVAL_MIN BT_GAP_ADV_FAST_INT_MIN_1
+#define BLE_CODED_ADV_INTERVAL_MAX BT_GAP_ADV_FAST_INT_MAX_1
 
 struct ready_anchor {
     struct ble_discovery_ready ready;
@@ -160,8 +163,8 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
 
 static const struct bt_le_adv_param ble_coded_adv_param =
     BT_LE_ADV_PARAM_INIT(BLE_CODED_ADV_OPTIONS,
-                         BT_GAP_ADV_FAST_INT_MIN_2,
-                         BT_GAP_ADV_FAST_INT_MAX_2,
+                         BLE_CODED_ADV_INTERVAL_MIN,
+                         BLE_CODED_ADV_INTERVAL_MAX,
                          NULL);
 
 static const struct bt_le_scan_param anchor_low_duty_scan_param = {
@@ -1522,6 +1525,7 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
 {
     if (result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) {
+        k_msleep(MESH_ACK_REPLY_DELAY_MS);
         (void)mesh_send_outbound(&result->hop_ack, "hop-ack");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {

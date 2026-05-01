@@ -1,10 +1,14 @@
 #internship #imec #architecture #documentation #UWB #BLE
 
-Version: 0.4.5
+Version: 0.4.6
 
 Previous version: [[UWB+BLE Architecture 0.2] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
 
 ## Changelog
+
+### 2026-05-01 - 0.4.6
+
+- Document low-duty BLE mesh timing: coded advertisements now use a 30-60 ms interval, mesh advertisements last 120 ms, hop ACK replies wait 130 ms before transmitting to avoid half-duplex collisions, and the hop ACK timeout is 500 ms.
 
 ### 2026-05-01 - 0.4.5
 
@@ -240,6 +244,8 @@ Every BLE advertisement and scan used by the firmware runs on Bluetooth LE Coded
 
 The nRF52 controller is configured for the highest supported BLE transmit power on the target, `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm. Range is prioritized over BLE current during active radio windows. The anchor remains power efficient by keeping BLE scans low duty cycle and by waking the DWM3000 only after a valid BLE request schedules UWB work.
 
+Coded advertisements use the faster 30-60 ms advertising interval. Mesh advertisements are held active for 120 ms, longer than the anchor's 100 ms BLE scan interval, so each transmission gets multiple overlap opportunities with low-duty anchor scans. Hop ACK replies wait 130 ms before advertising; that gives the sender time to finish its own half-duplex advertisement and return to scanning before the ACK starts.
+
 ### Mesh Packet Standard
 
 All routed packets use a versioned binary envelope. The detailed field list is documented in [[UWB+BLE Protocols and Strategies]], but each packet contains:
@@ -275,7 +281,10 @@ Default retry behavior:
 
 | Parameter | Value |
 | --- | --- |
-| Hop ACK timeout | 150 ms |
+| Coded advertisement interval | 30-60 ms |
+| Mesh advertisement duration | 120 ms |
+| Hop ACK reply delay | 130 ms |
+| Hop ACK timeout | 500 ms |
 | Gateway ACK timeout | 2 s |
 | Max retries | 3 |
 | Retry backoff | 100 ms, 250 ms, 500 ms |
