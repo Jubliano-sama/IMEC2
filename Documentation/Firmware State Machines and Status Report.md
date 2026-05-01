@@ -91,7 +91,7 @@ stateDiagram-v2
  StopReadyAdvert --> BleScan: READY advert stopped, low-duty scan restarted
 ```
 
-The anchor does not run an always-on UWB listener. It uses low-duty BLE scanning while idle, wakes UWB only after BLE discovery, keeps the responder window open for 400 ms, then returns DWM3000 to standby.
+The anchor does not run an always-on UWB listener. At boot it parks the DWM3000 wake pin inactive, uses low-duty BLE scanning while idle, wakes UWB only after BLE discovery, keeps the responder window open for 400 ms, then puts the DWM3000 into deep sleep.
 
 ## DWM3000 Initiator DS-TWR
 
@@ -162,7 +162,7 @@ stateDiagram-v2
  RouteDiscoveryNeeded --> Idle
 ```
 
-Route candidates expire after 7 s without a fresh advertisement, route status, or successful ACK refresh. Duplicate suppression entries expire after 60 s. A hop ACK is a custody ACK: relays send it only after they can accept local handling or track the forward. Coded advertisements use a 30-60 ms interval, mesh advertisements last 120 ms, hop ACK replies wait 130 ms to avoid half-duplex collisions, and hop ACK timeout is 500 ms. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
+Route candidates expire after 30 s without a fresh advertisement, route status, or successful ACK refresh. Anchors throttle routine route status/advertisement refreshes to 20 s, while selected-route changes still advertise immediately. Duplicate suppression entries expire after 60 s. A hop ACK is a custody ACK: relays send it only after they can accept local handling or track the forward. Coded advertisements use a 30-60 ms interval, mesh advertisements last 120 ms, hop ACK replies wait 130 ms to avoid half-duplex collisions, and hop ACK timeout is 500 ms. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
 
 ## Gateway Mesh Runtime
 
@@ -213,7 +213,7 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 - Implemented DWM3000 Zephyr port layer for SPI, reset, wake, DEV_ID read/validation, and SDK-compatible SPI/sleep/tick/reset hooks.
 - Integrated Qorvo DWM3000 decadriver source into the firmware build.
 - Implemented SPI-polled DWM3000 STS-SDC DS-TWR initiator/responder runtime using bounded `SYS_STATUS` polling.
-- Implemented BLE-gated anchor UWB wake: anchors low-duty scan BLE, advertise READY after valid discovery, keep a bounded multi-poll UWB responder window open, then return DWM3000 to standby.
+- Implemented BLE-gated anchor UWB wake: anchors low-duty scan BLE, advertise READY after valid discovery, keep a bounded multi-poll UWB responder window open, then put the DWM3000 into deep sleep.
 - Implemented multi-anchor MVP click flow: clicker advertises discovery, collects up to 8 READY anchors, RSSI-sorts them, ranges them sequentially, and builds one click report per successful anchor range.
 - Implemented clicker self-test flow with local DWM3000 check, diagnostic BLE, READY scan, and diagnostic dud UWB range.
 - Routed serial console/logging to USB CDC ACM for prototype debug over the USB-C port.
@@ -223,6 +223,7 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 - Implemented gateway command-result timeout tracking for one outstanding gateway-originated command.
 - Added selected-route telemetry to anchor `CMD_GET_STATUS` command results for mesh debug over USB.
 - Tightened duplicate retry handling so relays only hop-ACK duplicates when they can re-forward or safely finish the packet locally.
+- Added low-power route refresh throttling, DWM3000 wake-pin parking at boot, and DWM3000 deep sleep after UWB windows.
 - Added repository contributor guide in `AGENTS.md`.
 
 ## Verified

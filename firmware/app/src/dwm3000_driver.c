@@ -37,6 +37,8 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
 #define PREAMBLE_TIMEOUT_PAC 5u
 #define POLL_INTERVAL_US 100u
 #define DEFAULT_RESPONDER_WINDOW_MS 50u
+#define DWM3000_SLEEP_MODE DWT_CONFIG
+#define DWM3000_SLEEP_WAKE_FLAGS (DWT_PRES_SLEEP | DWT_WAKE_WUP | DWT_SLP_EN)
 
 static dwt_config_t default_config = {
     5,
@@ -61,6 +63,7 @@ static dwt_txconfig_t default_txconfig = {
 };
 
 static bool radio_configured;
+static bool radio_awake;
 
 static uint64_t timestamp_to_u64(const uint8_t timestamp[5])
 {
@@ -111,6 +114,7 @@ static int initialise_radio(bool idle_after_init)
     if (dwt_initialise(mode) != DWT_SUCCESS) {
         return -EIO;
     }
+    radio_awake = true;
 
     return dwm3000_port_set_fast_spi();
 }
@@ -524,6 +528,7 @@ int dwm3000_driver_probe(uint32_t *dev_id)
     }
 
     *dev_id = read_id;
+    radio_awake = true;
     return 0;
 }
 
@@ -567,6 +572,7 @@ int dwm3000_driver_configure_default(void)
     clear_all_events();
 
     radio_configured = true;
+    radio_awake = true;
     LOG_INF("DWM3000 configured for channel 5 STS-SDC DS-TWR at %u Hz SPI",
             (unsigned int)dwm3000_port_current_spi_hz());
     return 0;
@@ -574,13 +580,19 @@ int dwm3000_driver_configure_default(void)
 
 int dwm3000_driver_standby(void)
 {
-    if (!radio_configured) {
+    if (!radio_configured && !radio_awake) {
         return 0;
     }
 
-    dwt_forcetrxoff();
+    if (radio_configured) {
+        dwt_forcetrxoff();
+    }
     clear_all_events();
+    dwt_configuresleep(DWM3000_SLEEP_MODE, DWM3000_SLEEP_WAKE_FLAGS);
+    dwt_entersleep(DWT_DW_IDLE);
     radio_configured = false;
+    radio_awake = false;
+    LOG_INF("DWM3000 entered deep sleep; wakeup pin required before next UWB window");
     return dwm3000_port_set_slow_spi();
 }
 

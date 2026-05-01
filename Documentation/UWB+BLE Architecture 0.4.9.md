@@ -1,10 +1,14 @@
 #internship #imec #architecture #documentation #UWB #BLE
 
-Version: 0.4.8
+Version: 0.4.9
 
 Previous version: [[UWB+BLE Architecture 0.2] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
 
 ## Changelog
+
+### 2026-05-01 - 0.4.9
+
+- Document low-power mesh refresh behavior: passive route freshness is 30 s, anchors throttle routine route status/advertisement refreshes to 20 s, the DWM3000 wake pin is parked inactive at boot, and the DWM3000 enters deep sleep after each UWB window.
 
 ### 2026-05-01 - 0.4.8
 
@@ -101,8 +105,8 @@ Previous version: [[UWB+BLE Architecture 0.2] Design rationale: [[UWB+BLE Design
 #### Anchor (Fixed Node)
 - Mounted at known positions on the ceiling of the office.
 - Continuously scans for BLE advertisements from clickers (low duty cycle).
-- The DWM3000 is not an always-on receiver. It stays idle/asleep until a valid BLE discovery request or gateway survey command schedules a UWB window.
-- On clicker detection: advertises READY, wakes the UWB radio, opens a bounded DS-TWR responder window, then returns the DWM3000 to idle/standby.
+- The DWM3000 is not an always-on receiver. Firmware parks the DWM3000 wake pin inactive at boot, does not initialize the radio driver while idle, and only wakes/configures the radio after a valid BLE discovery request or gateway survey command schedules a UWB window.
+- On clicker detection: advertises READY, wakes the UWB radio, opens a bounded DS-TWR responder window, then puts the DWM3000 into deep sleep.
 - Relays data toward gateway via BLE mesh.
 - Participates in routing protocol for self-organizing mesh.
 - Reports battery level and connection data via periodic heartbeat requested by gateway.
@@ -250,7 +254,7 @@ For v1, this explicit acknowledgement behavior is more important than maximizing
 
 Every BLE advertisement and scan used by the firmware runs on Bluetooth LE Coded PHY/S=8 intent for range. Scans are coded-only; 1M PHY scanning is disabled for firmware traffic. All discovery, READY replies, mesh route advertisements, mesh data packets, hop ACKs, gateway ACKs, and survey control advertisements use non-connectable extended advertising on LE Coded PHY. The firmware does not open BLE connections, so it never requests the faster coded S=2 connection option.
 
-The nRF52 controller is configured for the highest supported BLE transmit power on the target, `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm. Range is prioritized over BLE current during active radio windows. The anchor remains power efficient by keeping BLE scans low duty cycle and by waking the DWM3000 only after a valid BLE request schedules UWB work.
+The nRF52 controller is configured for the highest supported BLE transmit power on the target, `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm. Range is prioritized over BLE current during active radio windows. The anchor remains power efficient by keeping BLE scans low duty cycle, parking the DWM3000 wake pin inactive at boot, and waking/configuring the DWM3000 only after a valid BLE request schedules UWB work.
 
 Coded advertisements use the faster 30-60 ms advertising interval. Mesh advertisements are held active for 120 ms, longer than the anchor's 100 ms BLE scan interval, so each transmission gets multiple overlap opportunities with low-duty anchor scans. Hop ACK replies wait 130 ms before advertising; that gives the sender time to finish its own half-duplex advertisement and return to scanning before the ACK starts.
 
@@ -296,7 +300,8 @@ Default retry behavior:
 | Gateway ACK timeout | 2 s |
 | Max retries | 3 |
 | Retry backoff | 100 ms, 250 ms, 500 ms |
-| Route freshness window | 7 s since last route advertisement, route status, or successful ACK refresh |
+| Route refresh interval | 20 s for routine anchor `ROUTE_STATUS`/`ROUTE_ADV` refreshes |
+| Route freshness window | 30 s since last route advertisement, route status, or successful ACK refresh |
 | Duplicate suppression window | 60 s per message identity |
 | Gateway command-result timeout | 5 s for one outstanding gateway-originated command |
 
@@ -316,7 +321,7 @@ Lower cost wins. This means a useful direct route still beats an unnecessary ext
 
 ### Route Discovery and State
 
-The gateway is the mesh root. It periodically advertises a route beacon with hop count 0 and a route epoch. Anchors that hear this beacon store the gateway as a direct candidate route. Anchors then re-advertise their selected route with hop count +1, allowing other anchors to discover multi-hop paths.
+The gateway is the mesh root. It periodically advertises a route beacon with hop count 0 and a route epoch. Anchors that hear this beacon store the gateway as a direct candidate route. Anchors re-advertise their selected route with hop count +1, allowing other anchors to discover multi-hop paths. To avoid burning battery on every gateway beacon, anchors send `ROUTE_STATUS`/`ROUTE_ADV` immediately when their selected route changes, then throttle routine refreshes to one refresh every 20 s.
 
 Route discovery has two directions:
 
@@ -347,7 +352,7 @@ The gateway and relays store matching downlink candidates:
 - latest link quality
 - last route status time
 
-Route selection uses the weighted cost above. Upstream candidates older than 7 s are removed before route advertisements, route status packets, new transmissions, and retry ticks use the table. Downlink candidates older than 7 s are removed the same way. A newer gateway route epoch invalidates old upstream candidates and outranks old downlink candidates, which lets the gateway force route rediscovery.
+Route selection uses the weighted cost above. Upstream candidates older than 30 s are removed before route advertisements, route status packets, new transmissions, and retry ticks use the table. Downlink candidates older than 30 s are removed the same way. A newer gateway route epoch invalidates old upstream candidates and outranks old downlink candidates, which lets the gateway force route rediscovery.
 
 ### Route Failure Behavior
 
@@ -367,7 +372,7 @@ Anchor calculates ToF data, forwards it to `my_next_hop`, waits for a hop ACK, t
 If hop ACK fails, the sender retries with backoff. If a packet has no TTL left, no usable route, or reaches a busy relay, it is not hop-ACKed. If gateway ACK fails after the packet was hop-acknowledged, the sender retries through the selected route first, then invalidates it and attempts another candidate.
 
 ### Self-Healing
-If an anchor dies, its neighbors stop hearing route advertisements and route status refreshes. After 7 s without refresh, upstream and downlink candidates through that node are expired before they can be selected for new traffic. Missing ACKs can remove a bad selected route faster: after three missed hop ACKs, the sender either switches to an alternate candidate or reports route discovery needed. Duplicate identities are time-bounded; entries expire after 60 s so old sessions do not block later sessions forever. During that window, directed duplicates can still be re-forwarded to repair a lost downstream packet or lost downstream ACK.
+If an anchor dies, its neighbors stop hearing route advertisements and route status refreshes. After 30 s without refresh, upstream and downlink candidates through that node are expired before they can be selected for new traffic. Missing ACKs remove a bad selected route faster during active traffic: after three missed hop ACKs, the sender either switches to an alternate candidate or reports route discovery needed. Duplicate identities are time-bounded; entries expire after 60 s so old sessions do not block later sessions forever. During that window, directed duplicates can still be re-forwarded to repair a lost downstream packet or lost downstream ACK.
 
 ---
 
@@ -549,13 +554,13 @@ Assumptions: 10% BLE scan duty cycle, 1000 ranging events/day (16 clickers × 50
 | UWB ranging windows | 1000 × 0.4s × 50mA = 20,000 mAs | 5.56 | 22% |
 | BLE/MCU during ranging | 1000 × 0.4s × 6.0 mA = 2,400 mAs | 0.67 | 3% |
 | BLE mesh relay | 1000 × 1.0s × 6.0 mA = 6,000 mAs | 1.67 | 8% |
-| Route discovery + heartbeat | 288/day × 15ms × 12mA | 0.011 | <1% |
-| **Daily total** | | **22.3** | |
-| **With 1.5× safety margin** | | **33.5** | |
+| Route refresh + heartbeat | 4,320/day × 240ms × 12mA | 3.46 | 13% |
+| **Daily total** | | **25.8** | |
+| **With 1.5× safety margin** | | **38.7** | |
 #### Battery Life Estimates (with 1.5× margin, 0.85 derating)
 
 **Assumptions:**
-- **Load:** 33.5 mAh/day (includes 1.5× safety margin).
+- **Load:** 38.7 mAh/day (includes 1.5× safety margin).
 - **Battery:** 18650 Li-Ion (3000 mAh nominal).
 - **Configuration:** Batteries in parallel (capacity adds up).
 - **Efficiency:** 0.85 (85% usable capacity).

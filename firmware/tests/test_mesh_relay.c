@@ -107,6 +107,55 @@ static void test_route_adv_forms_upstream_route_and_readvertises(void)
     assert(value[0] == 1u);
 }
 
+static void test_route_refresh_is_throttled_until_due(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct mesh_outbound route_adv;
+    struct mesh_relay_result result;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 7u);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 1u);
+
+    assert(mesh_relay_build_route_adv(&gateway, &route_adv, 1000u) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&anchor,
+                                &route_adv.packet,
+                                route_adv.payload,
+                                route_adv.payload_len,
+                                GATEWAY,
+                                80u,
+                                1000u,
+                                &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_STATUS));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_ADV));
+
+    assert(mesh_relay_build_route_adv(&gateway, &route_adv, 2000u) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&anchor,
+                                &route_adv.packet,
+                                route_adv.payload,
+                                route_adv.payload_len,
+                                GATEWAY,
+                                80u,
+                                2000u,
+                                &result) == PROTO_OK);
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_STATUS));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_ADV));
+
+    assert(mesh_relay_build_route_adv(&gateway,
+                                      &route_adv,
+                                      1000u + MESH_RELAY_ROUTE_REFRESH_MS) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&anchor,
+                                &route_adv.packet,
+                                route_adv.payload,
+                                route_adv.payload_len,
+                                GATEWAY,
+                                80u,
+                                1000u + MESH_RELAY_ROUTE_REFRESH_MS,
+                                &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_STATUS));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_ADV));
+}
+
 static void test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate(void)
 {
     struct mesh_relay relay;
@@ -407,7 +456,7 @@ static void test_downlink_routes_expire_when_not_refreshed(void)
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_OK);
     assert(next_hop_id == ANCHOR_B);
 
-    assert(mesh_relay_expire_routes(&gateway, 8001u) == 1u);
+    assert(mesh_relay_expire_routes(&gateway, 31001u) == 1u);
     assert(mesh_relay_find_downlink(&gateway, ANCHOR_A) == NULL);
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_ERR_NOT_FOUND);
 }
@@ -483,7 +532,7 @@ static void test_start_tx_rejects_stale_upstream_route(void)
                                &report,
                                payload,
                                sizeof(payload),
-                               8001u,
+                               31001u,
                                &tx) == PROTO_ERR_NOT_FOUND);
     assert(route_selected(&relay.upstream) == NULL);
 }
@@ -1336,6 +1385,7 @@ static void test_duplicate_retry_repairs_lost_gateway_ack(void)
 int main(void)
 {
     test_route_adv_forms_upstream_route_and_readvertises();
+    test_route_refresh_is_throttled_until_due();
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
     test_duplicate_cache_expires_by_time_window();
     test_status_tlvs_report_selected_route();

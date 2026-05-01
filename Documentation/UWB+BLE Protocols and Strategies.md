@@ -108,7 +108,7 @@ The clicker self-test is activated by a long press followed by a short press wit
 
 Self-test performs local module checks first, then emits a diagnostic BLE discovery request and a dud UWB ranging request. The dud request exercises the same BLE/UWB path as a real click but is explicitly diagnostic. Status LEDs show the result using the documented pattern table in the architecture document.
 
-Anchors are BLE-gated for both real and diagnostic clicker-originated ranging. An anchor low-duty scans BLE while the DWM3000 is idle/asleep. After it decodes a valid discovery request, it advertises READY and opens a bounded UWB responder window. The current MVP keeps this window open for 400 ms so the clicker can complete sequential DS-TWR with up to 8 discovered anchors. When the window expires, the anchor closes READY advertising, returns DWM3000 to standby, and resumes low-duty BLE scanning.
+Anchors are BLE-gated for both real and diagnostic clicker-originated ranging. At boot the firmware only parks the DWM3000 wake pin inactive; it does not initialize or configure the UWB radio while waiting. An anchor low-duty scans BLE while the DWM3000 is idle/asleep. After it decodes a valid discovery request, it advertises READY and opens a bounded UWB responder window. The current MVP keeps this window open for 400 ms so the clicker can complete sequential DS-TWR with up to 8 discovered anchors. When the window expires, the anchor closes READY advertising, puts the DWM3000 into deep sleep, and resumes low-duty BLE scanning.
 
 The MVP click path collects up to 8 READY anchors, deduplicates them by anchor ID, scores them by reciprocal RSSI, ranges them sequentially, and builds one click report packet per successful DS-TWR result. If an anchor receives the UWB poll but the responder-side exchange fails before a valid report, the anchor now forwards a failed range report with the relevant `RANGE_STATUS` instead of silently disappearing.
 
@@ -180,11 +180,11 @@ The first ACK tells Anchor A that Anchor B accepted the packet. The gateway ACK 
 ### Forwarding Rules
 
 1. Validate magic, version, payload length, and CRC. Invalid packets are dropped.
-2. Detect duplicates by `msg_type`, `src_id`, `dst_id`, `session_id`, and `seq`. If a duplicate requested a hop ACK, ACK it again but do not process the payload twice. A duplicate gateway-bound packet at the gateway can also re-emit the gateway ACK. Duplicate cache entries expire after 60 s.
+2. Detect duplicates by `msg_type`, `src_id`, `dst_id`, `session_id`, and `seq`. A local duplicate is not delivered to the application twice; the gateway can re-emit the gateway ACK. A directed duplicate that still needs forwarding is re-forwarded only when the relay can take custody. Duplicate cache entries expire after 60 s.
 3. If a new packet would require forwarding or an immediate local response while the node already has a tracked transmission in flight, do not send a hop ACK and do not cache it as a duplicate. The previous sender will retry.
 4. If `dst_id` is local, handle the packet locally. A gateway emits `GATEWAY_ACK` for gateway-bound packets that requested it. An anchor receiving a command emits `COMMAND_RESULT`.
 5. If `dst_id` is not local and `ttl` is zero, drop the packet without a hop ACK and record a route failure.
-6. Expire stale route candidates older than 7 s, then select the local next hop from the route table. Routes use `effective_cost = hop_count * 100 + (100 - quality)`, then prefer higher quality, fewer hops, newer observation time, and lower next-hop ID for deterministic tie breaking.
+6. Expire stale route candidates older than 30 s, then select the local next hop from the route table. Routes use `effective_cost = hop_count * 100 + (100 - quality)`, then prefer higher quality, fewer hops, newer observation time, and lower next-hop ID for deterministic tie breaking.
 7. Forward the same packet with `ttl - 1`. Relays do not rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload.
 8. Send `MESH_ACK` only after the packet is accepted for local handling or the relay has selected a next hop and can track the forward.
 9. If `ACK_REQUESTED` is set, wait up to `ROUTE_HOP_ACK_TIMEOUT_MS` for `MESH_ACK` with matching `REQUESTED_MSG_SEQ`. The current timeout is 500 ms to cover the low-duty scan cadence, ACK reply delay, and ACK advertisement duration.
@@ -251,6 +251,8 @@ effective_cost = hop_count * 100 + (100 - quality)
 Lower cost wins. I would read that as: one hop is worth about 100 quality points. A decent direct link beats an extra hop, but a terrible direct link can tie or lose against a very strong relay path. If two routes have the same cost, the anchor chooses higher quality, then fewer hops, then the newer observation, then the lower next-hop ID so tests are deterministic.
 
 Route failures are based on missing hop ACKs or missing gateway ACKs; after three failures the selected route is invalidated and the anchor tries the next best candidate for that gateway. A successful hop ACK or gateway ACK refreshes the selected route's `last_seen_ms`, so a working route does not expire just because the last advertisement was old.
+
+For low power, route advertisements are not echoed on every gateway beacon. Anchors send `ROUTE_STATUS` and their own `ROUTE_ADV` immediately when the selected route changes, then limit routine refreshes to one refresh every 20 s. Passive route entries expire after 30 s; active delivery failures still switch routes faster through hop-ACK retry failure.
 
 ### How Gateways Reach Anchors
 

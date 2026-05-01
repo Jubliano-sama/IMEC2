@@ -628,6 +628,30 @@ static int add_gateway_ack_action(struct mesh_relay *relay,
     return ret;
 }
 
+static bool route_refresh_due(bool sent, uint32_t last_ms, uint32_t now_ms)
+{
+    return !sent || (uint32_t)(now_ms - last_ms) >= MESH_RELAY_ROUTE_REFRESH_MS;
+}
+
+static bool selected_route_changed(bool had_selected,
+                                   uint64_t next_hop_id,
+                                   uint64_t gateway_id,
+                                   uint32_t route_epoch,
+                                   uint8_t hop_count,
+                                   const struct route_candidate *selected)
+{
+    if (selected == NULL) {
+        return had_selected;
+    }
+    if (!had_selected) {
+        return true;
+    }
+    return selected->next_hop_id != next_hop_id ||
+           selected->gateway_id != gateway_id ||
+           selected->route_epoch != route_epoch ||
+           selected->hop_count != hop_count;
+}
+
 static int handle_route_adv(struct mesh_relay *relay,
                             const struct proto_packet *packet,
                             const uint8_t *payload,
@@ -642,6 +666,15 @@ static int handle_route_adv(struct mesh_relay *relay,
     uint32_t route_epoch = 0u;
     uint8_t advertised_hop_count = 0u;
     uint8_t advertised_quality = 0u;
+    const struct route_candidate *selected;
+    uint64_t previous_selected_next_hop = 0u;
+    uint64_t previous_selected_gateway = 0u;
+    uint32_t previous_selected_epoch = 0u;
+    uint8_t previous_selected_hop_count = 0u;
+    bool had_selected;
+    bool route_changed;
+    bool status_due;
+    bool adv_due;
     int ret;
 
     if (relay->role != MESH_RELAY_ROLE_ANCHOR) {
@@ -674,6 +707,15 @@ static int handle_route_adv(struct mesh_relay *relay,
         return PROTO_ERR_MALFORMED;
     }
 
+    selected = route_selected(&relay->upstream);
+    had_selected = selected != NULL;
+    if (had_selected) {
+        previous_selected_next_hop = selected->next_hop_id;
+        previous_selected_gateway = selected->gateway_id;
+        previous_selected_epoch = selected->route_epoch;
+        previous_selected_hop_count = selected->hop_count;
+    }
+
     candidate.next_hop_id = previous_hop_id;
     candidate.gateway_id = gateway_id;
     candidate.route_epoch = route_epoch;
@@ -687,12 +729,34 @@ static int handle_route_adv(struct mesh_relay *relay,
         return ret;
     }
 
-    ret = mesh_relay_build_route_status(relay, &result->route_status, now_ms);
-    if (ret == PROTO_OK) {
+    if (mesh_relay_tx_active(relay)) {
+        return PROTO_OK;
+    }
+
+    selected = route_selected(&relay->upstream);
+    route_changed = selected_route_changed(had_selected,
+                                           previous_selected_next_hop,
+                                           previous_selected_gateway,
+                                           previous_selected_epoch,
+                                           previous_selected_hop_count,
+                                           selected);
+    status_due = route_changed ||
+                 route_refresh_due(relay->route_status_sent,
+                                   relay->last_route_status_ms,
+                                   now_ms);
+    adv_due = route_changed ||
+              route_refresh_due(relay->route_adv_sent,
+                                relay->last_route_adv_ms,
+                                now_ms);
+
+    if (status_due && mesh_relay_build_route_status(relay, &result->route_status, now_ms) == PROTO_OK) {
+        relay->route_status_sent = true;
+        relay->last_route_status_ms = now_ms;
         result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_STATUS;
     }
-    ret = mesh_relay_build_route_adv(relay, &result->route_adv, now_ms);
-    if (ret == PROTO_OK) {
+    if (adv_due && mesh_relay_build_route_adv(relay, &result->route_adv, now_ms) == PROTO_OK) {
+        relay->route_adv_sent = true;
+        relay->last_route_adv_ms = now_ms;
         result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_ADV;
     }
     return PROTO_OK;

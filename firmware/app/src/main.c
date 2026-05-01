@@ -1896,6 +1896,7 @@ static enum self_test_failure run_self_test(void)
     LOG_INF("self-test DWM3000 decadriver DEV_ID=0x%08x; fast SPI config checked at %u Hz",
             dev_id,
             (unsigned int)dwm3000_port_current_spi_hz());
+    (void)dwm3000_driver_standby();
 
     ret = advertise_discovery_request(&request, BLE_DISCOVERY_ADV_MS);
     if (ret < 0) {
@@ -2090,6 +2091,13 @@ int main(void)
     ret = status_leds_init();
     if (ret < 0) {
         LOG_WRN("status LED setup incomplete: %d", ret);
+    }
+
+    ret = dwm3000_port_init();
+    if (ret < 0) {
+        LOG_WRN("DWM3000 low-power pin park unavailable: %d", ret);
+    } else {
+        LOG_INF("DWM3000 wake pin parked inactive; radio init waits for BLE-triggered UWB");
     }
 
     if (DEVICE_ROLE == ROLE_CLICKER) {

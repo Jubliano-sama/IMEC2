@@ -34,7 +34,7 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 | Completed | Implement multi-anchor MVP click flow | Clicker advertises discovery, collects up to 8 READY anchors, RSSI-sorts them, ranges sequentially, and builds one report per successful range |
 | In progress | Implement full clicker normal-click flow | Successful anchor reports route through mesh; post-poll responder failures are reported; hardware validation pending |
 | In progress | Implement clicker self-test flow | Gesture, diagnostic BLE advertisement, READY scan, DWM3000 wake/reset/DEV_ID probe, and diagnostic UWB dud range wired; hardware validation pending |
-| Completed | Enforce BLE-gated anchor UWB wake | Anchor low-duty scans BLE, wakes UWB only after discovery, keeps a 400 ms responder window, then returns DWM3000 to standby |
+| Completed | Enforce BLE-gated anchor UWB wake | Anchor parks the DWM3000 wake pin inactive at boot, low-duty scans BLE, wakes UWB only after discovery, keeps a 400 ms responder window, then puts DWM3000 into deep sleep |
 
 ## P3 - Mesh, Gateway, and Survey
 
@@ -42,7 +42,7 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 | --- | --- | --- |
 | Completed | Implement mesh packet relay with hop ACK | Relay runtime, custody hop ACKs, low-duty scan-safe mesh timing, retries, duplicate re-forward repair, 60 s duplicate expiry, and burst RX queue |
 | Completed | Implement gateway ACK handling | End-to-end gateway ACK runtime for gateway-bound reports/status/results, with hop ACK tracking on the return path |
-| Completed | Implement route advertisements and route status | Self-organizing upstream route discovery, 7 s route freshness expiry, RSSI-weighted route choice, and gateway/relay downlink candidates |
+| Completed | Implement route advertisements and route status | Self-organizing upstream route discovery, 20 s routine route refresh, 30 s passive route expiry, RSSI-weighted route choice, and gateway/relay downlink candidates |
 | In progress | Implement gateway command dispatcher | USB command routing, anchor ping/status with route telemetry, unsupported-command responses, route timeout reporting, and 5 s command-result timeout tracking; broader command set pending |
 | Pending | Implement anchor self-distance survey | Reachability graph, pair preparation, exactly `n` measurements |
 | Completed | Implement COBS USB serial gateway output | Binary gateway packets and command failures emitted over USB CDC |

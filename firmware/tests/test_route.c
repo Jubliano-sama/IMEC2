@@ -101,7 +101,7 @@ static void test_expire_stale_selected_route_falls_back(void)
     assert(selected != NULL);
     assert(selected->next_hop_id == 0x02u);
 
-    assert(route_expire_stale(&table, 9001u, ROUTE_CANDIDATE_MAX_AGE_MS) == 1u);
+    assert(route_expire_stale(&table, 31001u, ROUTE_CANDIDATE_MAX_AGE_MS) == 1u);
     selected = route_selected(&table);
     assert(selected != NULL);
     assert(selected->next_hop_id == 0x03u);
@@ -117,7 +117,7 @@ static void test_expire_stale_all_routes_clears_selection(void)
     assert(route_upsert_candidate(&table, &route_a) == PROTO_OK);
     assert(route_upsert_candidate(&table, &route_b) == PROTO_OK);
 
-    assert(route_expire_stale(&table, 9001u, ROUTE_CANDIDATE_MAX_AGE_MS) == 2u);
+    assert(route_expire_stale(&table, 31501u, ROUTE_CANDIDATE_MAX_AGE_MS) == 2u);
     assert(route_selected(&table) == NULL);
 }
 

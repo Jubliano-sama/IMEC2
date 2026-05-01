@@ -17,6 +17,7 @@ extern "C" {
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
 #define MESH_RELAY_DOWNLINK_MAX_AGE_MS ROUTE_CANDIDATE_MAX_AGE_MS
+#define MESH_RELAY_ROUTE_REFRESH_MS 20000u
 
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,
@@ -94,6 +95,10 @@ struct mesh_relay {
     struct mesh_pending_tx pending;
     uint8_t duplicate_next;
     uint16_t next_seq;
+    uint32_t last_route_status_ms;
+    uint32_t last_route_adv_ms;
+    bool route_status_sent;
+    bool route_adv_sent;
 };
 
 struct mesh_relay_result {
