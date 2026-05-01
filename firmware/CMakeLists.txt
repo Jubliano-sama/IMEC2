@@ -14,6 +14,7 @@ add_library(core
     src/mesh_ble.c
     src/mesh_relay.c
     src/report.c
+    src/serial_frame.c
     src/status.c
     src/route.c
     src/survey.c
@@ -58,6 +59,10 @@ add_test(NAME mesh_relay COMMAND test_mesh_relay)
 add_executable(test_mesh_ble tests/test_mesh_ble.c)
 target_link_libraries(test_mesh_ble PRIVATE core)
 add_test(NAME mesh_ble COMMAND test_mesh_ble)
+
+add_executable(test_serial_frame tests/test_serial_frame.c)
+target_link_libraries(test_serial_frame PRIVATE core)
+add_test(NAME serial_frame COMMAND test_serial_frame)
 
 add_executable(test_report tests/test_report.c)
 target_link_libraries(test_report PRIVATE core)

@@ -5,12 +5,14 @@
 #include "mesh_relay.h"
 #include "protocol.h"
 #include "report.h"
+#include "serial_frame.h"
 #include "status.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net_buf.h>
@@ -47,6 +49,7 @@ LOG_MODULE_REGISTER(uwb_ble_app, LOG_LEVEL_DBG);
 #define STATUS1_RED_NODE DT_ALIAS(status1_red)
 #define STATUS1_GREEN_NODE DT_ALIAS(status1_green)
 #define STATUS1_BLUE_NODE DT_ALIAS(status1_blue)
+#define USB_CONSOLE_NODE DT_CHOSEN(zephyr_console)
 
 #if DT_NODE_HAS_STATUS(CLICK_BUTTON_NODE, okay)
 static const struct gpio_dt_spec click_button = GPIO_DT_SPEC_GET(CLICK_BUTTON_NODE, gpios);
@@ -75,6 +78,13 @@ static const struct gpio_dt_spec status1_green = GPIO_DT_SPEC_GET(STATUS1_GREEN_
 #endif
 #if DT_NODE_HAS_STATUS(STATUS1_BLUE_NODE, okay)
 static const struct gpio_dt_spec status1_blue = GPIO_DT_SPEC_GET(STATUS1_BLUE_NODE, gpios);
+#endif
+
+#if DT_NODE_HAS_STATUS(USB_CONSOLE_NODE, okay)
+static const struct device *serial_console = DEVICE_DT_GET(USB_CONSOLE_NODE);
+#define HAS_SERIAL_CONSOLE 1
+#else
+#define HAS_SERIAL_CONSOLE 0
 #endif
 
 static struct button_fsm button_fsm;
@@ -283,6 +293,11 @@ static int ble_runtime_init(void)
 
 static int debug_serial_init(void)
 {
+#if HAS_SERIAL_CONSOLE
+    if (!device_is_ready(serial_console)) {
+        return -ENODEV;
+    }
+#endif
 #if defined(CONFIG_USB_DEVICE_STACK)
     int ret = usb_enable(NULL);
 
@@ -291,6 +306,72 @@ static int debug_serial_init(void)
     }
 #endif
     return 0;
+}
+
+static bool debug_serial_dtr_ready(void)
+{
+#if HAS_SERIAL_CONSOLE && defined(CONFIG_UART_LINE_CTRL)
+    uint32_t dtr = 0u;
+
+    if (uart_line_ctrl_get(serial_console, UART_LINE_CTRL_DTR, &dtr) == 0) {
+        return dtr != 0u;
+    }
+#endif
+    return true;
+}
+
+static int gateway_emit_serial_packet(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len)
+{
+#if HAS_SERIAL_CONSOLE
+    struct proto_packet frame_packet;
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    size_t frame_len = 0u;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return 0;
+    }
+    if (packet == NULL || (payload == NULL && payload_len != 0u) ||
+        payload_len > UINT8_MAX) {
+        return -EINVAL;
+    }
+    if (!device_is_ready(serial_console)) {
+        return -ENODEV;
+    }
+    if (!debug_serial_dtr_ready()) {
+        return -EAGAIN;
+    }
+
+    frame_packet = *packet;
+    frame_packet.payload_len = (uint8_t)payload_len;
+    ret = serial_frame_encode_packet(&frame_packet,
+                                     payload,
+                                     frame,
+                                     sizeof(frame),
+                                     &frame_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    for (size_t i = 0u; i < frame_len; i++) {
+        uart_poll_out(serial_console, frame[i]);
+    }
+
+    LOG_INF("gateway USB COBS frame emitted: msg=0x%02x src=0x%016llx seq=%u payload_len=%u frame_len=%u",
+            frame_packet.msg_type,
+            (unsigned long long)frame_packet.src_id,
+            frame_packet.seq,
+            (unsigned int)payload_len,
+            (unsigned int)frame_len);
+    return 0;
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return -ENODEV;
+#endif
 }
 
 static int ble_start_manufacturer_advertising(const uint8_t *payload, size_t payload_len)
@@ -1118,6 +1199,15 @@ static void mesh_rx_work_handler(struct k_work *work)
             result.actions,
             result.status);
     mesh_handle_result_actions(&result);
+    if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
+        DEVICE_ROLE == ROLE_GATEWAY) {
+        ret = gateway_emit_serial_packet(&pending.packet,
+                                         pending.payload,
+                                         pending.payload_len);
+        if (ret < 0) {
+            LOG_WRN("gateway USB COBS frame not emitted: %d", ret);
+        }
+    }
 }
 
 static void mesh_tx_timeout_handler(struct k_work *work)
@@ -1597,7 +1687,7 @@ int main(void)
             LOG_ERR("gateway mesh scan unavailable: %d", ret);
         }
         (void)k_work_schedule(&gateway_route_adv_work, K_MSEC(250u));
-        LOG_INF("gateway mesh root active; USB COBS command dispatcher pending");
+        LOG_INF("gateway mesh root active; USB COBS packet output active; command dispatcher pending");
     }
 
     return 0;

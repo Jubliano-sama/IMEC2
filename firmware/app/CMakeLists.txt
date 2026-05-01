@@ -32,6 +32,7 @@ target_sources(app PRIVATE
     ../src/mesh_ble.c
     ../src/mesh_relay.c
     ../src/report.c
+    ../src/serial_frame.c
     ../src/status.c
     ../src/route.c
     ../src/survey.c
