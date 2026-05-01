@@ -101,7 +101,6 @@ static struct k_work_delayable gateway_route_adv_work;
 static struct k_work_delayable gateway_serial_rx_work;
 static struct k_spinlock anchor_ble_lock;
 static struct k_spinlock clicker_ready_lock;
-static struct k_spinlock mesh_rx_lock;
 static struct ble_discovery_req anchor_pending_request;
 static int8_t anchor_pending_rssi;
 static bool anchor_pending_valid;
@@ -124,6 +123,7 @@ static struct bt_le_ext_adv *mesh_ext_adv;
 #define GATEWAY_ROUTE_ADV_INTERVAL_MS 2000u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
+#define MESH_RX_QUEUE_DEPTH 8
 
 struct ready_anchor {
     struct ble_discovery_ready ready;
@@ -137,13 +137,13 @@ struct mesh_rx_pending {
     uint8_t payload_len;
     uint64_t previous_hop_id;
     uint8_t link_quality;
-    bool valid;
 };
+
+K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 
 static struct ready_anchor clicker_ready_anchors[MAX_READY_ANCHORS];
 static uint8_t clicker_ready_count;
 static uint8_t clicker_ready_expected_flags;
-static struct mesh_rx_pending mesh_rx_pending;
 static uint8_t gateway_serial_rx_frame[SERIAL_FRAME_MAX_LEN];
 static size_t gateway_serial_rx_len;
 static bool gateway_serial_rx_overflow;
@@ -1465,52 +1465,44 @@ static void mesh_rx_work_handler(struct k_work *work)
 {
     struct mesh_rx_pending pending;
     struct mesh_relay_result result;
-    k_spinlock_key_t key;
     int ret;
 
     ARG_UNUSED(work);
 
-    key = k_spin_lock(&mesh_rx_lock);
-    pending = mesh_rx_pending;
-    mesh_rx_pending.valid = false;
-    k_spin_unlock(&mesh_rx_lock, key);
-
-    if (!pending.valid) {
-        return;
-    }
-
-    ret = mesh_relay_handle_rx(&mesh_runtime,
-                               &pending.packet,
-                               pending.payload,
-                               pending.payload_len,
-                               pending.previous_hop_id,
-                               pending.link_quality,
-                               k_uptime_get_32(),
-                               &result);
-    if (ret != PROTO_OK) {
-        LOG_WRN("mesh RX rejected: %d", ret);
-        return;
-    }
-
-    LOG_INF("mesh RX handled: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx actions=0x%08x status=%d",
-            pending.packet.msg_type,
-            (unsigned long long)pending.packet.src_id,
-            (unsigned long long)pending.packet.dst_id,
-            (unsigned long long)pending.previous_hop_id,
-            result.actions,
-            result.status);
-    mesh_handle_result_actions(&result);
-    if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
-        DEVICE_ROLE == ROLE_GATEWAY) {
-        ret = gateway_emit_serial_packet(&pending.packet,
-                                         pending.payload,
-                                         pending.payload_len);
-        if (ret < 0) {
-            LOG_WRN("gateway USB COBS frame not emitted: %d", ret);
+    while (k_msgq_get(&mesh_rx_msgq, &pending, K_NO_WAIT) == 0) {
+        ret = mesh_relay_handle_rx(&mesh_runtime,
+                                   &pending.packet,
+                                   pending.payload,
+                                   pending.payload_len,
+                                   pending.previous_hop_id,
+                                   pending.link_quality,
+                                   k_uptime_get_32(),
+                                   &result);
+        if (ret != PROTO_OK) {
+            LOG_WRN("mesh RX rejected: %d", ret);
+            continue;
         }
-    } else if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
-               DEVICE_ROLE == ROLE_ANCHOR) {
-        anchor_handle_local_command(&pending.packet, pending.payload, pending.payload_len);
+
+        LOG_INF("mesh RX handled: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx actions=0x%08x status=%d",
+                pending.packet.msg_type,
+                (unsigned long long)pending.packet.src_id,
+                (unsigned long long)pending.packet.dst_id,
+                (unsigned long long)pending.previous_hop_id,
+                result.actions,
+                result.status);
+        mesh_handle_result_actions(&result);
+        if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
+            DEVICE_ROLE == ROLE_GATEWAY) {
+            ret = gateway_emit_serial_packet(&pending.packet,
+                                             pending.payload,
+                                             pending.payload_len);
+            if (ret < 0) {
+                LOG_WRN("gateway USB COBS frame not emitted: %d", ret);
+            }
+        } else if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
+                   DEVICE_ROLE == ROLE_ANCHOR) {
+            anchor_handle_local_command(&pending.packet, pending.payload, pending.payload_len);
+        }
     }
 }
 
@@ -1528,32 +1520,31 @@ static void mesh_tx_timeout_handler(struct k_work *work)
 
 static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi)
 {
-    k_spinlock_key_t key;
-    bool queued = false;
+    struct mesh_rx_pending pending = {0};
+    int ret;
 
     if (context == NULL || !context->found || context->payload_len > UINT8_MAX) {
         return false;
     }
 
-    key = k_spin_lock(&mesh_rx_lock);
-    if (!mesh_rx_pending.valid) {
-        mesh_rx_pending.packet = context->packet;
-        if (context->payload_len > 0u) {
-            memcpy(mesh_rx_pending.payload, context->payload, context->payload_len);
-        }
-        mesh_rx_pending.payload_len = (uint8_t)context->payload_len;
-        mesh_rx_pending.previous_hop_id = context->previous_hop_id;
-        mesh_rx_pending.link_quality = mesh_quality_from_rssi(rssi);
-        mesh_rx_pending.valid = true;
-        queued = true;
+    pending.packet = context->packet;
+    if (context->payload_len > 0u) {
+        memcpy(pending.payload, context->payload, context->payload_len);
     }
-    k_spin_unlock(&mesh_rx_lock, key);
+    pending.payload_len = (uint8_t)context->payload_len;
+    pending.previous_hop_id = context->previous_hop_id;
+    pending.link_quality = mesh_quality_from_rssi(rssi);
 
-    if (queued) {
-        (void)k_work_submit(&mesh_rx_work);
-    } else {
-        LOG_WRN("mesh RX dropped because work slot is occupied");
+    ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
+    if (ret < 0) {
+        LOG_WRN("mesh RX queue full; dropped msg=0x%02x src=0x%016llx dst=0x%016llx",
+                pending.packet.msg_type,
+                (unsigned long long)pending.packet.src_id,
+                (unsigned long long)pending.packet.dst_id);
+        return true;
     }
+
+    (void)k_work_submit(&mesh_rx_work);
     return true;
 }
 
