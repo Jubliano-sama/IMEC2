@@ -7,17 +7,31 @@ static bool candidate_valid_for_epoch(const struct route_candidate *candidate, u
     return candidate->valid && candidate->route_epoch == epoch;
 }
 
+static uint16_t candidate_effective_cost(const struct route_candidate *candidate)
+{
+    return (uint16_t)((uint16_t)candidate->hop_count * 100u +
+                      (uint16_t)(100u - candidate->link_quality));
+}
+
 static bool candidate_is_better(const struct route_candidate *candidate,
                                 const struct route_candidate *selected)
 {
+    uint16_t candidate_cost;
+    uint16_t selected_cost;
+
     if (selected == NULL) {
         return true;
     }
-    if (candidate->hop_count != selected->hop_count) {
-        return candidate->hop_count < selected->hop_count;
+    candidate_cost = candidate_effective_cost(candidate);
+    selected_cost = candidate_effective_cost(selected);
+    if (candidate_cost != selected_cost) {
+        return candidate_cost < selected_cost;
     }
     if (candidate->link_quality != selected->link_quality) {
         return candidate->link_quality > selected->link_quality;
+    }
+    if (candidate->hop_count != selected->hop_count) {
+        return candidate->hop_count < selected->hop_count;
     }
     if (candidate->last_seen_ms != selected->last_seen_ms) {
         return candidate->last_seen_ms > selected->last_seen_ms;
@@ -91,6 +105,35 @@ int route_select_best(struct route_table *table)
     return selected == NULL ? PROTO_ERR_NOT_FOUND : PROTO_OK;
 }
 
+uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t max_age_ms)
+{
+    uint8_t expired = 0u;
+
+    if (table == NULL || max_age_ms == 0u) {
+        return 0u;
+    }
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct route_candidate *candidate = &table->candidates[i];
+        uint32_t age_ms;
+
+        if (!candidate->valid) {
+            continue;
+        }
+
+        age_ms = now_ms - candidate->last_seen_ms;
+        if (age_ms > max_age_ms) {
+            candidate->valid = false;
+            expired++;
+        }
+    }
+
+    if (expired > 0u) {
+        (void)route_select_best(table);
+    }
+    return expired;
+}
+
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate)
 {
@@ -151,6 +194,22 @@ void route_record_success(struct route_table *table)
     candidate = &table->candidates[table->selected_index];
     if (candidate_valid_for_epoch(candidate, table->current_epoch)) {
         candidate->failure_count = 0u;
+    }
+}
+
+void route_record_success_at(struct route_table *table, uint32_t now_ms)
+{
+    struct route_candidate *candidate;
+
+    if (table == NULL || table->selected_index == ROUTE_NO_SELECTION ||
+        table->selected_index >= ROUTE_MAX_CANDIDATES) {
+        return;
+    }
+
+    candidate = &table->candidates[table->selected_index];
+    if (candidate_valid_for_epoch(candidate, table->current_epoch)) {
+        candidate->failure_count = 0u;
+        candidate->last_seen_ms = now_ms;
     }
 }
 

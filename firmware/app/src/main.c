@@ -28,6 +28,10 @@
 
 LOG_MODULE_REGISTER(uwb_ble_app, LOG_LEVEL_DBG);
 
+#if !defined(CONFIG_BT_EXT_ADV) || !defined(CONFIG_BT_CTLR_PHY_CODED)
+#error "BLE transport requires extended advertising on LE Coded PHY."
+#endif
+
 #define ROLE_CLICKER 1
 #define ROLE_ANCHOR 2
 #define ROLE_GATEWAY 3
@@ -106,9 +110,7 @@ static int8_t anchor_pending_rssi;
 static bool anchor_pending_valid;
 static bool anchor_uwb_busy;
 static struct mesh_relay mesh_runtime;
-#if defined(CONFIG_BT_EXT_ADV)
-static struct bt_le_ext_adv *mesh_ext_adv;
-#endif
+static struct bt_le_ext_adv *ble_ext_adv;
 
 #define MAX_READY_ANCHORS 8u
 #define BLE_DISCOVERY_ADV_MS 120u
@@ -124,6 +126,9 @@ static struct bt_le_ext_adv *mesh_ext_adv;
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
 #define MESH_RX_QUEUE_DEPTH 8
+#define BLE_CODED_SCAN_OPTIONS (BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M)
+#define BLE_CODED_ADV_OPTIONS (BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_CODED | \
+                               BT_LE_ADV_OPT_USE_TX_POWER)
 
 struct ready_anchor {
     struct ble_discovery_ready ready;
@@ -151,24 +156,40 @@ static uint16_t gateway_command_seq;
 
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 
+static const struct bt_le_adv_param ble_coded_adv_param =
+    BT_LE_ADV_PARAM_INIT(BLE_CODED_ADV_OPTIONS,
+                         BT_GAP_ADV_FAST_INT_MIN_2,
+                         BT_GAP_ADV_FAST_INT_MAX_2,
+                         NULL);
+
 static const struct bt_le_scan_param anchor_low_duty_scan_param = {
     .type = BT_LE_SCAN_TYPE_PASSIVE,
-    .options = BT_LE_SCAN_OPT_NONE,
+    .options = BLE_CODED_SCAN_OPTIONS,
     .interval = ANCHOR_SCAN_INTERVAL_100MS,
     .window = ANCHOR_SCAN_WINDOW_10MS,
     .timeout = 0u,
-    .interval_coded = 0u,
-    .window_coded = 0u,
+    .interval_coded = ANCHOR_SCAN_INTERVAL_100MS,
+    .window_coded = ANCHOR_SCAN_WINDOW_10MS,
 };
 
 static const struct bt_le_scan_param gateway_mesh_scan_param = {
     .type = BT_LE_SCAN_TYPE_PASSIVE,
-    .options = BT_LE_SCAN_OPT_NONE,
+    .options = BLE_CODED_SCAN_OPTIONS,
     .interval = 16u,
     .window = 16u,
     .timeout = 0u,
-    .interval_coded = 0u,
-    .window_coded = 0u,
+    .interval_coded = 16u,
+    .window_coded = 16u,
+};
+
+static const struct bt_le_scan_param clicker_ready_scan_param = {
+    .type = BT_LE_SCAN_TYPE_PASSIVE,
+    .options = BLE_CODED_SCAN_OPTIONS,
+    .interval = 16u,
+    .window = 16u,
+    .timeout = 0u,
+    .interval_coded = 16u,
+    .window_coded = 16u,
 };
 
 static const char *role_name(void)
@@ -691,57 +712,31 @@ static int ble_start_manufacturer_advertising(const uint8_t *payload, size_t pay
         return ret;
     }
 
-    ret = bt_le_adv_start(BT_LE_ADV_NCONN, ad, ARRAY_SIZE(ad), NULL, 0);
-    if (ret == -EALREADY) {
-        (void)bt_le_adv_stop();
-        ret = bt_le_adv_start(BT_LE_ADV_NCONN, ad, ARRAY_SIZE(ad), NULL, 0);
-    }
-
-    return ret;
-}
-
-static int ble_start_extended_manufacturer_advertising(const uint8_t *payload, size_t payload_len)
-{
-#if defined(CONFIG_BT_EXT_ADV)
-    const struct bt_data ad[] = {
-        BT_DATA(BT_DATA_MANUFACTURER_DATA, payload, payload_len),
-    };
-    int ret;
-
-    if (payload == NULL || payload_len == 0u || payload_len > MESH_BLE_MAX_FRAME_LEN) {
-        return -EINVAL;
-    }
-
-    ret = ble_runtime_init();
-    if (ret < 0) {
-        return ret;
-    }
-
-    if (mesh_ext_adv == NULL) {
-        ret = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN, NULL, &mesh_ext_adv);
+    if (ble_ext_adv == NULL) {
+        ret = bt_le_ext_adv_create(&ble_coded_adv_param, NULL, &ble_ext_adv);
         if (ret < 0) {
             return ret;
         }
     } else {
-        (void)bt_le_ext_adv_stop(mesh_ext_adv);
+        (void)bt_le_ext_adv_stop(ble_ext_adv);
     }
 
-    ret = bt_le_ext_adv_set_data(mesh_ext_adv, ad, ARRAY_SIZE(ad), NULL, 0);
+    ret = bt_le_ext_adv_set_data(ble_ext_adv, ad, ARRAY_SIZE(ad), NULL, 0);
     if (ret < 0) {
         return ret;
     }
-    return bt_le_ext_adv_start(mesh_ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
-#else
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    return -EMSGSIZE;
-#endif
+    return bt_le_ext_adv_start(ble_ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
 }
 
 static int ble_stop_advertising(void)
 {
-    int ret = bt_le_adv_stop();
+    int ret;
 
+    if (ble_ext_adv == NULL) {
+        return 0;
+    }
+
+    ret = bt_le_ext_adv_stop(ble_ext_adv);
     return ret == -EALREADY ? 0 : ret;
 }
 
@@ -764,23 +759,7 @@ static int ble_advertise_mesh_payload(const uint8_t *payload,
                                       size_t payload_len,
                                       uint32_t duration_ms)
 {
-    int ret;
-
-    if (payload_len <= BT_GAP_ADV_MAX_ADV_DATA_LEN - 2u) {
-        return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms);
-    }
-
-    ret = ble_start_extended_manufacturer_advertising(payload, payload_len);
-    if (ret < 0) {
-        return ret;
-    }
-    k_msleep(duration_ms);
-#if defined(CONFIG_BT_EXT_ADV)
-    ret = bt_le_ext_adv_stop(mesh_ext_adv);
-    return ret == -EALREADY ? 0 : ret;
-#else
-    return 0;
-#endif
+    return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms);
 }
 
 static uint16_t local_uwb_short_addr(void)
@@ -1276,10 +1255,10 @@ static int clicker_scan_for_ready_list(struct ready_anchor *anchors,
             MAX_READY_ANCHORS,
             expected_flags);
 
-    ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, clicker_ready_scan_cb);
+    ret = bt_le_scan_start(&clicker_ready_scan_param, clicker_ready_scan_cb);
     if (ret == -EALREADY) {
         (void)bt_le_scan_stop();
-        ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, clicker_ready_scan_cb);
+        ret = bt_le_scan_start(&clicker_ready_scan_param, clicker_ready_scan_cb);
     }
     if (ret < 0) {
         return ret;
@@ -1529,13 +1508,44 @@ static void mesh_rx_work_handler(struct k_work *work)
 static void mesh_tx_timeout_handler(struct k_work *work)
 {
     struct mesh_relay_result result;
+    struct proto_packet pending_packet = {0};
+    uint8_t pending_payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t pending_payload_len = 0u;
+    bool pending_gateway_command = false;
 
     ARG_UNUSED(work);
+
+    if (DEVICE_ROLE == ROLE_GATEWAY &&
+        mesh_relay_tx_active(&mesh_runtime) &&
+        mesh_runtime.pending.packet.msg_type == MSG_COMMAND &&
+        mesh_runtime.pending.packet.src_id == DEVICE_ID) {
+        pending_packet = mesh_runtime.pending.packet;
+        pending_payload_len = mesh_runtime.pending.payload_len;
+        if (pending_payload_len > 0u) {
+            memcpy(pending_payload, mesh_runtime.pending.payload, pending_payload_len);
+        }
+        pending_gateway_command = true;
+    }
 
     if (mesh_relay_tick(&mesh_runtime, k_uptime_get_32(), &result) != PROTO_OK) {
         return;
     }
     mesh_handle_result_actions(&result);
+
+    if (pending_gateway_command &&
+        (result.actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
+        enum command_id command_id = CMD_VENDOR_BASE;
+
+        if (gateway_command_extract_id(pending_payload,
+                                       pending_payload_len,
+                                       &command_id) != PROTO_OK) {
+            command_id = CMD_VENDOR_BASE;
+        }
+        gateway_emit_serial_command_result(&pending_packet,
+                                           command_id,
+                                           COMMAND_TIMEOUT,
+                                           (uint8_t)(-PROTO_ERR_NOT_FOUND));
+    }
 }
 
 static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi)

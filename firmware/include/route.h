@@ -16,6 +16,7 @@ extern "C" {
 #define ROUTE_MAX_FAILURES 3u
 #define ROUTE_HOP_ACK_TIMEOUT_MS 150u
 #define ROUTE_GATEWAY_ACK_TIMEOUT_MS 2000u
+#define ROUTE_CANDIDATE_MAX_AGE_MS 7000u
 #define ROUTE_DEDUP_WINDOW_MS 60000u
 
 enum route_failure_kind {
@@ -50,8 +51,10 @@ void route_table_init(struct route_table *table, uint32_t current_epoch);
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate);
 int route_select_best(struct route_table *table);
+uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t max_age_ms);
 const struct route_candidate *route_selected(const struct route_table *table);
 void route_record_success(struct route_table *table);
+void route_record_success_at(struct route_table *table, uint32_t now_ms);
 enum route_delivery_action route_record_failure(struct route_table *table,
                                                           enum route_failure_kind kind);
 uint32_t route_retry_backoff_ms(uint8_t failure_count);

@@ -1,6 +1,23 @@
 #internship #imec #architecture #documentation #UWB #BLE
 
+Version: 0.4.3
+
 Previous version: [[UWB+BLE Architecture 0.2] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
+
+## Changelog
+
+### 2026-05-01 - 0.4.3
+
+- Document the current mesh reliability approach: 7 s route freshness expiry, weighted upstream/downlink route selection, alternate downlink retry, 60 s duplicate cache expiry, and USB timeout reporting for failed gateway commands.
+
+### 2026-05-01 - 0.4.2
+
+- Document concrete BLE transmit power and DWM3000 UWB RF settings used by the firmware.
+
+### 2026-05-01 - 0.4.1
+
+- Document BLE long-range policy: all firmware BLE traffic uses LE Coded PHY/S=8 intent with coded-only scanning and highest configured nRF52 BLE TX power.
+- Document implemented RSSI/link-quality route weighting used by mesh route selection.
 
 ## System Architecture
 
@@ -134,6 +151,8 @@ t=400ms Anchor READY/UWB window expires if no more polls arrive
 
 **DWM3000 IRQ policy:** the current pinout does not connect the DWM3000 IRQ line. v1 therefore uses bounded SPI polling of DWM3000 status registers during scheduled UWB windows. This is acceptable because anchors only wake UWB after BLE has scheduled work; they must not spin in a permanent UWB receive loop.
 
+**DWM3000 UWB channel and TX settings:** the firmware currently configures DWM3000 channel 5 for all DS-TWR and survey ranging. The default `dwt_config_t` uses preamble length 64, PAC8, preamble code 9 for TX/RX, SFD type 1, 6.8 Mbps data rate, standard PHR, STS mode 1 with SDC, STS length 64, and PDOA mode 0. The default `dwt_txconfig_t` writes `PGdly=0x34`, `TX_POWER=0xFDFDFDFD`, and `PGcount=0x0`, matching the Qorvo channel-5 example settings. `TX_POWER=0xFDFDFDFD` is a raw DW3000 register value, not a final measured dBm claim; conducted output power still needs hardware calibration/validation.
+
 Key property: the clicker discovers anchors dynamically. Moving, adding, or removing anchors requires zero firmware changes or configuration updates on any clicker.
 
 ---
@@ -207,6 +226,12 @@ All mesh communication is symmetric at the protocol level. A sender must be able
 
 For v1, this explicit acknowledgement behavior is more important than maximizing throughput. It makes route debugging and test validation straightforward.
 
+### BLE PHY and TX Power Policy
+
+Every BLE advertisement and scan used by the firmware runs on Bluetooth LE Coded PHY/S=8 intent for range. Scans are coded-only; 1M PHY scanning is disabled for firmware traffic. All discovery, READY replies, mesh route advertisements, mesh data packets, hop ACKs, gateway ACKs, and survey control advertisements use non-connectable extended advertising on LE Coded PHY. The firmware does not open BLE connections, so it never requests the faster coded S=2 connection option.
+
+The nRF52 controller is configured for the highest supported BLE transmit power on the target, `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm. Range is prioritized over BLE current during active radio windows. The anchor remains power efficient by keeping BLE scans low duty cycle and by waking the DWM3000 only after a valid BLE request schedules UWB work.
+
 ### Mesh Packet Standard
 
 All routed packets use a versioned binary envelope. The detailed field list is documented in [[UWB+BLE Protocols and Strategies]], but each packet contains:
@@ -245,15 +270,23 @@ Default retry behavior:
 | Hop ACK timeout | 150 ms |
 | Gateway ACK timeout | 2 s |
 | Max retries | 3 |
-| Retry backoff | 100 ms, 250 ms, 500 ms plus jitter |
+| Retry backoff | 100 ms, 250 ms, 500 ms |
+| Route freshness window | 7 s since last route advertisement, route status, or successful ACK refresh |
+| Duplicate suppression window | 60 s per message identity |
 
-### Link Quality Weighting (optional enhancement)
+### Link Quality Weighting
 
 ```
 effective_cost = hop_count + (1.0 - rssi_normalized)
 ```
 
-This causes anchors to prefer fewer hops through strong links over more hops or weak (through-wall) links. Requires careful weighing of rssi.
+The firmware implements this as integer scoring:
+
+```
+effective_cost = hop_count * 100 + (100 - link_quality)
+```
+
+Lower cost wins. This means a useful direct route still beats an unnecessary extra hop, but an unusable direct route can lose to a perfect two-hop route. The same score is used for upstream routes toward the gateway and for downlink routes from the gateway or relay toward an anchor. When two routes have the same cost, the route with better link quality wins, then the lower hop count, then the newer observation, then the lower next-hop ID for deterministic tests.
 
 ### Route Discovery and State
 
@@ -266,6 +299,8 @@ Route discovery has two directions:
 
 Every relay that forwards `ROUTE_STATUS` stores a reverse entry for that anchor. The gateway therefore builds an anchor directory from route status packets instead of flooding commands.
 
+The current firmware is configured around one active gateway root for normal operation. The packet fields still carry `GATEWAY_ID` so the protocol can grow toward multiple gateways, but the v1 runtime selects one upstream route for its configured gateway.
+
 Each anchor stores:
 
 - selected next-hop anchor ID
@@ -276,29 +311,31 @@ Each anchor stores:
 - last route advertisement time
 - consecutive delivery failure count
 
-The gateway stores a matching downlink directory:
+The gateway and relays store matching downlink candidates:
 
 - anchor ID
-- selected next-hop anchor ID
+- next-hop anchor ID
 - gateway ID
 - hop count
 - route epoch
 - latest link quality
 - last route status time
 
-Route selection defaults to lowest hop count. If two routes have the same hop count, the anchor prefers the route with better recent link quality. A gateway route epoch change invalidates old routes, which lets the gateway force route rediscovery.
+Route selection uses the weighted cost above. Upstream candidates older than 7 s are removed before route advertisements, route status packets, new transmissions, and retry ticks use the table. Downlink candidates older than 7 s are removed the same way. A newer gateway route epoch invalidates old upstream candidates and outranks old downlink candidates, which lets the gateway force route rediscovery.
 
 ### Route Failure Behavior
 
-An anchor marks its current route suspect when hop ACK or gateway ACK repeatedly fails. After three failed delivery attempts for the same route, the anchor tries another known route candidate. If no candidate exists, it enters route discovery mode and buffers non-expired diagnostic/click reports until a route is found or the report TTL expires.
+An anchor marks its current upstream route suspect when hop ACK or gateway ACK repeatedly fails. After three failed delivery attempts for the selected route, the anchor invalidates that candidate and tries the next known route. If no candidate exists, it reports that route discovery is needed and stops the pending transmission.
+
+For gateway-to-anchor commands, the gateway or relay keeps multiple downlink candidates for the same target when route status packets arrive through different next hops. If the selected downlink next hop misses three hop ACK deadlines, that next-hop candidate is invalidated and the pending command is retransmitted through the next best downlink candidate. If no alternate exists, a gateway-originated command is completed locally as `COMMAND_TIMEOUT` over USB serial.
 
 ### Data Forwarding (every click)
 Anchor calculates ToF data, forwards it to `my_next_hop`, waits for a hop ACK, then waits for a gateway ACK. Intermediate anchors relay onward. Packets carry a TTL (decremented per hop, dropped at zero) to prevent loops during route convergence.
 
-If hop ACK fails, the sender retries with backoff. If gateway ACK fails after the packet was hop-acknowledged, the sender may retry through the same route first, then attempt route rediscovery.
+If hop ACK fails, the sender retries with backoff. If gateway ACK fails after the packet was hop-acknowledged, the sender retries through the selected route first, then invalidates it and attempts another candidate.
 
 ### Self-Healing
-If an anchor dies, its neighbors stop hearing route advertisements. After a certain amount of missed transmissions, they invalidate that route and recalculate from whatever alternatives they hear. Traffic automatically reroutes.
+If an anchor dies, its neighbors stop hearing route advertisements and route status refreshes. After 7 s without refresh, upstream and downlink candidates through that node are expired before they can be selected for new traffic. Missing ACKs can remove a bad selected route faster: after three missed hop ACKs, the sender either switches to an alternate candidate or reports route discovery needed. Duplicate suppression is also time-bounded; message identities expire after 60 s so old cache entries do not block later sessions forever.
 
 ---
 

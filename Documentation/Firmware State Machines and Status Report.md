@@ -137,19 +137,60 @@ stateDiagram-v2
  SendReport --> DoneError: report status or TX error
 ```
 
-## Gateway Shell
+## BLE Mesh Relay FSM
 
-Current gateway code is only a buildable role shell.
+Source: `mesh_relay_start_tx()`, `mesh_relay_handle_rx()`, and `mesh_relay_tick()` in `firmware/src/mesh_relay.c`.
+
+```mermaid
+stateDiagram-v2
+ [*] --> Idle
+ Idle --> SelectNextHop: local packet or forwarded packet ready
+ SelectNextHop --> TxFrame: route candidate exists
+ SelectNextHop --> RouteDiscoveryNeeded: no fresh route
+ TxFrame --> WaitHopAck: ACK_REQUESTED
+ TxFrame --> Idle: no hop ACK requested
+ WaitHopAck --> WaitGatewayAck: hop ACK received and gateway ACK required
+ WaitHopAck --> Idle: hop ACK received and no gateway ACK required
+ WaitHopAck --> RetrySamePath: hop ACK timeout, retry budget remains
+ RetrySamePath --> TxFrame
+ WaitHopAck --> TryAlternatePath: retry budget exhausted
+ TryAlternatePath --> TxFrame: alternate upstream/downlink candidate exists
+ TryAlternatePath --> RouteDiscoveryNeeded: no alternate candidate
+ WaitGatewayAck --> Idle: gateway ACK received
+ WaitGatewayAck --> RetrySamePath: gateway ACK timeout, retry budget remains
+ WaitGatewayAck --> TryAlternatePath: gateway ACK timeout, retry budget exhausted
+ RouteDiscoveryNeeded --> Idle
+```
+
+Route candidates expire after 7 s without a fresh advertisement, route status, or successful ACK refresh. Duplicate suppression entries expire after 60 s. Gateway-originated commands that exhaust all downlink candidates emit a local USB `COMMAND_TIMEOUT` result.
+
+## Gateway Mesh Runtime
+
+Source: `gateway_start_mesh_scan()`, `gateway_route_adv_work_handler()`, `gateway_handle_serial_frame()`, and `mesh_rx_work_handler()` in `firmware/app/src/main.c`.
 
 ```mermaid
 stateDiagram-v2
  [*] --> Boot
  Boot --> InitStatusLeds
- InitStatusLeds --> GatewayShell
- GatewayShell --> GatewayShell: log "USB COBS and command dispatcher pending"
+ InitStatusLeds --> StartMeshScan
+ StartMeshScan --> RouteBeaconLoop: coded PHY scan active
+ RouteBeaconLoop --> AdvertiseRoute: periodic ROUTE_ADV
+ AdvertiseRoute --> RouteBeaconLoop
+ RouteBeaconLoop --> HandleMeshRx: route status / report / ACK received
+ HandleMeshRx --> UpdateRoutes: ROUTE_STATUS received
+ HandleMeshRx --> EmitUsbPacket: local report/result delivered
+ HandleMeshRx --> SendGatewayAck: gateway-bound packet requested gateway ACK
+ UpdateRoutes --> RouteBeaconLoop
+ EmitUsbPacket --> RouteBeaconLoop
+ SendGatewayAck --> RouteBeaconLoop
+ RouteBeaconLoop --> RouteUsbCommand: USB COMMAND received
+ RouteUsbCommand --> WaitHopAck: fresh downlink route exists
+ RouteUsbCommand --> EmitUsbTimeout: no route / route lost after retries
+ WaitHopAck --> RouteBeaconLoop: hop ACK received
+ WaitHopAck --> EmitUsbTimeout: retries exhausted and no alternate downlink
 ```
 
-The protocol builders for commands, command results, hop ACKs, gateway ACKs, reports, routes, and surveys exist, but the live gateway runtime is not implemented yet.
+The gateway is the active mesh root: it advertises the route epoch, learns downlinks from `ROUTE_STATUS`, routes USB commands through selected next hops, emits delivered mesh packets over USB COBS, and returns structured timeout results for failed gateway-originated commands.
 
 ## Completed Work
 
@@ -160,7 +201,9 @@ The protocol builders for commands, command results, hop ACKs, gateway ACKs, rep
 - Implemented click/self-test report builders.
 - Implemented status LED pattern selection and button/self-test gesture FSM.
 - Implemented route candidate helpers, mesh hop ACK packet builders, gateway ACK packet builders, and survey command/result structures.
+- Implemented BLE mesh relay runtime with local next-hop addressing, hop ACKs, gateway ACKs, retry/backoff, upstream route fallback, downlink alternate fallback, route freshness expiry, duplicate cache expiry, and route status/advertisement handling.
 - Added Zephyr app skeleton with role selection for clicker, anchor, and gateway.
+- Configured all firmware BLE traffic for LE Coded PHY/S=8 intent, coded-only scanning, extended advertising, and +8 dBm nRF52 TX power.
 - Added ANNA-B402/DWM3000 devicetree overlay, DWM3000 binding, and 32 MHz SPIM3 runtime SPI configuration.
 - Implemented DWM3000 Zephyr port layer for SPI, reset, wake, DEV_ID read/validation, and SDK-compatible SPI/sleep/tick/reset hooks.
 - Integrated Qorvo DWM3000 decadriver source into the firmware build.
@@ -169,11 +212,14 @@ The protocol builders for commands, command results, hop ACKs, gateway ACKs, rep
 - Implemented multi-anchor MVP click flow: clicker advertises discovery, collects up to 8 READY anchors, RSSI-sorts them, ranges them sequentially, and builds one click report per successful anchor range.
 - Implemented clicker self-test flow with local DWM3000 check, diagnostic BLE, READY scan, and diagnostic dud UWB range.
 - Routed serial console/logging to USB CDC ACM for prototype debug over the USB-C port.
+- Implemented gateway USB COBS input/output for command packets and delivered mesh packets.
+- Implemented gateway route beaconing and command routing through the BLE mesh.
+- Implemented gateway ACK generation for received gateway-bound packets.
 - Added repository contributor guide in `AGENTS.md`.
 
 ## Verified
 
-- Native tests pass: `ctest --test-dir firmware/build --output-on-failure` reports 8/8 passing.
+- Native tests pass: `ctest --test-dir firmware/build --output-on-failure` reports 12/12 passing.
 - Zephyr builds pass for:
  - `FIRMWARE_ROLE=clicker`
  - `FIRMWARE_ROLE=anchor`
@@ -198,19 +244,12 @@ The protocol builders for commands, command results, hop ACKs, gateway ACKs, rep
 
 ### Anchor
 
-- Forward click/self-test reports through the BLE mesh instead of only building/logging packets locally.
-- Implement route advertisement receive/broadcast runtime.
-- Implement hop ACK retry handling and route fallback.
-- Track gateway ACK completion for reports originated or relayed by the anchor.
 - Add periodic heartbeat/status reports when requested by the gateway.
 
 ### Gateway
 
-- Implement USB COBS serial input/output.
-- Implement command dispatcher runtime.
-- Implement mesh root route beacon.
-- Generate gateway ACKs for received reports.
-- Forward click/self-test/survey results to the off-site processor.
+- Add command-result timeout tracking at the USB host/application layer if the target anchor accepts delivery but never returns `COMMAND_RESULT`.
+- Expand command handlers beyond ping/status as hardware needs mature.
 
 ### Anchor Survey
 

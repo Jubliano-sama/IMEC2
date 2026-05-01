@@ -16,6 +16,7 @@ extern "C" {
 #define MESH_RELAY_DOWNLINK_ROUTES 16u
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
+#define MESH_RELAY_DOWNLINK_MAX_AGE_MS ROUTE_CANDIDATE_MAX_AGE_MS
 
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,
@@ -66,6 +67,7 @@ struct mesh_duplicate_entry {
     uint64_t src_id;
     uint64_t dst_id;
     uint32_t session_id;
+    uint32_t last_seen_ms;
     uint16_t seq;
     bool valid;
 };
@@ -115,6 +117,7 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
+uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms);
 int mesh_relay_build_route_adv(struct mesh_relay *relay,
                                struct mesh_outbound *out,
                                uint32_t now_ms);

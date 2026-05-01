@@ -17,6 +17,12 @@ This document describes the v1 firmware wire protocol and the implementation str
 | TTL | Time To Live. Hop limit used to stop mesh packets from circulating forever. |
 | UWB | Ultra-Wideband. Used for distance measurements. |
 
+## Current Radio Settings
+
+BLE traffic uses LE Coded PHY/S=8 intent through non-connectable extended advertising and coded-only scanning. The nRF52 BLE transmit power is configured as `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm.
+
+UWB ranging uses DWM3000 channel 5 for click, self-test, and survey DS-TWR. The current DWM3000 TX RF register settings are `PGdly=0x34`, `TX_POWER=0xFDFDFDFD`, and `PGcount=0x0`. `TX_POWER` is the raw DW3000 register value; the final measured UWB output power must be validated/calibrated on hardware.
+
 ## Packet Envelope
 
 All non-advertising packets use the shared IMEC packet envelope:
@@ -169,13 +175,13 @@ The first ACK tells Anchor A that Anchor B accepted the packet. The gateway ACK 
 ### Forwarding Rules
 
 1. Validate magic, version, payload length, and CRC. Invalid packets are dropped.
-2. Detect duplicates by `msg_type`, `src_id`, `session_id`, and `seq`. If a duplicate requested a hop ACK, ACK it again but do not process the payload twice.
+2. Detect duplicates by `msg_type`, `src_id`, `dst_id`, `session_id`, and `seq`. If a duplicate requested a hop ACK, ACK it again but do not process the payload twice. Duplicate cache entries expire after 60 s.
 3. If `dst_id` is local, handle the packet locally. A gateway emits `GATEWAY_ACK` for gateway-bound packets that requested it. An anchor receiving a command emits `COMMAND_RESULT`.
 4. If `dst_id` is not local and `ttl` is zero, drop the packet and record a route failure.
-5. Select the local next hop from the route table. Routes prefer newest `ROUTE_EPOCH`, lower `HOP_COUNT`, higher `QUALITY`, newer observation time, then lower next-hop ID for deterministic tie breaking.
+5. Expire stale route candidates older than 7 s, then select the local next hop from the route table. Routes use `effective_cost = hop_count * 100 + (100 - quality)`, then prefer higher quality, fewer hops, newer observation time, and lower next-hop ID for deterministic tie breaking.
 6. Forward the same packet with `ttl - 1`. Relays do not rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload.
 7. If `ACK_REQUESTED` is set, wait up to `ROUTE_HOP_ACK_TIMEOUT_MS` for `MESH_ACK` with matching `REQUESTED_MSG_SEQ`.
-8. Retry the current route until its failure count reaches `ROUTE_MAX_FAILURES`. Then try an alternate route. If no alternate exists, return to route discovery and report the reason.
+8. Retry the current route until its failure count reaches `ROUTE_MAX_FAILURES`. Then invalidate that candidate and try an alternate route. If no alternate exists, return to route discovery and report the reason. For gateway-originated commands, that final failure is emitted to USB as `COMMAND_TIMEOUT`.
 9. For gateway-bound packets with `GATEWAY_ACK_REQUIRED`, keep the packet pending until the gateway ACK arrives or `ROUTE_GATEWAY_ACK_TIMEOUT_MS` expires.
 
 ### Route Formation
@@ -224,9 +230,19 @@ Then I store a candidate that means: "To reach Gateway G, send to this neighbor.
 
 After I choose my best route, I re-advertise it with `HOP_COUNT + 1`. That lets anchors farther away discover the same gateway through me.
 
-Each gateway owns its own route epoch. If several gateways exist, an anchor keeps separate candidates per `GATEWAY_ID`; a new epoch for one gateway does not invalidate routes to another gateway. The anchor may choose one default gateway for normal reports, but it still remembers every reachable gateway so test commands can verify the whole network.
+The v1 runtime is configured for one active gateway root for normal reports and commands. `GATEWAY_ID` stays in the packet and TLV formats so the protocol can grow toward multiple roots later, but the implemented route table selects one upstream route for the configured gateway.
 
-An anchor can hold route candidates that name `gateway_id`, `next_hop_id`, `route_epoch`, `hop_count`, `quality`, and `last_seen_ms`. The selected candidate for a gateway becomes the local next hop for upstream traffic to that gateway. Route failures are based on missing hop ACKs or missing gateway ACKs; after three failures the selected route is invalidated and the anchor tries the next best candidate for that gateway.
+An anchor can hold route candidates that name `gateway_id`, `next_hop_id`, `route_epoch`, `hop_count`, `quality`, and `last_seen_ms`. The selected candidate for a gateway becomes the local next hop for upstream traffic to that gateway.
+
+The route score is intentionally simple:
+
+```
+effective_cost = hop_count * 100 + (100 - quality)
+```
+
+Lower cost wins. I would read that as: one hop is worth about 100 quality points. A decent direct link beats an extra hop, but a terrible direct link can tie or lose against a very strong relay path. If two routes have the same cost, the anchor chooses higher quality, then fewer hops, then the newer observation, then the lower next-hop ID so tests are deterministic.
+
+Route failures are based on missing hop ACKs or missing gateway ACKs; after three failures the selected route is invalidated and the anchor tries the next best candidate for that gateway. A successful hop ACK or gateway ACK refreshes the selected route's `last_seen_ms`, so a working route does not expire just because the last advertisement was old.
 
 ### How Gateways Reach Anchors
 
@@ -243,11 +259,19 @@ Every node that forwards `ROUTE_STATUS` learns a reverse downlink entry:
 
 The gateway's anchor directory is therefore a table that says: "To reach Anchor A, send first to Neighbor B." It also stores `gateway_id`, `route_epoch`, `hop_count`, `quality`, and `last_seen_ms` so stale or weak routes can be replaced.
 
+The firmware keeps more than one downlink candidate when the same anchor can be reached through different next hops. It chooses among them with the same cost score used upstream:
+
+```
+effective_cost = hop_count * 100 + (100 - quality)
+```
+
+That means a direct but terrible link can lose to a strong relayed path, while a healthy direct link still wins. If a downlink next hop misses three hop ACK deadlines, only that next-hop candidate is removed; the pending command can immediately retry through the next best candidate.
+
 To send a command, the gateway does not broadcast to everyone. It sends a unicast `COMMAND` with `dst_id=anchor_id` to the remembered `next_hop_id`. Each relay repeats the same logic: "The final destination is Anchor A; my table says the next hop is X; send it to X."
 
 Gateway commands do not use `GATEWAY_ACK_REQUIRED` because the gateway is the sender. A command is considered complete when the target anchor returns `COMMAND_RESULT`; that result is gateway-bound and does use `GATEWAY_ACK_REQUIRED`.
 
-If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands.
+If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands. If an already-started gateway command loses every downlink candidate during retries, the gateway emits a local `COMMAND_RESULT` over USB with `COMMAND_TIMEOUT`.
 
 This keeps mesh communication symmetric for v1 testing: every important sender knows whether the next hop received the packet, and every gateway-bound sender can also know whether the gateway received it.
 
@@ -257,9 +281,9 @@ The firmware does not make every anchor hold a full all-to-all map. It stores on
 
 | Device | Stored routing state | What it means |
 | --- | --- | --- |
-| Gateway | Downlink directory keyed by anchor ID | "To reach Anchor A, first send to Neighbor B." Learned from `ROUTE_STATUS`. |
-| Relay anchor | Upstream candidates keyed by gateway and downlink entries keyed by target anchor | "For gateway-bound traffic, hand it to my selected upstream neighbor. For a known anchor behind me, hand it to that anchor or relay." |
-| Edge anchor | Upstream candidates keyed by gateway | "To reach Gateway G, hand traffic to this neighbor." It may not know how to reach every other anchor. |
+| Gateway | Downlink candidates keyed by target anchor and next hop | "To reach Anchor A, first try Neighbor B; if B fails, try the next candidate." Learned from `ROUTE_STATUS`. |
+| Relay anchor | Upstream candidates for the configured gateway and downlink candidates for target anchors behind it | "For gateway-bound traffic, hand it to my selected upstream neighbor. For a known anchor behind me, hand it to the best stored next hop." |
+| Edge anchor | Upstream candidates for the configured gateway | "To reach Gateway G, hand traffic to this neighbor." It may not know how to reach every other anchor. |
 
 An anchor does keep hop count to a gateway for each candidate route. It does not keep hop distance to every other anchor. The gateway is the device that gradually builds the useful anchor directory, because every anchor's `ROUTE_STATUS` travels toward the gateway and leaves reverse breadcrumbs on the way.
 
@@ -277,7 +301,7 @@ If I explain the gateway-to-anchor path to myself, it is:
 
 The message is therefore a chain of local unicast handoffs, not a hail-mary broadcast. Broadcast is reserved for route advertisements and discovery-like control traffic. Operational commands, reports, command results, route status packets, and ACKs are sent to one selected next hop at a time.
 
-If a next hop does not ACK, the sender retries and eventually invalidates that route. If no alternate route exists, the gateway gets a command failure locally over USB, or the anchor marks route discovery needed for gateway-bound packets.
+If a next hop does not ACK, the sender retries and eventually invalidates that next-hop route. If no alternate route exists, the gateway gets a `COMMAND_TIMEOUT` locally over USB for gateway-originated commands, or the anchor marks route discovery needed for gateway-bound packets.
 
 The live Zephyr runtime buffers up to 8 decoded mesh frames in a receive queue before processing. This avoids losing route/status/report bursts just because one work item was already busy.
 

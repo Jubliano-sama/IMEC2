@@ -136,10 +136,45 @@ static uint8_t combined_quality(uint8_t advertised_quality, uint8_t link_quality
     return advertised_quality < link_quality ? advertised_quality : link_quality;
 }
 
+static uint16_t downlink_effective_cost(const struct mesh_downlink_entry *entry)
+{
+    return (uint16_t)((uint16_t)entry->hop_count * 100u + (uint16_t)(100u - entry->quality));
+}
+
+static bool downlink_is_better(const struct mesh_downlink_entry *candidate,
+                               const struct mesh_downlink_entry *selected);
+
 static int downlink_index(const struct mesh_relay *relay, uint64_t target_id)
 {
+    int selected_index = -1;
+    const struct mesh_downlink_entry *selected = NULL;
+
     for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        if (relay->downlinks[i].valid && relay->downlinks[i].target_id == target_id) {
+        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (!entry->valid || entry->target_id != target_id) {
+            continue;
+        }
+        if (downlink_is_better(entry, selected)) {
+            selected = entry;
+            selected_index = (int)i;
+        }
+    }
+    return selected_index;
+}
+
+static int downlink_exact_index(const struct mesh_relay *relay,
+                                uint64_t target_id,
+                                uint64_t gateway_id,
+                                uint64_t next_hop_id)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (entry->valid &&
+            entry->target_id == target_id &&
+            entry->gateway_id == gateway_id &&
+            entry->next_hop_id == next_hop_id) {
             return (int)i;
         }
     }
@@ -149,17 +184,25 @@ static int downlink_index(const struct mesh_relay *relay, uint64_t target_id)
 static bool downlink_is_better(const struct mesh_downlink_entry *candidate,
                                const struct mesh_downlink_entry *selected)
 {
+    uint16_t candidate_cost;
+    uint16_t selected_cost;
+
     if (selected == NULL) {
         return true;
     }
     if (candidate->route_epoch != selected->route_epoch) {
         return candidate->route_epoch > selected->route_epoch;
     }
-    if (candidate->hop_count != selected->hop_count) {
-        return candidate->hop_count < selected->hop_count;
+    candidate_cost = downlink_effective_cost(candidate);
+    selected_cost = downlink_effective_cost(selected);
+    if (candidate_cost != selected_cost) {
+        return candidate_cost < selected_cost;
     }
     if (candidate->quality != selected->quality) {
         return candidate->quality > selected->quality;
+    }
+    if (candidate->hop_count != selected->hop_count) {
+        return candidate->hop_count < selected->hop_count;
     }
     if (candidate->last_seen_ms != selected->last_seen_ms) {
         return candidate->last_seen_ms > selected->last_seen_ms;
@@ -182,12 +225,13 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
         return PROTO_ERR_MALFORMED;
     }
 
-    index = downlink_index(relay, entry->target_id);
+    index = downlink_exact_index(relay,
+                                 entry->target_id,
+                                 entry->gateway_id,
+                                 entry->next_hop_id);
     if (index >= 0) {
-        if (downlink_is_better(entry, &relay->downlinks[index])) {
-            relay->downlinks[index] = *entry;
-            relay->downlinks[index].valid = true;
-        }
+        relay->downlinks[index] = *entry;
+        relay->downlinks[index].valid = true;
         return PROTO_OK;
     }
 
@@ -202,13 +246,18 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
         }
     }
 
+    if (free_index < 0 && !downlink_is_better(entry, replace)) {
+        return PROTO_ERR_NO_SPACE;
+    }
     index = free_index >= 0 ? free_index : replace_index;
     relay->downlinks[index] = *entry;
     relay->downlinks[index].valid = true;
     return PROTO_OK;
 }
 
-static bool duplicate_seen_and_store(struct mesh_relay *relay, const struct proto_packet *packet)
+static bool duplicate_seen_and_store(struct mesh_relay *relay,
+                                     const struct proto_packet *packet,
+                                     uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry;
 
@@ -218,6 +267,10 @@ static bool duplicate_seen_and_store(struct mesh_relay *relay, const struct prot
 
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
+        if (entry->valid && (uint32_t)(now_ms - entry->last_seen_ms) > ROUTE_DEDUP_WINDOW_MS) {
+            entry->valid = false;
+            continue;
+        }
         if (entry->valid &&
             entry->msg_type == packet->msg_type &&
             entry->src_id == packet->src_id &&
@@ -233,6 +286,7 @@ static bool duplicate_seen_and_store(struct mesh_relay *relay, const struct prot
     entry->src_id = packet->src_id;
     entry->dst_id = packet->dst_id;
     entry->session_id = packet->session_id;
+    entry->last_seen_ms = now_ms;
     entry->seq = packet->seq;
     entry->valid = true;
     relay->duplicate_next = (uint8_t)((relay->duplicate_next + 1u) % MESH_RELAY_DUP_CACHE_SIZE);
@@ -286,13 +340,62 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
            requested_seq == pending->packet.seq;
 }
 
-static void invalidate_downlink(struct mesh_relay *relay, uint64_t target_id)
+static void invalidate_downlink(struct mesh_relay *relay, uint64_t target_id, uint64_t next_hop_id)
 {
-    int index = downlink_index(relay, target_id);
+    int index = -1;
 
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (entry->valid &&
+            entry->target_id == target_id &&
+            entry->next_hop_id == next_hop_id) {
+            index = (int)i;
+            break;
+        }
+    }
+
+    if (index < 0) {
+        index = downlink_index(relay, target_id);
+    }
     if (index >= 0) {
         relay->downlinks[index].valid = false;
     }
+}
+
+static void refresh_downlink(struct mesh_relay *relay,
+                             uint64_t target_id,
+                             uint64_t next_hop_id,
+                             uint32_t now_ms)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (entry->valid &&
+            entry->target_id == target_id &&
+            entry->next_hop_id == next_hop_id) {
+            entry->last_seen_ms = now_ms;
+            return;
+        }
+    }
+}
+
+static uint8_t expire_downlinks(struct mesh_relay *relay, uint32_t now_ms)
+{
+    uint8_t expired = 0u;
+
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (!entry->valid) {
+            continue;
+        }
+        if ((uint32_t)(now_ms - entry->last_seen_ms) > MESH_RELAY_DOWNLINK_MAX_AGE_MS) {
+            entry->valid = false;
+            expired++;
+        }
+    }
+    return expired;
 }
 
 static int build_hop_ack(struct mesh_relay *relay,
@@ -364,6 +467,7 @@ static int handle_local_ack(struct mesh_relay *relay,
                             const struct proto_packet *packet,
                             const uint8_t *payload,
                             size_t payload_len,
+                            uint32_t now_ms,
                             struct mesh_relay_result *result)
 {
     uint16_t requested_seq = 0u;
@@ -388,7 +492,14 @@ static int handle_local_ack(struct mesh_relay *relay,
         packet->src_id == relay->pending.next_hop_id) {
         result->actions |= MESH_RELAY_ACTION_TX_HOP_CONFIRMED;
         relay->pending.failure_count = 0u;
-        route_record_success(&relay->upstream);
+        if (relay->pending.packet.dst_id == relay->gateway_id) {
+            route_record_success_at(&relay->upstream, now_ms);
+        } else {
+            refresh_downlink(relay,
+                             relay->pending.packet.dst_id,
+                             relay->pending.next_hop_id,
+                             now_ms);
+        }
         if (relay->pending.await_gateway_ack) {
             relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
         } else {
@@ -399,7 +510,7 @@ static int handle_local_ack(struct mesh_relay *relay,
                relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK) {
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
         relay->pending.state = MESH_RELAY_TX_IDLE;
-        route_record_success(&relay->upstream);
+        route_record_success_at(&relay->upstream, now_ms);
     }
 
     return PROTO_OK;
@@ -579,6 +690,19 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
     return index >= 0 ? &relay->downlinks[index] : NULL;
 }
 
+uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
+{
+    uint8_t expired;
+
+    if (relay == NULL) {
+        return 0u;
+    }
+
+    expired = route_expire_stale(&relay->upstream, now_ms, ROUTE_CANDIDATE_MAX_AGE_MS);
+    expired = (uint8_t)(expired + expire_downlinks(relay, now_ms));
+    return expired;
+}
+
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id)
@@ -630,6 +754,7 @@ int mesh_relay_build_route_adv(struct mesh_relay *relay,
         return PROTO_ERR_ARG;
     }
 
+    (void)mesh_relay_expire_routes(relay, now_ms);
     memset(out, 0, sizeof(*out));
     if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
         route_epoch = relay->upstream.current_epoch;
@@ -689,6 +814,7 @@ int mesh_relay_build_route_status(struct mesh_relay *relay,
         return PROTO_ERR_ARG;
     }
 
+    (void)mesh_relay_expire_routes(relay, now_ms);
     selected = route_selected(&relay->upstream);
     if (selected == NULL || selected->hop_count == UINT8_MAX) {
         return PROTO_ERR_NOT_FOUND;
@@ -760,6 +886,7 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
         return PROTO_ERR_MALFORMED;
     }
 
+    (void)mesh_relay_expire_routes(relay, now_ms);
     ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
     if (ret != PROTO_OK) {
         return ret;
@@ -795,6 +922,7 @@ int mesh_relay_tick(struct mesh_relay *relay,
     }
 
     result_reset(result);
+    (void)mesh_relay_expire_routes(relay, now_ms);
     if (!mesh_relay_tx_active(relay)) {
         return PROTO_OK;
     }
@@ -813,10 +941,23 @@ int mesh_relay_tick(struct mesh_relay *relay,
             }
         } else {
             if (relay->pending.failure_count + 1u >= MESH_RELAY_DOWNLINK_MAX_FAILURES) {
-                invalidate_downlink(relay, relay->pending.packet.dst_id);
-                relay->pending.state = MESH_RELAY_TX_IDLE;
-                result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
-                result->status = PROTO_ERR_NOT_FOUND;
+                invalidate_downlink(relay,
+                                    relay->pending.packet.dst_id,
+                                    relay->pending.next_hop_id);
+                ret = mesh_relay_select_next_hop(relay,
+                                                 relay->pending.packet.dst_id,
+                                                 &next_hop_id);
+                if (ret != PROTO_OK) {
+                    relay->pending.state = MESH_RELAY_TX_IDLE;
+                    result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
+                    result->status = PROTO_ERR_NOT_FOUND;
+                    return PROTO_OK;
+                }
+                relay->pending.next_hop_id = next_hop_id;
+                relay->pending.failure_count = 0u;
+                pending_set_deadlines(&relay->pending, now_ms);
+                outbound_from_pending(&relay->pending, &result->retransmit);
+                result->actions |= MESH_RELAY_ACTION_RETRANSMIT;
                 return PROTO_OK;
             }
             relay->pending.failure_count++;
@@ -885,6 +1026,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     }
 
     result_reset(result);
+    (void)mesh_relay_expire_routes(relay, now_ms);
 
     if ((packet->flags & FLAG_ACK_REQUESTED) != 0u && id_is_unicast(previous_hop_id)) {
         ret = build_hop_ack(relay, packet, previous_hop_id, &result->hop_ack);
@@ -894,10 +1036,10 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     }
 
     if (packet->msg_type == MSG_MESH_ACK || packet->msg_type == MSG_GATEWAY_ACK) {
-        (void)handle_local_ack(relay, packet, payload, payload_len, result);
+        (void)handle_local_ack(relay, packet, payload, payload_len, now_ms, result);
     }
 
-    duplicate = duplicate_seen_and_store(relay, packet);
+    duplicate = duplicate_seen_and_store(relay, packet, now_ms);
     if (duplicate) {
         result->actions |= MESH_RELAY_ACTION_DROP;
         result->status = PROTO_ERR_STALE;
