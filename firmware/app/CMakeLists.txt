@@ -29,6 +29,7 @@ target_sources(app PRIVATE
     ../src/discovery.c
     ../src/uwb.c
     ../src/mesh.c
+    ../src/mesh_ble.c
     ../src/mesh_relay.c
     ../src/report.c
     ../src/status.c

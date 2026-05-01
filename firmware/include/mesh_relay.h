@@ -122,6 +122,7 @@ int mesh_relay_build_route_status(struct mesh_relay *relay,
                                   struct mesh_outbound *out,
                                   uint32_t now_ms);
 bool mesh_relay_tx_active(const struct mesh_relay *relay);
+void mesh_relay_cancel_tx(struct mesh_relay *relay);
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,
                         const uint8_t *payload,

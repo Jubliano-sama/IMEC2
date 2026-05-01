@@ -729,6 +729,13 @@ bool mesh_relay_tx_active(const struct mesh_relay *relay)
     return relay != NULL && relay->pending.state != MESH_RELAY_TX_IDLE;
 }
 
+void mesh_relay_cancel_tx(struct mesh_relay *relay)
+{
+    if (relay != NULL) {
+        memset(&relay->pending, 0, sizeof(relay->pending));
+    }
+}
+
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,
                         const uint8_t *payload,

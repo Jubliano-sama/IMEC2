@@ -1,6 +1,7 @@
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "discovery.h"
+#include "mesh_ble.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 #include "report.h"
@@ -106,9 +107,6 @@ static struct bt_le_ext_adv *mesh_ext_adv;
 #define ANCHOR_SCAN_INTERVAL_100MS 160u
 #define ANCHOR_SCAN_WINDOW_10MS 16u
 #define ANCHOR_ERROR_BACKOFF_MS 5u
-#define MESH_BLE_FRAME_MAGIC 0xB7u
-#define MESH_BLE_FRAME_VERSION 0x01u
-#define MESH_BLE_FRAME_HEADER_LEN 20u
 #define MESH_ADV_TX_MS 30u
 #define GATEWAY_ROUTE_ADV_INTERVAL_MS 2000u
 
@@ -328,7 +326,7 @@ static int ble_start_extended_manufacturer_advertising(const uint8_t *payload, s
     };
     int ret;
 
-    if (payload == NULL || payload_len == 0u || payload_len > UINT8_MAX) {
+    if (payload == NULL || payload_len == 0u || payload_len > MESH_BLE_MAX_FRAME_LEN) {
         return -EINVAL;
     }
 
@@ -386,7 +384,7 @@ static int ble_advertise_mesh_payload(const uint8_t *payload,
 {
     int ret;
 
-    if (payload_len <= BT_GAP_ADV_MAX_ADV_DATA_LEN) {
+    if (payload_len <= BT_GAP_ADV_MAX_ADV_DATA_LEN - 2u) {
         return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms);
     }
 
@@ -421,87 +419,6 @@ static uint8_t mesh_quality_from_rssi(int8_t rssi)
     return (uint8_t)((int)rssi + 100);
 }
 
-static int mesh_frame_encode(const struct mesh_outbound *out,
-                             uint8_t *frame,
-                             size_t frame_cap,
-                             size_t *frame_len)
-{
-    size_t packet_len = 0u;
-    int ret;
-
-    if (out == NULL || frame == NULL || frame_len == NULL ||
-        frame_cap < MESH_BLE_FRAME_HEADER_LEN) {
-        return -EINVAL;
-    }
-
-    frame[0] = MESH_BLE_FRAME_MAGIC;
-    frame[1] = MESH_BLE_FRAME_VERSION;
-    proto_put_u64_le(&frame[2], DEVICE_ID);
-    proto_put_u64_le(&frame[10], out->next_hop_id);
-
-    ret = proto_packet_encode(&out->packet,
-                              out->payload,
-                              &frame[MESH_BLE_FRAME_HEADER_LEN],
-                              frame_cap - MESH_BLE_FRAME_HEADER_LEN,
-                              &packet_len);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    if (packet_len > UINT16_MAX) {
-        return -EMSGSIZE;
-    }
-
-    proto_put_u16_le(&frame[18], (uint16_t)packet_len);
-    *frame_len = MESH_BLE_FRAME_HEADER_LEN + packet_len;
-    return 0;
-}
-
-static int mesh_frame_decode(const uint8_t *frame,
-                             size_t frame_len,
-                             uint64_t *previous_hop_id,
-                             struct proto_packet *packet,
-                             uint8_t *payload,
-                             uint8_t *payload_len)
-{
-    const uint8_t *decoded_payload = NULL;
-    size_t decoded_payload_len = 0u;
-    uint64_t next_hop_id;
-    uint16_t packet_len;
-    int ret;
-
-    if (frame == NULL || previous_hop_id == NULL || packet == NULL ||
-        payload == NULL || payload_len == NULL ||
-        frame_len < MESH_BLE_FRAME_HEADER_LEN ||
-        frame[0] != MESH_BLE_FRAME_MAGIC ||
-        frame[1] != MESH_BLE_FRAME_VERSION) {
-        return -EINVAL;
-    }
-
-    *previous_hop_id = proto_get_u64_le(&frame[2]);
-    next_hop_id = proto_get_u64_le(&frame[10]);
-    packet_len = proto_get_u16_le(&frame[18]);
-    if (*previous_hop_id == 0u ||
-        (next_hop_id != MESH_BROADCAST_ID && next_hop_id != DEVICE_ID) ||
-        packet_len != frame_len - MESH_BLE_FRAME_HEADER_LEN) {
-        return -EINVAL;
-    }
-
-    ret = proto_packet_decode(&frame[MESH_BLE_FRAME_HEADER_LEN],
-                              packet_len,
-                              packet,
-                              &decoded_payload,
-                              &decoded_payload_len);
-    if (ret != PROTO_OK || decoded_payload_len > PACKET_MAX_PAYLOAD_LEN) {
-        return -EINVAL;
-    }
-
-    if (decoded_payload_len > 0u) {
-        memcpy(payload, decoded_payload, decoded_payload_len);
-    }
-    *payload_len = (uint8_t)decoded_payload_len;
-    return 0;
-}
-
 struct anchor_scan_parse_context {
     bool found;
     struct ble_discovery_req request;
@@ -517,25 +434,13 @@ struct mesh_frame_parse_context {
     uint64_t previous_hop_id;
     struct proto_packet packet;
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    uint8_t payload_len;
+    size_t payload_len;
 };
 
-static bool parse_discovery_ad(struct bt_data *data, void *user_data)
-{
-    struct anchor_scan_parse_context *context = user_data;
-
-    if (data->type != BT_DATA_MANUFACTURER_DATA) {
-        return true;
-    }
-
-    if (ble_discovery_req_decode(data->data, data->data_len,
-                                      &context->request) == PROTO_OK) {
-        context->found = true;
-        return false;
-    }
-
-    return true;
-}
+struct anchor_scan_combined_context {
+    struct mesh_frame_parse_context mesh;
+    struct anchor_scan_parse_context discovery;
+};
 
 static bool parse_ready_ad(struct bt_data *data, void *user_data)
 {
@@ -562,13 +467,45 @@ static bool parse_mesh_ad(struct bt_data *data, void *user_data)
         return true;
     }
 
-    if (mesh_frame_decode(data->data,
-                          data->data_len,
-                          &context->previous_hop_id,
-                          &context->packet,
-                          context->payload,
-                          &context->payload_len) == 0) {
+    if (mesh_ble_frame_decode(data->data,
+                              data->data_len,
+                              DEVICE_ID,
+                              &context->previous_hop_id,
+                              &context->packet,
+                              context->payload,
+                              sizeof(context->payload),
+                              &context->payload_len) == PROTO_OK) {
         context->found = true;
+        return false;
+    }
+
+    return true;
+}
+
+static bool parse_anchor_scan_ad(struct bt_data *data, void *user_data)
+{
+    struct anchor_scan_combined_context *context = user_data;
+
+    if (data->type != BT_DATA_MANUFACTURER_DATA) {
+        return true;
+    }
+
+    if (mesh_ble_frame_decode(data->data,
+                              data->data_len,
+                              DEVICE_ID,
+                              &context->mesh.previous_hop_id,
+                              &context->mesh.packet,
+                              context->mesh.payload,
+                              sizeof(context->mesh.payload),
+                              &context->mesh.payload_len) == PROTO_OK) {
+        context->mesh.found = true;
+        return false;
+    }
+
+    if (ble_discovery_req_decode(data->data,
+                                 data->data_len,
+                                 &context->discovery.request) == PROTO_OK) {
+        context->discovery.found = true;
         return false;
     }
 
@@ -578,6 +515,7 @@ static bool parse_mesh_ad(struct bt_data *data, void *user_data)
 static int anchor_start_ble_scan(void);
 static int gateway_start_mesh_scan(void);
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
+static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi);
 static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi);
 static int build_range_report(uint64_t clicker_id,
                               uint32_t event_seq,
@@ -759,25 +697,25 @@ static void anchor_scan_cb(const bt_addr_le_t *addr,
                            uint8_t adv_type,
                            struct net_buf_simple *buf)
 {
-    struct anchor_scan_parse_context context = {0};
+    struct anchor_scan_combined_context context = {0};
     k_spinlock_key_t key;
     bool submit = false;
 
     ARG_UNUSED(addr);
     ARG_UNUSED(adv_type);
 
-    if (mesh_queue_from_scan(buf, rssi)) {
+    bt_data_parse(buf, parse_anchor_scan_ad, &context);
+    if (context.mesh.found) {
+        (void)mesh_queue_parsed(&context.mesh, rssi);
         return;
     }
-
-    bt_data_parse(buf, parse_discovery_ad, &context);
-    if (!context.found) {
+    if (!context.discovery.found) {
         return;
     }
 
     key = k_spin_lock(&anchor_ble_lock);
     if (!anchor_uwb_busy && !anchor_pending_valid) {
-        anchor_pending_request = context.request;
+        anchor_pending_request = context.discovery.request;
         anchor_pending_rssi = rssi;
         anchor_pending_valid = true;
         submit = true;
@@ -786,15 +724,15 @@ static void anchor_scan_cb(const bt_addr_le_t *addr,
 
     if (submit) {
         LOG_INF("anchor queued discovery request: clicker=0x%016llx event_seq=%u flags=0x%02x rssi=%d",
-                (unsigned long long)context.request.clicker_id,
-                context.request.event_seq,
-                context.request.flags,
+                (unsigned long long)context.discovery.request.clicker_id,
+                context.discovery.request.event_seq,
+                context.discovery.request.flags,
                 rssi);
         (void)k_work_submit(&anchor_ble_work);
     } else {
         LOG_DBG("anchor ignored discovery while busy/pending: clicker=0x%016llx event_seq=%u",
-                (unsigned long long)context.request.clicker_id,
-                context.request.event_seq);
+                (unsigned long long)context.discovery.request.clicker_id,
+                context.discovery.request.event_seq);
     }
 }
 
@@ -1045,14 +983,14 @@ static void mesh_restart_role_scan(void)
 
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason)
 {
-    uint8_t frame[UINT8_MAX];
+    uint8_t frame[MESH_BLE_MAX_FRAME_LEN];
     size_t frame_len = 0u;
     int ret;
 
-    ret = mesh_frame_encode(out, frame, sizeof(frame), &frame_len);
-    if (ret < 0) {
+    ret = mesh_ble_frame_encode(DEVICE_ID, out, frame, sizeof(frame), &frame_len);
+    if (ret != PROTO_OK) {
         LOG_WRN("mesh frame encode failed for %s: %d", reason, ret);
-        return ret;
+        return -EINVAL;
     }
 
     mesh_stop_role_scan();
@@ -1080,7 +1018,7 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
     return 0;
 }
 
-static void mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
+static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
 {
     struct mesh_outbound tx;
     int ret;
@@ -1093,11 +1031,15 @@ static void mesh_start_tracked_tx(const struct mesh_outbound *out, const char *r
                               &tx);
     if (ret != PROTO_OK) {
         LOG_WRN("mesh could not start tracked TX for %s: %d", reason, ret);
-        return;
+        return -EHOSTUNREACH;
     }
-    if (mesh_send_outbound(&tx, reason) == 0) {
-        mesh_schedule_tx_timeout();
+    ret = mesh_send_outbound(&tx, reason);
+    if (ret < 0) {
+        mesh_relay_cancel_tx(&mesh_runtime);
+        return ret;
     }
+    mesh_schedule_tx_timeout();
+    return 0;
 }
 
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
@@ -1109,10 +1051,10 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         (void)mesh_send_outbound(&result->gateway_ack, "gateway-ack");
     }
     if (result->actions & MESH_RELAY_ACTION_FORWARD) {
-        mesh_start_tracked_tx(&result->forward, "forward");
+        (void)mesh_start_tracked_tx(&result->forward, "forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_STATUS) {
-        mesh_start_tracked_tx(&result->route_status, "route-status");
+        (void)mesh_start_tracked_tx(&result->route_status, "route-status");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_ADV) {
         (void)mesh_send_outbound(&result->route_adv, "route-adv");
@@ -1190,25 +1132,23 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     mesh_handle_result_actions(&result);
 }
 
-static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi)
+static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi)
 {
-    struct mesh_frame_parse_context context = {0};
     k_spinlock_key_t key;
     bool queued = false;
 
-    bt_data_parse(buf, parse_mesh_ad, &context);
-    if (!context.found) {
+    if (context == NULL || !context->found || context->payload_len > UINT8_MAX) {
         return false;
     }
 
     key = k_spin_lock(&mesh_rx_lock);
     if (!mesh_rx_pending.valid) {
-        mesh_rx_pending.packet = context.packet;
-        if (context.payload_len > 0u) {
-            memcpy(mesh_rx_pending.payload, context.payload, context.payload_len);
+        mesh_rx_pending.packet = context->packet;
+        if (context->payload_len > 0u) {
+            memcpy(mesh_rx_pending.payload, context->payload, context->payload_len);
         }
-        mesh_rx_pending.payload_len = context.payload_len;
-        mesh_rx_pending.previous_hop_id = context.previous_hop_id;
+        mesh_rx_pending.payload_len = (uint8_t)context->payload_len;
+        mesh_rx_pending.previous_hop_id = context->previous_hop_id;
         mesh_rx_pending.link_quality = mesh_quality_from_rssi(rssi);
         mesh_rx_pending.valid = true;
         queued = true;
@@ -1221,6 +1161,14 @@ static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi)
         LOG_WRN("mesh RX dropped because work slot is occupied");
     }
     return true;
+}
+
+static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi)
+{
+    struct mesh_frame_parse_context context = {0};
+
+    bt_data_parse(buf, parse_mesh_ad, &context);
+    return mesh_queue_parsed(&context, rssi);
 }
 
 static int build_range_report(uint64_t clicker_id,
@@ -1281,7 +1229,11 @@ static int build_range_report(uint64_t clicker_id,
         };
 
         memcpy(outbound.payload, payload, payload_len);
-        mesh_start_tracked_tx(&outbound, "click-report");
+        ret = mesh_start_tracked_tx(&outbound, "click-report");
+        if (ret < 0) {
+            LOG_WRN("click report mesh TX could not start: %d", ret);
+            return ret;
+        }
     }
     return 0;
 }
