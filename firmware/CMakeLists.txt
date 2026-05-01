@@ -9,6 +9,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(core
     src/protocol.c
     src/discovery.c
+    src/gateway_command.c
     src/uwb.c
     src/mesh.c
     src/mesh_ble.c
@@ -39,6 +40,10 @@ add_test(NAME status COMMAND test_status)
 add_executable(test_discovery tests/test_discovery.c)
 target_link_libraries(test_discovery PRIVATE core)
 add_test(NAME discovery COMMAND test_discovery)
+
+add_executable(test_gateway_command tests/test_gateway_command.c)
+target_link_libraries(test_gateway_command PRIVATE core)
+add_test(NAME gateway_command COMMAND test_gateway_command)
 
 add_executable(test_uwb tests/test_uwb.c)
 target_link_libraries(test_uwb PRIVATE core)

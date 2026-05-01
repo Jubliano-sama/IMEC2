@@ -1,6 +1,7 @@
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "discovery.h"
+#include "gateway_command.h"
 #include "mesh.h"
 #include "mesh_ble.h"
 #include "mesh_relay.h"
@@ -411,30 +412,6 @@ static uint16_t gateway_next_command_seq(void)
     return gateway_command_seq;
 }
 
-static int command_id_from_payload(const uint8_t *payload,
-                                   size_t payload_len,
-                                   enum command_id *command_id)
-{
-    const uint8_t *value = NULL;
-    uint8_t value_len = 0u;
-    int ret;
-
-    if (payload == NULL || command_id == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = tlv_find(payload, payload_len, TLV_COMMAND_ID, &value, &value_len);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (value_len != sizeof(uint16_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    *command_id = (enum command_id)proto_get_u16_le(value);
-    return PROTO_OK;
-}
-
 static int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_t *payload_len)
 {
     int ret;
@@ -510,30 +487,20 @@ static void gateway_emit_serial_command_result(const struct proto_packet *comman
         return;
     }
 
-    ret = mesh_append_command_result(payload,
-                                     sizeof(payload),
-                                     &payload_len,
-                                     command_id,
-                                     status,
-                                     reason);
+    ret = gateway_command_build_failure_result(command,
+                                               DEVICE_ID,
+                                               command_id,
+                                               status,
+                                               reason,
+                                               k_uptime_get_32(),
+                                               &result,
+                                               payload,
+                                               sizeof(payload),
+                                               &payload_len);
     if (ret != PROTO_OK) {
+        LOG_WRN("gateway command failure result build failed: %d", ret);
         return;
     }
-
-    result.msg_type = MSG_COMMAND_RESULT;
-    result.flags = FLAG_ERROR;
-    if ((command->flags & FLAG_DIAGNOSTIC) != 0u) {
-        result.flags |= FLAG_DIAGNOSTIC;
-    }
-    result.src_id = DEVICE_ID;
-    result.dst_id = DEVICE_ID;
-    result.session_id = command->session_id == 0u ? k_uptime_get_32() : command->session_id;
-    if (result.session_id == 0u) {
-        result.session_id = 1u;
-    }
-    result.seq = command->seq;
-    result.ttl = 1u;
-    result.payload_len = (uint8_t)payload_len;
 
     ret = gateway_emit_serial_packet(&result, payload, payload_len);
     if (ret < 0) {
@@ -557,7 +524,7 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
         return;
     }
 
-    ret = command_id_from_payload(payload, payload_len, &command_id);
+    ret = gateway_command_extract_id(payload, payload_len, &command_id);
     if (ret != PROTO_OK) {
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = (uint8_t)(-ret);
@@ -587,51 +554,30 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
 {
     struct mesh_outbound outbound = {0};
     enum command_id command_id = CMD_VENDOR_BASE;
-    uint32_t session_id;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -EINVAL;
     }
-    if (packet == NULL || (payload == NULL && payload_len != 0u) ||
-        payload_len > UINT8_MAX || packet->msg_type != MSG_COMMAND ||
-        packet->dst_id == DEVICE_ID || packet->dst_id == MESH_BROADCAST_ID) {
-        return -EINVAL;
-    }
 
-    ret = command_id_from_payload(payload, payload_len, &command_id);
+    ret = gateway_command_prepare_outbound(packet,
+                                           payload,
+                                           payload_len,
+                                           DEVICE_ID,
+                                           k_uptime_get_32(),
+                                           packet != NULL && packet->seq == 0u ?
+                                           gateway_next_command_seq() : 0u,
+                                           &outbound,
+                                           &command_id);
     if (ret != PROTO_OK) {
-        LOG_WRN("gateway rejected USB command with malformed COMMAND_ID: %d", ret);
+        LOG_WRN("gateway rejected USB command: %d", ret);
         gateway_emit_serial_command_result(packet,
                                            CMD_VENDOR_BASE,
+                                           ret == PROTO_ERR_ARG ? COMMAND_DENIED :
                                            COMMAND_MALFORMED_PAYLOAD,
                                            (uint8_t)(-ret));
-        return -EINVAL;
+        return mesh_errno_from_proto(ret);
     }
-
-    session_id = packet->session_id;
-    if (session_id == 0u) {
-        session_id = k_uptime_get_32();
-        if (session_id == 0u) {
-            session_id = 1u;
-        }
-    }
-
-    outbound.packet = *packet;
-    outbound.packet.src_id = DEVICE_ID;
-    outbound.packet.session_id = session_id;
-    outbound.packet.seq = packet->seq == 0u ? gateway_next_command_seq() : packet->seq;
-    outbound.packet.ttl = packet->ttl == 0u ? MESH_DEFAULT_TTL : packet->ttl;
-    outbound.packet.flags = FLAG_ACK_REQUESTED;
-    if ((packet->flags & FLAG_DIAGNOSTIC) != 0u) {
-        outbound.packet.flags |= FLAG_DIAGNOSTIC;
-    }
-    outbound.packet.payload_len = (uint8_t)payload_len;
-
-    if (payload_len > 0u) {
-        memcpy(outbound.payload, payload, payload_len);
-    }
-    outbound.payload_len = (uint8_t)payload_len;
 
     ret = mesh_start_tracked_tx(&outbound, "usb-command");
     if (ret < 0) {

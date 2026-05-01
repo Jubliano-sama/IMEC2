@@ -27,6 +27,7 @@ target_sources(app PRIVATE
     "${DWM3000_SDK_DIR}/decadriver/deca_device.c"
     ../src/protocol.c
     ../src/discovery.c
+    ../src/gateway_command.c
     ../src/uwb.c
     ../src/mesh.c
     ../src/mesh_ble.c
