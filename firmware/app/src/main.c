@@ -385,6 +385,23 @@ static int gateway_emit_serial_packet(const struct proto_packet *packet,
 #endif
 }
 
+static int mesh_errno_from_proto(int ret)
+{
+    switch (ret) {
+    case PROTO_OK:
+        return 0;
+    case PROTO_ERR_MALFORMED:
+        return -EBUSY;
+    case PROTO_ERR_NOT_FOUND:
+    case PROTO_ERR_STALE:
+        return -EHOSTUNREACH;
+    case PROTO_ERR_NO_SPACE:
+        return -ENOSPC;
+    default:
+        return -EINVAL;
+    }
+}
+
 static uint16_t gateway_next_command_seq(void)
 {
     gateway_command_seq++;
@@ -479,6 +496,51 @@ static int anchor_send_command_result(const struct proto_packet *command,
     return mesh_start_tracked_tx(&outbound, "command-result");
 }
 
+static void gateway_emit_serial_command_result(const struct proto_packet *command,
+                                               enum command_id command_id,
+                                               enum command_status status,
+                                               uint8_t reason)
+{
+    struct proto_packet result = {0};
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    int ret;
+
+    if (command == NULL || DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    ret = mesh_append_command_result(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     command_id,
+                                     status,
+                                     reason);
+    if (ret != PROTO_OK) {
+        return;
+    }
+
+    result.msg_type = MSG_COMMAND_RESULT;
+    result.flags = FLAG_ERROR;
+    if ((command->flags & FLAG_DIAGNOSTIC) != 0u) {
+        result.flags |= FLAG_DIAGNOSTIC;
+    }
+    result.src_id = DEVICE_ID;
+    result.dst_id = DEVICE_ID;
+    result.session_id = command->session_id == 0u ? k_uptime_get_32() : command->session_id;
+    if (result.session_id == 0u) {
+        result.session_id = 1u;
+    }
+    result.seq = command->seq;
+    result.ttl = 1u;
+    result.payload_len = (uint8_t)payload_len;
+
+    ret = gateway_emit_serial_packet(&result, payload, payload_len);
+    if (ret < 0) {
+        LOG_WRN("gateway USB command failure result not emitted: %d", ret);
+    }
+}
+
 static void anchor_handle_local_command(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len)
@@ -540,6 +602,10 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
     ret = command_id_from_payload(payload, payload_len, &command_id);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway rejected USB command with malformed COMMAND_ID: %d", ret);
+        gateway_emit_serial_command_result(packet,
+                                           CMD_VENDOR_BASE,
+                                           COMMAND_MALFORMED_PAYLOAD,
+                                           (uint8_t)(-ret));
         return -EINVAL;
     }
 
@@ -573,6 +639,10 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
                 (unsigned int)command_id,
                 (unsigned long long)outbound.packet.dst_id,
                 ret);
+        gateway_emit_serial_command_result(&outbound.packet,
+                                           command_id,
+                                           ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                           (uint8_t)(-ret));
         return ret;
     }
 
@@ -1397,7 +1467,7 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
                               &tx);
     if (ret != PROTO_OK) {
         LOG_WRN("mesh could not start tracked TX for %s: %d", reason, ret);
-        return -EHOSTUNREACH;
+        return mesh_errno_from_proto(ret);
     }
     ret = mesh_send_outbound(&tx, reason);
     if (ret < 0) {
