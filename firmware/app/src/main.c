@@ -1,6 +1,7 @@
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "discovery.h"
+#include "mesh.h"
 #include "mesh_ble.h"
 #include "mesh_relay.h"
 #include "protocol.h"
@@ -96,6 +97,7 @@ static struct k_work anchor_ble_work;
 static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable gateway_route_adv_work;
+static struct k_work_delayable gateway_serial_rx_work;
 static struct k_spinlock anchor_ble_lock;
 static struct k_spinlock clicker_ready_lock;
 static struct k_spinlock mesh_rx_lock;
@@ -119,6 +121,8 @@ static struct bt_le_ext_adv *mesh_ext_adv;
 #define ANCHOR_ERROR_BACKOFF_MS 5u
 #define MESH_ADV_TX_MS 30u
 #define GATEWAY_ROUTE_ADV_INTERVAL_MS 2000u
+#define GATEWAY_SERIAL_POLL_MS 10u
+#define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
 
 struct ready_anchor {
     struct ble_discovery_ready ready;
@@ -139,6 +143,12 @@ static struct ready_anchor clicker_ready_anchors[MAX_READY_ANCHORS];
 static uint8_t clicker_ready_count;
 static uint8_t clicker_ready_expected_flags;
 static struct mesh_rx_pending mesh_rx_pending;
+static uint8_t gateway_serial_rx_frame[SERIAL_FRAME_MAX_LEN];
+static size_t gateway_serial_rx_len;
+static bool gateway_serial_rx_overflow;
+static uint16_t gateway_command_seq;
+
+static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 
 static const struct bt_le_scan_param anchor_low_duty_scan_param = {
     .type = BT_LE_SCAN_TYPE_PASSIVE,
@@ -355,6 +365,7 @@ static int gateway_emit_serial_packet(const struct proto_packet *packet,
         return -EINVAL;
     }
 
+    uart_poll_out(serial_console, SERIAL_FRAME_DELIMITER);
     for (size_t i = 0u; i < frame_len; i++) {
         uart_poll_out(serial_console, frame[i]);
     }
@@ -372,6 +383,280 @@ static int gateway_emit_serial_packet(const struct proto_packet *packet,
     ARG_UNUSED(payload_len);
     return -ENODEV;
 #endif
+}
+
+static uint16_t gateway_next_command_seq(void)
+{
+    gateway_command_seq++;
+    if (gateway_command_seq == 0u) {
+        gateway_command_seq = 1u;
+    }
+    return gateway_command_seq;
+}
+
+static int command_id_from_payload(const uint8_t *payload,
+                                   size_t payload_len,
+                                   enum command_id *command_id)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || command_id == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(payload, payload_len, TLV_COMMAND_ID, &value, &value_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint16_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *command_id = (enum command_id)proto_get_u16_le(value);
+    return PROTO_OK;
+}
+
+static int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_t *payload_len)
+{
+    int ret;
+
+    ret = tlv_append_u8(payload, payload_cap, payload_len, TLV_DEVICE_ROLE, (uint8_t)DEVICE_ROLE);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, payload_len, TLV_UPTIME_MS, k_uptime_get_32());
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload, payload_cap, payload_len, TLV_STATUS_BITS, 0u);
+}
+
+static int anchor_send_command_result(const struct proto_packet *command,
+                                      enum command_id command_id,
+                                      enum command_status status,
+                                      uint8_t reason)
+{
+    struct mesh_outbound outbound = {0};
+    size_t payload_len = 0u;
+    bool diagnostic;
+    int ret;
+
+    if (command == NULL) {
+        return -EINVAL;
+    }
+
+    ret = mesh_append_command_result(outbound.payload,
+                                     sizeof(outbound.payload),
+                                     &payload_len,
+                                     command_id,
+                                     status,
+                                     reason);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    if (status == COMMAND_OK && command_id == CMD_GET_STATUS) {
+        ret = append_anchor_status_tlvs(outbound.payload, sizeof(outbound.payload), &payload_len);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+    }
+
+    diagnostic = (command->flags & FLAG_DIAGNOSTIC) != 0u;
+    ret = mesh_init_command_result(&outbound.packet,
+                                   DEVICE_ID,
+                                   GATEWAY_ID,
+                                   command->session_id,
+                                   command->seq,
+                                   (uint8_t)payload_len,
+                                   diagnostic);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    outbound.payload_len = (uint8_t)payload_len;
+
+    return mesh_start_tracked_tx(&outbound, "command-result");
+}
+
+static void anchor_handle_local_command(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+    enum command_status status = COMMAND_OK;
+    uint8_t reason = 0u;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        packet == NULL ||
+        packet->msg_type != MSG_COMMAND ||
+        packet->dst_id != DEVICE_ID) {
+        return;
+    }
+
+    ret = command_id_from_payload(payload, payload_len, &command_id);
+    if (ret != PROTO_OK) {
+        status = COMMAND_MALFORMED_PAYLOAD;
+        reason = (uint8_t)(-ret);
+    } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
+        status = COMMAND_UNSUPPORTED_COMMAND;
+        reason = 1u;
+    }
+
+    ret = anchor_send_command_result(packet, command_id, status, reason);
+    if (ret < 0) {
+        LOG_WRN("anchor command result TX failed: cmd=0x%04x status=%u ret=%d",
+                (unsigned int)command_id,
+                status,
+                ret);
+        return;
+    }
+
+    LOG_INF("anchor command handled: cmd=0x%04x status=%u reason=%u",
+            (unsigned int)command_id,
+            status,
+            reason);
+}
+
+static int gateway_route_serial_packet(struct proto_packet *packet,
+                                       uint8_t *payload,
+                                       size_t payload_len)
+{
+    struct mesh_outbound outbound = {0};
+    enum command_id command_id = CMD_VENDOR_BASE;
+    uint32_t session_id;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -EINVAL;
+    }
+    if (packet == NULL || (payload == NULL && payload_len != 0u) ||
+        payload_len > UINT8_MAX || packet->msg_type != MSG_COMMAND ||
+        packet->dst_id == DEVICE_ID || packet->dst_id == MESH_BROADCAST_ID) {
+        return -EINVAL;
+    }
+
+    ret = command_id_from_payload(payload, payload_len, &command_id);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway rejected USB command with malformed COMMAND_ID: %d", ret);
+        return -EINVAL;
+    }
+
+    session_id = packet->session_id;
+    if (session_id == 0u) {
+        session_id = k_uptime_get_32();
+        if (session_id == 0u) {
+            session_id = 1u;
+        }
+    }
+
+    outbound.packet = *packet;
+    outbound.packet.src_id = DEVICE_ID;
+    outbound.packet.session_id = session_id;
+    outbound.packet.seq = packet->seq == 0u ? gateway_next_command_seq() : packet->seq;
+    outbound.packet.ttl = packet->ttl == 0u ? MESH_DEFAULT_TTL : packet->ttl;
+    outbound.packet.flags = FLAG_ACK_REQUESTED;
+    if ((packet->flags & FLAG_DIAGNOSTIC) != 0u) {
+        outbound.packet.flags |= FLAG_DIAGNOSTIC;
+    }
+    outbound.packet.payload_len = (uint8_t)payload_len;
+
+    if (payload_len > 0u) {
+        memcpy(outbound.payload, payload, payload_len);
+    }
+    outbound.payload_len = (uint8_t)payload_len;
+
+    ret = mesh_start_tracked_tx(&outbound, "usb-command");
+    if (ret < 0) {
+        LOG_WRN("gateway USB command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
+                (unsigned int)command_id,
+                (unsigned long long)outbound.packet.dst_id,
+                ret);
+        return ret;
+    }
+
+    LOG_INF("gateway USB command routed: cmd=0x%04x dst=0x%016llx session=%u seq=%u ttl=%u",
+            (unsigned int)command_id,
+            (unsigned long long)outbound.packet.dst_id,
+            outbound.packet.session_id,
+            outbound.packet.seq,
+            outbound.packet.ttl);
+    return 0;
+}
+
+static void gateway_handle_serial_frame(const uint8_t *frame, size_t frame_len)
+{
+    struct proto_packet packet = {0};
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    int ret;
+
+    ret = serial_frame_decode_packet(frame,
+                                     frame_len,
+                                     &packet,
+                                     payload,
+                                     sizeof(payload),
+                                     &payload_len);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway USB COBS frame decode failed: %d", ret);
+        return;
+    }
+
+    ret = gateway_route_serial_packet(&packet, payload, payload_len);
+    if (ret < 0) {
+        LOG_WRN("gateway USB packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
+                packet.msg_type,
+                (unsigned long long)packet.dst_id,
+                ret);
+    }
+}
+
+static void gateway_serial_rx_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+#if HAS_SERIAL_CONSOLE
+    if (device_is_ready(serial_console) && debug_serial_dtr_ready()) {
+        unsigned char byte;
+        uint16_t read_count = 0u;
+
+        while (read_count < GATEWAY_SERIAL_MAX_BYTES_PER_POLL &&
+               uart_poll_in(serial_console, &byte) == 0) {
+            read_count++;
+
+            if (gateway_serial_rx_overflow) {
+                if (byte == SERIAL_FRAME_DELIMITER) {
+                    gateway_serial_rx_overflow = false;
+                    gateway_serial_rx_len = 0u;
+                    LOG_WRN("gateway USB RX frame dropped after overflow");
+                }
+                continue;
+            }
+
+            if (gateway_serial_rx_len >= sizeof(gateway_serial_rx_frame)) {
+                gateway_serial_rx_overflow = true;
+                gateway_serial_rx_len = 0u;
+                continue;
+            }
+
+            gateway_serial_rx_frame[gateway_serial_rx_len] = byte;
+            gateway_serial_rx_len++;
+            if (byte == SERIAL_FRAME_DELIMITER) {
+                if (gateway_serial_rx_len > 1u) {
+                    gateway_handle_serial_frame(gateway_serial_rx_frame, gateway_serial_rx_len);
+                }
+                gateway_serial_rx_len = 0u;
+            }
+        }
+    }
+#endif
+
+    (void)k_work_reschedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
 }
 
 static int ble_start_manufacturer_advertising(const uint8_t *payload, size_t payload_len)
@@ -1207,6 +1492,9 @@ static void mesh_rx_work_handler(struct k_work *work)
         if (ret < 0) {
             LOG_WRN("gateway USB COBS frame not emitted: %d", ret);
         }
+    } else if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
+               DEVICE_ROLE == ROLE_ANCHOR) {
+        anchor_handle_local_command(&pending.packet, pending.payload, pending.payload_len);
     }
 }
 
@@ -1682,12 +1970,14 @@ int main(void)
                         GATEWAY_ID,
                         1u);
         k_work_init_delayable(&gateway_route_adv_work, gateway_route_adv_work_handler);
+        k_work_init_delayable(&gateway_serial_rx_work, gateway_serial_rx_work_handler);
         ret = gateway_start_mesh_scan();
         if (ret < 0) {
             LOG_ERR("gateway mesh scan unavailable: %d", ret);
         }
         (void)k_work_schedule(&gateway_route_adv_work, K_MSEC(250u));
-        LOG_INF("gateway mesh root active; USB COBS packet output active; command dispatcher pending");
+        (void)k_work_schedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
+        LOG_INF("gateway mesh root active; USB COBS packet input/output active");
     }
 
     return 0;
