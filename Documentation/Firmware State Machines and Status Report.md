@@ -248,7 +248,7 @@ The gateway is the active mesh root: it advertises the route epoch, learns downl
 ### Clicker
 
 - Produce explicit partial-failure packets when some anchors time out or return bad range status.
-- Add real low-power transitions after click/self-test.
+- Measure actual post-click/self-test sleep current on hardware and tune MCU system sleep policy if needed.
 - Integrate battery/charger measurement into self-test and status reporting.
 
 ### Anchor
