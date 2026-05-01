@@ -32,7 +32,7 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 | Completed | Implement BLE discovery request/READY payloads | Normal and diagnostic discovery payloads |
 | In progress | Implement DWM3000 STS-SDC DS-TWR wrapper | SPI-polled initiator/responder runtime is wired; hardware timing/calibration smoke test pending |
 | Completed | Implement multi-anchor MVP click flow | Clicker advertises discovery, collects up to 8 READY anchors, RSSI-sorts them, ranges sequentially, and builds one report per successful range |
-| In progress | Implement full clicker normal-click flow | Explicit partial-failure reporting and gateway delivery pending |
+| In progress | Implement full clicker normal-click flow | Successful anchor reports route through mesh; post-poll responder failures are reported; hardware validation pending |
 | In progress | Implement clicker self-test flow | Gesture, diagnostic BLE advertisement, READY scan, DWM3000 wake/reset/DEV_ID probe, and diagnostic UWB dud range wired; hardware validation pending |
 | Completed | Enforce BLE-gated anchor UWB wake | Anchor low-duty scans BLE, wakes UWB only after discovery, keeps a 400 ms responder window, then returns DWM3000 to standby |
 
@@ -40,18 +40,18 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 
 | Status | Task | Output |
 | --- | --- | --- |
-| In progress | Implement mesh packet relay with hop ACK | Hop ACK packet builder complete; relay runtime pending |
-| In progress | Implement gateway ACK handling | End-to-end gateway ACK packet builder complete; relay runtime pending |
-| Pending | Implement route advertisements and route status | Self-organizing mesh root discovery |
-| In progress | Implement gateway command dispatcher | Command and command-result packet builders complete; dispatch handlers pending |
+| Completed | Implement mesh packet relay with hop ACK | Relay runtime, hop ACKs, retries, duplicate suppression, and burst RX queue |
+| Completed | Implement gateway ACK handling | End-to-end gateway ACK runtime for gateway-bound reports/status/results |
+| Completed | Implement route advertisements and route status | Self-organizing upstream route discovery and gateway downlink directory |
+| In progress | Implement gateway command dispatcher | USB command routing, basic anchor ping/status, unsupported-command responses; broader command set pending |
 | Pending | Implement anchor self-distance survey | Reachability graph, pair preparation, exactly `n` measurements |
-| Pending | Implement COBS USB serial gateway output | Binary frames for off-site processor |
+| Completed | Implement COBS USB serial gateway output | Binary gateway packets and command failures emitted over USB CDC |
 
 ## P4 - Verification
 
 | Status | Task | Output |
 | --- | --- | --- |
-| Completed | Native unit tests | Packet, TLV, COBS, discovery, UWB frames, status, route, mesh ACK, reports, survey |
+| Completed | Native unit tests | Packet, TLV, COBS, discovery, UWB frames, status, route, mesh relay, BLE mesh frames, gateway command policy, reports, survey |
 | Completed | Zephyr build test | App compiles for `nrf52833dk/nrf52833` in the root west workspace |
 | Pending | Hardware smoke test | Device ID, BLE discovery/READY, DWM3000 sleep/wake, one SPI-polled range |
 | Pending | Integration test | Normal click, self-test, route retry, survey run |

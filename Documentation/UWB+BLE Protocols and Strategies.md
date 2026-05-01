@@ -102,7 +102,7 @@ Self-test performs local module checks first, then emits a diagnostic BLE discov
 
 Anchors are BLE-gated for both real and diagnostic clicker-originated ranging. An anchor low-duty scans BLE while the DWM3000 is idle/asleep. After it decodes a valid discovery request, it advertises READY and opens a bounded UWB responder window. The current MVP keeps this window open for 400 ms so the clicker can complete sequential DS-TWR with up to 8 discovered anchors. When the window expires, the anchor closes READY advertising, returns DWM3000 to standby, and resumes low-duty BLE scanning.
 
-The MVP click path collects up to 8 READY anchors, deduplicates them by anchor ID, scores them by reciprocal RSSI, ranges them sequentially, and builds one click report packet per successful DS-TWR result. Full v1 still needs explicit partial-failure packets, mesh forwarding, hop ACKs, and gateway ACKs.
+The MVP click path collects up to 8 READY anchors, deduplicates them by anchor ID, scores them by reciprocal RSSI, ranges them sequentially, and builds one click report packet per successful DS-TWR result. If an anchor receives the UWB poll but the responder-side exchange fails before a valid report, the anchor now forwards a failed range report with the relevant `RANGE_STATUS` instead of silently disappearing.
 
 ## Mesh Protocol
 
@@ -250,6 +250,36 @@ Gateway commands do not use `GATEWAY_ACK_REQUIRED` because the gateway is the se
 If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands.
 
 This keeps mesh communication symmetric for v1 testing: every important sender knows whether the next hop received the packet, and every gateway-bound sender can also know whether the gateway received it.
+
+### What Each Device Stores
+
+The firmware does not make every anchor hold a full all-to-all map. It stores only the pieces needed for the next decision:
+
+| Device | Stored routing state | What it means |
+| --- | --- | --- |
+| Gateway | Downlink directory keyed by anchor ID | "To reach Anchor A, first send to Neighbor B." Learned from `ROUTE_STATUS`. |
+| Relay anchor | Upstream candidates keyed by gateway and downlink entries keyed by target anchor | "For gateway-bound traffic, hand it to my selected upstream neighbor. For a known anchor behind me, hand it to that anchor or relay." |
+| Edge anchor | Upstream candidates keyed by gateway | "To reach Gateway G, hand traffic to this neighbor." It may not know how to reach every other anchor. |
+
+An anchor does keep hop count to a gateway for each candidate route. It does not keep hop distance to every other anchor. The gateway is the device that gradually builds the useful anchor directory, because every anchor's `ROUTE_STATUS` travels toward the gateway and leaves reverse breadcrumbs on the way.
+
+### How One Message Reaches One Anchor
+
+If I explain the gateway-to-anchor path to myself, it is:
+
+1. The gateway wants to reach `dst_id=Anchor A`.
+2. It checks its downlink directory for Anchor A.
+3. The directory says, for example, "Anchor A is behind Anchor B."
+4. The gateway sends one BLE mesh frame to Anchor B. The packet still says `dst_id=Anchor A`; only the local BLE next hop is B.
+5. Anchor B receives it, sends a hop ACK back to the gateway, then checks its own downlink table.
+6. If B knows A directly, B sends the same packet to A. If not, B sends it to the next relay it has stored for A.
+7. Anchor A receives a packet whose `dst_id` is its own ID, handles it locally, and returns a `COMMAND_RESULT` back upstream to the gateway.
+
+The message is therefore a chain of local unicast handoffs, not a hail-mary broadcast. Broadcast is reserved for route advertisements and discovery-like control traffic. Operational commands, reports, command results, route status packets, and ACKs are sent to one selected next hop at a time.
+
+If a next hop does not ACK, the sender retries and eventually invalidates that route. If no alternate route exists, the gateway gets a command failure locally over USB, or the anchor marks route discovery needed for gateway-bound packets.
+
+The live Zephyr runtime buffers up to 8 decoded mesh frames in a receive queue before processing. This avoids losing route/status/report bursts just because one work item was already busy.
 
 ## Anchor Self-Distance Survey Strategy
 

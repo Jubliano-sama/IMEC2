@@ -722,7 +722,6 @@ int dwm3000_driver_responder_poll_once(uint64_t local_anchor_id,
 
     if (result != NULL) {
         memset(result, 0, sizeof(*result));
-        result->responder_id = local_anchor_id;
         result->status = RANGE_INTERNAL_ERROR;
     }
 
@@ -758,6 +757,11 @@ int dwm3000_driver_responder_poll_once(uint64_t local_anchor_id,
     if (!poll_targets_anchor(&poll, local_anchor_id)) {
         return -EAGAIN;
     }
+    if (result != NULL) {
+        result->responder_id = local_anchor_id;
+        result->quality = quality;
+        result->status = RANGE_INTERNAL_ERROR;
+    }
 
     resp_tx_time = (uint32_t)((poll_rx_ts +
                                (POLL_RX_TO_RESP_TX_DLY_UUS *
@@ -777,6 +781,9 @@ int dwm3000_driver_responder_poll_once(uint64_t local_anchor_id,
 
     ret = uwb_encode_response(&response, tx_buffer, sizeof(tx_buffer), &tx_len);
     if (ret != PROTO_OK) {
+        if (result != NULL) {
+            result->status = RANGE_INTERNAL_ERROR;
+        }
         return -EINVAL;
     }
 
@@ -787,6 +794,9 @@ int dwm3000_driver_responder_poll_once(uint64_t local_anchor_id,
     ret = send_range_frame(tx_buffer, tx_len,
                            DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
     if (ret < 0) {
+        if (result != NULL) {
+            result->status = RANGE_DELAYED_TX_MISSED;
+        }
         return -ETIME;
     }
 
@@ -794,6 +804,10 @@ int dwm3000_driver_responder_poll_once(uint64_t local_anchor_id,
                         rx_buffer, sizeof(rx_buffer), &frame_len,
                         &final_rx_ts, &quality);
     if (ret < 0) {
+        if (result != NULL) {
+            result->quality = quality;
+            result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
+        }
         return ret;
     }
 

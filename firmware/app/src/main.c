@@ -1026,7 +1026,7 @@ static void anchor_discovery_work_handler(struct k_work *work)
         ret = dwm3000_driver_responder_poll_once(DEVICE_ID,
                                                       poll_timeout_ms,
                                                       &range_result);
-        if (ret == -ETIMEDOUT) {
+        if (ret == -ETIMEDOUT && range_result.responder_id != DEVICE_ID) {
             break;
         }
         if (ret == -EAGAIN) {
@@ -1034,7 +1034,27 @@ static void anchor_discovery_work_handler(struct k_work *work)
             continue;
         }
         if (ret < 0) {
-            LOG_WRN("anchor responder exchange failed: %d", ret);
+            if (range_result.responder_id == DEVICE_ID) {
+                handled_ranges++;
+                LOG_WRN("anchor responder exchange %u failed after poll: clicker=0x%016llx event_seq=%u ret=%d status=%u quality=%u",
+                        handled_ranges,
+                        (unsigned long long)request.clicker_id,
+                        request.event_seq,
+                        ret,
+                        range_result.status,
+                        range_result.quality);
+                if (ble_flags_count_as_click(request.flags)) {
+                    int report_ret = build_range_report(request.clicker_id,
+                                                        request.event_seq,
+                                                        &range_result);
+                    if (report_ret < 0) {
+                        LOG_WRN("failed to report anchor-side range failure: %d",
+                                report_ret);
+                    }
+                }
+            } else {
+                LOG_WRN("anchor responder exchange failed before valid poll: %d", ret);
+            }
             k_msleep(ANCHOR_ERROR_BACKOFF_MS);
             continue;
         }
