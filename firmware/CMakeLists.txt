@@ -11,6 +11,7 @@ add_library(core
     src/discovery.c
     src/uwb.c
     src/mesh.c
+    src/mesh_relay.c
     src/report.c
     src/status.c
     src/route.c
@@ -48,6 +49,10 @@ add_test(NAME route COMMAND test_route)
 add_executable(test_mesh tests/test_mesh.c)
 target_link_libraries(test_mesh PRIVATE core)
 add_test(NAME mesh COMMAND test_mesh)
+
+add_executable(test_mesh_relay tests/test_mesh_relay.c)
+target_link_libraries(test_mesh_relay PRIVATE core)
+add_test(NAME mesh_relay COMMAND test_mesh_relay)
 
 add_executable(test_report tests/test_report.c)
 target_link_libraries(test_report PRIVATE core)
