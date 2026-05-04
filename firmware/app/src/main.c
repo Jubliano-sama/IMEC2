@@ -2490,8 +2490,7 @@ static bool mesh_outbound_uses_advertising(const struct mesh_outbound *out)
     }
 
     return out->packet.msg_type == MSG_ROUTE_REQ ||
-           out->packet.msg_type == MSG_ROUTE_REPLY ||
-           out->packet.msg_type == MSG_ROUTE_ADV;
+           out->packet.msg_type == MSG_ROUTE_REPLY;
 }
 
 static int mesh_send_connected_payload(const struct mesh_outbound *out,
@@ -2776,12 +2775,6 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
     }
     if (result->actions & MESH_RELAY_ACTION_FORWARD) {
         (void)mesh_start_tracked_tx(&result->forward, "forward");
-    }
-    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_STATUS) {
-        (void)mesh_start_tracked_tx(&result->route_status, "route-status");
-    }
-    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_ADV) {
-        (void)mesh_send_outbound(&result->route_adv, "route-adv");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
         (void)mesh_send_outbound(&result->route_request, "route-request-forward");
