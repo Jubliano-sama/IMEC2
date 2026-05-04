@@ -40,11 +40,19 @@ int report_append_range_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_TIMESTAMP_MS, fields->timestamp_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = tlv_append_i32(payload, payload_cap, offset, TLV_DISTANCE_MM, fields->distance_mm);
     if (ret != PROTO_OK) {
         return ret;
     }
     ret = tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, fields->quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_i8(payload, payload_cap, offset, TLV_UWB_RSL_DBM, fields->rsl_dbm);
     if (ret != PROTO_OK) {
         return ret;
     }

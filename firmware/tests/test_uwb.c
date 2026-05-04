@@ -8,8 +8,8 @@ static struct uwb_range_header header(uint8_t type, uint8_t flags)
         .type = type,
         .seq = 17u,
         .session_id = 0xAABBCCDDu,
-        .initiator_id = 0x1122334455667788ull,
-        .responder_id = 0x8877665544332211ull,
+        .initiator_short_addr = 0x7788u,
+        .responder_short_addr = 0x2211u,
         .flags = flags,
     };
     return value;
@@ -21,8 +21,8 @@ static void assert_same_header(const struct uwb_range_header *actual,
     assert(actual->type == expected->type);
     assert(actual->seq == expected->seq);
     assert(actual->session_id == expected->session_id);
-    assert(actual->initiator_id == expected->initiator_id);
-    assert(actual->responder_id == expected->responder_id);
+    assert(actual->initiator_short_addr == expected->initiator_short_addr);
+    assert(actual->responder_short_addr == expected->responder_short_addr);
     assert(actual->flags == expected->flags);
 }
 
@@ -38,6 +38,10 @@ static void test_poll_round_trip_diagnostic_not_click(void)
     assert(buf[0] == UWB_MARKER);
     assert(buf[1] == UWB_VERSION);
     assert(buf[2] == MSG_UWB_POLL);
+    assert(UWB_POLL_LEN == 13u);
+    assert(UWB_RESP_LEN == 21u);
+    assert(UWB_FINAL_LEN == 25u);
+    assert(UWB_REPORT_LEN == 21u);
 
     assert(uwb_decode_poll(buf, written, &decoded) == PROTO_OK);
     assert_same_header(&decoded, &poll);
@@ -63,6 +67,7 @@ static void test_response_final_and_report_round_trip(void)
         .distance_mm = -1234,
         .quality = 91u,
         .status = RANGE_OK,
+        .rsl_dbm = -72,
     };
     struct uwb_response_frame decoded_response = {0};
     struct uwb_final_frame decoded_final = {0};
@@ -92,6 +97,7 @@ static void test_response_final_and_report_round_trip(void)
     assert(decoded_report.distance_mm == report.distance_mm);
     assert(decoded_report.quality == report.quality);
     assert(decoded_report.status == report.status);
+    assert(decoded_report.rsl_dbm == report.rsl_dbm);
 }
 
 static void test_rejects_invalid_header_and_status(void)

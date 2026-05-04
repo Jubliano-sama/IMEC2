@@ -24,9 +24,9 @@ static int encode_header(const struct uwb_range_header *header,
     out[2] = header->type;
     out[3] = header->seq;
     proto_put_u32_le(&out[4], header->session_id);
-    proto_put_u64_le(&out[8], header->initiator_id);
-    proto_put_u64_le(&out[16], header->responder_id);
-    out[24] = header->flags;
+    proto_put_u16_le(&out[8], header->initiator_short_addr);
+    proto_put_u16_le(&out[10], header->responder_short_addr);
+    out[12] = header->flags;
     return PROTO_OK;
 }
 
@@ -52,9 +52,9 @@ static int decode_header(const uint8_t *data,
     header->type = data[2];
     header->seq = data[3];
     header->session_id = proto_get_u32_le(&data[4]);
-    header->initiator_id = proto_get_u64_le(&data[8]);
-    header->responder_id = proto_get_u64_le(&data[16]);
-    header->flags = data[24];
+    header->initiator_short_addr = proto_get_u16_le(&data[8]);
+    header->responder_short_addr = proto_get_u16_le(&data[10]);
+    header->flags = data[12];
     return uwb_header_validate(header, expected_type);
 }
 
@@ -75,9 +75,9 @@ int uwb_header_validate(const struct uwb_range_header *header, uint8_t expected_
         return PROTO_ERR_MALFORMED;
     }
     if (header->session_id == 0u ||
-        header->initiator_id == 0u ||
-        header->responder_id == 0u ||
-        header->initiator_id == header->responder_id) {
+        header->initiator_short_addr == 0u ||
+        header->responder_short_addr == 0u ||
+        header->initiator_short_addr == header->responder_short_addr) {
         return PROTO_ERR_MALFORMED;
     }
     if ((header->flags & FLAG_DIAGNOSTIC) != 0u &&
@@ -136,8 +136,8 @@ int uwb_encode_response(const struct uwb_response_frame *frame,
         return ret;
     }
 
-    proto_put_u32_le(&out[25], frame->poll_rx_ts_32);
-    proto_put_u32_le(&out[29], frame->resp_tx_ts_32);
+    proto_put_u32_le(&out[13], frame->poll_rx_ts_32);
+    proto_put_u32_le(&out[17], frame->resp_tx_ts_32);
     *written = UWB_RESP_LEN;
     return PROTO_OK;
 }
@@ -157,8 +157,8 @@ int uwb_decode_response(const uint8_t *data,
         return ret;
     }
 
-    frame->poll_rx_ts_32 = proto_get_u32_le(&data[25]);
-    frame->resp_tx_ts_32 = proto_get_u32_le(&data[29]);
+    frame->poll_rx_ts_32 = proto_get_u32_le(&data[13]);
+    frame->resp_tx_ts_32 = proto_get_u32_le(&data[17]);
     return PROTO_OK;
 }
 
@@ -181,9 +181,9 @@ int uwb_encode_final(const struct uwb_final_frame *frame,
         return ret;
     }
 
-    proto_put_u32_le(&out[25], frame->poll_tx_ts_32);
-    proto_put_u32_le(&out[29], frame->resp_rx_ts_32);
-    proto_put_u32_le(&out[33], frame->final_tx_ts_32);
+    proto_put_u32_le(&out[13], frame->poll_tx_ts_32);
+    proto_put_u32_le(&out[17], frame->resp_rx_ts_32);
+    proto_put_u32_le(&out[21], frame->final_tx_ts_32);
     *written = UWB_FINAL_LEN;
     return PROTO_OK;
 }
@@ -203,9 +203,9 @@ int uwb_decode_final(const uint8_t *data,
         return ret;
     }
 
-    frame->poll_tx_ts_32 = proto_get_u32_le(&data[25]);
-    frame->resp_rx_ts_32 = proto_get_u32_le(&data[29]);
-    frame->final_tx_ts_32 = proto_get_u32_le(&data[33]);
+    frame->poll_tx_ts_32 = proto_get_u32_le(&data[13]);
+    frame->resp_rx_ts_32 = proto_get_u32_le(&data[17]);
+    frame->final_tx_ts_32 = proto_get_u32_le(&data[21]);
     return PROTO_OK;
 }
 
@@ -235,9 +235,10 @@ int uwb_encode_report(const struct uwb_report_frame *frame,
         return ret;
     }
 
-    proto_put_u32_le(&out[25], (uint32_t)frame->distance_mm);
-    out[29] = frame->quality;
-    proto_put_u16_le(&out[30], (uint16_t)frame->status);
+    proto_put_u32_le(&out[13], (uint32_t)frame->distance_mm);
+    out[17] = frame->quality;
+    proto_put_u16_le(&out[18], (uint16_t)frame->status);
+    out[20] = (uint8_t)frame->rsl_dbm;
     *written = UWB_REPORT_LEN;
     return PROTO_OK;
 }
@@ -257,9 +258,10 @@ int uwb_decode_report(const uint8_t *data,
         return ret;
     }
 
-    frame->distance_mm = (int32_t)proto_get_u32_le(&data[25]);
-    frame->quality = data[29];
-    frame->status = (enum range_status)proto_get_u16_le(&data[30]);
+    frame->distance_mm = (int32_t)proto_get_u32_le(&data[13]);
+    frame->quality = data[17];
+    frame->status = (enum range_status)proto_get_u16_le(&data[18]);
+    frame->rsl_dbm = (int8_t)data[20];
 
     if (frame->quality > 100u) {
         return PROTO_ERR_MALFORMED;

@@ -1,6 +1,43 @@
 # UWB+BLE Protocols and Strategies
 
+Version: 0.1.6
+
 This document describes the v1 firmware wire protocol and the implementation strategies that go with it. It is deliberately separate from the architecture document so protocol choices can be reviewed without rereading the hardware and product context.
+
+## Changelog
+
+### 2026-05-04 - 0.1.6
+
+- Replace scheduled grant/slot discovery with the robust wake/READY strategy from `From Click to Ranging, Developing a Robust Strategy.md`: 330 ms clicker wake advertisements, timed 200 ms READY scans, deterministic anchor arbitration, 180 ms addressed READY advertisements, 500 ms anchor UWB wait windows, up to 6 wake attempts, and 4 unique successfully ranged anchors required for a normal click.
+- Compact DS-TWR UWB frames by replacing repeated 64-bit IDs with 16-bit UWB short addresses in timing-critical UWB packets.
+- Document the DS-TWR timing rule: equal reply delays are the first priority; shortest possible common delay is second. With the current 13 B poll and 21 B response, the slower receive path is 8 B longer, or 10 us at 6.8 Mbps.
+
+### 2026-05-04 - 0.1.5
+
+- Add UWB received signal level reporting: click range reports now carry `UWB_RSL_DBM`, an `i8` dBm estimate from DWM3000 RX diagnostics.
+
+### 2026-05-04 - 0.1.4
+
+- Update the current BLE radio settings to SoftDevice Controller with LE 1M PHY extended advertising and 1M scanning; Coded PHY and 2M PHY controller support are disabled.
+
+### 2026-05-03 - 0.1.3
+
+- Change the scheduled ranging strategy to one deterministic clicker per anchor service epoch, avoiding cross-anchor UWB collisions between simultaneous clickers.
+- Document the 13 s grant join window and 1.6 s selected-clicker UWB slot used for the four-simultaneous-click timing budget.
+
+### 2026-05-03 - 0.1.2
+
+- Clarify that clickers repeat fixed discovery advertisements followed by a minimum grant scan window when anchors miss the first discovery because they are busy.
+- Document the current 1 s discovery window, approximately 2.5 s minimum grant scan window, and 10 s grant join window.
+
+### 2026-05-03 - 0.1.1
+
+- Add the discovery-close delay to the BLE discovery request layout so anchors know when a clicker will stop advertising and start grant scanning.
+- Update the clicker-originated ranging strategy for fixed discovery advertisements, targeted grant scanning, and BLE-only grant phases before UWB slots.
+
+### 2026-05-02 - 0.1
+
+- Initial versioned release. Content migrated from unversioned `UWB+BLE Protocols and Strategies.md`.
 
 ## Abbreviations
 
@@ -19,9 +56,9 @@ This document describes the v1 firmware wire protocol and the implementation str
 
 ## Current Radio Settings
 
-BLE traffic uses LE Coded PHY/S=8 intent through non-connectable extended advertising and coded-only scanning. The nRF52 BLE transmit power is configured as `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm.
+BLE traffic uses the SoftDevice Controller with non-connectable extended advertising on LE 1M PHY and passive LE 1M scanning. Extended advertising disables the secondary 2M PHY with `BT_LE_ADV_OPT_NO_2M`; `CONFIG_BT_CTLR_PHY_CODED=n` and `CONFIG_BT_CTLR_PHY_2M=n` keep Coded and 2M controller PHY support off. The nRF52 BLE transmit power is configured as `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm.
 
-Anchors keep mesh scanning low duty cycle: 100 ms interval, 10 ms window. Coded advertisements use a 30-60 ms interval, and mesh advertisements stay active for 120 ms, giving each transmission multiple overlap opportunities with that scan cadence. Hop ACK replies wait 130 ms before advertising, which avoids replying while the original sender is still in its own half-duplex advertisement window. Senders wait 500 ms for hop ACKs.
+Anchors keep their idle BLE scan at a 300 ms interval and 30 ms window. Clicker wake and anchor READY extended advertisements use a 20 ms interval on LE 1M PHY. Mesh advertisements still stay active for 120 ms; hop ACK replies wait 130 ms before advertising, which avoids replying while the original sender is still in its own half-duplex advertisement window. Senders wait 500 ms for hop ACKs.
 
 UWB ranging uses DWM3000 channel 5 for click, self-test, and survey DS-TWR. The current DWM3000 TX RF register settings are `PGdly=0x34`, `TX_POWER=0xFDFDFDFD`, and `PGcount=0x0`. `TX_POWER` is the raw DW3000 register value; the final measured UWB output power must be validated/calibrated on hardware.
 
@@ -45,6 +82,42 @@ All non-advertising packets use the shared IMEC packet envelope:
 | CRC16 | 16 bits | Covers the envelope and payload. |
 
 USB serial frames wrap this binary packet with COBS. BLE advertisements use compact fixed layouts for discovery because advertisements have tight payload limits.
+
+## BLE Discovery Advertisements
+
+All discovery advertisements start with the 16-bit company ID, protocol version, and BLE message type. A clicker discovery request then carries:
+
+| Field | Size | Purpose |
+| --- | ---: | --- |
+| Clicker ID | 64 bits | Identifies the clicker asking to range. |
+| Event sequence | 32 bits | Groups all READY replies, UWB exchanges, and reports for this click or diagnostic event. |
+| Flags | 8 bits | Marks normal click versus diagnostic traffic. |
+| Attempt index | 8 bits | Wake attempt number for this click event. |
+| READY scan starts in | 16 bits | Milliseconds from this advertised payload until the clicker stops wake advertising and starts its READY scan. |
+| READY scan duration | 16 bits | Duration of the clicker's addressed READY scan window. |
+| Minimum anchor count | 8 bits | Required number of unique successfully ranged anchors for normal-click success. |
+| Priority ID | 64 bits | Deterministic arbitration value; lower values win. The current firmware uses the clicker device ID. |
+
+An addressed READY advertisement carries anchor ID, selected clicker ID, selected event sequence, UWB short address, flags, attempt index, RSSI hint, status, and the selected priority value seen by the anchor. Clickers ignore READY advertisements that are not addressed to their current clicker ID, event sequence, attempt index, and flag mode.
+
+## UWB Ranging Frames
+
+Timing-critical UWB frames use a compact 13 byte header before the radio FCS:
+
+| Field | Size | Purpose |
+| --- | ---: | --- |
+| Marker | 8 bits | Rejects non-IMEC UWB frames early. |
+| Version | 8 bits | UWB frame format version. |
+| Type | 8 bits | Poll, response, final, or report. |
+| Sequence | 8 bits | Identifies one DS-TWR attempt inside the click event. |
+| Session ID | 32 bits | Click or diagnostic event sequence. |
+| Initiator short address | 16 bits | Compact UWB address derived from the initiator ID. |
+| Responder short address | 16 bits | Compact UWB address advertised in READY. |
+| Flags | 8 bits | Normal click versus diagnostic semantics. |
+
+Current frame sizes before the radio FCS are: poll 13 B, response 21 B, final 25 B, and report 21 B. The poll is intentionally the smallest packet; the response and final carry only the timestamps needed by DS-TWR. Full 64-bit clicker and anchor IDs stay in BLE discovery/READY and mesh reports, not in the DS-TWR timing path.
+
+For DS-TWR timing, equal reply delays are more important than absolute minimum reply delay. The responder response delay and the initiator final delay must always be the same value unless there is a deliberate calibration change. After equality is preserved, the shared value may be reduced only as far as the slower receive/process path allows. With the current packet sizes, the initiator receives a response that is 8 B longer than the poll received by the responder. At 6.8 Mbps, that difference is `ceil(8 B * 8 bits * 1e6 / 6.8e6) = 10 us`, so the shorter poll path must intentionally wait. The firmware currently uses a shared 900 uus delayed-TX reply interval.
 
 ## Why Message Types Are Numbered
 
@@ -101,6 +174,7 @@ TLVs let command and report payloads grow without changing the fixed packet head
 | `0x21` | `RANGE_STATUS` | `u8` | UWB result status such as OK, timeout, bad frame, wrong target, STS quality fail, or missed delayed TX. |
 | `0x22` | `ROUTE_EPOCH` | `u32` | Gateway-selected route generation. A newer epoch invalidates older route candidates. |
 | `0x23` | `HOP_COUNT` | `u8` | Number of mesh hops from this sender to the gateway. Used to prefer shorter routes. |
+| `0x24` | `UWB_RSL_DBM` | `i8` | UWB received signal level in dBm, estimated from DWM3000 Ipatov RX diagnostics. Included on click range reports for calibration and range-bias analysis; `0` means unavailable. |
 
 ## Self-Test Strategy
 
@@ -108,9 +182,15 @@ The clicker self-test is activated by a long press followed by a short press wit
 
 Self-test performs local module checks first, then emits a diagnostic BLE discovery request and a dud UWB ranging request. The dud request exercises the same BLE/UWB path as a real click but is explicitly diagnostic. Status LEDs show the result using the documented pattern table in the architecture document.
 
-Anchors are BLE-gated for both real and diagnostic clicker-originated ranging. At boot the firmware only parks the DWM3000 wake pin inactive; it does not initialize or configure the UWB radio while waiting. An anchor low-duty scans BLE while the DWM3000 is idle/asleep. After it decodes a valid discovery request, it advertises READY and opens a bounded UWB responder window. The current MVP keeps this window open for 400 ms so the clicker can complete sequential DS-TWR with up to 8 discovered anchors. When the window expires, the anchor closes READY advertising, puts the DWM3000 into deep sleep, and resumes low-duty BLE scanning.
+Anchors are BLE-gated for both real and diagnostic clicker-originated ranging. At boot the firmware only parks the DWM3000 wake pin inactive; it does not initialize or configure the UWB radio while waiting. An anchor low-duty scans BLE while the DWM3000 is idle/asleep. A clicker first performs a UWB politeness sniff, then advertises a wake request for 330 ms at a 20 ms interval. Each wake advertisement carries the remaining time until the clicker's READY scan starts. The clicker then full-duty scans addressed READY advertisements for 200 ms.
 
-The MVP click path collects up to 8 READY anchors, deduplicates them by anchor ID, scores them by reciprocal RSSI, ranges them sequentially, and builds one click report packet per successful DS-TWR result. If an anchor receives the UWB poll but the responder-side exchange fails before a valid report, the anchor now forwards a failed range report with the relevant `RANGE_STATUS` instead of silently disappearing.
+After an anchor hears a wake request, it wakes UWB for warm-up, switches to full-duty BLE scanning for overlapping clicker requests, and deterministically selects the lowest priority ID for the overlapping READY window. It waits until the selected clicker is scanning, advertises an addressed READY for 180 ms, then stops BLE before opening a 500 ms UWB responder window for that clicker/event/attempt. Other clickers receive no READY from that anchor and retry in a later wake attempt.
+
+The MVP click path collects up to 8 READY anchors per attempt, deduplicates successful anchors across attempts, sorts READY anchors by BLE RSSI, and ranges anchors sequentially. Each selected anchor may be retried for as many DS-TWR exchanges as fit inside its 50 ms per-anchor window, using a random 4-10 ms backoff after failed exchanges. A normal click succeeds only after at least 4 unique anchors have successfully ranged. If fewer than 4 unique anchors succeed, the clicker retries the 330 ms wake plus 200 ms READY scan flow up to 6 attempts while staying within the 15 s click budget. The click report includes `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS`, and `UWB_RSL_DBM`. If an anchor receives the UWB poll but the responder-side exchange fails before a valid report, the anchor queues a failed range report with the relevant `RANGE_STATUS` instead of silently disappearing.
+
+Queued reports are drained one at a time through the acknowledged mesh. A queued report is removed from the queue only after mesh delivery starts; if the route is later lost after retry exhaustion, the report is requeued so it can wait for route recovery. This favors power and data retention over immediate BLE chatter during the time-critical UWB window.
+
+The clicker does not stay in the mesh or keep a background BLE role. After a normal click or self-test completes or fails, it deletes its temporary advertising set, disables the BLE runtime when supported by the controller, and returns to button-only idle. If BLE shutdown is not supported on a given build, the firmware logs that over USB debug and still stops active advertising/scanning.
 
 ## Mesh Protocol
 
@@ -147,7 +227,7 @@ That is the whole mesh model. Gateway advertisements teach anchors how to send u
 
 | Packet | Header shape | Main payload TLVs | Purpose |
 | --- | --- | --- | --- |
-| Gateway-bound report | `msg_type=CLICK_REPORT`, `SELF_TEST_REPORT`, `SURVEY_RESULT`, or other report; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=reporting anchor`; `dst_id=gateway`; `ttl=4` | Report-specific TLVs such as `CLICKER_ID`, `ANCHOR_ID`, `EVENT_SEQ`, `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS` | Carries measured data toward the gateway. A real click also sets `COUNT_AS_CLICK`; diagnostic traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. |
+| Gateway-bound report | `msg_type=CLICK_REPORT`, `SELF_TEST_REPORT`, `SURVEY_RESULT`, or other report; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=reporting anchor`; `dst_id=gateway`; `ttl=4` | Report-specific TLVs such as `CLICKER_ID`, `ANCHOR_ID`, `EVENT_SEQ`, `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS`, `UWB_RSL_DBM` | Carries measured data toward the gateway. A real click also sets `COUNT_AS_CLICK`; diagnostic traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. |
 | Hop ACK | `msg_type=MESH_ACK`; `flags=HOP_ACK`; `src_id=receiver`; `dst_id=previous hop`; `ttl=1` | `REQUESTED_MSG_SEQ` | Confirms one radio hop only. It does not mean the gateway received the packet. |
 | Gateway ACK | `msg_type=GATEWAY_ACK`; `flags=ACK_REQUESTED | GATEWAY_ACK`; `src_id=gateway`; `dst_id=original source`; `ttl=4` | `REQUESTED_MSG_SEQ` | Confirms the gateway received the original gateway-bound packet. It is routed back like a normal reliable packet, so every return-path hop ACKs custody. |
 | Gateway command | `msg_type=COMMAND`; `flags=ACK_REQUESTED`; `src_id=gateway`; `dst_id=target anchor`; `ttl=4` | `COMMAND_ID` plus command-specific TLVs | Sends an extensible command to one anchor. Delivery is confirmed hop by hop; target acceptance is confirmed by `COMMAND_RESULT`. |
@@ -333,4 +413,4 @@ DWM3000 reset and soft-reset are always performed with the SPI clock at 2 MHz. T
 
 On nRF52833, the DWM3000 is attached to SPIM3 because SPIM3 supports 32 MHz. SPI1 is capped at 8 MHz and is not suitable for the high-speed design target.
 
-The DWM3000 IRQ pin is not connected in the current v1 pinout. During an active ranging window the firmware polls `SYS_STATUS` over SPI for TX complete, good RX, RX timeout, and RX error bits. This polling is bounded by BLE-scheduled windows and explicit timeouts; it is not an always-on UWB listening mode.
+The DWM3000 IRQ pin is not connected in the current v1 pinout. During an active ranging window the firmware polls `SYS_STATUS` over SPI for TX complete, good RX, RX timeout, and RX error bits. This polling is bounded by BLE-arbitrated windows and explicit timeouts; it is not an always-on UWB listening mode.

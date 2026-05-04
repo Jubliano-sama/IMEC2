@@ -16,8 +16,10 @@ struct range_report_fields {
     uint64_t clicker_id;
     uint64_t anchor_id;
     uint32_t event_seq;
+    uint32_t timestamp_ms;
     int32_t distance_mm;
     uint8_t quality;
+    int8_t rsl_dbm;
     enum range_status range_status;
 };
 

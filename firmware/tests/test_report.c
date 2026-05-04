@@ -8,8 +8,10 @@ static void test_click_report_packet_counts_as_click(void)
         .clicker_id = 0x1111222233334444ull,
         .anchor_id = 0x5555666677778888ull,
         .event_seq = 123u,
+        .timestamp_ms = 987654u,
         .distance_mm = 4567,
         .quality = 95u,
+        .rsl_dbm = -73,
         .range_status = RANGE_OK,
     };
     uint8_t payload[96];
@@ -36,9 +38,17 @@ static void test_click_report_packet_counts_as_click(void)
     assert(value_len == 8u);
     assert(proto_get_u64_le(value) == fields.clicker_id);
 
+    assert(tlv_find(payload, payload_len, TLV_TIMESTAMP_MS, &value, &value_len) == PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == fields.timestamp_ms);
+
     assert(tlv_find(payload, payload_len, TLV_RANGE_STATUS, &value, &value_len) == PROTO_OK);
     assert(value_len == 1u);
     assert(value[0] == RANGE_OK);
+
+    assert(tlv_find(payload, payload_len, TLV_UWB_RSL_DBM, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert((int8_t)value[0] == fields.rsl_dbm);
 }
 
 static void test_self_test_report_is_diagnostic_not_click(void)
@@ -78,6 +88,7 @@ static void test_rejects_bad_range_fields(void)
         .clicker_id = 0x1111222233334444ull,
         .anchor_id = 0x5555666677778888ull,
         .event_seq = 123u,
+        .timestamp_ms = 987654u,
         .distance_mm = 4567,
         .quality = 101u,
         .range_status = RANGE_OK,

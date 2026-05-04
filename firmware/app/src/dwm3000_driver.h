@@ -11,6 +11,7 @@
 struct dwm3000_range_request {
     uint64_t initiator_id;
     uint64_t responder_id;
+    uint16_t responder_short_addr;
     uint32_t session_id;
     uint8_t seq;
     uint8_t flags;
@@ -18,9 +19,14 @@ struct dwm3000_range_request {
 };
 
 struct dwm3000_range_result {
+    uint64_t initiator_id;
     uint64_t responder_id;
+    uint32_t session_id;
+    uint8_t seq;
+    uint8_t flags;
     int32_t distance_mm;
     uint8_t quality;
+    int8_t rsl_dbm;
     enum range_status status;
 };
 
@@ -33,5 +39,10 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 int dwm3000_driver_responder_poll_once(uint64_t local_anchor_id,
                                        uint32_t timeout_ms,
                                        struct dwm3000_range_result *result);
+int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,
+                                           const struct dwm3000_range_request *expected,
+                                           uint32_t timeout_ms,
+                                           struct dwm3000_range_result *result);
+int dwm3000_driver_listen_activity(uint32_t timeout_ms, bool *activity_detected);
 
 #endif

@@ -106,6 +106,7 @@ enum tlv_type {
     TLV_RANGE_STATUS = 0x21,
     TLV_ROUTE_EPOCH = 0x22,
     TLV_HOP_COUNT = 0x23,
+    TLV_UWB_RSL_DBM = 0x24,
 };
 
 enum device_role {

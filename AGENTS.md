@@ -52,4 +52,10 @@ This workspace has no repo-level Git history available, so use clear imperative 
 
 Do not edit imported dependency trees unless the task explicitly targets them. Prefer documenting protocol changes in `Documentation/` alongside code changes. Treat the DWM3000 IRQ as unavailable for v1; use bounded SPI polling during BLE-scheduled UWB windows.
 
-When modifying versioned documentation in `Documentation/`, increment only the patch component unless the user requests a larger version change. For example, the next edit to `Documentation/UWB+BLE Architecture 0.4.md` becomes `Documentation/UWB+BLE Architecture 0.4.1.md`; do not change `0.4` to `0.5` unless explicitly requested. Every documentation version bump must also add a short dated changelog entry inside the modified file.
+When modifying versioned documentation in `Documentation/`, increment only the patch component unless the user requests a larger version change. For example, the next edit to `Documentation/UWB+BLE Architecture 0.4.md` becomes `Documentation/UWB+BLE Architecture 0.4.1.md`; do not change `0.4` to `0.5` unless explicitly requested. Every documentation version bump must also add a short dated changelog entry inside the modified file. This rule applies to all versioned docs:
+
+- `UWB+BLE Architecture X.Y.Z.md`
+- `UWB+BLE Protocols and Strategies X.Y.md`
+- `Firmware State Machines and Status Report X.Y.md`
+
+For `Documentation/Firmware State Machines and Status Report X.Y.Z.md`, keep diagrams as a high-level reader overview. Mermaid flowchart and state labels should describe system behavior in plain language, not function names, enum/action constants, internal variable names, or low-level implementation shorthand. When a loop represents a bounded time window, state that it is the same continuous window and not a restarted window. Prefer labels such as "Run UWB range with next anchor", "Send result through mesh", and "Mark anchor idle and resume scan" over labels such as `dwm3000_driver_*`, `mesh_start_tracked_tx`, `RANGE_OK`, `success_count++`, or "poll once until deadline". Keep precise source references in the prose above each chart, not inside the chart labels.

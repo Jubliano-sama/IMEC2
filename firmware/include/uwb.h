@@ -13,18 +13,18 @@ extern "C" {
 
 #define UWB_MARKER 0xCAu
 #define UWB_VERSION 0x01u
-#define UWB_HEADER_LEN 25u
+#define UWB_HEADER_LEN 13u
 #define UWB_POLL_LEN UWB_HEADER_LEN
 #define UWB_RESP_LEN (UWB_HEADER_LEN + 8u)
 #define UWB_FINAL_LEN (UWB_HEADER_LEN + 12u)
-#define UWB_REPORT_LEN (UWB_HEADER_LEN + 7u)
+#define UWB_REPORT_LEN (UWB_HEADER_LEN + 8u)
 
 struct uwb_range_header {
     uint8_t type;
     uint8_t seq;
     uint32_t session_id;
-    uint64_t initiator_id;
-    uint64_t responder_id;
+    uint16_t initiator_short_addr;
+    uint16_t responder_short_addr;
     uint8_t flags;
 };
 
@@ -46,6 +46,7 @@ struct uwb_report_frame {
     int32_t distance_mm;
     uint8_t quality;
     enum range_status status;
+    int8_t rsl_dbm;
 };
 
 bool uwb_frame_type_valid(uint8_t type);

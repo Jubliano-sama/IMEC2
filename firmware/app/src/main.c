@@ -28,8 +28,8 @@
 
 LOG_MODULE_REGISTER(uwb_ble_app, LOG_LEVEL_DBG);
 
-#if !defined(CONFIG_BT_EXT_ADV) || !defined(CONFIG_BT_CTLR_PHY_CODED)
-#error "BLE transport requires extended advertising on LE Coded PHY."
+#if !defined(CONFIG_BT_EXT_ADV) || !defined(CONFIG_BT_LL_SOFTDEVICE)
+#error "BLE transport requires extended advertising with the SoftDevice Controller."
 #endif
 
 #define ROLE_CLICKER 1
@@ -98,46 +98,73 @@ static uint32_t next_event_seq;
 static bool ble_ready;
 static bool anchor_scan_active;
 static bool gateway_mesh_scan_active;
+static bool clicker_ready_scan_active;
+static bool ble_adv_active;
+static bool uwb_rf_active;
 static struct k_work anchor_ble_work;
 static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_tx_timeout_work;
+static struct k_work_delayable report_tx_work;
 static struct k_work_delayable gateway_route_adv_work;
 static struct k_work_delayable gateway_serial_rx_work;
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_spinlock anchor_ble_lock;
 static struct k_spinlock clicker_ready_lock;
-static struct ble_discovery_req anchor_pending_request;
-static int8_t anchor_pending_rssi;
-static bool anchor_pending_valid;
 static bool anchor_uwb_busy;
+static bool anchor_admission_open;
+static bool anchor_service_active;
 static struct mesh_relay mesh_runtime;
 static struct bt_le_ext_adv *ble_ext_adv;
 
 #define MAX_READY_ANCHORS 8u
-#define BLE_DISCOVERY_ADV_MS 120u
-#define BLE_READY_SCAN_MS 150u
-#define ANCHOR_UWB_WINDOW_MS 400u
+#define MAX_SUCCESSFUL_ANCHORS 16u
+#define WAKE_ADV_MS 330u
+#define WAKE_ADV_UPDATE_MS 20u
+#define READY_SCAN_MS 200u
+#define ANCHOR_READY_ADV_MS 180u
+#define ANCHOR_UWB_WAIT_MS 500u
+#define NO_ANCHOR_RETRY_DELAY_MS 700u
+#define MAX_WAKE_ATTEMPTS 6u
+#define MIN_UNIQUE_RANGED_ANCHORS 4u
+#define CLICK_ANCHOR_RANGE_WINDOW_MS 50u
+#define DS_TWR_RETRY_BACKOFF_MIN_MS 4u
+#define DS_TWR_RETRY_BACKOFF_MAX_MS 10u
+#define UWB_QUIET_TIME_MS 30u
+#define MAX_POLITENESS_WAIT_MS 500u
+#define CLICK_REPORT_BUILD_GUARD_MS 20u
+#define ANCHOR_SERVICE_QUEUE_DEPTH 8u
 #define SELF_TEST_UWB_TIMEOUT_MS 150u
 #define CLICK_UWB_TIMEOUT_MS 150u
-#define ANCHOR_SCAN_INTERVAL_100MS 160u
-#define ANCHOR_SCAN_WINDOW_10MS 16u
-#define ANCHOR_ERROR_BACKOFF_MS 5u
+#define CLICK_REPORT_READY_DEADLINE_MS 15000u
+#define ANCHOR_SCAN_INTERVAL_300MS 480u
+#define ANCHOR_SCAN_WINDOW_30MS 48u
+#define BLE_ADV_INTERVAL_20MS 32u
 #define MESH_ADV_TX_MS 120u
 #define MESH_ACK_REPLY_DELAY_MS (MESH_ADV_TX_MS + 10u)
 #define GATEWAY_ROUTE_ADV_INTERVAL_MS 2000u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
 #define MESH_RX_QUEUE_DEPTH 8
-#define BLE_CODED_SCAN_OPTIONS (BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M)
-#define BLE_CODED_ADV_OPTIONS (BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_CODED | \
-                               BT_LE_ADV_OPT_USE_TX_POWER)
-#define BLE_CODED_ADV_INTERVAL_MIN BT_GAP_ADV_FAST_INT_MIN_1
-#define BLE_CODED_ADV_INTERVAL_MAX BT_GAP_ADV_FAST_INT_MAX_1
+#define REPORT_TX_QUEUE_DEPTH 16
+#define REPORT_TX_RETRY_DELAY_MS 1000u
+#define BLE_SCAN_OPTIONS BT_LE_SCAN_OPT_NONE
+#define BLE_ADV_OPTIONS (BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_NO_2M | \
+                         BT_LE_ADV_OPT_USE_TX_POWER)
+#define BLE_ADV_INTERVAL_MIN BLE_ADV_INTERVAL_20MS
+#define BLE_ADV_INTERVAL_MAX BLE_ADV_INTERVAL_20MS
 
 struct ready_anchor {
     struct ble_discovery_ready ready;
     int8_t clicker_rssi;
     int16_t rssi_score;
+    uint32_t received_ms;
+};
+
+struct anchor_service_slot {
+    struct ble_discovery_req request;
+    int8_t rssi;
+    int64_t ready_scan_start_ms;
+    int64_t ready_scan_end_ms;
 };
 
 struct mesh_rx_pending {
@@ -149,10 +176,17 @@ struct mesh_rx_pending {
 };
 
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
+K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
 
+static struct anchor_service_slot anchor_service_slots[ANCHOR_SERVICE_QUEUE_DEPTH];
+static uint8_t anchor_service_count;
 static struct ready_anchor clicker_ready_anchors[MAX_READY_ANCHORS];
 static uint8_t clicker_ready_count;
 static uint8_t clicker_ready_expected_flags;
+static uint32_t clicker_ready_expected_event_seq;
+static uint8_t clicker_ready_expected_attempt_index;
+static int64_t anchor_service_window_start_ms;
+static int64_t anchor_service_window_end_ms;
 static uint8_t gateway_serial_rx_frame[SERIAL_FRAME_MAX_LEN];
 static size_t gateway_serial_rx_len;
 static bool gateway_serial_rx_overflow;
@@ -160,41 +194,44 @@ static uint16_t gateway_command_seq;
 static struct gateway_command_pending gateway_command_pending_state;
 
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
+static void report_tx_schedule(uint32_t delay_ms);
 
-static const struct bt_le_adv_param ble_coded_adv_param =
-    BT_LE_ADV_PARAM_INIT(BLE_CODED_ADV_OPTIONS,
-                         BLE_CODED_ADV_INTERVAL_MIN,
-                         BLE_CODED_ADV_INTERVAL_MAX,
+static const struct bt_le_adv_param ble_adv_param =
+    BT_LE_ADV_PARAM_INIT(BLE_ADV_OPTIONS,
+                         BLE_ADV_INTERVAL_MIN,
+                         BLE_ADV_INTERVAL_MAX,
                          NULL);
 
 static const struct bt_le_scan_param anchor_low_duty_scan_param = {
     .type = BT_LE_SCAN_TYPE_PASSIVE,
-    .options = BLE_CODED_SCAN_OPTIONS,
-    .interval = ANCHOR_SCAN_INTERVAL_100MS,
-    .window = ANCHOR_SCAN_WINDOW_10MS,
+    .options = BLE_SCAN_OPTIONS,
+    .interval = ANCHOR_SCAN_INTERVAL_300MS,
+    .window = ANCHOR_SCAN_WINDOW_30MS,
     .timeout = 0u,
-    .interval_coded = ANCHOR_SCAN_INTERVAL_100MS,
-    .window_coded = ANCHOR_SCAN_WINDOW_10MS,
+};
+
+static const struct bt_le_scan_param anchor_full_duty_scan_param = {
+    .type = BT_LE_SCAN_TYPE_PASSIVE,
+    .options = BLE_SCAN_OPTIONS,
+    .interval = 16u,
+    .window = 16u,
+    .timeout = 0u,
 };
 
 static const struct bt_le_scan_param gateway_mesh_scan_param = {
     .type = BT_LE_SCAN_TYPE_PASSIVE,
-    .options = BLE_CODED_SCAN_OPTIONS,
+    .options = BLE_SCAN_OPTIONS,
     .interval = 16u,
     .window = 16u,
     .timeout = 0u,
-    .interval_coded = 16u,
-    .window_coded = 16u,
 };
 
 static const struct bt_le_scan_param clicker_ready_scan_param = {
     .type = BT_LE_SCAN_TYPE_PASSIVE,
-    .options = BLE_CODED_SCAN_OPTIONS,
+    .options = BLE_SCAN_OPTIONS,
     .interval = 16u,
     .window = 16u,
     .timeout = 0u,
-    .interval_coded = 16u,
-    .window_coded = 16u,
 };
 
 static const char *role_name(void)
@@ -326,6 +363,74 @@ static int ble_runtime_init(void)
     ble_ready = true;
     LOG_INF("BLE runtime ready");
     return 0;
+}
+
+static void ble_runtime_shutdown(void)
+{
+    int ret;
+
+    if (!ble_ready) {
+        return;
+    }
+
+    if (ble_ext_adv != NULL) {
+        (void)bt_le_ext_adv_stop(ble_ext_adv);
+        ble_adv_active = false;
+        ret = bt_le_ext_adv_delete(ble_ext_adv);
+        if (ret < 0) {
+            LOG_WRN("BLE advertising set delete failed during shutdown: %d", ret);
+        }
+        ble_ext_adv = NULL;
+    }
+
+    ret = bt_disable();
+    if (ret < 0) {
+        LOG_WRN("BLE runtime shutdown not supported/failed: %d", ret);
+        return;
+    }
+
+    ble_ready = false;
+    anchor_scan_active = false;
+    gateway_mesh_scan_active = false;
+    clicker_ready_scan_active = false;
+    LOG_INF("BLE runtime shut down for clicker idle");
+}
+
+static bool ble_rf_active(void)
+{
+    return ble_adv_active ||
+           anchor_scan_active ||
+           gateway_mesh_scan_active ||
+           clicker_ready_scan_active;
+}
+
+static int radio_guard_ble_start(const char *reason)
+{
+    if (uwb_rf_active) {
+        LOG_ERR("blocked BLE RF while UWB active: %s", reason);
+        return -EBUSY;
+    }
+    return 0;
+}
+
+static int radio_guard_uwb_start(const char *reason)
+{
+    if (ble_rf_active()) {
+        LOG_ERR("blocked UWB while BLE RF active: %s", reason);
+        return -EBUSY;
+    }
+    if (uwb_rf_active) {
+        LOG_ERR("blocked nested UWB operation: %s", reason);
+        return -EBUSY;
+    }
+
+    uwb_rf_active = true;
+    return 0;
+}
+
+static void radio_guard_uwb_stop(void)
+{
+    uwb_rf_active = false;
 }
 
 static int debug_serial_init(void)
@@ -810,25 +915,35 @@ static int ble_start_manufacturer_advertising(const uint8_t *payload, size_t pay
         return -EINVAL;
     }
 
+    ret = radio_guard_ble_start("advertising");
+    if (ret < 0) {
+        return ret;
+    }
+
     ret = ble_runtime_init();
     if (ret < 0) {
         return ret;
     }
 
     if (ble_ext_adv == NULL) {
-        ret = bt_le_ext_adv_create(&ble_coded_adv_param, NULL, &ble_ext_adv);
+        ret = bt_le_ext_adv_create(&ble_adv_param, NULL, &ble_ext_adv);
         if (ret < 0) {
             return ret;
         }
     } else {
         (void)bt_le_ext_adv_stop(ble_ext_adv);
+        ble_adv_active = false;
     }
 
     ret = bt_le_ext_adv_set_data(ble_ext_adv, ad, ARRAY_SIZE(ad), NULL, 0);
     if (ret < 0) {
         return ret;
     }
-    return bt_le_ext_adv_start(ble_ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
+    ret = bt_le_ext_adv_start(ble_ext_adv, BT_LE_EXT_ADV_START_DEFAULT);
+    if (ret == 0) {
+        ble_adv_active = true;
+    }
+    return ret;
 }
 
 static int ble_stop_advertising(void)
@@ -840,7 +955,11 @@ static int ble_stop_advertising(void)
     }
 
     ret = bt_le_ext_adv_stop(ble_ext_adv);
-    return ret == -EALREADY ? 0 : ret;
+    if (ret == 0 || ret == -EALREADY) {
+        ble_adv_active = false;
+        return 0;
+    }
+    return ret;
 }
 
 static int ble_advertise_manufacturer_payload(const uint8_t *payload,
@@ -981,6 +1100,10 @@ static int gateway_start_mesh_scan(void);
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi);
 static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi);
+static void anchor_scan_cb(const bt_addr_le_t *addr,
+                           int8_t rssi,
+                           uint8_t adv_type,
+                           struct net_buf_simple *buf);
 static int build_range_report(uint64_t clicker_id,
                               uint32_t event_seq,
                               const struct dwm3000_range_result *range_result);
@@ -988,7 +1111,17 @@ static int build_range_report(uint64_t clicker_id,
 static int16_t ready_rssi_score(const struct ble_discovery_ready *ready,
                                 int8_t clicker_rssi)
 {
-    return (int16_t)ready->rssi_hint + (int16_t)clicker_rssi;
+    ARG_UNUSED(ready);
+    return (int16_t)clicker_rssi;
+}
+
+static bool ready_anchor_precedes(const struct ready_anchor *left,
+                                  const struct ready_anchor *right)
+{
+    if (left->rssi_score != right->rssi_score) {
+        return left->rssi_score > right->rssi_score;
+    }
+    return left->ready.anchor_id < right->ready.anchor_id;
 }
 
 static void sort_ready_anchors_by_rssi(void)
@@ -997,7 +1130,7 @@ static void sort_ready_anchors_by_rssi(void)
         struct ready_anchor candidate = clicker_ready_anchors[i];
         uint8_t j = i;
 
-        while (j > 0u && candidate.rssi_score > clicker_ready_anchors[j - 1u].rssi_score) {
+        while (j > 0u && ready_anchor_precedes(&candidate, &clicker_ready_anchors[j - 1u])) {
             clicker_ready_anchors[j] = clicker_ready_anchors[j - 1u];
             j--;
         }
@@ -1005,13 +1138,50 @@ static void sort_ready_anchors_by_rssi(void)
     }
 }
 
+static void clicker_ready_collection_reset(uint8_t expected_flags,
+                                           uint32_t expected_event_seq,
+                                           uint8_t expected_attempt_index)
+{
+    k_spinlock_key_t key;
+
+    key = k_spin_lock(&clicker_ready_lock);
+    clicker_ready_count = 0u;
+    clicker_ready_expected_flags = expected_flags;
+    clicker_ready_expected_event_seq = expected_event_seq;
+    clicker_ready_expected_attempt_index = expected_attempt_index;
+    memset(clicker_ready_anchors, 0, sizeof(clicker_ready_anchors));
+    k_spin_unlock(&clicker_ready_lock, key);
+}
+
+static uint8_t clicker_ready_snapshot(struct ready_anchor *anchors,
+                                      uint8_t anchor_cap)
+{
+    k_spinlock_key_t key;
+    uint8_t found_count;
+
+    if (anchors == NULL || anchor_cap == 0u) {
+        return 0u;
+    }
+
+    key = k_spin_lock(&clicker_ready_lock);
+    found_count = MIN(clicker_ready_count, anchor_cap);
+    for (uint8_t i = 0u; i < found_count; i++) {
+        anchors[i] = clicker_ready_anchors[i];
+    }
+    k_spin_unlock(&clicker_ready_lock, key);
+
+    return found_count;
+}
+
 static bool ready_anchor_store_locked(const struct ble_discovery_ready *ready,
-                                      int8_t clicker_rssi)
+                                      int8_t clicker_rssi,
+                                      uint32_t received_ms)
 {
     struct ready_anchor candidate = {
         .ready = *ready,
         .clicker_rssi = clicker_rssi,
         .rssi_score = ready_rssi_score(ready, clicker_rssi),
+        .received_ms = received_ms,
     };
 
     for (uint8_t i = 0u; i < clicker_ready_count; i++) {
@@ -1033,7 +1203,7 @@ static bool ready_anchor_store_locked(const struct ble_discovery_ready *ready,
         return true;
     }
 
-    if (candidate.rssi_score > clicker_ready_anchors[MAX_READY_ANCHORS - 1u].rssi_score) {
+    if (ready_anchor_precedes(&candidate, &clicker_ready_anchors[MAX_READY_ANCHORS - 1u])) {
         clicker_ready_anchors[MAX_READY_ANCHORS - 1u] = candidate;
         sort_ready_anchors_by_rssi();
         return true;
@@ -1042,31 +1212,284 @@ static bool ready_anchor_store_locked(const struct ble_discovery_ready *ready,
     return false;
 }
 
-static void anchor_discovery_work_handler(struct k_work *work)
+static bool service_windows_overlap(int64_t left_start_ms,
+                                    int64_t left_end_ms,
+                                    int64_t right_start_ms,
+                                    int64_t right_end_ms)
 {
-    struct ble_discovery_req request;
+    return left_start_ms < right_end_ms && right_start_ms < left_end_ms;
+}
+
+static bool anchor_service_add_locked(const struct ble_discovery_req *request,
+                                      int8_t rssi,
+                                      int64_t received_ms,
+                                      bool *start_work)
+{
+    int64_t ready_scan_start_ms;
+    int64_t ready_scan_end_ms;
+
+    if (request == NULL || start_work == NULL) {
+        return false;
+    }
+    if (anchor_uwb_busy || (anchor_service_active && !anchor_admission_open)) {
+        return false;
+    }
+
+    ready_scan_start_ms = received_ms + request->ready_scan_starts_in_ms;
+    ready_scan_end_ms = ready_scan_start_ms + request->ready_scan_duration_ms;
+    if (anchor_service_count > 0u &&
+        !service_windows_overlap(ready_scan_start_ms,
+                                 ready_scan_end_ms,
+                                 anchor_service_window_start_ms,
+                                 anchor_service_window_end_ms)) {
+        return false;
+    }
+
+    for (uint8_t i = 0u; i < anchor_service_count; i++) {
+        if (anchor_service_slots[i].request.clicker_id == request->clicker_id &&
+            anchor_service_slots[i].request.event_seq == request->event_seq &&
+            anchor_service_slots[i].request.attempt_index == request->attempt_index) {
+            anchor_service_slots[i].rssi = rssi;
+            if (ready_scan_start_ms > anchor_service_slots[i].ready_scan_start_ms) {
+                anchor_service_slots[i].ready_scan_start_ms = ready_scan_start_ms;
+                anchor_service_slots[i].ready_scan_end_ms = ready_scan_end_ms;
+                anchor_service_slots[i].request = *request;
+            }
+            return true;
+        }
+    }
+
+    if (anchor_service_count >= ANCHOR_SERVICE_QUEUE_DEPTH) {
+        return false;
+    }
+
+    anchor_service_slots[anchor_service_count].request = *request;
+    anchor_service_slots[anchor_service_count].rssi = rssi;
+    anchor_service_slots[anchor_service_count].ready_scan_start_ms = ready_scan_start_ms;
+    anchor_service_slots[anchor_service_count].ready_scan_end_ms = ready_scan_end_ms;
+    anchor_service_count++;
+    if (!anchor_service_active) {
+        anchor_service_active = true;
+        anchor_admission_open = true;
+        anchor_service_window_start_ms = ready_scan_start_ms;
+        anchor_service_window_end_ms = ready_scan_end_ms;
+        *start_work = true;
+    }
+    return true;
+}
+
+static uint16_t delay_ms_to_u16(int64_t delay_ms)
+{
+    if (delay_ms <= 0) {
+        return 0u;
+    }
+    if (delay_ms > UINT16_MAX) {
+        return UINT16_MAX;
+    }
+    return (uint16_t)delay_ms;
+}
+
+static bool anchor_service_slot_precedes(const struct anchor_service_slot *left,
+                                         const struct anchor_service_slot *right)
+{
+    if (left->request.priority_id != right->request.priority_id) {
+        return left->request.priority_id < right->request.priority_id;
+    }
+    if (left->request.clicker_id != right->request.clicker_id) {
+        return left->request.clicker_id < right->request.clicker_id;
+    }
+    if (left->request.event_seq != right->request.event_seq) {
+        return left->request.event_seq < right->request.event_seq;
+    }
+    return left->request.attempt_index < right->request.attempt_index;
+}
+
+static void select_anchor_service_slot(struct anchor_service_slot *slots,
+                                       uint8_t slot_count)
+{
+    uint8_t selected = 0u;
+
+    for (uint8_t i = 1u; i < slot_count; i++) {
+        if (anchor_service_slot_precedes(&slots[i], &slots[selected])) {
+            selected = i;
+        }
+    }
+
+    if (selected != 0u) {
+        struct anchor_service_slot chosen = slots[selected];
+
+        slots[selected] = slots[0];
+        slots[0] = chosen;
+    }
+}
+
+static int advertise_ready_to_range(const struct anchor_service_slot *slot)
+{
     struct ble_discovery_ready ready = {
         .anchor_id = DEVICE_ID,
+        .target_clicker_id = slot->request.clicker_id,
+        .priority_id_seen = slot->request.priority_id,
+        .target_event_seq = slot->request.event_seq,
         .uwb_short_addr = local_uwb_short_addr(),
-        .flags = 0u,
-        .rssi_hint = 0,
+        .flags = slot->request.flags,
+        .attempt_index = slot->request.attempt_index,
+        .rssi_hint = slot->rssi,
+        .status = BLE_READY_STATUS_ADMITTED,
     };
     uint8_t payload[BLE_DISCOVERY_READY_LEN];
     size_t payload_len = 0u;
-    k_spinlock_key_t key;
+    int ret;
+
+    ret = ble_discovery_ready_encode(&ready, payload, sizeof(payload), &payload_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    LOG_INF("anchor READY advert: clicker=0x%016llx event_seq=%u attempt=%u ready_ms=%u priority=0x%016llx",
+            (unsigned long long)ready.target_clicker_id,
+            ready.target_event_seq,
+            ready.attempt_index,
+            ANCHOR_READY_ADV_MS,
+            (unsigned long long)ready.priority_id_seen);
+    return ble_advertise_manufacturer_payload(payload, payload_len, ANCHOR_READY_ADV_MS);
+}
+
+static void build_slot_report_if_click(const struct anchor_service_slot *slot,
+                                       const struct dwm3000_range_result *result)
+{
+    int ret;
+
+    if (!ble_flags_count_as_click(slot->request.flags)) {
+        return;
+    }
+
+    ret = build_range_report(slot->request.clicker_id,
+                             slot->request.event_seq,
+                             result);
+    if (ret < 0) {
+        LOG_WRN("failed to build anchor range report: %d", ret);
+    }
+}
+
+static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
+{
+    struct dwm3000_range_request expected = {
+        .initiator_id = slot->request.clicker_id,
+        .responder_id = DEVICE_ID,
+        .responder_short_addr = local_uwb_short_addr(),
+        .session_id = slot->request.event_seq,
+        .seq = 0u,
+        .flags = slot->request.flags,
+        .timeout_ms = ANCHOR_UWB_WAIT_MS,
+    };
     struct dwm3000_range_result range_result;
-    int64_t deadline_ms;
-    uint8_t handled_ranges = 0u;
-    int8_t rssi;
+    int64_t deadline_ms = k_uptime_get() + ANCHOR_UWB_WAIT_MS;
+    bool saw_poll = false;
+    int ret = -ETIMEDOUT;
+
+    LOG_INF("anchor UWB responder window start: clicker=0x%016llx event_seq=%u attempt=%u window_ms=%u",
+            (unsigned long long)slot->request.clicker_id,
+            slot->request.event_seq,
+            slot->request.attempt_index,
+            ANCHOR_UWB_WAIT_MS);
+
+    while (true) {
+        int64_t remaining_ms = deadline_ms - k_uptime_get();
+
+        if (remaining_ms <= 0) {
+            break;
+        }
+        expected.timeout_ms = (uint32_t)remaining_ms;
+        ret = dwm3000_driver_responder_poll_expected(DEVICE_ID,
+                                                     &expected,
+                                                     expected.timeout_ms,
+                                                     &range_result);
+        if (ret == -EAGAIN) {
+            continue;
+        }
+        if (ret == -ETIMEDOUT) {
+            break;
+        }
+
+        saw_poll = true;
+        if (ret < 0 || range_result.status != RANGE_OK) {
+            LOG_WRN("anchor UWB exchange failed after poll: clicker=0x%016llx event_seq=%u seq=%u ret=%d status=%u quality=%u rsl=%d dBm",
+                    (unsigned long long)range_result.initiator_id,
+                    range_result.session_id,
+                    range_result.seq,
+                    ret,
+                    range_result.status,
+                    range_result.quality,
+                    range_result.rsl_dbm);
+        } else {
+            LOG_INF("anchor UWB exchange complete: clicker=0x%016llx event_seq=%u seq=%u distance_mm=%d quality=%u rsl=%d dBm",
+                    (unsigned long long)range_result.initiator_id,
+                    range_result.session_id,
+                    range_result.seq,
+                    range_result.distance_mm,
+                    range_result.quality,
+                    range_result.rsl_dbm);
+        }
+        build_slot_report_if_click(slot, &range_result);
+    }
+
+    if (!saw_poll) {
+        LOG_WRN("anchor UWB responder window timed out without selected clicker poll: clicker=0x%016llx event_seq=%u ret=%d",
+                (unsigned long long)slot->request.clicker_id,
+                slot->request.event_seq,
+                ret);
+    }
+}
+
+static void anchor_discovery_work_handler(struct k_work *work)
+{
+    struct anchor_service_slot slots[ANCHOR_SERVICE_QUEUE_DEPTH];
+    k_spinlock_key_t key;
+    uint8_t slot_count;
+    bool uwb_started = false;
     int ret;
 
     ARG_UNUSED(work);
 
+    ret = dwm3000_port_wakeup();
+    if (ret < 0) {
+        LOG_WRN("anchor DWM3000 wake during arbitration failed: %d", ret);
+    }
+
+    if (anchor_scan_active) {
+        ret = bt_le_scan_stop();
+        if (ret < 0 && ret != -EALREADY) {
+            LOG_WRN("failed to stop low-duty anchor BLE scan: %d", ret);
+        }
+        anchor_scan_active = false;
+    }
+
+    ret = bt_le_scan_start(&anchor_full_duty_scan_param, anchor_scan_cb);
+    if (ret < 0 && ret != -EALREADY) {
+        LOG_WRN("failed to start anchor arbitration scan: %d", ret);
+    } else {
+        anchor_scan_active = true;
+        LOG_INF("anchor arbitration scan active until selected READY window");
+    }
+
+    while (true) {
+        int64_t scan_until_ms;
+        int64_t now_ms = k_uptime_get();
+
+        key = k_spin_lock(&anchor_ble_lock);
+        scan_until_ms = anchor_service_window_start_ms;
+        k_spin_unlock(&anchor_ble_lock, key);
+
+        if (now_ms >= scan_until_ms) {
+            break;
+        }
+        k_msleep((uint32_t)MIN(10, scan_until_ms - now_ms));
+    }
+
     key = k_spin_lock(&anchor_ble_lock);
-    request = anchor_pending_request;
-    rssi = anchor_pending_rssi;
-    anchor_pending_valid = false;
-    anchor_uwb_busy = true;
+    anchor_admission_open = false;
+    slot_count = anchor_service_count;
+    memcpy(slots, anchor_service_slots, sizeof(slots));
     k_spin_unlock(&anchor_ble_lock, key);
 
     if (anchor_scan_active) {
@@ -1077,103 +1500,67 @@ static void anchor_discovery_work_handler(struct k_work *work)
         anchor_scan_active = false;
     }
 
-    ready.flags = request.flags;
-    ready.rssi_hint = rssi;
-    if (ble_discovery_ready_encode(&ready, payload, sizeof(payload),
-                                        &payload_len) == PROTO_OK) {
-        ret = ble_start_manufacturer_advertising(payload, payload_len);
-        if (ret < 0) {
-            LOG_WRN("anchor READY advertisement failed: %d", ret);
-        }
+    if (slot_count == 0u) {
+        LOG_WRN("anchor arbitration ended with empty queue");
+        goto restart_scan;
     }
 
-    LOG_INF("anchor accepted BLE request: clicker=0x%016llx event_seq=%u flags=0x%02x request_rssi=%d",
-            (unsigned long long)request.clicker_id,
-            request.event_seq,
-            request.flags,
-            rssi);
-    LOG_INF("anchor UWB responder window open for %u ms; READY remains advertised",
-            ANCHOR_UWB_WINDOW_MS);
+    select_anchor_service_slot(slots, slot_count);
+    LOG_INF("anchor selected clicker for READY: selected=0x%016llx event_seq=%u attempt=%u queued=%u priority=0x%016llx",
+            (unsigned long long)slots[0].request.clicker_id,
+            slots[0].request.event_seq,
+            slots[0].request.attempt_index,
+            slot_count,
+            (unsigned long long)slots[0].request.priority_id);
 
-    deadline_ms = k_uptime_get() + ANCHOR_UWB_WINDOW_MS;
-    while (true) {
-        int64_t remaining_ms = deadline_ms - k_uptime_get();
-        uint32_t poll_timeout_ms;
-
-        if (remaining_ms <= 0) {
-            break;
-        }
-        poll_timeout_ms = (uint32_t)remaining_ms;
-
-        ret = dwm3000_driver_responder_poll_once(DEVICE_ID,
-                                                      poll_timeout_ms,
-                                                      &range_result);
-        if (ret == -ETIMEDOUT && range_result.responder_id != DEVICE_ID) {
-            break;
-        }
-        if (ret == -EAGAIN) {
-            LOG_DBG("anchor ignored UWB poll for another responder");
-            continue;
-        }
-        if (ret < 0) {
-            if (range_result.responder_id == DEVICE_ID) {
-                handled_ranges++;
-                LOG_WRN("anchor responder exchange %u failed after poll: clicker=0x%016llx event_seq=%u ret=%d status=%u quality=%u",
-                        handled_ranges,
-                        (unsigned long long)request.clicker_id,
-                        request.event_seq,
-                        ret,
-                        range_result.status,
-                        range_result.quality);
-                if (ble_flags_count_as_click(request.flags)) {
-                    int report_ret = build_range_report(request.clicker_id,
-                                                        request.event_seq,
-                                                        &range_result);
-                    if (report_ret < 0) {
-                        LOG_WRN("failed to report anchor-side range failure: %d",
-                                report_ret);
-                    }
-                }
-            } else {
-                LOG_WRN("anchor responder exchange failed before valid poll: %d", ret);
-            }
-            k_msleep(ANCHOR_ERROR_BACKOFF_MS);
-            continue;
-        }
-
-        handled_ranges++;
-        LOG_INF("anchor responder exchange %u complete: clicker=0x%016llx event_seq=%u status=%u distance_mm=%d quality=%u",
-                handled_ranges,
-                (unsigned long long)request.clicker_id,
-                request.event_seq,
-                range_result.status,
-                range_result.distance_mm,
-                range_result.quality);
-
-        if (ble_flags_count_as_click(request.flags)) {
-            ret = build_range_report(request.clicker_id, request.event_seq, &range_result);
-            if (ret < 0) {
-                LOG_WRN("failed to build anchor-side click report: %d", ret);
-            }
-        } else {
-            LOG_INF("diagnostic responder result was not counted as click");
-        }
+    (void)ble_stop_advertising();
+    if (slots[0].ready_scan_start_ms > k_uptime_get()) {
+        k_msleep((uint32_t)(slots[0].ready_scan_start_ms - k_uptime_get()));
     }
 
-    (void)dwm3000_driver_standby();
+    ret = advertise_ready_to_range(&slots[0]);
+    if (ret < 0) {
+        LOG_WRN("anchor READY advertisement failed: %d", ret);
+    }
     (void)ble_stop_advertising();
 
-    LOG_INF("anchor UWB responder window closed: handled_ranges=%u; DWM3000 standby requested",
-            handled_ranges);
+    ret = radio_guard_uwb_start("anchor READY UWB responder window");
+    if (ret < 0) {
+        goto restart_scan;
+    }
+    uwb_started = true;
+    key = k_spin_lock(&anchor_ble_lock);
+    anchor_uwb_busy = true;
+    k_spin_unlock(&anchor_ble_lock, key);
 
+    LOG_INF("anchor UWB responder service start: window_ms=%u BLE RF is off",
+            ANCHOR_UWB_WAIT_MS);
+    run_anchor_uwb_window(&slots[0]);
+
+    (void)dwm3000_driver_standby();
+    radio_guard_uwb_stop();
+    uwb_started = false;
+    LOG_INF("anchor UWB responder service closed; DWM3000 standby requested");
+
+restart_scan:
+    if (uwb_started) {
+        (void)dwm3000_driver_standby();
+        radio_guard_uwb_stop();
+    }
     key = k_spin_lock(&anchor_ble_lock);
     anchor_uwb_busy = false;
+    anchor_admission_open = false;
+    anchor_service_active = false;
+    anchor_service_count = 0u;
+    anchor_service_window_start_ms = 0;
+    anchor_service_window_end_ms = 0;
     k_spin_unlock(&anchor_ble_lock, key);
 
     ret = anchor_start_ble_scan();
     if (ret < 0) {
         LOG_ERR("failed to restart low-duty anchor BLE scan: %d", ret);
     }
+    report_tx_schedule(0u);
 }
 
 static void anchor_scan_cb(const bt_addr_le_t *addr,
@@ -1183,6 +1570,7 @@ static void anchor_scan_cb(const bt_addr_le_t *addr,
 {
     struct anchor_scan_combined_context context = {0};
     k_spinlock_key_t key;
+    int64_t received_ms;
     bool submit = false;
 
     ARG_UNUSED(addr);
@@ -1197,26 +1585,30 @@ static void anchor_scan_cb(const bt_addr_le_t *addr,
         return;
     }
 
+    received_ms = k_uptime_get();
     key = k_spin_lock(&anchor_ble_lock);
-    if (!anchor_uwb_busy && !anchor_pending_valid) {
-        anchor_pending_request = context.discovery.request;
-        anchor_pending_rssi = rssi;
-        anchor_pending_valid = true;
-        submit = true;
+    if (anchor_service_add_locked(&context.discovery.request, rssi, received_ms, &submit)) {
+        LOG_INF("anchor queued wake request: clicker=0x%016llx event_seq=%u attempt=%u flags=0x%02x priority=0x%016llx ready_in_ms=%u ready_scan_ms=%u rssi=%d depth=%u/%u",
+                (unsigned long long)context.discovery.request.clicker_id,
+                context.discovery.request.event_seq,
+                context.discovery.request.attempt_index,
+                context.discovery.request.flags,
+                (unsigned long long)context.discovery.request.priority_id,
+                context.discovery.request.ready_scan_starts_in_ms,
+                context.discovery.request.ready_scan_duration_ms,
+                rssi,
+                anchor_service_count,
+                ANCHOR_SERVICE_QUEUE_DEPTH);
     }
     k_spin_unlock(&anchor_ble_lock, key);
 
     if (submit) {
-        LOG_INF("anchor queued discovery request: clicker=0x%016llx event_seq=%u flags=0x%02x rssi=%d",
+        (void)k_work_submit(&anchor_ble_work);
+    } else if (!anchor_admission_open) {
+        LOG_DBG("anchor ignored wake request while busy/pending: clicker=0x%016llx event_seq=%u attempt=%u",
                 (unsigned long long)context.discovery.request.clicker_id,
                 context.discovery.request.event_seq,
-                context.discovery.request.flags,
-                rssi);
-        (void)k_work_submit(&anchor_ble_work);
-    } else {
-        LOG_DBG("anchor ignored discovery while busy/pending: clicker=0x%016llx event_seq=%u",
-                (unsigned long long)context.discovery.request.clicker_id,
-                context.discovery.request.event_seq);
+                context.discovery.request.attempt_index);
     }
 }
 
@@ -1230,6 +1622,7 @@ static void clicker_ready_scan_cb(const bt_addr_le_t *addr,
     bool stored = false;
     uint8_t ready_count = 0u;
     int16_t score = 0;
+    uint32_t received_ms = k_uptime_get_32();
 
     ARG_UNUSED(addr);
     ARG_UNUSED(adv_type);
@@ -1240,33 +1633,54 @@ static void clicker_ready_scan_cb(const bt_addr_le_t *addr,
     }
 
     key = k_spin_lock(&clicker_ready_lock);
-    if (context.ready.flags == clicker_ready_expected_flags) {
+    if (context.ready.status == BLE_READY_STATUS_ADMITTED &&
+        context.ready.flags == clicker_ready_expected_flags &&
+        context.ready.target_clicker_id == DEVICE_ID &&
+        context.ready.target_event_seq == clicker_ready_expected_event_seq &&
+        context.ready.attempt_index == clicker_ready_expected_attempt_index) {
         score = ready_rssi_score(&context.ready, rssi);
-        stored = ready_anchor_store_locked(&context.ready, rssi);
+        stored = ready_anchor_store_locked(&context.ready, rssi, received_ms);
         ready_count = clicker_ready_count;
     }
     k_spin_unlock(&clicker_ready_lock, key);
 
     if (stored) {
-        LOG_INF("READY anchor accepted: id=0x%016llx uwb=0x%04x anchor_rssi=%d clicker_rssi=%d score=%d count=%u/%u",
+        LOG_INF("READY accepted: anchor=0x%016llx uwb=0x%04x event_seq=%u attempt=%u priority_seen=0x%016llx anchor_rssi=%d clicker_rssi=%d score=%d count=%u/%u",
                 (unsigned long long)context.ready.anchor_id,
                 context.ready.uwb_short_addr,
+                context.ready.target_event_seq,
+                context.ready.attempt_index,
+                (unsigned long long)context.ready.priority_id_seen,
                 context.ready.rssi_hint,
                 rssi,
                 score,
                 ready_count,
                 MAX_READY_ANCHORS);
-    } else if (context.ready.flags != clicker_ready_expected_flags) {
-        LOG_DBG("READY anchor ignored due to flags: id=0x%016llx flags=0x%02x expected=0x%02x",
+    } else if (context.ready.flags != clicker_ready_expected_flags ||
+               context.ready.target_clicker_id != DEVICE_ID ||
+               context.ready.target_event_seq != clicker_ready_expected_event_seq ||
+               context.ready.attempt_index != clicker_ready_expected_attempt_index) {
+        LOG_DBG("READY ignored: anchor=0x%016llx target=0x%016llx event_seq=%u attempt=%u flags=0x%02x expected_event=%u expected_attempt=%u expected_flags=0x%02x status=%u",
                 (unsigned long long)context.ready.anchor_id,
+                (unsigned long long)context.ready.target_clicker_id,
+                context.ready.target_event_seq,
+                context.ready.attempt_index,
                 context.ready.flags,
-                clicker_ready_expected_flags);
+                clicker_ready_expected_event_seq,
+                clicker_ready_expected_attempt_index,
+                clicker_ready_expected_flags,
+                context.ready.status);
     }
 }
 
 static int anchor_start_ble_scan(void)
 {
     int ret;
+
+    ret = radio_guard_ble_start("anchor scan");
+    if (ret < 0) {
+        return ret;
+    }
 
     ret = ble_runtime_init();
     if (ret < 0) {
@@ -1300,6 +1714,11 @@ static int gateway_start_mesh_scan(void)
 {
     int ret;
 
+    ret = radio_guard_ble_start("gateway scan");
+    if (ret < 0) {
+        return ret;
+    }
+
     ret = ble_runtime_init();
     if (ret < 0) {
         return ret;
@@ -1332,9 +1751,10 @@ static void gateway_route_adv_work_handler(struct k_work *work)
 static int clicker_scan_for_ready_list(struct ready_anchor *anchors,
                                        uint8_t anchor_cap,
                                        uint8_t expected_flags,
+                                       uint32_t expected_event_seq,
+                                       uint8_t expected_attempt_index,
                                        uint32_t duration_ms)
 {
-    k_spinlock_key_t key;
     uint8_t found_count;
     int ret;
 
@@ -1342,55 +1762,55 @@ static int clicker_scan_for_ready_list(struct ready_anchor *anchors,
         return -EINVAL;
     }
 
+    ret = radio_guard_ble_start("clicker READY scan");
+    if (ret < 0) {
+        return ret;
+    }
+
     ret = ble_runtime_init();
     if (ret < 0) {
         return ret;
     }
 
-    key = k_spin_lock(&clicker_ready_lock);
-    clicker_ready_count = 0u;
-    clicker_ready_expected_flags = expected_flags;
-    memset(clicker_ready_anchors, 0, sizeof(clicker_ready_anchors));
-    k_spin_unlock(&clicker_ready_lock, key);
-
-    LOG_INF("clicker scanning for READY anchors: duration_ms=%u max=%u expected_flags=0x%02x",
+    LOG_INF("clicker scanning for READY advertisements: duration_ms=%u max=%u event_seq=%u attempt=%u expected_flags=0x%02x",
             duration_ms,
             MAX_READY_ANCHORS,
+            expected_event_seq,
+            expected_attempt_index,
             expected_flags);
 
     ret = bt_le_scan_start(&clicker_ready_scan_param, clicker_ready_scan_cb);
     if (ret == -EALREADY) {
         (void)bt_le_scan_stop();
+        clicker_ready_scan_active = false;
         ret = bt_le_scan_start(&clicker_ready_scan_param, clicker_ready_scan_cb);
     }
     if (ret < 0) {
         return ret;
     }
+    clicker_ready_scan_active = true;
 
     k_msleep(duration_ms);
 
     ret = bt_le_scan_stop();
+    clicker_ready_scan_active = false;
     if (ret < 0 && ret != -EALREADY) {
         return ret;
     }
 
-    key = k_spin_lock(&clicker_ready_lock);
-    found_count = MIN(clicker_ready_count, anchor_cap);
-    for (uint8_t i = 0u; i < found_count; i++) {
-        anchors[i] = clicker_ready_anchors[i];
-    }
-    k_spin_unlock(&clicker_ready_lock, key);
+    found_count = clicker_ready_snapshot(anchors, anchor_cap);
 
     if (found_count == 0u) {
         return -ETIMEDOUT;
     }
 
-    LOG_INF("clicker READY scan complete: anchors=%u sorted_by_rssi=1", found_count);
+    LOG_INF("clicker READY scan complete: ready_anchors=%u sorted_by_rssi=1", found_count);
     for (uint8_t i = 0u; i < found_count; i++) {
-        LOG_INF("READY order[%u]: id=0x%016llx uwb=0x%04x anchor_rssi=%d clicker_rssi=%d score=%d",
+        LOG_INF("READY order[%u]: id=0x%016llx uwb=0x%04x attempt=%u anchor_rssi=%d clicker_rssi=%d score=%d",
                 i,
                 (unsigned long long)anchors[i].ready.anchor_id,
                 anchors[i].ready.uwb_short_addr,
+                anchors[i].ready.attempt_index,
                 anchors[i].ready.rssi_hint,
                 anchors[i].clicker_rssi,
                 anchors[i].rssi_score);
@@ -1411,12 +1831,74 @@ static int advertise_discovery_request(const struct ble_discovery_req *request,
         return -EINVAL;
     }
 
-    LOG_INF("clicker BLE discovery advertisement: clicker=0x%016llx event_seq=%u flags=0x%02x duration_ms=%u",
+    LOG_INF("clicker BLE wake advertisement: clicker=0x%016llx event_seq=%u attempt=%u flags=0x%02x duration_ms=%u ready_scan_starts_in_ms=%u ready_scan_ms=%u min_anchors=%u priority=0x%016llx",
             (unsigned long long)request->clicker_id,
             request->event_seq,
+            request->attempt_index,
             request->flags,
-            duration_ms);
+            duration_ms,
+            request->ready_scan_starts_in_ms,
+            request->ready_scan_duration_ms,
+            request->min_anchor_count,
+            (unsigned long long)request->priority_id);
     return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms);
+}
+
+static int advertise_wake_window(const struct ble_discovery_req *request,
+                                 uint32_t window_ms)
+{
+    int64_t close_ms;
+    int ret;
+
+    if (request == NULL || window_ms == 0u) {
+        return -EINVAL;
+    }
+
+    close_ms = k_uptime_get() + window_ms;
+    while (k_uptime_get() < close_ms) {
+        struct ble_discovery_req advertised = *request;
+        int64_t remaining_ms = close_ms - k_uptime_get();
+        uint32_t slice_ms;
+
+        if (remaining_ms <= 0) {
+            break;
+        }
+
+        advertised.ready_scan_starts_in_ms = delay_ms_to_u16(remaining_ms);
+        slice_ms = MIN(WAKE_ADV_UPDATE_MS, (uint32_t)remaining_ms);
+        ret = advertise_discovery_request(&advertised, slice_ms);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
+static int clicker_collect_ready_attempt(const struct ble_discovery_req *request,
+                                         struct ready_anchor *anchors,
+                                         uint8_t anchor_cap)
+{
+    int ret;
+
+    if (request == NULL || anchors == NULL || anchor_cap == 0u) {
+        return -EINVAL;
+    }
+
+    clicker_ready_collection_reset(request->flags,
+                                   request->event_seq,
+                                   request->attempt_index);
+
+    ret = advertise_wake_window(request, WAKE_ADV_MS);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return clicker_scan_for_ready_list(anchors,
+                                       anchor_cap,
+                                       request->flags,
+                                       request->event_seq,
+                                       request->attempt_index,
+                                       READY_SCAN_MS);
 }
 
 static void mesh_schedule_tx_timeout(void)
@@ -1452,7 +1934,7 @@ static void mesh_restart_role_scan(void)
 {
     int ret;
 
-    if (DEVICE_ROLE == ROLE_ANCHOR && !anchor_uwb_busy) {
+    if (DEVICE_ROLE == ROLE_ANCHOR && !anchor_uwb_busy && !anchor_service_active) {
         ret = anchor_start_ble_scan();
         if (ret < 0) {
             LOG_WRN("mesh failed to restart anchor scan: %d", ret);
@@ -1526,6 +2008,85 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
     return 0;
 }
 
+static bool anchor_uwb_window_active(void)
+{
+    k_spinlock_key_t key;
+    bool busy;
+
+    key = k_spin_lock(&anchor_ble_lock);
+    busy = anchor_uwb_busy || anchor_service_active;
+    k_spin_unlock(&anchor_ble_lock, key);
+    return busy;
+}
+
+static void report_tx_schedule(uint32_t delay_ms)
+{
+    if (DEVICE_ROLE == ROLE_ANCHOR) {
+        (void)k_work_reschedule(&report_tx_work, K_MSEC(delay_ms));
+    }
+}
+
+static void report_tx_work_handler(struct k_work *work)
+{
+    struct mesh_outbound outbound;
+    struct mesh_outbound dropped;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_ANCHOR) {
+        return;
+    }
+    if (anchor_uwb_window_active() || mesh_relay_tx_active(&mesh_runtime)) {
+        return;
+    }
+
+    ret = k_msgq_peek(&report_tx_msgq, &outbound);
+    if (ret != 0) {
+        return;
+    }
+
+    ret = mesh_start_tracked_tx(&outbound, "queued-click-report");
+    if (ret == 0) {
+        (void)k_msgq_get(&report_tx_msgq, &dropped, K_NO_WAIT);
+        return;
+    }
+
+    if (ret == -EHOSTUNREACH || ret == -EBUSY) {
+        LOG_WRN("queued click report waiting for mesh route/idle state: ret=%d", ret);
+        report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        return;
+    }
+
+    (void)k_msgq_get(&report_tx_msgq, &dropped, K_NO_WAIT);
+    LOG_WRN("queued click report dropped after permanent TX error: ret=%d", ret);
+}
+
+static int queue_anchor_report(const struct mesh_outbound *outbound)
+{
+    int ret;
+
+    if (outbound == NULL) {
+        return -EINVAL;
+    }
+    if (DEVICE_ROLE != ROLE_ANCHOR) {
+        return 0;
+    }
+
+    ret = k_msgq_put(&report_tx_msgq, outbound, K_NO_WAIT);
+    if (ret != 0) {
+        LOG_WRN("anchor report queue full; click report dropped");
+        return -ENOSPC;
+    }
+
+    LOG_INF("anchor queued click report: queue_depth=%u",
+            k_msgq_num_used_get(&report_tx_msgq));
+    if (!anchor_uwb_window_active()) {
+        report_tx_schedule(0u);
+    }
+    return 0;
+}
+
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
 {
     if (result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) {
@@ -1561,6 +2122,9 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
     }
     if (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) {
         LOG_INF("mesh local delivery ready");
+    }
+    if (DEVICE_ROLE == ROLE_ANCHOR && !mesh_relay_tx_active(&mesh_runtime)) {
+        report_tx_schedule(0u);
     }
 }
 
@@ -1619,8 +2183,24 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     uint8_t pending_payload[PACKET_MAX_PAYLOAD_LEN];
     size_t pending_payload_len = 0u;
     bool pending_gateway_command = false;
+    struct mesh_outbound pending_report = {0};
+    bool pending_anchor_report = false;
 
     ARG_UNUSED(work);
+
+    if (DEVICE_ROLE == ROLE_ANCHOR &&
+        mesh_relay_tx_active(&mesh_runtime) &&
+        mesh_runtime.pending.packet.msg_type == MSG_CLICK_REPORT &&
+        mesh_runtime.pending.packet.src_id == DEVICE_ID) {
+        pending_report.packet = mesh_runtime.pending.packet;
+        pending_report.payload_len = mesh_runtime.pending.payload_len;
+        if (pending_report.payload_len > 0u) {
+            memcpy(pending_report.payload,
+                   mesh_runtime.pending.payload,
+                   pending_report.payload_len);
+        }
+        pending_anchor_report = true;
+    }
 
     if (DEVICE_ROLE == ROLE_GATEWAY &&
         mesh_relay_tx_active(&mesh_runtime) &&
@@ -1653,6 +2233,12 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                                            command_id,
                                            COMMAND_TIMEOUT,
                                            (uint8_t)(-PROTO_ERR_NOT_FOUND));
+    }
+
+    if (pending_anchor_report &&
+        (result.actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
+        LOG_WRN("requeueing click report after mesh route loss");
+        (void)queue_anchor_report(&pending_report);
     }
 }
 
@@ -1704,17 +2290,24 @@ static int build_range_report(uint64_t clicker_id,
     uint8_t encoded[PACKET_MAX_LEN];
     size_t payload_len = 0u;
     size_t encoded_len = 0u;
+    uint16_t packet_seq;
     int ret;
 
-    if (range_result == NULL || range_result->responder_id == 0u) {
+    if (range_result == NULL ||
+        clicker_id == 0u ||
+        event_seq == 0u ||
+        range_result->responder_id == 0u) {
         return -EINVAL;
     }
+    packet_seq = range_result->seq == 0u ? (uint16_t)event_seq : range_result->seq;
 
     fields.clicker_id = clicker_id;
     fields.anchor_id = range_result->responder_id;
     fields.event_seq = event_seq;
+    fields.timestamp_ms = k_uptime_get_32();
     fields.distance_mm = range_result->distance_mm;
     fields.quality = range_result->quality;
+    fields.rsl_dbm = range_result->rsl_dbm;
     fields.range_status = range_result->status;
 
     ret = report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields);
@@ -1726,7 +2319,7 @@ static int build_range_report(uint64_t clicker_id,
                                         range_result->responder_id,
                                         GATEWAY_ID,
                                         event_seq,
-                                        (uint16_t)event_seq,
+                                        packet_seq,
                                         (uint8_t)payload_len);
     if (ret != PROTO_OK) {
         return -EINVAL;
@@ -1737,12 +2330,13 @@ static int build_range_report(uint64_t clicker_id,
         return -EINVAL;
     }
 
-    LOG_INF("click report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d quality=%u packet_len=%u",
+    LOG_INF("click report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d quality=%u rsl=%d dBm packet_len=%u",
             (unsigned long long)clicker_id,
             event_seq,
             (unsigned long long)range_result->responder_id,
             range_result->distance_mm,
             range_result->quality,
+            range_result->rsl_dbm,
             (unsigned int)encoded_len);
 
     if (DEVICE_ROLE == ROLE_ANCHOR) {
@@ -1752,107 +2346,309 @@ static int build_range_report(uint64_t clicker_id,
         };
 
         memcpy(outbound.payload, payload, payload_len);
-        ret = mesh_start_tracked_tx(&outbound, "click-report");
+        ret = queue_anchor_report(&outbound);
         if (ret < 0) {
-            LOG_WRN("click report mesh TX could not start: %d", ret);
+            LOG_WRN("click report could not be queued for mesh TX: %d", ret);
             return ret;
         }
     }
     return 0;
 }
 
-static int run_normal_click(void)
+static bool anchor_id_seen(const uint64_t *anchors, uint8_t anchor_count, uint64_t anchor_id)
 {
-    const struct ble_discovery_req request = {
-        .clicker_id = DEVICE_ID,
-        .event_seq = ++next_event_seq,
-        .flags = ble_flags_for_click(),
-    };
-    struct ready_anchor anchors[MAX_READY_ANCHORS];
-    struct dwm3000_range_request range_request;
-    struct dwm3000_range_result range_result;
-    uint8_t success_count = 0u;
-    int ready_count;
+    for (uint8_t i = 0u; i < anchor_count; i++) {
+        if (anchors[i] == anchor_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t ds_twr_retry_backoff_ms(uint64_t anchor_id, uint8_t seq)
+{
+    uint32_t jitter = k_cycle_get_32() ^
+                      (uint32_t)anchor_id ^
+                      (uint32_t)(anchor_id >> 32) ^
+                      (uint32_t)seq;
+    uint32_t span = DS_TWR_RETRY_BACKOFF_MAX_MS - DS_TWR_RETRY_BACKOFF_MIN_MS + 1u;
+
+    return DS_TWR_RETRY_BACKOFF_MIN_MS + (jitter % span);
+}
+
+static int clicker_politeness_phase(void)
+{
+    int64_t deadline_ms = k_uptime_get() + MAX_POLITENESS_WAIT_MS;
+    uint32_t quiet_ms = 0u;
     int ret;
 
-    LOG_INF("normal click started: event_seq=%u discovery_adv_ms=%u ready_scan_ms=%u max_anchors=%u",
-            request.event_seq,
-            BLE_DISCOVERY_ADV_MS,
-            BLE_READY_SCAN_MS,
-            MAX_READY_ANCHORS);
-
-    ret = advertise_discovery_request(&request, BLE_DISCOVERY_ADV_MS);
+    ret = radio_guard_uwb_start("clicker politeness sniff");
     if (ret < 0) {
-        LOG_ERR("normal click BLE discovery advertisement failed: %d", ret);
         return ret;
     }
 
-    ready_count = clicker_scan_for_ready_list(anchors,
-                                              ARRAY_SIZE(anchors),
-                                              request.flags,
-                                              BLE_READY_SCAN_MS);
-    if (ready_count < 0) {
-        LOG_WRN("normal click did not receive READY anchors over BLE: %d", ready_count);
-        return ready_count;
-    }
+    while (quiet_ms < UWB_QUIET_TIME_MS && k_uptime_get() < deadline_ms) {
+        int64_t remaining_ms = deadline_ms - k_uptime_get();
+        uint32_t listen_ms;
+        bool activity_detected = false;
 
-    LOG_INF("normal click ranging %d anchors in RSSI order", ready_count);
-    for (uint8_t i = 0u; i < (uint8_t)ready_count; i++) {
-        range_request.initiator_id = DEVICE_ID;
-        range_request.responder_id = anchors[i].ready.anchor_id;
-        range_request.session_id = request.event_seq;
-        range_request.seq = i + 1u;
-        range_request.flags = request.flags;
-        range_request.timeout_ms = CLICK_UWB_TIMEOUT_MS;
-
-        LOG_INF("normal click DS-TWR start: index=%u/%d anchor=0x%016llx uwb=0x%04x score=%d timeout_ms=%u",
-                i + 1u,
-                ready_count,
-                (unsigned long long)anchors[i].ready.anchor_id,
-                anchors[i].ready.uwb_short_addr,
-                anchors[i].rssi_score,
-                range_request.timeout_ms);
-
-        ret = dwm3000_driver_range_initiator(&range_request, &range_result);
-        if (ret < 0 || range_result.status != RANGE_OK) {
-            LOG_WRN("normal click DS-TWR failed: anchor=0x%016llx ret=%d range_status=%u",
-                    (unsigned long long)anchors[i].ready.anchor_id,
-                    ret,
-                    range_result.status);
-            continue;
+        if (remaining_ms <= 0) {
+            break;
+        }
+        listen_ms = MIN(UWB_QUIET_TIME_MS - quiet_ms, (uint32_t)remaining_ms);
+        if (listen_ms == 0u) {
+            break;
         }
 
-        ret = build_range_report(DEVICE_ID, request.event_seq, &range_result);
+        ret = dwm3000_driver_listen_activity(listen_ms, &activity_detected);
         if (ret < 0) {
-            LOG_WRN("normal click report build failed: anchor=0x%016llx ret=%d",
-                    (unsigned long long)range_result.responder_id,
-                    ret);
-            continue;
+            (void)dwm3000_driver_standby();
+            radio_guard_uwb_stop();
+            return ret;
         }
-        success_count++;
+
+        if (activity_detected) {
+            quiet_ms = 0u;
+        } else {
+            quiet_ms += listen_ms;
+        }
     }
 
     (void)dwm3000_driver_standby();
+    radio_guard_uwb_stop();
+    LOG_INF("clicker politeness phase complete: quiet_ms=%u max_wait_ms=%u",
+            quiet_ms,
+            MAX_POLITENESS_WAIT_MS);
+    return 0;
+}
 
-    if (success_count == 0u) {
-        LOG_WRN("normal click completed with no successful anchor ranges: discovered=%d",
-                ready_count);
-        return -EIO;
+static int range_ready_anchor_for_window(const struct ble_discovery_req *request,
+                                         const struct ready_anchor *anchor,
+                                         int64_t click_deadline_ms,
+                                         uint8_t *next_seq,
+                                         uint8_t *attempted_count,
+                                         bool *anchor_succeeded)
+{
+    int64_t anchor_deadline_ms;
+    int last_ret = -ETIMEDOUT;
+
+    if (request == NULL || anchor == NULL || next_seq == NULL ||
+        attempted_count == NULL || anchor_succeeded == NULL) {
+        return -EINVAL;
     }
 
-    LOG_INF("normal click completed: event_seq=%u discovered=%d successful_ranges=%u",
-            request.event_seq,
-            ready_count,
-            success_count);
-    return 0;
+    *anchor_succeeded = false;
+    anchor_deadline_ms = MIN(k_uptime_get() + CLICK_ANCHOR_RANGE_WINDOW_MS,
+                             click_deadline_ms - CLICK_REPORT_BUILD_GUARD_MS);
+
+    while (k_uptime_get() < anchor_deadline_ms) {
+        struct dwm3000_range_request range_request = {
+            .initiator_id = DEVICE_ID,
+            .responder_id = anchor->ready.anchor_id,
+            .responder_short_addr = anchor->ready.uwb_short_addr,
+            .session_id = request->event_seq,
+            .seq = *next_seq,
+            .flags = request->flags,
+        };
+        struct dwm3000_range_result range_result;
+        int64_t remaining_ms = anchor_deadline_ms - k_uptime_get();
+        int ret;
+
+        if (remaining_ms <= 0) {
+            break;
+        }
+        if (range_request.seq == 0u) {
+            range_request.seq = 1u;
+            *next_seq = 1u;
+        }
+        range_request.timeout_ms = MIN(CLICK_UWB_TIMEOUT_MS, (uint32_t)remaining_ms);
+
+        ret = radio_guard_uwb_start("clicker READY UWB range");
+        if (ret < 0) {
+            return ret;
+        }
+        (*attempted_count)++;
+        LOG_INF("normal click DS-TWR start: anchor=0x%016llx seq=%u timeout_ms=%u anchor_window_remaining_ms=%d BLE RF is off",
+                (unsigned long long)anchor->ready.anchor_id,
+                range_request.seq,
+                range_request.timeout_ms,
+                (int)(anchor_deadline_ms - k_uptime_get()));
+
+        ret = dwm3000_driver_range_initiator(&range_request, &range_result);
+        (void)dwm3000_driver_standby();
+        radio_guard_uwb_stop();
+        (*next_seq)++;
+        if (*next_seq == 0u) {
+            *next_seq = 1u;
+        }
+
+        if (ret == 0 && range_result.status == RANGE_OK) {
+            int report_ret;
+
+            report_ret = build_range_report(DEVICE_ID, request->event_seq, &range_result);
+            if (report_ret < 0) {
+                LOG_WRN("normal click report build failed: anchor=0x%016llx ret=%d",
+                        (unsigned long long)range_result.responder_id,
+                        report_ret);
+                last_ret = report_ret;
+            } else {
+                *anchor_succeeded = true;
+                last_ret = 0;
+            }
+            continue;
+        }
+
+        LOG_WRN("normal click DS-TWR failed: anchor=0x%016llx ret=%d range_status=%u",
+                (unsigned long long)anchor->ready.anchor_id,
+                ret,
+                range_result.status);
+        last_ret = ret < 0 ? ret : -EIO;
+
+        remaining_ms = anchor_deadline_ms - k_uptime_get();
+        if (remaining_ms > (int64_t)DS_TWR_RETRY_BACKOFF_MIN_MS) {
+            uint32_t backoff_ms = ds_twr_retry_backoff_ms(anchor->ready.anchor_id,
+                                                          range_request.seq);
+
+            backoff_ms = MIN(backoff_ms, (uint32_t)remaining_ms);
+            k_msleep(backoff_ms);
+        }
+    }
+
+    return *anchor_succeeded ? 0 : last_ret;
+}
+
+static int run_normal_click(void)
+{
+    uint32_t event_seq = ++next_event_seq;
+    uint64_t successful_anchors[MAX_SUCCESSFUL_ANCHORS] = {0};
+    uint8_t success_count = 0u;
+    uint8_t attempted_count = 0u;
+    uint8_t next_seq = 1u;
+    uint16_t total_ready_count = 0u;
+    int64_t click_deadline_ms;
+    int last_ret = -ETIMEDOUT;
+    int ret;
+
+    BUILD_ASSERT(MIN_UNIQUE_RANGED_ANCHORS <= MAX_SUCCESSFUL_ANCHORS,
+                 "successful anchor result storage must cover the success threshold");
+
+    LOG_INF("normal click started: event_seq=%u wake_ms=%u ready_scan_ms=%u max_attempts=%u min_unique_anchors=%u",
+            event_seq,
+            WAKE_ADV_MS,
+            READY_SCAN_MS,
+            MAX_WAKE_ATTEMPTS,
+            MIN_UNIQUE_RANGED_ANCHORS);
+
+    click_deadline_ms = k_uptime_get() + CLICK_REPORT_READY_DEADLINE_MS;
+    ret = clicker_politeness_phase();
+    if (ret < 0) {
+        LOG_WRN("normal click politeness sniff failed: %d", ret);
+        return ret;
+    }
+
+    for (uint8_t attempt = 1u; attempt <= MAX_WAKE_ATTEMPTS; attempt++) {
+        struct ble_discovery_req request = {
+            .clicker_id = DEVICE_ID,
+            .priority_id = DEVICE_ID,
+            .event_seq = event_seq,
+            .ready_scan_starts_in_ms = WAKE_ADV_MS,
+            .ready_scan_duration_ms = READY_SCAN_MS,
+            .flags = ble_flags_for_click(),
+            .attempt_index = attempt,
+            .min_anchor_count = MIN_UNIQUE_RANGED_ANCHORS,
+        };
+        struct ready_anchor anchors[MAX_READY_ANCHORS];
+        int ready_count;
+
+        if (k_uptime_get() + WAKE_ADV_MS + READY_SCAN_MS >= click_deadline_ms) {
+            break;
+        }
+
+        ready_count = clicker_collect_ready_attempt(&request, anchors, ARRAY_SIZE(anchors));
+        if (ready_count == -ETIMEDOUT) {
+            last_ret = ready_count;
+            LOG_WRN("normal click attempt found no READY anchors: event_seq=%u attempt=%u",
+                    event_seq,
+                    attempt);
+            if (attempt < MAX_WAKE_ATTEMPTS) {
+                int64_t retry_delay_ms = MIN((int64_t)NO_ANCHOR_RETRY_DELAY_MS,
+                                             click_deadline_ms - k_uptime_get());
+
+                if (retry_delay_ms > 0) {
+                    k_msleep((uint32_t)retry_delay_ms);
+                }
+            }
+            continue;
+        }
+        if (ready_count < 0) {
+            return ready_count;
+        }
+
+        total_ready_count += (uint16_t)ready_count;
+        LOG_INF("normal click attempt received READY anchors: event_seq=%u attempt=%u ready=%d unique_success=%u/%u",
+                event_seq,
+                attempt,
+                ready_count,
+                success_count,
+                MIN_UNIQUE_RANGED_ANCHORS);
+
+        for (uint8_t i = 0u; i < (uint8_t)ready_count; i++) {
+            bool anchor_succeeded = false;
+
+            if (anchor_id_seen(successful_anchors, success_count, anchors[i].ready.anchor_id)) {
+                continue;
+            }
+            if (k_uptime_get() >= click_deadline_ms - CLICK_REPORT_BUILD_GUARD_MS) {
+                break;
+            }
+
+            ret = range_ready_anchor_for_window(&request,
+                                                &anchors[i],
+                                                click_deadline_ms,
+                                                &next_seq,
+                                                &attempted_count,
+                                                &anchor_succeeded);
+            if (anchor_succeeded) {
+                successful_anchors[success_count] = anchors[i].ready.anchor_id;
+                success_count++;
+                LOG_INF("normal click unique anchor ranged: anchor=0x%016llx success=%u/%u",
+                        (unsigned long long)anchors[i].ready.anchor_id,
+                        success_count,
+                        MIN_UNIQUE_RANGED_ANCHORS);
+                if (success_count >= MIN_UNIQUE_RANGED_ANCHORS) {
+                    LOG_INF("normal click completed: event_seq=%u ready_seen=%u attempted_ranges=%u successful_unique_ranges=%u",
+                            event_seq,
+                            total_ready_count,
+                            attempted_count,
+                            success_count);
+                    return 0;
+                }
+            } else if (ret < 0) {
+                last_ret = ret;
+            }
+        }
+    }
+
+    LOG_WRN("normal click failed: event_seq=%u ready_seen=%u attempted_ranges=%u successful_unique_ranges=%u required=%u",
+            event_seq,
+            total_ready_count,
+            attempted_count,
+            success_count,
+            MIN_UNIQUE_RANGED_ANCHORS);
+    return last_ret < 0 ? last_ret : -EIO;
 }
 
 static enum self_test_failure run_self_test(void)
 {
     const struct ble_discovery_req request = {
         .clicker_id = DEVICE_ID,
+        .priority_id = DEVICE_ID,
         .event_seq = ++next_event_seq,
+        .ready_scan_starts_in_ms = WAKE_ADV_MS,
+        .ready_scan_duration_ms = READY_SCAN_MS,
         .flags = ble_flags_for_diagnostic(),
+        .attempt_index = 1u,
+        .min_anchor_count = 1u,
     };
     struct dwm3000_range_request range_request;
     struct dwm3000_range_result range_result;
@@ -1898,41 +2694,39 @@ static enum self_test_failure run_self_test(void)
             (unsigned int)dwm3000_port_current_spi_hz());
     (void)dwm3000_driver_standby();
 
-    ret = advertise_discovery_request(&request, BLE_DISCOVERY_ADV_MS);
-    if (ret < 0) {
-        LOG_ERR("self-test BLE diagnostic advertisement failed: %d", ret);
-        return SELF_TEST_FAILURE_BLE;
-    }
-
-    ready_count = clicker_scan_for_ready_list(anchors,
-                                              ARRAY_SIZE(anchors),
-                                              request.flags,
-                                              BLE_READY_SCAN_MS);
+    ready_count = clicker_collect_ready_attempt(&request, anchors, ARRAY_SIZE(anchors));
     if (ready_count < 0) {
         LOG_WRN("self-test did not receive diagnostic READY over BLE: %d", ready_count);
         return ready_count == -ETIMEDOUT ? SELF_TEST_FAILURE_NO_ANCHOR :
                                            SELF_TEST_FAILURE_BLE;
     }
 
-    LOG_INF("self-test using strongest READY anchor: id=0x%016llx score=%d discovered=%d",
+    LOG_INF("self-test using first READY anchor: anchor=0x%016llx score=%d discovered=%d",
             (unsigned long long)anchors[0].ready.anchor_id,
             anchors[0].rssi_score,
             ready_count);
 
     range_request.initiator_id = DEVICE_ID;
     range_request.responder_id = anchors[0].ready.anchor_id;
+    range_request.responder_short_addr = anchors[0].ready.uwb_short_addr;
     range_request.session_id = request.event_seq;
     range_request.seq = 1u;
     range_request.flags = request.flags;
     range_request.timeout_ms = SELF_TEST_UWB_TIMEOUT_MS;
 
+    ret = radio_guard_uwb_start("self-test READY UWB range");
+    if (ret < 0) {
+        return SELF_TEST_FAILURE_UWB;
+    }
     ret = dwm3000_driver_range_initiator(&range_request, &range_result);
     (void)dwm3000_driver_standby();
+    radio_guard_uwb_stop();
     if (ret == 0 && range_result.status == RANGE_OK) {
-        LOG_INF("self-test UWB dud range passed: anchor=0x%016llx distance_mm=%d quality=%u",
+        LOG_INF("self-test UWB dud range passed: anchor=0x%016llx distance_mm=%d quality=%u rsl=%d dBm",
                 (unsigned long long)range_result.responder_id,
                 range_result.distance_mm,
-                range_result.quality);
+                range_result.quality,
+                range_result.rsl_dbm);
         return SELF_TEST_FAILURE_NONE;
     }
 
@@ -1952,6 +2746,9 @@ static void handle_button_action(enum button_action action)
     switch (action) {
     case BUTTON_ACTION_NORMAL_CLICK:
         ret = run_normal_click();
+        if (DEVICE_ROLE == ROLE_CLICKER) {
+            ble_runtime_shutdown();
+        }
         status.click_accepted = ret == 0;
         status_apply(&status);
         if (ret == 0) {
@@ -1975,6 +2772,9 @@ static void handle_button_action(enum button_action action)
         status.self_test_running = true;
         status_apply(&status);
         failure = run_self_test();
+        if (DEVICE_ROLE == ROLE_CLICKER) {
+            ble_runtime_shutdown();
+        }
         status.self_test_running = false;
         status.failure = failure;
         status.self_test_passed = failure == SELF_TEST_FAILURE_NONE;
@@ -2078,15 +2878,21 @@ int main(void)
     button_fsm_init(&button_fsm);
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
+    k_work_init_delayable(&report_tx_work, report_tx_work_handler);
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
     LOG_INF("UWB/BLE firmware starting as %s", role_name());
-    LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_ready_anchors=%u ready_scan_ms=%u anchor_uwb_window_ms=%u",
+    LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_ready=%u wake_ms=%u ready_scan_ms=%u max_attempts=%u min_unique_anchors=%u anchor_scan_interval=%u anchor_scan_window=%u anchor_uwb_wait_ms=%u",
             (unsigned long long)DEVICE_ID,
             (unsigned long long)GATEWAY_ID,
             MAX_READY_ANCHORS,
-            BLE_READY_SCAN_MS,
-            ANCHOR_UWB_WINDOW_MS);
+            WAKE_ADV_MS,
+            READY_SCAN_MS,
+            MAX_WAKE_ATTEMPTS,
+            MIN_UNIQUE_RANGED_ANCHORS,
+            ANCHOR_SCAN_INTERVAL_300MS,
+            ANCHOR_SCAN_WINDOW_30MS,
+            ANCHOR_UWB_WAIT_MS);
 
     ret = status_leds_init();
     if (ret < 0) {

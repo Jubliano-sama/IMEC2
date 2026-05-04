@@ -29,12 +29,12 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 
 | Status | Task | Output |
 | --- | --- | --- |
-| Completed | Implement BLE discovery request/READY payloads | Normal and diagnostic discovery payloads |
-| In progress | Implement DWM3000 STS-SDC DS-TWR wrapper | SPI-polled initiator/responder runtime is wired; hardware timing/calibration smoke test pending |
-| Completed | Implement multi-anchor MVP click flow | Clicker advertises discovery, collects up to 8 READY anchors, RSSI-sorts them, ranges sequentially, and builds one report per successful range |
-| In progress | Implement full clicker normal-click flow | Successful anchor reports route through mesh; post-poll responder failures are reported; hardware validation pending |
+| Completed | Implement BLE wake/READY payloads | Normal and diagnostic wake requests, addressed READY payloads, attempt index, priority, READY timing, and minimum anchor count |
+| In progress | Implement DWM3000 STS-SDC DS-TWR wrapper | SPI-polled initiator/responder runtime is wired with compact UWB frames and equal reply delays; hardware timing/calibration smoke test pending |
+| Completed | Implement multi-anchor MVP click flow | Clicker runs UWB politeness sniff, advertises wake, collects up to 8 addressed READY anchors per attempt, RSSI-sorts them, ranges sequentially, and requires 4 unique successful anchors |
+| Completed | Implement full clicker normal-click flow | Software path complete: up to 6 wake attempts, 50 ms per-anchor retry windows, successful anchor reports route through mesh from a post-UWB report queue, and post-poll responder failures are reported; hardware validation remains in P4 |
 | In progress | Implement clicker self-test flow | Gesture, diagnostic BLE advertisement, READY scan, DWM3000 wake/reset/DEV_ID probe, and diagnostic UWB dud range wired; hardware validation pending |
-| Completed | Enforce BLE-gated anchor UWB wake | Anchor parks the DWM3000 wake pin inactive at boot, low-duty scans BLE, wakes UWB only after discovery, keeps a 400 ms responder window, then puts DWM3000 into deep sleep |
+| Completed | Enforce BLE-gated anchor UWB wake | Anchor parks the DWM3000 wake pin inactive at boot, low-duty scans BLE, wakes UWB only after a wake request, sends addressed READY after deterministic arbitration, keeps a 500 ms responder window, then puts DWM3000 into deep sleep |
 
 ## P3 - Mesh, Gateway, and Survey
 
