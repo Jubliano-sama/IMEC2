@@ -41,7 +41,8 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
  * than the responder receives before scheduling the response. At 6.8 Mbps that
  * path delta is ceil(8 B * 8 bits * 1e6 / 6.8e6) = 10 us. The shared 900 uus
  * delay intentionally lets the shorter poll path wait, keeping both reply
- * times equal.
+ * times equal. Optional RX diagnostics must stay out of the RX-to-delayed-TX
+ * critical path; delayed TX misses mean this common value must be raised.
  */
 #define UWB_PHY_DATA_RATE_BPS 6800000u
 #define DS_TWR_RX_PATH_DELTA_BYTES (UWB_RESP_LEN - UWB_POLL_LEN)
@@ -501,7 +502,8 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
 
 static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          uint8_t *buffer, size_t buffer_len, size_t *frame_len,
-                         uint64_t *rx_timestamp, uint8_t *quality, int8_t *rsl_dbm)
+                         uint64_t *rx_timestamp, uint8_t *quality,
+                         int8_t *rsl_dbm, bool capture_rsl)
 {
     int ret;
 
@@ -526,7 +528,9 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         dwt_forcetrxoff();
         return -EBADMSG;
     }
-    read_received_signal_level(rsl_dbm);
+    if (capture_rsl) {
+        read_received_signal_level(rsl_dbm);
+    }
 
     *frame_len = read_rx_frame(buffer, buffer_len);
     clear_status(SYS_STATUS_RXFCG_BIT_MASK);
@@ -543,7 +547,8 @@ static int receive_response(const struct dwm3000_range_request *request,
                             uint64_t *resp_rx_ts,
                             uint8_t *quality,
                             int8_t *rsl_dbm,
-                            enum range_status *status_out)
+                            enum range_status *status_out,
+                            bool capture_rsl)
 {
     uint8_t rx_buffer[UWB_RESP_LEN + FCS_LEN];
     uint32_t status;
@@ -573,7 +578,9 @@ static int receive_response(const struct dwm3000_range_request *request,
         *status_out = RANGE_STS_QUALITY_FAIL;
         return -EBADMSG;
     }
-    read_received_signal_level(rsl_dbm);
+    if (capture_rsl) {
+        read_received_signal_level(rsl_dbm);
+    }
 
     frame_len = read_rx_frame(rx_buffer, sizeof(rx_buffer));
     clear_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_TXFRS_BIT_MASK);
@@ -609,7 +616,7 @@ static int receive_report(const struct dwm3000_range_request *request,
     int ret;
 
     ret = receive_frame(REPORT_RX_TIMEOUT_MS, &status,
-                        rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL, NULL);
+                        rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL, NULL, false);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->responder_id = responder_id;
@@ -639,6 +646,7 @@ static int receive_report(const struct dwm3000_range_request *request,
     result->distance_mm = report.distance_mm;
     result->quality = report.quality;
     result->rsl_dbm = report.rsl_dbm;
+    result->rsl_sampled = report.rsl_dbm != 0;
     result->status = report.status;
     return report.status == RANGE_OK ? 0 : -EIO;
 }
@@ -829,7 +837,8 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         return ret;
     }
 
-    ret = receive_response(request, &response, &resp_rx_ts, &quality, &rsl_dbm, &range_status);
+    ret = receive_response(request, &response, &resp_rx_ts, &quality, &rsl_dbm,
+                           &range_status, false);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->quality = quality;
@@ -912,6 +921,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     int8_t rsl_dbm = 0;
     int32_t distance_mm = 0;
     enum range_status report_status = RANGE_OK;
+    bool capture_final_rsl;
     int ret;
 
     if (result != NULL) {
@@ -939,7 +949,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
-                        &poll_rx_ts, &quality, &rsl_dbm);
+                        &poll_rx_ts, &quality, &rsl_dbm, false);
     if (ret < 0) {
         return ret == -ETIMEDOUT ? -ETIMEDOUT : ret;
     }
@@ -998,9 +1008,11 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -ETIME;
     }
 
+    capture_final_rsl = expected == NULL || expected->capture_rsl;
     ret = receive_frame(FINAL_RX_TIMEOUT_MS, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len,
-                        &final_rx_ts, &quality, &rsl_dbm);
+                        &final_rx_ts, &quality, &rsl_dbm,
+                        capture_final_rsl);
     if (ret < 0) {
         if (result != NULL) {
             result->quality = quality;
@@ -1064,6 +1076,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
         result->distance_mm = distance_mm;
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
+        result->rsl_sampled = capture_final_rsl;
         result->status = report_status;
     }
     return report_status == RANGE_OK ? 0 : -EIO;

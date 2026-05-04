@@ -10,6 +10,57 @@ static bool range_status_valid(enum range_status status)
     return status >= RANGE_OK && status <= RANGE_INTERNAL_ERROR;
 }
 
+static int append_distance_samples(uint8_t *payload,
+                                   size_t payload_cap,
+                                   size_t *offset,
+                                   const struct range_report_fields *fields)
+{
+    uint8_t samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET * sizeof(int32_t)];
+    uint16_t chunk_count;
+    bool fragmented;
+    size_t sample_bytes;
+    int ret;
+
+    if (fields->sample_count == 0u) {
+        return PROTO_OK;
+    }
+    chunk_count = fields->distance_sample_count == 0u ?
+                  fields->sample_count :
+                  fields->distance_sample_count;
+    fragmented = fields->sample_index != 0u || chunk_count != fields->sample_count;
+    if (fields->distance_samples_mm == NULL ||
+        fields->sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES ||
+        chunk_count == 0u ||
+        chunk_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET ||
+        (fragmented && chunk_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT) ||
+        fields->sample_index > fields->sample_count ||
+        chunk_count > fields->sample_count - fields->sample_index) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    sample_bytes = (size_t)chunk_count * sizeof(int32_t);
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_SAMPLE_COUNT,
+                         fields->sample_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (fragmented) {
+        ret = tlv_append_u16(payload, payload_cap, offset, TLV_SAMPLE_INDEX,
+                             fields->sample_index);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+
+    for (uint16_t i = 0u; i < chunk_count; i++) {
+        proto_put_u32_le(&samples[(size_t)i * sizeof(int32_t)],
+                         (uint32_t)fields->distance_samples_mm[i]);
+    }
+    return tlv_append_bytes(payload, payload_cap, offset,
+                            TLV_DISTANCE_SAMPLES_MM,
+                            samples, (uint8_t)sample_bytes);
+}
+
 int report_append_range_tlvs(uint8_t *payload,
                                   size_t payload_cap,
                                   size_t *offset,
@@ -48,13 +99,19 @@ int report_append_range_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = append_distance_samples(payload, payload_cap, offset, fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, fields->quality);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_i8(payload, payload_cap, offset, TLV_UWB_RSL_DBM, fields->rsl_dbm);
-    if (ret != PROTO_OK) {
-        return ret;
+    if (!fields->omit_rsl) {
+        ret = tlv_append_i8(payload, payload_cap, offset, TLV_UWB_RSL_DBM, fields->rsl_dbm);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     return tlv_append_u8(payload, payload_cap, offset, TLV_RANGE_STATUS, (uint8_t)fields->range_status);
 }

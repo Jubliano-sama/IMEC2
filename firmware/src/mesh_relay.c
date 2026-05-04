@@ -68,6 +68,36 @@ static int append_route_tlvs(uint8_t *payload,
     return tlv_append_u8(payload, payload_cap, offset, TLV_RETRY_COUNT, retry_count);
 }
 
+static int append_route_discovery_tlvs(uint8_t *payload,
+                                       size_t payload_cap,
+                                       size_t *offset,
+                                       uint64_t origin_id,
+                                       uint64_t target_id,
+                                       uint32_t route_epoch,
+                                       uint8_t hop_count,
+                                       uint8_t quality)
+{
+    int ret;
+
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_INITIATOR_ID, origin_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_RESPONDER_ID, target_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_ROUTE_EPOCH, route_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_HOP_COUNT, hop_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, quality);
+}
+
 static int find_u64_tlv(const uint8_t *payload, size_t payload_len, uint8_t type, uint64_t *value)
 {
     const uint8_t *tlv_value = NULL;
@@ -808,6 +838,397 @@ static int cache_route_status_downlink(struct mesh_relay *relay,
     return upsert_downlink(relay, &entry);
 }
 
+static int upsert_reactive_route(struct mesh_relay *relay,
+                                 uint64_t target_id,
+                                 uint64_t next_hop_id,
+                                 uint32_t route_epoch,
+                                 uint8_t advertised_hop_count,
+                                 uint8_t quality,
+                                 uint32_t now_ms)
+{
+    if (!id_is_unicast(target_id) ||
+        !id_is_unicast(next_hop_id) ||
+        next_hop_id == relay->local_id ||
+        advertised_hop_count == UINT8_MAX ||
+        quality > 100u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (target_id == relay->local_id) {
+        return PROTO_OK;
+    }
+
+    if (target_id == relay->gateway_id) {
+        struct route_candidate candidate = {
+            .next_hop_id = next_hop_id,
+            .gateway_id = target_id,
+            .route_epoch = route_epoch,
+            .last_seen_ms = now_ms,
+            .hop_count = advertised_hop_count,
+            .link_quality = quality,
+            .valid = true,
+        };
+
+        if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
+            return PROTO_OK;
+        }
+        return route_upsert_candidate(&relay->upstream, &candidate);
+    }
+
+    if (advertised_hop_count + 1u == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    struct mesh_downlink_entry entry = {
+        .target_id = target_id,
+        .next_hop_id = next_hop_id,
+        .gateway_id = relay->gateway_id,
+        .route_epoch = route_epoch,
+        .last_seen_ms = now_ms,
+        .hop_count = advertised_hop_count + 1u,
+        .quality = quality,
+        .valid = true,
+    };
+
+    return upsert_downlink(relay, &entry);
+}
+
+static int parse_route_discovery_tlvs(const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint64_t *origin_id,
+                                      uint64_t *target_id,
+                                      uint32_t *route_epoch,
+                                      uint8_t *hop_count,
+                                      uint8_t *quality)
+{
+    int ret;
+
+    ret = find_u64_tlv(payload, payload_len, TLV_INITIATOR_ID, origin_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = find_u64_tlv(payload, payload_len, TLV_RESPONDER_ID, target_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = find_u32_tlv(payload, payload_len, TLV_ROUTE_EPOCH, route_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = find_u8_tlv(payload, payload_len, TLV_HOP_COUNT, hop_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return find_u8_tlv(payload, payload_len, TLV_QUALITY, quality);
+}
+
+static int build_route_request_forward(const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint8_t link_quality,
+                                       struct mesh_outbound *out)
+{
+    uint64_t origin_id = 0u;
+    uint64_t target_id = 0u;
+    uint32_t route_epoch = 0u;
+    uint8_t hop_count = 0u;
+    uint8_t quality = 0u;
+    size_t out_payload_len = 0u;
+    int ret;
+
+    if (packet->ttl == 0u) {
+        return PROTO_ERR_STALE;
+    }
+
+    ret = parse_route_discovery_tlvs(payload,
+                                     payload_len,
+                                     &origin_id,
+                                     &target_id,
+                                     &route_epoch,
+                                     &hop_count,
+                                     &quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (hop_count == UINT8_MAX) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    quality = combined_quality(quality, link_quality);
+    ret = append_route_discovery_tlvs(out->payload,
+                                      sizeof(out->payload),
+                                      &out_payload_len,
+                                      origin_id,
+                                      target_id,
+                                      route_epoch,
+                                      hop_count + 1u,
+                                      quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet = *packet;
+    out->packet.ttl = packet->ttl - 1u;
+    out->packet.payload_len = (uint8_t)out_payload_len;
+    out->payload_len = (uint8_t)out_payload_len;
+    out->next_hop_id = MESH_BROADCAST_ID;
+    return PROTO_OK;
+}
+
+static int build_route_reply(struct mesh_relay *relay,
+                             uint64_t origin_id,
+                             uint64_t target_id,
+                             uint64_t next_hop_id,
+                             uint32_t session_id,
+                             uint32_t route_epoch,
+                             struct mesh_outbound *out)
+{
+    size_t payload_len = 0u;
+    int ret;
+
+    if (!id_is_unicast(origin_id) ||
+        !id_is_unicast(target_id) ||
+        !id_is_unicast(next_hop_id) ||
+        next_hop_id == relay->local_id ||
+        session_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(out, 0, sizeof(*out));
+    ret = append_route_discovery_tlvs(out->payload,
+                                      sizeof(out->payload),
+                                      &payload_len,
+                                      origin_id,
+                                      target_id,
+                                      route_epoch,
+                                      0u,
+                                      100u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_ROUTE_REPLY;
+    out->packet.flags = 0u;
+    out->packet.src_id = target_id;
+    out->packet.dst_id = origin_id;
+    out->packet.session_id = session_id;
+    out->packet.seq = relay_next_seq(relay);
+    out->packet.ttl = MESH_DEFAULT_TTL;
+    out->packet.payload_len = (uint8_t)payload_len;
+    out->payload_len = (uint8_t)payload_len;
+    out->next_hop_id = next_hop_id;
+    return PROTO_OK;
+}
+
+static int build_route_reply_forward(const struct mesh_relay *relay,
+                                     const struct proto_packet *packet,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     uint8_t link_quality,
+                                     struct mesh_outbound *out)
+{
+    uint64_t origin_id = 0u;
+    uint64_t target_id = 0u;
+    uint64_t next_hop_id = 0u;
+    uint32_t route_epoch = 0u;
+    uint8_t hop_count = 0u;
+    uint8_t quality = 0u;
+    size_t out_payload_len = 0u;
+    int ret;
+
+    if (packet->ttl == 0u) {
+        return PROTO_ERR_STALE;
+    }
+
+    ret = parse_route_discovery_tlvs(payload,
+                                     payload_len,
+                                     &origin_id,
+                                     &target_id,
+                                     &route_epoch,
+                                     &hop_count,
+                                     &quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (hop_count == UINT8_MAX) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    quality = combined_quality(quality, link_quality);
+    ret = append_route_discovery_tlvs(out->payload,
+                                      sizeof(out->payload),
+                                      &out_payload_len,
+                                      origin_id,
+                                      target_id,
+                                      route_epoch,
+                                      hop_count + 1u,
+                                      quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet = *packet;
+    out->packet.ttl = packet->ttl - 1u;
+    out->packet.payload_len = (uint8_t)out_payload_len;
+    out->payload_len = (uint8_t)out_payload_len;
+    out->next_hop_id = next_hop_id;
+    return PROTO_OK;
+}
+
+static int handle_route_request(struct mesh_relay *relay,
+                                const struct proto_packet *packet,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                uint64_t previous_hop_id,
+                                uint8_t link_quality,
+                                uint32_t now_ms,
+                                struct mesh_relay_result *result)
+{
+    uint64_t origin_id = 0u;
+    uint64_t target_id = 0u;
+    uint32_t route_epoch = 0u;
+    uint8_t hop_count = 0u;
+    uint8_t quality = 0u;
+    int ret;
+
+    if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = parse_route_discovery_tlvs(payload,
+                                     payload_len,
+                                     &origin_id,
+                                     &target_id,
+                                     &route_epoch,
+                                     &hop_count,
+                                     &quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (origin_id != packet->src_id ||
+        packet->dst_id != MESH_BROADCAST_ID ||
+        !id_is_unicast(target_id) ||
+        target_id == origin_id ||
+        hop_count == UINT8_MAX) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    quality = combined_quality(quality, link_quality);
+    ret = upsert_reactive_route(relay,
+                                origin_id,
+                                previous_hop_id,
+                                route_epoch,
+                                hop_count,
+                                quality,
+                                now_ms);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
+        return ret;
+    }
+
+    if (target_id == relay->local_id) {
+        ret = build_route_reply(relay,
+                                origin_id,
+                                target_id,
+                                previous_hop_id,
+                                packet->session_id,
+                                relay->upstream.current_epoch > route_epoch ?
+                                relay->upstream.current_epoch : route_epoch,
+                                &result->route_reply);
+        if (ret == PROTO_OK) {
+            result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
+        }
+        return ret;
+    }
+
+    if (mesh_relay_tx_active(relay)) {
+        return PROTO_ERR_BUSY;
+    }
+
+    ret = build_route_request_forward(packet,
+                                      payload,
+                                      payload_len,
+                                      link_quality,
+                                      &result->route_request);
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REQ;
+    }
+    return ret;
+}
+
+static int handle_route_reply(struct mesh_relay *relay,
+                              const struct proto_packet *packet,
+                              const uint8_t *payload,
+                              size_t payload_len,
+                              uint64_t previous_hop_id,
+                              uint8_t link_quality,
+                              uint32_t now_ms,
+                              struct mesh_relay_result *result)
+{
+    uint64_t origin_id = 0u;
+    uint64_t target_id = 0u;
+    uint32_t route_epoch = 0u;
+    uint8_t hop_count = 0u;
+    uint8_t quality = 0u;
+    int ret;
+
+    if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = parse_route_discovery_tlvs(payload,
+                                     payload_len,
+                                     &origin_id,
+                                     &target_id,
+                                     &route_epoch,
+                                     &hop_count,
+                                     &quality);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (packet->src_id != target_id ||
+        packet->dst_id != origin_id ||
+        !id_is_unicast(origin_id) ||
+        !id_is_unicast(target_id) ||
+        origin_id == target_id ||
+        hop_count == UINT8_MAX) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    quality = combined_quality(quality, link_quality);
+    ret = upsert_reactive_route(relay,
+                                target_id,
+                                previous_hop_id,
+                                route_epoch,
+                                hop_count,
+                                quality,
+                                now_ms);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
+        return ret;
+    }
+
+    if (packet->dst_id == relay->local_id) {
+        result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY;
+        return PROTO_OK;
+    }
+    if (mesh_relay_tx_active(relay)) {
+        return PROTO_ERR_BUSY;
+    }
+
+    ret = build_route_reply_forward(relay,
+                                    packet,
+                                    payload,
+                                    payload_len,
+                                    link_quality,
+                                    &result->route_reply);
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
+    }
+    return ret;
+}
+
 void mesh_relay_init(struct mesh_relay *relay,
                      enum mesh_relay_role role,
                      uint64_t local_id,
@@ -996,6 +1417,57 @@ int mesh_relay_build_route_status(struct mesh_relay *relay,
     out->packet.payload_len = (uint8_t)payload_len;
     out->payload_len = (uint8_t)payload_len;
     out->next_hop_id = selected->next_hop_id;
+    return PROTO_OK;
+}
+
+int mesh_relay_build_route_request(struct mesh_relay *relay,
+                                   uint64_t target_id,
+                                   struct mesh_outbound *out,
+                                   uint32_t now_ms)
+{
+    uint32_t route_epoch;
+    uint32_t session_id;
+    size_t payload_len = 0u;
+    int ret;
+
+    if (relay == NULL || out == NULL ||
+        !id_is_unicast(relay->local_id) ||
+        !id_is_unicast(target_id) ||
+        target_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    (void)mesh_relay_expire_routes(relay, now_ms);
+    memset(out, 0, sizeof(*out));
+
+    route_epoch = relay->upstream.current_epoch;
+    session_id = now_ms != 0u ? now_ms : route_epoch;
+    if (session_id == 0u) {
+        session_id = 1u;
+    }
+
+    ret = append_route_discovery_tlvs(out->payload,
+                                      sizeof(out->payload),
+                                      &payload_len,
+                                      relay->local_id,
+                                      target_id,
+                                      route_epoch,
+                                      0u,
+                                      100u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_ROUTE_REQ;
+    out->packet.flags = 0u;
+    out->packet.src_id = relay->local_id;
+    out->packet.dst_id = MESH_BROADCAST_ID;
+    out->packet.session_id = session_id;
+    out->packet.seq = relay_next_seq(relay);
+    out->packet.ttl = MESH_DEFAULT_TTL;
+    out->packet.payload_len = (uint8_t)payload_len;
+    out->payload_len = (uint8_t)payload_len;
+    out->next_hop_id = MESH_BROADCAST_ID;
     return PROTO_OK;
 }
 
@@ -1277,10 +1749,48 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
-    if ((packet_needs_forward(relay, packet) || local_delivery_needs_response(relay, packet)) &&
+    if (packet->msg_type != MSG_ROUTE_REQ &&
+        packet->msg_type != MSG_ROUTE_REPLY &&
+        (packet_needs_forward(relay, packet) || local_delivery_needs_response(relay, packet)) &&
         mesh_relay_tx_active(relay)) {
         result->status = PROTO_ERR_BUSY;
         result->actions |= MESH_RELAY_ACTION_DROP;
+        return PROTO_OK;
+    }
+
+    if (packet->msg_type == MSG_ROUTE_REQ && packet->dst_id == MESH_BROADCAST_ID) {
+        ret = handle_route_request(relay,
+                                   packet,
+                                   payload,
+                                   payload_len,
+                                   previous_hop_id,
+                                   link_quality,
+                                   now_ms,
+                                   result);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+        } else {
+            duplicate_store(relay, packet, now_ms);
+        }
+        return PROTO_OK;
+    }
+
+    if (packet->msg_type == MSG_ROUTE_REPLY && packet->dst_id != MESH_BROADCAST_ID) {
+        ret = handle_route_reply(relay,
+                                 packet,
+                                 payload,
+                                 payload_len,
+                                 previous_hop_id,
+                                 link_quality,
+                                 now_ms,
+                                 result);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+        } else {
+            duplicate_store(relay, packet, now_ms);
+        }
         return PROTO_OK;
     }
 

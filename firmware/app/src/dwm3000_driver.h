@@ -16,6 +16,7 @@ struct dwm3000_range_request {
     uint8_t seq;
     uint8_t flags;
     uint32_t timeout_ms;
+    bool capture_rsl;
 };
 
 struct dwm3000_range_result {
@@ -27,6 +28,7 @@ struct dwm3000_range_result {
     int32_t distance_mm;
     uint8_t quality;
     int8_t rsl_dbm;
+    bool rsl_sampled;
     enum range_status status;
 };
 

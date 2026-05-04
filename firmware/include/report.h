@@ -11,6 +11,9 @@ extern "C" {
 #endif
 
 #define REPORT_DEFAULT_TTL 4u
+#define RANGE_REPORT_MAX_DISTANCE_SAMPLES 96u
+#define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 35u
+#define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 34u
 
 struct range_report_fields {
     uint64_t clicker_id;
@@ -21,6 +24,11 @@ struct range_report_fields {
     uint8_t quality;
     int8_t rsl_dbm;
     enum range_status range_status;
+    const int32_t *distance_samples_mm;
+    uint16_t sample_index;
+    uint16_t sample_count;
+    uint16_t distance_sample_count;
+    bool omit_rsl;
 };
 
 struct self_test_report_fields {

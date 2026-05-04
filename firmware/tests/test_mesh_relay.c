@@ -1382,6 +1382,188 @@ static void test_duplicate_retry_repairs_lost_gateway_ack(void)
     assert(!mesh_relay_tx_active(&origin));
 }
 
+static void test_reactive_gateway_route_request_and_reply(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay relay;
+    struct mesh_relay anchor;
+    struct mesh_outbound route_req;
+    struct mesh_outbound report_tx;
+    struct mesh_relay_result relay_result;
+    struct mesh_relay_result gateway_result;
+    struct mesh_relay_result anchor_result;
+    struct proto_packet report;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 50u, 90u);
+    uint8_t payload[1] = {0x66u};
+    const struct route_candidate *selected;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 50u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 1u);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 1u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+
+    assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 500u, 1u, sizeof(payload)) == PROTO_OK);
+    assert(mesh_relay_start_tx(&anchor, &report, payload, sizeof(payload), 1000u, &report_tx) ==
+           PROTO_ERR_NOT_FOUND);
+
+    assert(mesh_relay_build_route_request(&anchor, GATEWAY, &route_req, 1000u) == PROTO_OK);
+    assert(route_req.packet.msg_type == MSG_ROUTE_REQ);
+    assert(route_req.packet.dst_id == MESH_BROADCAST_ID);
+    assert(route_req.next_hop_id == MESH_BROADCAST_ID);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                70u,
+                                1010u,
+                                &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_OK);
+    assert(has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &relay_result.route_request.packet,
+                                relay_result.route_request.payload,
+                                relay_result.route_request.payload_len,
+                                ANCHOR_B,
+                                90u,
+                                1020u,
+                                &gateway_result) == PROTO_OK);
+    assert(gateway_result.status == PROTO_OK);
+    assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(gateway_result.route_reply.next_hop_id == ANCHOR_B);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &gateway_result.route_reply.packet,
+                                gateway_result.route_reply.payload,
+                                gateway_result.route_reply.payload_len,
+                                GATEWAY,
+                                90u,
+                                1030u,
+                                &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_OK);
+    assert(has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(relay_result.route_reply.next_hop_id == ANCHOR_A);
+
+    assert(mesh_relay_handle_rx(&anchor,
+                                &relay_result.route_reply.packet,
+                                relay_result.route_reply.payload,
+                                relay_result.route_reply.payload_len,
+                                ANCHOR_B,
+                                70u,
+                                1040u,
+                                &anchor_result) == PROTO_OK);
+    assert(anchor_result.status == PROTO_OK);
+    assert(has_action(&anchor_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY));
+
+    selected = route_selected(&anchor.upstream);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == ANCHOR_B);
+    assert(selected->gateway_id == GATEWAY);
+    assert(selected->hop_count == 1u);
+    assert(selected->link_quality == 70u);
+
+    assert(mesh_relay_start_tx(&anchor, &report, payload, sizeof(payload), 1050u, &report_tx) ==
+           PROTO_OK);
+    assert(report_tx.next_hop_id == ANCHOR_B);
+}
+
+static void test_reactive_gateway_discovers_downlink_anchor(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay relay;
+    struct mesh_relay anchor;
+    struct mesh_outbound route_req;
+    struct mesh_outbound command_tx;
+    struct mesh_relay_result relay_result;
+    struct mesh_relay_result anchor_result;
+    struct mesh_relay_result gateway_result;
+    struct proto_packet command;
+    uint8_t command_payload[16];
+    size_t command_payload_len = 0u;
+    const struct mesh_downlink_entry *downlink;
+    uint64_t next_hop_id = 0u;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 60u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 60u);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 60u);
+
+    assert(mesh_relay_build_route_request(&gateway, ANCHOR_A, &route_req, 2000u) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                GATEWAY,
+                                85u,
+                                2010u,
+                                &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_OK);
+    assert(has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    assert(route_selected(&relay.upstream) != NULL);
+
+    assert(mesh_relay_handle_rx(&anchor,
+                                &relay_result.route_request.packet,
+                                relay_result.route_request.payload,
+                                relay_result.route_request.payload_len,
+                                ANCHOR_B,
+                                65u,
+                                2020u,
+                                &anchor_result) == PROTO_OK);
+    assert(anchor_result.status == PROTO_OK);
+    assert(has_action(&anchor_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(anchor_result.route_reply.next_hop_id == ANCHOR_B);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &anchor_result.route_reply.packet,
+                                anchor_result.route_reply.payload,
+                                anchor_result.route_reply.payload_len,
+                                ANCHOR_A,
+                                65u,
+                                2030u,
+                                &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_OK);
+    assert(has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(relay_result.route_reply.next_hop_id == GATEWAY);
+    downlink = mesh_relay_find_downlink(&relay, ANCHOR_A);
+    assert(downlink != NULL);
+    assert(downlink->next_hop_id == ANCHOR_A);
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &relay_result.route_reply.packet,
+                                relay_result.route_reply.payload,
+                                relay_result.route_reply.payload_len,
+                                ANCHOR_B,
+                                85u,
+                                2040u,
+                                &gateway_result) == PROTO_OK);
+    assert(gateway_result.status == PROTO_OK);
+    assert(has_action(&gateway_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY));
+    downlink = mesh_relay_find_downlink(&gateway, ANCHOR_A);
+    assert(downlink != NULL);
+    assert(downlink->next_hop_id == ANCHOR_B);
+    assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_OK);
+    assert(next_hop_id == ANCHOR_B);
+
+    assert(mesh_append_command_id(command_payload,
+                                  sizeof(command_payload),
+                                  &command_payload_len,
+                                  CMD_GET_STATUS) == PROTO_OK);
+    assert(mesh_init_command(&command,
+                             GATEWAY,
+                             ANCHOR_A,
+                             600u,
+                             1u,
+                             (uint8_t)command_payload_len) == PROTO_OK);
+    assert(mesh_relay_start_tx(&gateway,
+                               &command,
+                               command_payload,
+                               command_payload_len,
+                               2050u,
+                               &command_tx) == PROTO_OK);
+    assert(command_tx.next_hop_id == ANCHOR_B);
+}
+
 int main(void)
 {
     test_route_adv_forms_upstream_route_and_readvertises();
@@ -1404,5 +1586,7 @@ int main(void)
     test_hop_ack_timeout_retries_then_requests_route_discovery();
     test_gateway_reaches_anchor_behind_relay_and_receives_result();
     test_duplicate_retry_repairs_lost_gateway_ack();
+    test_reactive_gateway_route_request_and_reply();
+    test_reactive_gateway_discovers_downlink_anchor();
     return 0;
 }

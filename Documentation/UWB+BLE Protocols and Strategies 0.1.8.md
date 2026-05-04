@@ -1,10 +1,22 @@
 # UWB+BLE Protocols and Strategies
 
-Version: 0.1.6
+Version: 0.1.8
 
 This document describes the v1 firmware wire protocol and the implementation strategies that go with it. It is deliberately separate from the architecture document so protocol choices can be reviewed without rereading the hardware and product context.
 
 ## Changelog
+
+### 2026-05-04 - 0.1.8
+
+- Rewrite mesh routing as simple reactive routing: nodes advertise `ROUTE_REQ` discovery requests, return `ROUTE_REPLY` discovery replies along the reverse path, then send operational mesh data over a BLE connection to the selected next hop.
+- Document that anchors and the gateway keep their configured scan duty cycle active during mesh connection establishment and connection events; connection traffic must not silently stop low-duty click discovery scanning.
+- Document click priority over mesh relay work: a valid click wake request preempts active anchor mesh forwarding and pending mesh RX work, while already-built click reports are requeued.
+- Document connected mesh report fragmentation: one GATT write carries at most 244 bytes of mesh frame data, so oversized aggregated click sample lists are split across multiple report packets instead of dropping measured samples.
+
+### 2026-05-04 - 0.1.7
+
+- Document anchor-side click range aggregation: repeated successful DS-TWR exchanges inside one anchor UWB window are packed into one gateway-bound click report, with one aggregate `DISTANCE_MM`, one `UWB_RSL_DBM`, one `SAMPLE_COUNT`, and one packed `DISTANCE_SAMPLES_MM` list.
+- Clarify that DWM3000 RX diagnostics for received signal level are sampled at most once per aggregated anchor report and kept out of the RX-to-delayed-TX reply path.
 
 ### 2026-05-04 - 0.1.6
 
@@ -56,9 +68,13 @@ This document describes the v1 firmware wire protocol and the implementation str
 
 ## Current Radio Settings
 
-BLE traffic uses the SoftDevice Controller with non-connectable extended advertising on LE 1M PHY and passive LE 1M scanning. Extended advertising disables the secondary 2M PHY with `BT_LE_ADV_OPT_NO_2M`; `CONFIG_BT_CTLR_PHY_CODED=n` and `CONFIG_BT_CTLR_PHY_2M=n` keep Coded and 2M controller PHY support off. The nRF52 BLE transmit power is configured as `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm.
+BLE traffic uses the SoftDevice Controller on LE 1M PHY. Extended advertising disables the secondary 2M PHY with `BT_LE_ADV_OPT_NO_2M`; `CONFIG_BT_CTLR_PHY_CODED=n` and `CONFIG_BT_CTLR_PHY_2M=n` keep Coded and 2M controller PHY support off. The nRF52 BLE transmit power is configured as `CONFIG_BT_CTLR_TX_PWR_PLUS_8`, which is +8 dBm.
 
-Anchors keep their idle BLE scan at a 300 ms interval and 30 ms window. Clicker wake and anchor READY extended advertisements use a 20 ms interval on LE 1M PHY. Mesh advertisements still stay active for 120 ms; hop ACK replies wait 130 ms before advertising, which avoids replying while the original sender is still in its own half-duplex advertisement window. Senders wait 500 ms for hop ACKs.
+Clicker wake and anchor READY advertisements are non-connectable extended advertisements with a 20 ms interval. Reactive mesh discovery uses connectable extended advertisements for `ROUTE_REQ` and `ROUTE_REPLY`; each route discovery advertisement stays active for 250 ms so the peer can start the BLE connection while the route reply is still visible. Operational mesh data, hop ACKs, gateway ACKs, reports, commands, and command results are sent over a BLE connection using the mesh GATT write characteristic, not by repeating every data packet as an advertisement.
+
+Anchors keep their idle BLE scan at a 300 ms interval and 30 ms window. The gateway mesh scan remains full duty. Mesh connection creation uses scan/create parameters that match the role scan cadence, and established mesh connections use long enough connection intervals to leave scan time available. A mesh connection must not stop or downgrade the configured role scan: anchors still scan at the expected 300 ms / 30 ms click-discovery duty cycle during connection establishment and connection events.
+
+The configured ATT MTU is 247 bytes. After the 3-byte ATT write overhead, one connected mesh write carries one 244-byte mesh frame. That leaves 194 bytes for the inner protocol payload after the mesh frame header, packet envelope, and packet CRC. An unfragmented aggregated click report can carry 35 `i32` distance samples. If the anchor measured more samples, it sends multiple `CLICK_REPORT` packets for the same `(anchor, clicker, event_seq)` measurement.
 
 UWB ranging uses DWM3000 channel 5 for click, self-test, and survey DS-TWR. The current DWM3000 TX RF register settings are `PGdly=0x34`, `TX_POWER=0xFDFDFDFD`, and `PGcount=0x0`. `TX_POWER` is the raw DW3000 register value; the final measured UWB output power must be validated/calibrated on hardware.
 
@@ -150,10 +166,10 @@ TLVs let command and report payloads grow without changing the fixed packet head
 | `0x09` | `UWB_SHORT_ADDR` | `u16` | Short address used inside UWB frames when the full 64-bit ID would be too large or too slow. |
 | `0x0A` | `ANCHOR_ID` | `u64` | Identifies the anchor that measured, relayed, or reported data. |
 | `0x0B` | `CLICKER_ID` | `u64` | Identifies the clicker that originated a click or diagnostic self-test request. |
-| `0x0C` | `DISTANCE_MM` | `i32` | Ranging result in millimeters. Negative values are reserved for invalid or unavailable measurements. |
+| `0x0C` | `DISTANCE_MM` | `i32` | Ranging result in millimeters. For aggregated click ranges, this is the rounded average of successful DS-TWR distance samples. Negative values are reserved for invalid or unavailable measurements. |
 | `0x0D` | `QUALITY` | `u8` | Normalized range quality score so downstream processing can reject weak measurements. |
-| `0x0E` | `SAMPLE_INDEX` | `u16` | Index of one measurement inside an `n`-sample survey or repeated diagnostic run. |
-| `0x0F` | `SAMPLE_COUNT` | `u16` | Total requested measurements for a survey pair or repeated diagnostic range. |
+| `0x0E` | `SAMPLE_INDEX` | `u16` | Index of one measurement inside an `n`-sample survey or repeated diagnostic run. In fragmented aggregated click reports, this is the first sample index carried by this packet. |
+| `0x0F` | `SAMPLE_COUNT` | `u16` | Total measurements carried by a survey pair, repeated diagnostic range, or aggregated click range. In fragmented aggregated click reports, this is the total sample count for the whole anchor-click measurement, not just this packet. |
 | `0x10` | `COMMAND_ID` | `u16` | Selects the gateway command being executed. Leaves room for many future anchor commands. |
 | `0x11` | `COMMAND_STATUS` | `u8` | Result of a command: OK, unsupported, malformed, busy, denied, timeout, radio error, invalid state, or internal error. |
 | `0x12` | `REQUESTED_MSG_SEQ` | `u16` | Identifies the original packet sequence being acknowledged or referenced by an error. |
@@ -173,8 +189,9 @@ TLVs let command and report payloads grow without changing the fixed packet head
 | `0x20` | `RESPONDER_ID` | `u64` | Anchor expected to respond in a UWB ranging exchange. Required for survey pair scheduling. |
 | `0x21` | `RANGE_STATUS` | `u8` | UWB result status such as OK, timeout, bad frame, wrong target, STS quality fail, or missed delayed TX. |
 | `0x22` | `ROUTE_EPOCH` | `u32` | Gateway-selected route generation. A newer epoch invalidates older route candidates. |
-| `0x23` | `HOP_COUNT` | `u8` | Number of mesh hops from this sender to the gateway. Used to prefer shorter routes. |
+| `0x23` | `HOP_COUNT` | `u8` | Number of route-discovery hops advertised by the sender. For gateway-bound routes, this is the distance from the advertising next hop back to the gateway. Used to prefer shorter routes. |
 | `0x24` | `UWB_RSL_DBM` | `i8` | UWB received signal level in dBm, estimated from DWM3000 Ipatov RX diagnostics. Included on click range reports for calibration and range-bias analysis; `0` means unavailable. |
+| `0x25` | `DISTANCE_SAMPLES_MM` | packed `i32[]` | Little-endian millimeter distances for successful DS-TWR samples included in an aggregated click range report. In one-packet reports the list length is `SAMPLE_COUNT * 4` bytes. In fragmented reports, `SAMPLE_COUNT` gives the total measurement sample count, `SAMPLE_INDEX` gives the first index in this packet, and the TLV length gives this packet's chunk length. |
 
 ## Self-Test Strategy
 
@@ -186,7 +203,9 @@ Anchors are BLE-gated for both real and diagnostic clicker-originated ranging. A
 
 After an anchor hears a wake request, it wakes UWB for warm-up, switches to full-duty BLE scanning for overlapping clicker requests, and deterministically selects the lowest priority ID for the overlapping READY window. It waits until the selected clicker is scanning, advertises an addressed READY for 180 ms, then stops BLE before opening a 500 ms UWB responder window for that clicker/event/attempt. Other clickers receive no READY from that anchor and retry in a later wake attempt.
 
-The MVP click path collects up to 8 READY anchors per attempt, deduplicates successful anchors across attempts, sorts READY anchors by BLE RSSI, and ranges anchors sequentially. Each selected anchor may be retried for as many DS-TWR exchanges as fit inside its 50 ms per-anchor window, using a random 4-10 ms backoff after failed exchanges. A normal click succeeds only after at least 4 unique anchors have successfully ranged. If fewer than 4 unique anchors succeed, the clicker retries the 330 ms wake plus 200 ms READY scan flow up to 6 attempts while staying within the 15 s click budget. The click report includes `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS`, and `UWB_RSL_DBM`. If an anchor receives the UWB poll but the responder-side exchange fails before a valid report, the anchor queues a failed range report with the relevant `RANGE_STATUS` instead of silently disappearing.
+The MVP click path collects up to 8 READY anchors per attempt, deduplicates successful anchors across attempts, sorts READY anchors by BLE RSSI, and ranges anchors sequentially. Each selected anchor may be retried for as many DS-TWR exchanges as fit inside its 50 ms per-anchor window, using a random 4-10 ms backoff after failed exchanges. A normal click succeeds only after at least 4 unique anchors have successfully ranged. If fewer than 4 unique anchors succeed, the clicker retries the 330 ms wake plus 200 ms READY scan flow up to 6 attempts while staying within the 15 s click budget.
+
+When an anchor receives multiple valid polls from the selected clicker inside the same 500 ms anchor UWB window, those exchanges are treated as repeated samples of one anchor-click measurement. The anchor still sends the immediate UWB report required by each DS-TWR exchange, but it queues the gateway-bound `CLICK_REPORT` data only after the UWB window ends. The first report packet carries one rounded-average `DISTANCE_MM`, one average `QUALITY`, one `RANGE_STATUS`, one total `SAMPLE_COUNT`, one packed `DISTANCE_SAMPLES_MM` list, and the only `UWB_RSL_DBM` TLV for that aggregate. If the packed sample list does not fit one connected mesh packet, the anchor queues additional `CLICK_REPORT` packets with the same aggregate fields, the same total `SAMPLE_COUNT`, a `SAMPLE_INDEX`, and the next sample chunk. Those later packets omit `UWB_RSL_DBM`; DWM3000 RX diagnostics are read at most once for the aggregate and are never repeated per distance sample. If an anchor receives the UWB poll but no valid distance sample is produced, the anchor queues one failed range report with the relevant `RANGE_STATUS` instead of silently disappearing.
 
 Queued reports are drained one at a time through the acknowledged mesh. A queued report is removed from the queue only after mesh delivery starts; if the route is later lost after retry exhaustion, the report is requeued so it can wait for route recovery. This favors power and data retention over immediate BLE chatter during the time-critical UWB window.
 
@@ -194,22 +213,20 @@ The clicker does not stay in the mesh or keep a background BLE role. After a nor
 
 ## Mesh Protocol
 
-The most useful way to picture the mesh is not "every node knows the whole network." It is simpler than that:
+The mesh is reactive. Nodes do not maintain a constantly refreshed route map. They discover a path when a real packet needs one, then reuse the selected next-hop connection while the route remains fresh.
 
-- A packet is an envelope with a final `src_id` and final `dst_id`.
-- The current device only asks: "Which neighbor should I hand this envelope to next?"
-- A hop ACK means: "that neighbor got the envelope from me."
-- A gateway ACK means: "the gateway eventually got the envelope."
-- A command result means: "the target anchor actually handled the command."
+The useful model is:
 
-So if Anchor A wants to send a report to Gateway G through Anchor B, A does not need a full map. A only needs to know "to reach G, hand this to B." B then makes the same decision from its own route table.
+- A packet has a final `src_id` and final `dst_id`.
+- The current device only chooses the local next hop for this transmission.
+- If no next hop is known, the device advertises a `ROUTE_REQ`.
+- The target answers with a `ROUTE_REPLY` that walks back along the reverse breadcrumbs left by the request.
+- After the reply installs the route, operational packets use a BLE connection to the selected next hop.
+- A hop ACK means the next hop accepted custody.
+- A gateway ACK means the gateway eventually received the original gateway-bound packet.
+- A command result means the target anchor actually handled the command.
 
-Route discovery uses two message ideas:
-
-- `ROUTE_ADV`: "I know a way to Gateway G. It is this many hops away."
-- `ROUTE_STATUS`: "I am Anchor A. I currently reach Gateway G through this path. Remember that if you need to send something back to me."
-
-That is the whole mesh model. Gateway advertisements teach anchors how to send upstream. Anchor status packets teach the gateway and relays how to send back downstream.
+So if Anchor A wants to send a report to Gateway G through Anchor B, A first advertises "who can reach Gateway G for this packet?" B forwards that route request. G replies back through B. A then sends the report to B over a BLE connection; B forwards the same packet toward G over its own selected connection.
 
 | Concept | Meaning |
 | --- | --- |
@@ -217,7 +234,7 @@ That is the whole mesh model. Gateway advertisements teach anchors how to send u
 | End-to-end destination | `dst_id`. The final receiver, usually the gateway for reports or an anchor for commands. Relays do not rewrite it. |
 | Local next hop | The neighbor chosen from the route table for this one transmission. It is transport state, not the packet destination. Route/status packets can expose it with `NEXT_HOP_ID`. |
 | Upstream route | A route from an anchor toward a gateway. Used for reports, heartbeats, survey results, and command results. |
-| Downlink route | A route from the gateway toward an anchor. Learned from anchor route status packets traveling upstream. Used for gateway commands. |
+| Downlink route | A route from the gateway or relay toward an anchor. Learned from reactive route replies and reverse breadcrumbs. Used for gateway commands. |
 | Sequence | `seq`. The sender's packet number inside `session_id`. ACKs reference this value with `REQUESTED_MSG_SEQ`. |
 | TTL | Forwarding budget. Each relay decrements `ttl`; packets with no remaining budget are dropped and reported as route failures. |
 | Hop ACK | `MESH_ACK`. A local receipt from the next hop saying "I accepted your packet." |
@@ -227,13 +244,13 @@ That is the whole mesh model. Gateway advertisements teach anchors how to send u
 
 | Packet | Header shape | Main payload TLVs | Purpose |
 | --- | --- | --- | --- |
-| Gateway-bound report | `msg_type=CLICK_REPORT`, `SELF_TEST_REPORT`, `SURVEY_RESULT`, or other report; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=reporting anchor`; `dst_id=gateway`; `ttl=4` | Report-specific TLVs such as `CLICKER_ID`, `ANCHOR_ID`, `EVENT_SEQ`, `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS`, `UWB_RSL_DBM` | Carries measured data toward the gateway. A real click also sets `COUNT_AS_CLICK`; diagnostic traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. |
+| Gateway-bound report | `msg_type=CLICK_REPORT`, `SELF_TEST_REPORT`, `SURVEY_RESULT`, or other report; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=reporting anchor`; `dst_id=gateway`; `ttl=4` | Report-specific TLVs such as `CLICKER_ID`, `ANCHOR_ID`, `EVENT_SEQ`, `DISTANCE_MM`, `SAMPLE_COUNT`, `DISTANCE_SAMPLES_MM`, `QUALITY`, `RANGE_STATUS`, `UWB_RSL_DBM` | Carries measured data toward the gateway. A real click also sets `COUNT_AS_CLICK`; diagnostic traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. |
 | Hop ACK | `msg_type=MESH_ACK`; `flags=HOP_ACK`; `src_id=receiver`; `dst_id=previous hop`; `ttl=1` | `REQUESTED_MSG_SEQ` | Confirms one radio hop only. It does not mean the gateway received the packet. |
 | Gateway ACK | `msg_type=GATEWAY_ACK`; `flags=ACK_REQUESTED | GATEWAY_ACK`; `src_id=gateway`; `dst_id=original source`; `ttl=4` | `REQUESTED_MSG_SEQ` | Confirms the gateway received the original gateway-bound packet. It is routed back like a normal reliable packet, so every return-path hop ACKs custody. |
 | Gateway command | `msg_type=COMMAND`; `flags=ACK_REQUESTED`; `src_id=gateway`; `dst_id=target anchor`; `ttl=4` | `COMMAND_ID` plus command-specific TLVs | Sends an extensible command to one anchor. Delivery is confirmed hop by hop; target acceptance is confirmed by `COMMAND_RESULT`. |
 | Command result | `msg_type=COMMAND_RESULT`; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=target anchor`; `dst_id=gateway`; `ttl=4` | `COMMAND_ID`, `COMMAND_STATUS`, optional `ERROR_CODE` or result TLVs | Returns the command outcome to the gateway using the same reliable gateway-bound path as reports. |
-| Route advertisement | `msg_type=ROUTE_ADV`; `src_id=advertising node`; `dst_id=broadcast or neighbor`; `ttl=1` for local advertisements | `GATEWAY_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, optional `NEXT_HOP_ID` | Announces a possible route to the gateway. Anchors use this to populate their route tables. |
-| Route status | `msg_type=ROUTE_STATUS`; `flags=ACK_REQUESTED | GATEWAY_ACK_REQUIRED`; `src_id=anchor`; `dst_id=gateway` | `ANCHOR_ID`, `GATEWAY_ID`, `NEXT_HOP_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, `RETRY_COUNT`, optional `REASON` | Registers an anchor with the gateway, reports the selected upstream route, and teaches relays the reverse downlink path. |
+| Route request | `msg_type=ROUTE_REQ`; `src_id=requester`; `dst_id=broadcast`; `ttl=4` | `INITIATOR_ID`, `RESPONDER_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY` | Advertised discovery request. Each receiver stores a reverse route to the initiator and rebroadcasts until the target is reached or TTL expires. |
+| Route reply | `msg_type=ROUTE_REPLY`; `src_id=target`; `dst_id=requester`; `ttl=4` | `INITIATOR_ID`, `RESPONDER_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY` | Advertised discovery reply. Each receiver installs a route to the target and forwards the reply along the reverse route to the requester. |
 
 ### Example: Report Through One Relay
 
@@ -274,14 +291,14 @@ The first ACK tells Anchor A that Anchor B accepted the packet. The gateway ACK 
 
 ### Route Formation
 
-The mesh is built from two simple flows. I would explain it to myself like this:
+The mesh is built from two reactive advertisements:
 
-1. The gateway says, "I am Gateway G, and I am zero hops away from myself."
-2. Any anchor that hears that says, "I can reach Gateway G directly."
-3. That anchor repeats the advertisement as, "I can reach Gateway G in one hop."
-4. Farther anchors hear that and say, "I can reach Gateway G through that anchor."
-5. Each anchor sends a route status back toward the gateway.
-6. Every node that forwards the route status remembers which neighbor it came from. That becomes the way back to the anchor.
+1. A sender with data and no usable route advertises `ROUTE_REQ`.
+2. Every receiver stores a reverse route to the requester through the previous hop.
+3. If the receiver is not the target, it rebroadcasts the request with `HOP_COUNT + 1` and reduced path quality.
+4. The target sends `ROUTE_REPLY` back to the requester through the reverse route.
+5. Every receiver of the reply stores a route to the target through the previous hop.
+6. When the reply reaches the requester, the data packet can be sent over the selected next-hop BLE connection.
 
 ```mermaid
 sequenceDiagram
@@ -289,34 +306,31 @@ sequenceDiagram
  participant B as Anchor B
  participant A as Anchor A
 
- G->>B: ROUTE_ADV gateway=G, epoch=9, hop_count=0
- B-->>G: ROUTE_STATUS anchor=B, gateway=G, next_hop=G
- B->>A: ROUTE_ADV gateway=G, epoch=9, hop_count=1
- A-->>B: ROUTE_STATUS anchor=A, gateway=G, next_hop=B
- B-->>G: forward ROUTE_STATUS anchor=A
- G->>B: COMMAND dst=A
- B->>A: forward COMMAND dst=A
- A-->>B: COMMAND_RESULT dst=G
- B-->>G: forward COMMAND_RESULT dst=G
+ A->>B: ROUTE_REQ target=Gateway, hop_count=0
+ B->>G: ROUTE_REQ target=Gateway, hop_count=1
+ G-->>B: ROUTE_REPLY target=Gateway, hop_count=0
+ B-->>A: ROUTE_REPLY target=Gateway, hop_count=1
+ A->>B: CLICK_REPORT over BLE connection
+ B->>G: CLICK_REPORT over BLE connection
+ G-->>B: GATEWAY_ACK over BLE connection
+ B-->>A: GATEWAY_ACK over BLE connection
 ```
 
-Anchor A finds Gateway G because Anchor B repeats the gateway advertisement. Gateway G reaches Anchor A because A's route status traveled back through B. B remembers "A is behind my A-facing link", and G remembers "A is behind B."
+Anchor A finds Gateway G because Anchor B repeats A's request and G's reply returns through B. B learns both useful directions: "Gateway is behind my G-facing link" and "Anchor A is behind my A-facing link."
 
 ### How Anchors Find Gateways
 
-If I am an anchor, I find gateways by listening for `ROUTE_ADV` messages.
+If I am an anchor, I find gateways by advertising `ROUTE_REQ` when I have a gateway-bound report or command result and no selected upstream route.
 
-When I hear one, I read it as:
+When I hear a `ROUTE_REPLY` from the gateway or from a relay returning the gateway's reply, I read it as:
 
-- `GATEWAY_ID`: which gateway this route reaches.
-- `ROUTE_EPOCH`: which generation of the route map this belongs to.
-- `HOP_COUNT`: how far the advertising node is from the gateway.
-- `QUALITY`: how good this local link looks.
-- sender ID: the neighbor I would hand packets to if I choose this route.
+- `RESPONDER_ID`: which gateway this route reaches.
+- `ROUTE_EPOCH`: which route generation this reply belongs to.
+- `HOP_COUNT`: how far the replying previous hop is from the gateway.
+- `QUALITY`: the weakest-link quality advertised along the discovered path.
+- previous hop ID: the neighbor that sent me the reply and should receive gateway-bound data.
 
 Then I store a candidate that means: "To reach Gateway G, send to this neighbor." If the gateway itself sent the advertisement, that neighbor is the gateway. If another anchor sent it, that neighbor is the relay.
-
-After I choose my best route, I re-advertise it with `HOP_COUNT + 1`. That lets anchors farther away discover the same gateway through me.
 
 The v1 runtime is configured for one active gateway root for normal reports and commands. `GATEWAY_ID` stays in the packet and TLV formats so the protocol can grow toward multiple roots later, but the implemented route table selects one upstream route for the configured gateway.
 
@@ -330,22 +344,16 @@ effective_cost = hop_count * 100 + (100 - quality)
 
 Lower cost wins. I would read that as: one hop is worth about 100 quality points. A decent direct link beats an extra hop, but a terrible direct link can tie or lose against a very strong relay path. If two routes have the same cost, the anchor chooses higher quality, then fewer hops, then the newer observation, then the lower next-hop ID so tests are deterministic.
 
-Route failures are based on missing hop ACKs or missing gateway ACKs; after three failures the selected route is invalidated and the anchor tries the next best candidate for that gateway. A successful hop ACK or gateway ACK refreshes the selected route's `last_seen_ms`, so a working route does not expire just because the last advertisement was old.
-
-For low power, route advertisements are not echoed on every gateway beacon. Anchors send `ROUTE_STATUS` and their own `ROUTE_ADV` immediately when the selected route changes, then limit routine refreshes to one refresh every 20 s. Passive route entries expire after 30 s; active delivery failures still switch routes faster through hop-ACK retry failure.
+Route failures are based on missing hop ACKs or missing gateway ACKs; after three failures the selected route is invalidated and the anchor tries the next best candidate for that gateway. If no candidate remains, the original packet stays queued and a new `ROUTE_REQ` is advertised. A successful hop ACK or gateway ACK refreshes the selected route's `last_seen_ms`, so an actively working route does not expire just because no discovery traffic is currently needed.
 
 ### How Gateways Reach Anchors
 
-If I am the gateway, I do not guess where anchors are. I wait for anchors to register themselves with `ROUTE_STATUS`.
+If I am the gateway and need to command Anchor A, I use the same reactive discovery if no downlink entry exists. I advertise `ROUTE_REQ` with `RESPONDER_ID=Anchor A`. Relays store the reverse route to the gateway while rebroadcasting the request. Anchor A replies with `ROUTE_REPLY`; every node that forwards the reply learns the next hop toward Anchor A.
 
-After an anchor chooses an upstream route, it sends `ROUTE_STATUS` to that gateway. This is not optional registration; it is how the gateway learns that the anchor exists in the current route epoch.
-
-Every node that forwards `ROUTE_STATUS` learns a reverse downlink entry:
-
-| Receiver of `ROUTE_STATUS` | Cached downlink entry |
+| Receiver of `ROUTE_REPLY` from Anchor A | Cached downlink entry |
 | --- | --- |
-| Relay B receives status from Anchor A | `target_anchor=A`, `next_hop=A` |
-| Gateway G receives forwarded status from Relay B | `target_anchor=A`, `next_hop=B` |
+| Relay B receives reply from Anchor A | `target_anchor=A`, `next_hop=A` |
+| Gateway G receives forwarded reply from Relay B | `target_anchor=A`, `next_hop=B` |
 
 The gateway's anchor directory is therefore a table that says: "To reach Anchor A, send first to Neighbor B." It also stores `gateway_id`, `route_epoch`, `hop_count`, `quality`, and `last_seen_ms` so stale or weak routes can be replaced.
 
@@ -365,7 +373,7 @@ Gateway commands do not use `GATEWAY_ACK_REQUIRED` because the gateway is the se
 
 The gateway tracks one outstanding command-result wait. While that wait is active, a second USB command is rejected as `COMMAND_BUSY`; this keeps v1 deterministic and avoids ambiguous host-side completion. The wait clears when a `COMMAND_RESULT` arrives from the target anchor with the same gateway ID, target ID, session ID, and sequence number.
 
-If a gateway has no current directory entry for an anchor, that anchor is not considered reachable. The gateway refreshes discovery by starting a new route epoch and waiting for fresh `ROUTE_STATUS` packets instead of blindly flooding operational commands. If an already-started gateway command loses every downlink candidate during retries, or if the target accepts delivery but no matching result arrives within 5 s, the gateway emits a local `COMMAND_RESULT` over USB with `COMMAND_TIMEOUT`.
+If a gateway has no current directory entry for an anchor, it starts `ROUTE_REQ` discovery and keeps the USB command pending. Once the matching `ROUTE_REPLY` installs a route, the command is sent over the BLE connection to the selected next hop. If discovery or delivery does not produce a matching `COMMAND_RESULT` within 5 s, the gateway emits a local `COMMAND_RESULT` over USB with `COMMAND_TIMEOUT`.
 
 This keeps mesh communication symmetric for v1 testing: every important sender knows whether the next hop received the packet, and every gateway-bound sender can also know whether the gateway received it.
 
@@ -377,11 +385,11 @@ The firmware does not make every anchor hold a full all-to-all map. It stores on
 
 | Device | Stored routing state | What it means |
 | --- | --- | --- |
-| Gateway | Downlink candidates keyed by target anchor and next hop | "To reach Anchor A, first try Neighbor B; if B fails, try the next candidate." Learned from `ROUTE_STATUS`. |
+| Gateway | Downlink candidates keyed by target anchor and next hop | "To reach Anchor A, first try Neighbor B; if B fails, try the next candidate." Learned from `ROUTE_REPLY`. |
 | Relay anchor | Upstream candidates for the configured gateway and downlink candidates for target anchors behind it | "For gateway-bound traffic, hand it to my selected upstream neighbor. For a known anchor behind me, hand it to the best stored next hop." |
 | Edge anchor | Upstream candidates for the configured gateway | "To reach Gateway G, hand traffic to this neighbor." It may not know how to reach every other anchor. |
 
-An anchor does keep hop count to a gateway for each candidate route. It does not keep hop distance to every other anchor. The gateway is the device that gradually builds the useful anchor directory, because every anchor's `ROUTE_STATUS` travels toward the gateway and leaves reverse breadcrumbs on the way.
+An anchor does keep hop count to a gateway for each candidate route. It does not keep hop distance to every other anchor. The gateway gradually builds the useful anchor directory as command route replies return from target anchors.
 
 ### How One Message Reaches One Anchor
 
@@ -395,11 +403,11 @@ If I explain the gateway-to-anchor path to myself, it is:
 6. If B knows A directly, B sends the same packet to A. If not, B sends it to the next relay it has stored for A.
 7. Anchor A receives a packet whose `dst_id` is its own ID, handles it locally, and returns a `COMMAND_RESULT` back upstream to the gateway.
 
-The message is therefore a chain of local unicast handoffs, not a hail-mary broadcast. Broadcast is reserved for route advertisements and discovery-like control traffic. Operational commands, reports, command results, route status packets, and ACKs are sent to one selected next hop at a time.
+The message is therefore a chain of local unicast handoffs, not a broadcast. Broadcast is reserved for `ROUTE_REQ`; `ROUTE_REPLY` follows the reverse path. Operational commands, reports, command results, and ACKs are sent to one selected next hop at a time over BLE connections.
 
 If a next hop does not ACK, the sender retries and eventually invalidates that next-hop route. No ACK can mean "out of range," "route missing," "TTL exhausted," or "neighbor is temporarily busy"; the sender does not need to know which one to behave correctly. If no alternate route exists, the gateway gets a `COMMAND_TIMEOUT` locally over USB for gateway-originated commands, or the anchor marks route discovery needed for gateway-bound packets.
 
-The live Zephyr runtime buffers up to 8 decoded mesh frames in a receive queue before processing. This avoids losing route/status/report bursts just because one work item was already busy.
+The live Zephyr runtime buffers up to 8 decoded mesh frames in a receive queue before processing. A valid click wake advertisement has higher priority than mesh relay work: an anchor preempts active mesh forwarding and clears pending mesh RX work so the READY/UWB path can start on time. Already-built local click reports are requeued rather than dropped.
 
 ## Anchor Self-Distance Survey Strategy
 

@@ -11,7 +11,10 @@
 #include "status.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
@@ -38,6 +41,12 @@ LOG_MODULE_REGISTER(uwb_ble_app, LOG_LEVEL_DBG);
 
 #ifndef DEVICE_ROLE
 #define DEVICE_ROLE ROLE_CLICKER
+#endif
+
+#if DEVICE_ROLE != ROLE_CLICKER
+#if !defined(CONFIG_BT_CENTRAL) || !defined(CONFIG_BT_PERIPHERAL) || !defined(CONFIG_BT_GATT_CLIENT)
+#error "Anchor/gateway mesh data transport requires BLE central, peripheral, and GATT client support."
+#endif
 #endif
 
 #ifndef DEVICE_ID
@@ -100,12 +109,12 @@ static bool anchor_scan_active;
 static bool gateway_mesh_scan_active;
 static bool clicker_ready_scan_active;
 static bool ble_adv_active;
+static bool ble_ext_adv_connectable;
 static bool uwb_rf_active;
 static struct k_work anchor_ble_work;
 static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable report_tx_work;
-static struct k_work_delayable gateway_route_adv_work;
 static struct k_work_delayable gateway_serial_rx_work;
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_spinlock anchor_ble_lock;
@@ -139,17 +148,24 @@ static struct bt_le_ext_adv *ble_ext_adv;
 #define ANCHOR_SCAN_INTERVAL_300MS 480u
 #define ANCHOR_SCAN_WINDOW_30MS 48u
 #define BLE_ADV_INTERVAL_20MS 32u
-#define MESH_ADV_TX_MS 120u
-#define MESH_ACK_REPLY_DELAY_MS (MESH_ADV_TX_MS + 10u)
-#define GATEWAY_ROUTE_ADV_INTERVAL_MS 2000u
+#define MESH_DISCOVERY_ADV_TX_MS 250u
+#define MESH_ACK_REPLY_DELAY_MS 0u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
 #define MESH_RX_QUEUE_DEPTH 8
 #define REPORT_TX_QUEUE_DEPTH 16
 #define REPORT_TX_RETRY_DELAY_MS 1000u
+#define MESH_CONN_NEIGHBOR_SLOTS 8u
+#define MESH_CONN_TIMEOUT_MS 900u
+#define MESH_CONN_MTU_TIMEOUT_MS 500u
+#define MESH_CONN_INTERVAL_MIN 80u
+#define MESH_CONN_INTERVAL_MAX 120u
+#define MESH_CONN_LATENCY 0u
+#define MESH_CONN_SUPERVISION_TIMEOUT 400u
 #define BLE_SCAN_OPTIONS BT_LE_SCAN_OPT_NONE
 #define BLE_ADV_OPTIONS (BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_NO_2M | \
                          BT_LE_ADV_OPT_USE_TX_POWER)
+#define BLE_CONN_ADV_OPTIONS (BLE_ADV_OPTIONS | BT_LE_ADV_OPT_CONNECTABLE)
 #define BLE_ADV_INTERVAL_MIN BLE_ADV_INTERVAL_20MS
 #define BLE_ADV_INTERVAL_MAX BLE_ADV_INTERVAL_20MS
 
@@ -175,10 +191,23 @@ struct mesh_rx_pending {
     uint8_t link_quality;
 };
 
+struct mesh_neighbor {
+    uint64_t node_id;
+    bt_addr_le_t addr;
+    struct bt_conn *conn;
+    struct k_sem connected_sem;
+    uint32_t last_seen_ms;
+    bool valid;
+    bool connecting;
+    bool connected;
+};
+
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
 
 static struct anchor_service_slot anchor_service_slots[ANCHOR_SERVICE_QUEUE_DEPTH];
+static struct mesh_neighbor mesh_neighbors[MESH_CONN_NEIGHBOR_SLOTS];
+static struct k_mutex mesh_neighbor_lock;
 static uint8_t anchor_service_count;
 static struct ready_anchor clicker_ready_anchors[MAX_READY_ANCHORS];
 static uint8_t clicker_ready_count;
@@ -192,12 +221,48 @@ static size_t gateway_serial_rx_len;
 static bool gateway_serial_rx_overflow;
 static uint16_t gateway_command_seq;
 static struct gateway_command_pending gateway_command_pending_state;
+static struct mesh_outbound mesh_route_waiting_tx;
+static bool mesh_route_waiting_tx_valid;
+static struct k_sem mesh_mtu_sem;
+static struct bt_gatt_exchange_params mesh_mtu_exchange_params;
+static uint8_t mesh_mtu_exchange_err;
 
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
+static int mesh_request_route(uint64_t target_id, const char *reason);
+static void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
 static void report_tx_schedule(uint32_t delay_ms);
+static int queue_anchor_report(const struct mesh_outbound *outbound);
+static bool mesh_queue_from_frame(const uint8_t *frame, size_t frame_len, uint8_t link_quality);
+static ssize_t mesh_conn_write(struct bt_conn *conn,
+                               const struct bt_gatt_attr *attr,
+                               const void *buf,
+                               uint16_t len,
+                               uint16_t offset,
+                               uint8_t flags);
+
+static struct bt_uuid_128 mesh_conn_service_uuid =
+    BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x7a62b590, 0x52f0, 0x45b9, 0xa40a, 0x334156b26800));
+static struct bt_uuid_128 mesh_conn_rx_uuid =
+    BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x7a62b590, 0x52f0, 0x45b9, 0xa40a, 0x334156b26801));
+
+BT_GATT_SERVICE_DEFINE(mesh_conn_svc,
+    BT_GATT_PRIMARY_SERVICE(&mesh_conn_service_uuid),
+    BT_GATT_CHARACTERISTIC(&mesh_conn_rx_uuid.uuid,
+                           BT_GATT_CHRC_WRITE_WITHOUT_RESP | BT_GATT_CHRC_WRITE,
+                           BT_GATT_PERM_WRITE,
+                           NULL,
+                           mesh_conn_write,
+                           NULL),
+);
 
 static const struct bt_le_adv_param ble_adv_param =
     BT_LE_ADV_PARAM_INIT(BLE_ADV_OPTIONS,
+                         BLE_ADV_INTERVAL_MIN,
+                         BLE_ADV_INTERVAL_MAX,
+                         NULL);
+
+static const struct bt_le_adv_param ble_conn_adv_param =
+    BT_LE_ADV_PARAM_INIT(BLE_CONN_ADV_OPTIONS,
                          BLE_ADV_INTERVAL_MIN,
                          BLE_ADV_INTERVAL_MAX,
                          NULL);
@@ -246,6 +311,324 @@ static const char *role_name(void)
     default:
         return "unknown";
     }
+}
+
+static uint16_t mesh_conn_rx_value_handle(void)
+{
+    return bt_gatt_attr_get_handle(&mesh_conn_svc.attrs[2]);
+}
+
+static bool mesh_id_is_unicast(uint64_t node_id)
+{
+    return node_id != MESH_BROADCAST_ID;
+}
+
+static ssize_t mesh_conn_write(struct bt_conn *conn,
+                               const struct bt_gatt_attr *attr,
+                               const void *buf,
+                               uint16_t len,
+                               uint16_t offset,
+                               uint8_t flags)
+{
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    ARG_UNUSED(flags);
+
+    if (offset != 0u) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+    if (buf == NULL || len == 0u || len > MESH_BLE_MAX_FRAME_LEN) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+    if (!mesh_queue_from_frame(buf, len, 100u)) {
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+    return len;
+}
+
+static struct mesh_neighbor *mesh_neighbor_find_by_id_locked(uint64_t node_id)
+{
+    for (uint8_t i = 0u; i < MESH_CONN_NEIGHBOR_SLOTS; i++) {
+        if (mesh_neighbors[i].valid && mesh_neighbors[i].node_id == node_id) {
+            return &mesh_neighbors[i];
+        }
+    }
+    return NULL;
+}
+
+static struct mesh_neighbor *mesh_neighbor_find_by_addr_locked(const bt_addr_le_t *addr)
+{
+    for (uint8_t i = 0u; i < MESH_CONN_NEIGHBOR_SLOTS; i++) {
+        if (mesh_neighbors[i].valid && bt_addr_le_cmp(&mesh_neighbors[i].addr, addr) == 0) {
+            return &mesh_neighbors[i];
+        }
+    }
+    return NULL;
+}
+
+static struct mesh_neighbor *mesh_neighbor_alloc_locked(void)
+{
+    struct mesh_neighbor *oldest = &mesh_neighbors[0];
+
+    for (uint8_t i = 0u; i < MESH_CONN_NEIGHBOR_SLOTS; i++) {
+        if (!mesh_neighbors[i].valid) {
+            return &mesh_neighbors[i];
+        }
+        if (mesh_neighbors[i].last_seen_ms < oldest->last_seen_ms &&
+            mesh_neighbors[i].conn == NULL) {
+            oldest = &mesh_neighbors[i];
+        }
+    }
+    if (oldest->conn != NULL) {
+        return NULL;
+    }
+    return oldest;
+}
+
+static void mesh_note_peer_addr(uint64_t node_id, const bt_addr_le_t *addr)
+{
+    struct mesh_neighbor *neighbor;
+
+    if (!mesh_id_is_unicast(node_id) || node_id == DEVICE_ID || addr == NULL) {
+        return;
+    }
+
+    k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+    neighbor = mesh_neighbor_find_by_id_locked(node_id);
+    if (neighbor == NULL) {
+        neighbor = mesh_neighbor_alloc_locked();
+    }
+    if (neighbor != NULL) {
+        bool same_addr = neighbor->valid && bt_addr_le_cmp(&neighbor->addr, addr) == 0;
+
+        if (!same_addr && neighbor->conn == NULL) {
+            bt_addr_le_copy(&neighbor->addr, addr);
+        } else if (!neighbor->valid) {
+            bt_addr_le_copy(&neighbor->addr, addr);
+        }
+        neighbor->node_id = node_id;
+        neighbor->last_seen_ms = k_uptime_get_32();
+        neighbor->valid = true;
+    }
+    k_mutex_unlock(&mesh_neighbor_lock);
+}
+
+static void mesh_mtu_exchange_cb(struct bt_conn *conn,
+                                 uint8_t err,
+                                 struct bt_gatt_exchange_params *params)
+{
+    ARG_UNUSED(conn);
+    ARG_UNUSED(params);
+
+    mesh_mtu_exchange_err = err;
+    k_sem_give(&mesh_mtu_sem);
+}
+
+static int mesh_exchange_mtu(struct bt_conn *conn)
+{
+    int ret;
+
+    if (conn == NULL) {
+        return -EINVAL;
+    }
+    if (bt_gatt_get_mtu(conn) >= MESH_BLE_MAX_FRAME_LEN + 3u) {
+        return 0;
+    }
+
+    k_sem_reset(&mesh_mtu_sem);
+    mesh_mtu_exchange_err = 0u;
+    mesh_mtu_exchange_params.func = mesh_mtu_exchange_cb;
+    ret = bt_gatt_exchange_mtu(conn, &mesh_mtu_exchange_params);
+    if (ret == -EALREADY) {
+        return 0;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+    ret = k_sem_take(&mesh_mtu_sem, K_MSEC(MESH_CONN_MTU_TIMEOUT_MS));
+    if (ret < 0) {
+        return ret;
+    }
+    return mesh_mtu_exchange_err == 0u ? 0 : -EIO;
+}
+
+static void mesh_conn_connected(struct bt_conn *conn, uint8_t err)
+{
+    const bt_addr_le_t *addr = bt_conn_get_dst(conn);
+    struct mesh_neighbor *neighbor;
+    struct bt_le_conn_param param = {
+        .interval_min = MESH_CONN_INTERVAL_MIN,
+        .interval_max = MESH_CONN_INTERVAL_MAX,
+        .latency = MESH_CONN_LATENCY,
+        .timeout = MESH_CONN_SUPERVISION_TIMEOUT,
+    };
+
+    k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+    neighbor = mesh_neighbor_find_by_addr_locked(addr);
+    if (neighbor != NULL) {
+        neighbor->connecting = false;
+        if (err == 0u) {
+            if (neighbor->conn == NULL) {
+                neighbor->conn = bt_conn_ref(conn);
+            }
+            neighbor->connected = true;
+            neighbor->last_seen_ms = k_uptime_get_32();
+        } else {
+            if (neighbor->conn != NULL) {
+                bt_conn_unref(neighbor->conn);
+                neighbor->conn = NULL;
+            }
+            neighbor->connected = false;
+        }
+        k_sem_give(&neighbor->connected_sem);
+    }
+    k_mutex_unlock(&mesh_neighbor_lock);
+
+    if (err != 0u) {
+        LOG_WRN("mesh BLE connection failed: err=%u", err);
+        return;
+    }
+
+    (void)bt_conn_le_param_update(conn, &param);
+    LOG_INF("mesh BLE connection established; role scan remains active");
+}
+
+static void mesh_conn_disconnected(struct bt_conn *conn, uint8_t reason)
+{
+    struct mesh_neighbor *neighbor;
+
+    k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+    neighbor = mesh_neighbor_find_by_addr_locked(bt_conn_get_dst(conn));
+    if (neighbor != NULL && neighbor->conn == conn) {
+        bt_conn_unref(neighbor->conn);
+        neighbor->conn = NULL;
+        neighbor->connected = false;
+        neighbor->connecting = false;
+    }
+    k_mutex_unlock(&mesh_neighbor_lock);
+
+    LOG_INF("mesh BLE connection disconnected: reason=%u; role scan remains active", reason);
+}
+
+BT_CONN_CB_DEFINE(mesh_conn_callbacks) = {
+    .connected = mesh_conn_connected,
+    .disconnected = mesh_conn_disconnected,
+};
+
+static void mesh_neighbors_init(void)
+{
+    k_mutex_init(&mesh_neighbor_lock);
+    k_sem_init(&mesh_mtu_sem, 0u, 1u);
+    for (uint8_t i = 0u; i < MESH_CONN_NEIGHBOR_SLOTS; i++) {
+        k_sem_init(&mesh_neighbors[i].connected_sem, 0u, 1u);
+    }
+}
+
+static int mesh_scan_create_params(struct bt_conn_le_create_param *param)
+{
+    if (param == NULL) {
+        return -EINVAL;
+    }
+
+    memset(param, 0, sizeof(*param));
+    param->options = BT_CONN_LE_OPT_NONE;
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        param->interval = 16u;
+        param->window = 16u;
+    } else {
+        param->interval = ANCHOR_SCAN_INTERVAL_300MS;
+        param->window = ANCHOR_SCAN_WINDOW_30MS;
+    }
+    return 0;
+}
+
+static int mesh_neighbor_connection(uint64_t node_id, struct bt_conn **conn_out)
+{
+    struct bt_conn_le_create_param create_param;
+    struct bt_le_conn_param conn_param = {
+        .interval_min = MESH_CONN_INTERVAL_MIN,
+        .interval_max = MESH_CONN_INTERVAL_MAX,
+        .latency = MESH_CONN_LATENCY,
+        .timeout = MESH_CONN_SUPERVISION_TIMEOUT,
+    };
+    struct mesh_neighbor *neighbor;
+    bt_addr_le_t addr;
+    struct bt_conn *conn = NULL;
+    bool connecting;
+    int ret;
+
+    if (conn_out == NULL || !mesh_id_is_unicast(node_id) || node_id == DEVICE_ID) {
+        return -EINVAL;
+    }
+    *conn_out = NULL;
+
+    k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+    neighbor = mesh_neighbor_find_by_id_locked(node_id);
+    if (neighbor == NULL || !neighbor->valid) {
+        k_mutex_unlock(&mesh_neighbor_lock);
+        return -EHOSTUNREACH;
+    }
+    if (neighbor->connected && neighbor->conn != NULL) {
+        *conn_out = bt_conn_ref(neighbor->conn);
+        k_mutex_unlock(&mesh_neighbor_lock);
+        return 0;
+    }
+    if (neighbor->connecting) {
+        connecting = true;
+    } else {
+        connecting = false;
+        neighbor->connecting = true;
+        neighbor->connected = false;
+        k_sem_reset(&neighbor->connected_sem);
+    }
+    bt_addr_le_copy(&addr, &neighbor->addr);
+    k_mutex_unlock(&mesh_neighbor_lock);
+
+    if (!connecting) {
+        ret = mesh_scan_create_params(&create_param);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = bt_conn_le_create(&addr, &create_param, &conn_param, &conn);
+        if (ret < 0) {
+            k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+            neighbor = mesh_neighbor_find_by_id_locked(node_id);
+            if (neighbor != NULL) {
+                neighbor->connecting = false;
+                neighbor->connected = false;
+                k_sem_give(&neighbor->connected_sem);
+            }
+            k_mutex_unlock(&mesh_neighbor_lock);
+            return ret;
+        }
+        k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+        neighbor = mesh_neighbor_find_by_id_locked(node_id);
+        if (neighbor != NULL) {
+            neighbor->conn = conn;
+        } else if (conn != NULL) {
+            bt_conn_unref(conn);
+        }
+        k_mutex_unlock(&mesh_neighbor_lock);
+    }
+
+    k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+    neighbor = mesh_neighbor_find_by_id_locked(node_id);
+    k_mutex_unlock(&mesh_neighbor_lock);
+    if (neighbor == NULL ||
+        k_sem_take(&neighbor->connected_sem, K_MSEC(MESH_CONN_TIMEOUT_MS)) < 0) {
+        return -ETIMEDOUT;
+    }
+
+    k_mutex_lock(&mesh_neighbor_lock, K_FOREVER);
+    neighbor = mesh_neighbor_find_by_id_locked(node_id);
+    if (neighbor != NULL && neighbor->connected && neighbor->conn != NULL) {
+        *conn_out = bt_conn_ref(neighbor->conn);
+        ret = 0;
+    } else {
+        ret = -ENOTCONN;
+    }
+    k_mutex_unlock(&mesh_neighbor_lock);
+    return ret;
 }
 
 static int configure_output(const struct gpio_dt_spec *gpio)
@@ -381,6 +764,7 @@ static void ble_runtime_shutdown(void)
             LOG_WRN("BLE advertising set delete failed during shutdown: %d", ret);
         }
         ble_ext_adv = NULL;
+        ble_ext_adv_connectable = false;
     }
 
     ret = bt_disable();
@@ -687,6 +1071,7 @@ static void gateway_command_result_timeout_handler(struct k_work *work)
             (unsigned long long)command.dst_id,
             command.session_id,
             command.seq);
+    mesh_clear_route_waiting_tx(&command);
     gateway_emit_serial_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
 }
 
@@ -809,11 +1194,17 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
 
     ret = mesh_start_tracked_tx(&outbound, "usb-command");
     if (ret < 0) {
-        gateway_clear_pending_command_result(&outbound.packet);
         LOG_WRN("gateway USB command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
                 (unsigned int)command_id,
                 (unsigned long long)outbound.packet.dst_id,
                 ret);
+        if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
+            LOG_INF("gateway command waiting for reactive route discovery: cmd=0x%04x dst=0x%016llx",
+                    (unsigned int)command_id,
+                    (unsigned long long)outbound.packet.dst_id);
+            return 0;
+        }
+        gateway_clear_pending_command_result(&outbound.packet);
         gateway_emit_serial_command_result(&outbound.packet,
                                            command_id,
                                            ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
@@ -904,11 +1295,14 @@ static void gateway_serial_rx_work_handler(struct k_work *work)
     (void)k_work_reschedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
 }
 
-static int ble_start_manufacturer_advertising(const uint8_t *payload, size_t payload_len)
+static int ble_start_manufacturer_advertising(const uint8_t *payload,
+                                              size_t payload_len,
+                                              bool connectable)
 {
     const struct bt_data ad[] = {
         BT_DATA(BT_DATA_MANUFACTURER_DATA, payload, payload_len),
     };
+    const struct bt_le_adv_param *param = connectable ? &ble_conn_adv_param : &ble_adv_param;
     int ret;
 
     if (payload == NULL || payload_len == 0u) {
@@ -925,11 +1319,23 @@ static int ble_start_manufacturer_advertising(const uint8_t *payload, size_t pay
         return ret;
     }
 
-    if (ble_ext_adv == NULL) {
-        ret = bt_le_ext_adv_create(&ble_adv_param, NULL, &ble_ext_adv);
+    if (ble_ext_adv != NULL && ble_ext_adv_connectable != connectable) {
+        (void)bt_le_ext_adv_stop(ble_ext_adv);
+        ble_adv_active = false;
+        ret = bt_le_ext_adv_delete(ble_ext_adv);
         if (ret < 0) {
             return ret;
         }
+        ble_ext_adv = NULL;
+        ble_ext_adv_connectable = false;
+    }
+
+    if (ble_ext_adv == NULL) {
+        ret = bt_le_ext_adv_create(param, NULL, &ble_ext_adv);
+        if (ret < 0) {
+            return ret;
+        }
+        ble_ext_adv_connectable = connectable;
     } else {
         (void)bt_le_ext_adv_stop(ble_ext_adv);
         ble_adv_active = false;
@@ -964,11 +1370,12 @@ static int ble_stop_advertising(void)
 
 static int ble_advertise_manufacturer_payload(const uint8_t *payload,
                                               size_t payload_len,
-                                              uint32_t duration_ms)
+                                              uint32_t duration_ms,
+                                              bool connectable)
 {
     int ret;
 
-    ret = ble_start_manufacturer_advertising(payload, payload_len);
+    ret = ble_start_manufacturer_advertising(payload, payload_len, connectable);
     if (ret < 0) {
         return ret;
     }
@@ -979,9 +1386,10 @@ static int ble_advertise_manufacturer_payload(const uint8_t *payload,
 
 static int ble_advertise_mesh_payload(const uint8_t *payload,
                                       size_t payload_len,
-                                      uint32_t duration_ms)
+                                      uint32_t duration_ms,
+                                      bool connectable)
 {
-    return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms);
+    return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms, connectable);
 }
 
 static uint16_t local_uwb_short_addr(void)
@@ -1073,6 +1481,13 @@ static bool parse_anchor_scan_ad(struct bt_data *data, void *user_data)
         return true;
     }
 
+    if (ble_discovery_req_decode(data->data,
+                                 data->data_len,
+                                 &context->discovery.request) == PROTO_OK) {
+        context->discovery.found = true;
+        return false;
+    }
+
     if (mesh_ble_frame_decode(data->data,
                               data->data_len,
                               DEVICE_ID,
@@ -1085,21 +1500,18 @@ static bool parse_anchor_scan_ad(struct bt_data *data, void *user_data)
         return false;
     }
 
-    if (ble_discovery_req_decode(data->data,
-                                 data->data_len,
-                                 &context->discovery.request) == PROTO_OK) {
-        context->discovery.found = true;
-        return false;
-    }
-
     return true;
 }
 
 static int anchor_start_ble_scan(void);
 static int gateway_start_mesh_scan(void);
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
-static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi);
-static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi);
+static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context,
+                              const bt_addr_le_t *addr,
+                              int8_t rssi);
+static bool mesh_queue_from_scan(struct net_buf_simple *buf,
+                                 const bt_addr_le_t *addr,
+                                 int8_t rssi);
 static void anchor_scan_cb(const bt_addr_le_t *addr,
                            int8_t rssi,
                            uint8_t adv_type,
@@ -1107,6 +1519,11 @@ static void anchor_scan_cb(const bt_addr_le_t *addr,
 static int build_range_report(uint64_t clicker_id,
                               uint32_t event_seq,
                               const struct dwm3000_range_result *range_result);
+static int build_range_report_samples(uint64_t clicker_id,
+                                      uint32_t event_seq,
+                                      const struct dwm3000_range_result *range_result,
+                                      const int32_t *distance_samples_mm,
+                                      uint16_t sample_count);
 
 static int16_t ready_rssi_score(const struct ble_discovery_ready *ready,
                                 int8_t clicker_rssi)
@@ -1351,21 +1768,99 @@ static int advertise_ready_to_range(const struct anchor_service_slot *slot)
             ready.attempt_index,
             ANCHOR_READY_ADV_MS,
             (unsigned long long)ready.priority_id_seen);
-    return ble_advertise_manufacturer_payload(payload, payload_len, ANCHOR_READY_ADV_MS);
+    return ble_advertise_manufacturer_payload(payload, payload_len, ANCHOR_READY_ADV_MS, false);
+}
+
+struct anchor_range_window_report {
+    struct dwm3000_range_result result;
+    int32_t distance_samples_mm[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
+    int64_t distance_sum_mm;
+    uint32_t quality_sum;
+    uint16_t sample_count;
+    bool have_result;
+    bool rsl_sampled;
+};
+
+static int32_t average_i32_nearest(int64_t sum, uint16_t count)
+{
+    int64_t half;
+
+    if (count == 0u) {
+        return 0;
+    }
+
+    half = count / 2;
+    return (int32_t)(sum >= 0 ? (sum + half) / count : (sum - half) / count);
+}
+
+static void anchor_range_window_record(struct anchor_range_window_report *report,
+                                       const struct dwm3000_range_result *result)
+{
+    int8_t sampled_rsl = 0;
+
+    if (report == NULL || result == NULL) {
+        return;
+    }
+
+    if (report->rsl_sampled) {
+        sampled_rsl = report->result.rsl_dbm;
+    }
+
+    if (!report->have_result || result->status == RANGE_OK) {
+        report->result = *result;
+        report->have_result = true;
+    }
+    if (result->rsl_sampled && !report->rsl_sampled) {
+        sampled_rsl = result->rsl_dbm;
+        report->rsl_sampled = true;
+    }
+    if (report->rsl_sampled) {
+        report->result.rsl_dbm = sampled_rsl;
+        report->result.rsl_sampled = true;
+    }
+
+    if (result->status != RANGE_OK ||
+        report->sample_count >= RANGE_REPORT_MAX_DISTANCE_SAMPLES) {
+        return;
+    }
+
+    report->distance_samples_mm[report->sample_count] = result->distance_mm;
+    report->distance_sum_mm += result->distance_mm;
+    report->quality_sum += result->quality;
+    report->sample_count++;
+}
+
+static void anchor_range_window_finalize(struct anchor_range_window_report *report)
+{
+    if (report == NULL || !report->have_result || report->sample_count == 0u) {
+        return;
+    }
+
+    report->result.distance_mm = average_i32_nearest(report->distance_sum_mm,
+                                                     report->sample_count);
+    report->result.quality = (uint8_t)((report->quality_sum +
+                                        (report->sample_count / 2u)) /
+                                       report->sample_count);
+    report->result.status = RANGE_OK;
 }
 
 static void build_slot_report_if_click(const struct anchor_service_slot *slot,
-                                       const struct dwm3000_range_result *result)
+                                       const struct anchor_range_window_report *report)
 {
     int ret;
 
     if (!ble_flags_count_as_click(slot->request.flags)) {
         return;
     }
+    if (report == NULL || !report->have_result) {
+        return;
+    }
 
-    ret = build_range_report(slot->request.clicker_id,
-                             slot->request.event_seq,
-                             result);
+    ret = build_range_report_samples(slot->request.clicker_id,
+                                     slot->request.event_seq,
+                                     &report->result,
+                                     report->distance_samples_mm,
+                                     report->sample_count);
     if (ret < 0) {
         LOG_WRN("failed to build anchor range report: %d", ret);
     }
@@ -1383,6 +1878,7 @@ static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
         .timeout_ms = ANCHOR_UWB_WAIT_MS,
     };
     struct dwm3000_range_result range_result;
+    struct anchor_range_window_report window_report = {0};
     int64_t deadline_ms = k_uptime_get() + ANCHOR_UWB_WAIT_MS;
     bool saw_poll = false;
     int ret = -ETIMEDOUT;
@@ -1400,6 +1896,7 @@ static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
             break;
         }
         expected.timeout_ms = (uint32_t)remaining_ms;
+        expected.capture_rsl = !window_report.rsl_sampled;
         ret = dwm3000_driver_responder_poll_expected(DEVICE_ID,
                                                      &expected,
                                                      expected.timeout_ms,
@@ -1412,6 +1909,9 @@ static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
         }
 
         saw_poll = true;
+        if (range_result.initiator_id != 0u && range_result.responder_id != 0u) {
+            anchor_range_window_record(&window_report, &range_result);
+        }
         if (ret < 0 || range_result.status != RANGE_OK) {
             LOG_WRN("anchor UWB exchange failed after poll: clicker=0x%016llx event_seq=%u seq=%u ret=%d status=%u quality=%u rsl=%d dBm",
                     (unsigned long long)range_result.initiator_id,
@@ -1422,15 +1922,28 @@ static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
                     range_result.quality,
                     range_result.rsl_dbm);
         } else {
-            LOG_INF("anchor UWB exchange complete: clicker=0x%016llx event_seq=%u seq=%u distance_mm=%d quality=%u rsl=%d dBm",
+            LOG_INF("anchor UWB exchange sample complete: clicker=0x%016llx event_seq=%u seq=%u distance_mm=%d quality=%u rsl=%d dBm samples=%u/%u",
                     (unsigned long long)range_result.initiator_id,
                     range_result.session_id,
                     range_result.seq,
                     range_result.distance_mm,
                     range_result.quality,
-                    range_result.rsl_dbm);
+                    range_result.rsl_dbm,
+                    window_report.sample_count,
+                    RANGE_REPORT_MAX_DISTANCE_SAMPLES);
         }
-        build_slot_report_if_click(slot, &range_result);
+    }
+
+    anchor_range_window_finalize(&window_report);
+    build_slot_report_if_click(slot, &window_report);
+    if (window_report.sample_count > 0u) {
+        LOG_INF("anchor UWB window report ready: clicker=0x%016llx event_seq=%u samples=%u aggregate_distance_mm=%d aggregate_quality=%u rsl=%d dBm",
+                (unsigned long long)window_report.result.initiator_id,
+                window_report.result.session_id,
+                window_report.sample_count,
+                window_report.result.distance_mm,
+                window_report.result.quality,
+                window_report.result.rsl_dbm);
     }
 
     if (!saw_poll) {
@@ -1438,6 +1951,40 @@ static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
                 (unsigned long long)slot->request.clicker_id,
                 slot->request.event_seq,
                 ret);
+    }
+}
+
+static void mesh_preempt_for_click_event(void)
+{
+    struct mesh_outbound pending_report = {0};
+    bool requeue_report = false;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR) {
+        return;
+    }
+
+    if (mesh_relay_tx_active(&mesh_runtime)) {
+        if (mesh_runtime.pending.packet.msg_type == MSG_CLICK_REPORT &&
+            mesh_runtime.pending.packet.src_id == DEVICE_ID) {
+            pending_report.packet = mesh_runtime.pending.packet;
+            pending_report.payload_len = mesh_runtime.pending.payload_len;
+            if (pending_report.payload_len > 0u) {
+                memcpy(pending_report.payload,
+                       mesh_runtime.pending.payload,
+                       pending_report.payload_len);
+            }
+            requeue_report = true;
+        }
+        mesh_relay_cancel_tx(&mesh_runtime);
+        (void)k_work_cancel_delayable(&mesh_tx_timeout_work);
+        LOG_INF("anchor click discovery preempted active mesh TX");
+    }
+
+    k_msgq_purge(&mesh_rx_msgq);
+    if (requeue_report) {
+        if (k_msgq_put(&report_tx_msgq, &pending_report, K_NO_WAIT) != 0) {
+            LOG_WRN("preempted click report could not be requeued");
+        }
     }
 }
 
@@ -1578,13 +2125,14 @@ static void anchor_scan_cb(const bt_addr_le_t *addr,
 
     bt_data_parse(buf, parse_anchor_scan_ad, &context);
     if (context.mesh.found) {
-        (void)mesh_queue_parsed(&context.mesh, rssi);
+        (void)mesh_queue_parsed(&context.mesh, addr, rssi);
         return;
     }
     if (!context.discovery.found) {
         return;
     }
 
+    mesh_preempt_for_click_event();
     received_ms = k_uptime_get();
     key = k_spin_lock(&anchor_ble_lock);
     if (anchor_service_add_locked(&context.discovery.request, rssi, received_ms, &submit)) {
@@ -1707,7 +2255,7 @@ static void gateway_mesh_scan_cb(const bt_addr_le_t *addr,
     ARG_UNUSED(addr);
     ARG_UNUSED(adv_type);
 
-    (void)mesh_queue_from_scan(buf, rssi);
+    (void)mesh_queue_from_scan(buf, addr, rssi);
 }
 
 static int gateway_start_mesh_scan(void)
@@ -1734,18 +2282,6 @@ static int gateway_start_mesh_scan(void)
             gateway_mesh_scan_param.interval,
             gateway_mesh_scan_param.window);
     return 0;
-}
-
-static void gateway_route_adv_work_handler(struct k_work *work)
-{
-    struct mesh_outbound route_adv;
-
-    ARG_UNUSED(work);
-
-    if (mesh_relay_build_route_adv(&mesh_runtime, &route_adv, k_uptime_get_32()) == PROTO_OK) {
-        (void)mesh_send_outbound(&route_adv, "gateway-route-adv");
-    }
-    (void)k_work_reschedule(&gateway_route_adv_work, K_MSEC(GATEWAY_ROUTE_ADV_INTERVAL_MS));
 }
 
 static int clicker_scan_for_ready_list(struct ready_anchor *anchors,
@@ -1841,7 +2377,7 @@ static int advertise_discovery_request(const struct ble_discovery_req *request,
             request->ready_scan_duration_ms,
             request->min_anchor_count,
             (unsigned long long)request->priority_id);
-    return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms);
+    return ble_advertise_manufacturer_payload(payload, payload_len, duration_ms, false);
 }
 
 static int advertise_wake_window(const struct ble_discovery_req *request,
@@ -1947,6 +2483,73 @@ static void mesh_restart_role_scan(void)
     }
 }
 
+static bool mesh_outbound_uses_advertising(const struct mesh_outbound *out)
+{
+    if (out == NULL) {
+        return false;
+    }
+
+    return out->packet.msg_type == MSG_ROUTE_REQ ||
+           out->packet.msg_type == MSG_ROUTE_REPLY ||
+           out->packet.msg_type == MSG_ROUTE_ADV;
+}
+
+static int mesh_send_connected_payload(const struct mesh_outbound *out,
+                                       const uint8_t *frame,
+                                       size_t frame_len,
+                                       const char *reason)
+{
+    struct bt_conn *conn = NULL;
+    uint16_t mtu;
+    uint16_t handle;
+    int ret;
+
+    ret = mesh_neighbor_connection(out->next_hop_id, &conn);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = mesh_exchange_mtu(conn);
+    if (ret < 0) {
+        LOG_WRN("mesh MTU exchange failed for %s: %d", reason, ret);
+    }
+
+    mtu = bt_gatt_get_mtu(conn);
+    if (mtu <= 3u || frame_len > (size_t)(mtu - 3u)) {
+        bt_conn_unref(conn);
+        LOG_WRN("mesh connection frame too large for ATT MTU: frame_len=%u mtu=%u",
+                (unsigned int)frame_len,
+                mtu);
+        return -EMSGSIZE;
+    }
+
+    handle = mesh_conn_rx_value_handle();
+    ret = bt_gatt_write_without_response(conn, handle, frame, (uint16_t)frame_len, false);
+    bt_conn_unref(conn);
+    return ret;
+}
+
+static int mesh_send_advertisement_payload(const struct mesh_outbound *out,
+                                           const uint8_t *frame,
+                                           size_t frame_len,
+                                           const char *reason)
+{
+    int ret;
+
+    mesh_stop_role_scan();
+    ret = ble_advertise_mesh_payload(frame, frame_len, MESH_DISCOVERY_ADV_TX_MS, true);
+    mesh_restart_role_scan();
+    if (ret < 0) {
+        LOG_WRN("mesh BLE discovery advertisement failed for %s: msg=0x%02x next=0x%016llx len=%u ret=%d",
+                reason,
+                out->packet.msg_type,
+                (unsigned long long)out->next_hop_id,
+                (unsigned int)frame_len,
+                ret);
+    }
+    return ret;
+}
+
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason)
 {
     uint8_t frame[MESH_BLE_MAX_FRAME_LEN];
@@ -1959,9 +2562,11 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
         return -EINVAL;
     }
 
-    mesh_stop_role_scan();
-    ret = ble_advertise_mesh_payload(frame, frame_len, MESH_ADV_TX_MS);
-    mesh_restart_role_scan();
+    if (mesh_outbound_uses_advertising(out)) {
+        ret = mesh_send_advertisement_payload(out, frame, frame_len, reason);
+    } else {
+        ret = mesh_send_connected_payload(out, frame, frame_len, reason);
+    }
     if (ret < 0) {
         LOG_WRN("mesh BLE TX failed for %s: msg=0x%02x next=0x%016llx len=%u ret=%d",
                 reason,
@@ -1984,6 +2589,69 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
     return 0;
 }
 
+static int mesh_request_route(uint64_t target_id, const char *reason)
+{
+    struct mesh_outbound route_req;
+    int ret;
+
+    if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
+        return -EINVAL;
+    }
+
+    ret = mesh_relay_build_route_request(&mesh_runtime,
+                                         target_id,
+                                         &route_req,
+                                         k_uptime_get_32());
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    LOG_INF("mesh route discovery request: target=0x%016llx reason=%s",
+            (unsigned long long)target_id,
+            reason);
+    return mesh_send_outbound(&route_req, "route-request");
+}
+
+static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
+{
+    if (out == NULL || DEVICE_ROLE != ROLE_GATEWAY || out->packet.msg_type != MSG_COMMAND) {
+        return;
+    }
+
+    mesh_route_waiting_tx = *out;
+    mesh_route_waiting_tx_valid = true;
+}
+
+static void mesh_clear_route_waiting_tx(const struct proto_packet *packet)
+{
+    if (!mesh_route_waiting_tx_valid || packet == NULL) {
+        return;
+    }
+    if (mesh_route_waiting_tx.packet.dst_id == packet->dst_id &&
+        mesh_route_waiting_tx.packet.session_id == packet->session_id &&
+        mesh_route_waiting_tx.packet.seq == packet->seq) {
+        mesh_route_waiting_tx_valid = false;
+    }
+}
+
+static void mesh_try_route_waiting_tx(void)
+{
+    struct mesh_outbound pending;
+    int ret;
+
+    if (!mesh_route_waiting_tx_valid || mesh_relay_tx_active(&mesh_runtime)) {
+        return;
+    }
+
+    pending = mesh_route_waiting_tx;
+    ret = mesh_start_tracked_tx(&pending, "route-discovered-command");
+    if (ret == 0) {
+        mesh_route_waiting_tx_valid = false;
+    } else if (ret == -EHOSTUNREACH) {
+        (void)mesh_request_route(pending.packet.dst_id, "route-waiting-command");
+    }
+}
+
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
 {
     struct mesh_outbound tx;
@@ -1997,11 +2665,19 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
                               &tx);
     if (ret != PROTO_OK) {
         LOG_WRN("mesh could not start tracked TX for %s: %d", reason, ret);
+        if (ret == PROTO_ERR_NOT_FOUND) {
+            mesh_store_route_waiting_tx(out);
+            (void)mesh_request_route(out->packet.dst_id, reason);
+        }
         return mesh_errno_from_proto(ret);
     }
     ret = mesh_send_outbound(&tx, reason);
     if (ret < 0) {
         mesh_relay_cancel_tx(&mesh_runtime);
+        if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
+            mesh_store_route_waiting_tx(out);
+            (void)mesh_request_route(out->packet.dst_id, reason);
+        }
         return ret;
     }
     mesh_schedule_tx_timeout();
@@ -2090,7 +2766,9 @@ static int queue_anchor_report(const struct mesh_outbound *outbound)
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
 {
     if (result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) {
-        k_msleep(MESH_ACK_REPLY_DELAY_MS);
+        if (MESH_ACK_REPLY_DELAY_MS > 0u) {
+            k_msleep(MESH_ACK_REPLY_DELAY_MS);
+        }
         (void)mesh_send_outbound(&result->hop_ack, "hop-ack");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
@@ -2105,12 +2783,22 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_ADV) {
         (void)mesh_send_outbound(&result->route_adv, "route-adv");
     }
+    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
+        (void)mesh_send_outbound(&result->route_request, "route-request-forward");
+    }
+    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
+        (void)mesh_send_outbound(&result->route_reply, "route-reply");
+    }
     if (result->actions & MESH_RELAY_ACTION_RETRANSMIT) {
         (void)mesh_send_outbound(&result->retransmit, "retransmit");
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) {
         LOG_WRN("mesh route discovery needed after delivery failure");
+    }
+    if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY) {
+        LOG_INF("mesh reactive route ready");
+        mesh_try_route_waiting_tx();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_HOP_CONFIRMED) {
         LOG_INF("mesh pending TX hop acknowledged");
@@ -2125,6 +2813,9 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
     }
     if (DEVICE_ROLE == ROLE_ANCHOR && !mesh_relay_tx_active(&mesh_runtime)) {
         report_tx_schedule(0u);
+    }
+    if (DEVICE_ROLE == ROLE_GATEWAY && !mesh_relay_tx_active(&mesh_runtime)) {
+        mesh_try_route_waiting_tx();
     }
 }
 
@@ -2157,6 +2848,11 @@ static void mesh_rx_work_handler(struct k_work *work)
                 (unsigned long long)pending.previous_hop_id,
                 result.actions,
                 result.status);
+        if (result.status == PROTO_ERR_NOT_FOUND &&
+            pending.packet.dst_id != DEVICE_ID &&
+            pending.packet.dst_id != MESH_BROADCAST_ID) {
+            (void)mesh_request_route(pending.packet.dst_id, "rx-forward-miss");
+        }
         mesh_handle_result_actions(&result);
         if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             DEVICE_ROLE == ROLE_GATEWAY) {
@@ -2221,18 +2917,16 @@ static void mesh_tx_timeout_handler(struct k_work *work)
 
     if (pending_gateway_command &&
         (result.actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
-        enum command_id command_id = CMD_VENDOR_BASE;
+        struct mesh_outbound waiting = {
+            .packet = pending_packet,
+            .payload_len = (uint8_t)pending_payload_len,
+        };
 
-        if (gateway_command_extract_id(pending_payload,
-                                       pending_payload_len,
-                                       &command_id) != PROTO_OK) {
-            command_id = CMD_VENDOR_BASE;
+        if (pending_payload_len > 0u) {
+            memcpy(waiting.payload, pending_payload, pending_payload_len);
         }
-        gateway_clear_pending_command_result(&pending_packet);
-        gateway_emit_serial_command_result(&pending_packet,
-                                           command_id,
-                                           COMMAND_TIMEOUT,
-                                           (uint8_t)(-PROTO_ERR_NOT_FOUND));
+        mesh_store_route_waiting_tx(&waiting);
+        (void)mesh_request_route(pending_packet.dst_id, "gateway-command-timeout");
     }
 
     if (pending_anchor_report &&
@@ -2242,7 +2936,9 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     }
 }
 
-static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, int8_t rssi)
+static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context,
+                              const bt_addr_le_t *addr,
+                              int8_t rssi)
 {
     struct mesh_rx_pending pending = {0};
     int ret;
@@ -2258,6 +2954,7 @@ static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, in
     pending.payload_len = (uint8_t)context->payload_len;
     pending.previous_hop_id = context->previous_hop_id;
     pending.link_quality = mesh_quality_from_rssi(rssi);
+    mesh_note_peer_addr(context->previous_hop_id, addr);
 
     ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
     if (ret < 0) {
@@ -2272,87 +2969,186 @@ static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context, in
     return true;
 }
 
-static bool mesh_queue_from_scan(struct net_buf_simple *buf, int8_t rssi)
+static bool mesh_queue_from_frame(const uint8_t *frame, size_t frame_len, uint8_t link_quality)
+{
+    struct mesh_frame_parse_context context = {0};
+    struct mesh_rx_pending pending = {0};
+    int ret;
+
+    if (frame == NULL || frame_len == 0u) {
+        return false;
+    }
+    if (mesh_ble_frame_decode(frame,
+                              frame_len,
+                              DEVICE_ID,
+                              &context.previous_hop_id,
+                              &context.packet,
+                              context.payload,
+                              sizeof(context.payload),
+                              &context.payload_len) != PROTO_OK ||
+        context.payload_len > UINT8_MAX) {
+        return false;
+    }
+
+    pending.packet = context.packet;
+    if (context.payload_len > 0u) {
+        memcpy(pending.payload, context.payload, context.payload_len);
+    }
+    pending.payload_len = (uint8_t)context.payload_len;
+    pending.previous_hop_id = context.previous_hop_id;
+    pending.link_quality = link_quality;
+
+    ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
+    if (ret < 0) {
+        LOG_WRN("mesh connection RX queue full; dropped msg=0x%02x src=0x%016llx dst=0x%016llx",
+                pending.packet.msg_type,
+                (unsigned long long)pending.packet.src_id,
+                (unsigned long long)pending.packet.dst_id);
+        return false;
+    }
+
+    (void)k_work_submit(&mesh_rx_work);
+    return true;
+}
+
+static bool mesh_queue_from_scan(struct net_buf_simple *buf,
+                                 const bt_addr_le_t *addr,
+                                 int8_t rssi)
 {
     struct mesh_frame_parse_context context = {0};
 
     bt_data_parse(buf, parse_mesh_ad, &context);
-    return mesh_queue_parsed(&context, rssi);
+    return mesh_queue_parsed(&context, addr, rssi);
+}
+
+static int build_range_report_samples(uint64_t clicker_id,
+                                      uint32_t event_seq,
+                                      const struct dwm3000_range_result *range_result,
+                                      const int32_t *distance_samples_mm,
+                                      uint16_t sample_count)
+{
+    struct range_report_fields fields;
+    struct proto_packet packet;
+    uint8_t payload[MESH_BLE_MAX_PAYLOAD_LEN];
+    uint8_t encoded[PACKET_MAX_LEN];
+    uint16_t sample_index = 0u;
+    uint16_t packet_index = 0u;
+    bool fragmented;
+    int ret;
+
+    if (range_result == NULL ||
+        clicker_id == 0u ||
+        event_seq == 0u ||
+        range_result->responder_id == 0u ||
+        (sample_count > 0u && distance_samples_mm == NULL) ||
+        sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES) {
+        return -EINVAL;
+    }
+    fragmented = sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET;
+
+    do {
+        size_t payload_len = 0u;
+        size_t encoded_len = 0u;
+        uint16_t chunk_count = 0u;
+        uint16_t packet_seq;
+
+        if (sample_count > 0u) {
+            uint16_t chunk_cap = fragmented ?
+                                 RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT :
+                                 RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET;
+
+            chunk_count = MIN(chunk_cap, sample_count - sample_index);
+        }
+
+        fields.clicker_id = clicker_id;
+        fields.anchor_id = range_result->responder_id;
+        fields.event_seq = event_seq;
+        fields.timestamp_ms = k_uptime_get_32();
+        fields.distance_mm = range_result->distance_mm;
+        fields.quality = range_result->quality;
+        fields.rsl_dbm = range_result->rsl_dbm;
+        fields.range_status = range_result->status;
+        fields.distance_samples_mm = chunk_count > 0u ? &distance_samples_mm[sample_index] : NULL;
+        fields.sample_index = sample_index;
+        fields.sample_count = sample_count;
+        fields.distance_sample_count = chunk_count;
+        fields.omit_rsl = packet_index != 0u;
+
+        ret = report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+
+        packet_seq = (uint16_t)((range_result->seq == 0u ?
+                                 (uint16_t)event_seq :
+                                 range_result->seq) + packet_index);
+        ret = report_init_click_packet(&packet,
+                                       range_result->responder_id,
+                                       GATEWAY_ID,
+                                       event_seq,
+                                       packet_seq,
+                                       (uint8_t)payload_len);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+
+        ret = proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+
+        LOG_INF("click report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d samples=%u chunk_index=%u chunk_samples=%u quality=%u rsl_included=%u packet_len=%u",
+                (unsigned long long)clicker_id,
+                event_seq,
+                (unsigned long long)range_result->responder_id,
+                range_result->distance_mm,
+                sample_count,
+                sample_index,
+                chunk_count,
+                range_result->quality,
+                packet_index == 0u ? 1u : 0u,
+                (unsigned int)encoded_len);
+
+        if (DEVICE_ROLE == ROLE_ANCHOR) {
+            struct mesh_outbound outbound = {
+                .packet = packet,
+                .payload_len = (uint8_t)payload_len,
+            };
+
+            memcpy(outbound.payload, payload, payload_len);
+            ret = queue_anchor_report(&outbound);
+            if (ret < 0) {
+                LOG_WRN("click report could not be queued for mesh TX: %d", ret);
+                return ret;
+            }
+        }
+
+        sample_index += chunk_count;
+        packet_index++;
+    } while (sample_index < sample_count);
+
+    return 0;
 }
 
 static int build_range_report(uint64_t clicker_id,
                               uint32_t event_seq,
                               const struct dwm3000_range_result *range_result)
 {
-    struct range_report_fields fields;
-    struct proto_packet packet;
-    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    uint8_t encoded[PACKET_MAX_LEN];
-    size_t payload_len = 0u;
-    size_t encoded_len = 0u;
-    uint16_t packet_seq;
-    int ret;
+    int32_t distance_sample;
+    const int32_t *distance_samples = NULL;
+    uint16_t sample_count = 0u;
 
-    if (range_result == NULL ||
-        clicker_id == 0u ||
-        event_seq == 0u ||
-        range_result->responder_id == 0u) {
-        return -EINVAL;
-    }
-    packet_seq = range_result->seq == 0u ? (uint16_t)event_seq : range_result->seq;
-
-    fields.clicker_id = clicker_id;
-    fields.anchor_id = range_result->responder_id;
-    fields.event_seq = event_seq;
-    fields.timestamp_ms = k_uptime_get_32();
-    fields.distance_mm = range_result->distance_mm;
-    fields.quality = range_result->quality;
-    fields.rsl_dbm = range_result->rsl_dbm;
-    fields.range_status = range_result->status;
-
-    ret = report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
+    if (range_result != NULL && range_result->status == RANGE_OK) {
+        distance_sample = range_result->distance_mm;
+        distance_samples = &distance_sample;
+        sample_count = 1u;
     }
 
-    ret = report_init_click_packet(&packet,
-                                        range_result->responder_id,
-                                        GATEWAY_ID,
-                                        event_seq,
-                                        packet_seq,
-                                        (uint8_t)payload_len);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-
-    ret = proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-
-    LOG_INF("click report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d quality=%u rsl=%d dBm packet_len=%u",
-            (unsigned long long)clicker_id,
-            event_seq,
-            (unsigned long long)range_result->responder_id,
-            range_result->distance_mm,
-            range_result->quality,
-            range_result->rsl_dbm,
-            (unsigned int)encoded_len);
-
-    if (DEVICE_ROLE == ROLE_ANCHOR) {
-        struct mesh_outbound outbound = {
-            .packet = packet,
-            .payload_len = (uint8_t)payload_len,
-        };
-
-        memcpy(outbound.payload, payload, payload_len);
-        ret = queue_anchor_report(&outbound);
-        if (ret < 0) {
-            LOG_WRN("click report could not be queued for mesh TX: %d", ret);
-            return ret;
-        }
-    }
-    return 0;
+    return build_range_report_samples(clicker_id,
+                                      event_seq,
+                                      range_result,
+                                      distance_samples,
+                                      sample_count);
 }
 
 static bool anchor_id_seen(const uint64_t *anchors, uint8_t anchor_count, uint64_t anchor_id)
@@ -2876,6 +3672,7 @@ int main(void)
     }
 
     button_fsm_init(&button_fsm);
+    mesh_neighbors_init();
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
@@ -2930,15 +3727,13 @@ int main(void)
                         DEVICE_ID,
                         GATEWAY_ID,
                         1u);
-        k_work_init_delayable(&gateway_route_adv_work, gateway_route_adv_work_handler);
         k_work_init_delayable(&gateway_serial_rx_work, gateway_serial_rx_work_handler);
         ret = gateway_start_mesh_scan();
         if (ret < 0) {
             LOG_ERR("gateway mesh scan unavailable: %d", ret);
         }
-        (void)k_work_schedule(&gateway_route_adv_work, K_MSEC(250u));
         (void)k_work_schedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
-        LOG_INF("gateway mesh root active; USB COBS packet input/output active");
+        LOG_INF("gateway reactive mesh root active; USB COBS packet input/output active");
     }
 
     return 0;

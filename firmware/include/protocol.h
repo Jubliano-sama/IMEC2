@@ -48,6 +48,8 @@ enum msg_type {
     MSG_GATEWAY_ACK = 0x32,
     MSG_ROUTE_ADV = 0x33,
     MSG_ROUTE_STATUS = 0x34,
+    MSG_ROUTE_REQ = 0x35,
+    MSG_ROUTE_REPLY = 0x36,
 
     MSG_COMMAND = 0x40,
     MSG_COMMAND_RESULT = 0x41,
@@ -107,6 +109,7 @@ enum tlv_type {
     TLV_ROUTE_EPOCH = 0x22,
     TLV_HOP_COUNT = 0x23,
     TLV_UWB_RSL_DBM = 0x24,
+    TLV_DISTANCE_SAMPLES_MM = 0x25,
 };
 
 enum device_role {

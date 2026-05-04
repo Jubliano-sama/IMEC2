@@ -1,8 +1,18 @@
 # Firmware State Machines
 
-Version: 0.1.16
+Version: 0.1.18
 
 ## Changelog
+
+### 2026-05-04 - 0.1.18
+
+- Rewrite mesh state charts for reactive routing: route requests and replies use advertisements, while operational mesh packets use BLE connections.
+- Document that anchor click wake advertisements preempt mesh relay work and that mesh connections must preserve the expected scan duty cycle.
+- Document that aggregated click range samples can be split across multiple report packets, with received signal level included only once for the aggregate.
+
+### 2026-05-04 - 0.1.17
+
+- Update click range reporting behavior: repeated successful DS-TWR exchanges within one anchor UWB window are collected as samples and queued as one aggregated range report after the continuous window ends.
 
 ### 2026-05-04 - 0.1.16
 
@@ -26,7 +36,7 @@ flowchart TD
     Role -->|gateway| Gateway[Gateway runtime]
     Clicker --> ClickerIdle[Button-only idle between actions]
     Anchor --> AnchorScan[Low-duty BLE scan parent task]
-    Gateway --> GatewayRoot[Mesh root scan, route beacon, USB serial]
+    Gateway --> GatewayRoot[Mesh root scan, reactive routes, USB serial]
 ```
 
 ## Clicker Role
@@ -114,7 +124,7 @@ flowchart TD
     Start[Have READY anchors] --> Next{Another unranged READY anchor?}
     Next -->|yes| Window[Use one 50 ms anchor window]
     Window --> Range[Run a complete DS-TWR exchange]
-    Range -->|success| RecordOk[Record successful range result]
+    Range -->|success| RecordOk[Record successful range sample]
     Range -->|timeout or radio error| Backoff{Window time remains?}
     Backoff -->|yes| Wait[Wait a short random backoff]
     Wait --> Range
@@ -162,9 +172,10 @@ Diagnostic events do not count as clicks.
 flowchart TD
     Start[Anchor runtime starts] --> Scan[Low-duty BLE scan, 300 ms interval and 30 ms window]
     Scan --> Packet{Advertisement type?}
-    Packet -->|mesh packet| MeshQueue[Queue mesh packet for relay handling]
+    Packet -->|clicker wake request| Preempt[Preempt relay work for click handling]
+    Preempt --> Availability{Ranging service state?}
+    Packet -->|mesh discovery packet| MeshQueue[Queue mesh packet for relay handling]
     MeshQueue --> Scan
-    Packet -->|clicker wake request| Availability{Ranging service state?}
     Availability -->|idle| NewAdmission[Start arbitration for this READY window]
     Availability -->|arbitration open| AddRequest[Add or refresh competing request]
     Availability -->|READY or UWB active| Ignore[Ignore until next scan opportunity]
@@ -175,7 +186,7 @@ flowchart TD
     Packet -->|other advertisement| Scan
 ```
 
-Anchor scan pauses only for READY advertising and the UWB responder window.
+Anchor scan pauses only for READY advertising and the UWB responder window. Mesh connection establishment and mesh connection events keep the role scan active at the configured duty cycle.
 
 ### Addressed READY Service
 
@@ -194,16 +205,19 @@ flowchart TD
     Window -->|matching poll| Exchange[Complete DS-TWR exchanges immediately]
     Window -->|no matching poll| Timeout[Return to idle without a no-poll report]
     Window -->|wrong poll| Window
-    Exchange -->|range ok| QueueOk[Queue timestamped range report]
-    Exchange -->|range failed after poll| QueueFail[Queue timestamped failure report]
+    Exchange -->|range ok| CollectOk[Collect successful range sample]
+    Exchange -->|range failed after poll| CollectFail[Remember failure if no sample succeeds]
+    CollectOk --> More{Same continuous window remains?}
+    More -->|yes| Window
+    More -->|no| QueueOk[Queue report packet or packets]
+    CollectFail --> More
     QueueOk --> Standby[Return UWB to standby]
-    QueueFail --> Standby
     Timeout --> Standby
     Standby --> Resume[Mark service idle and resume low-duty BLE scan]
     Resume --> Drain[Drain queued reports through mesh when possible]
 ```
 
-Selection order: lower priority ID, then lower clicker ID, event sequence, and attempt.
+Selection order: lower priority ID, then lower clicker ID, event sequence, and attempt. A matching poll does not restart the 500 ms UWB responder window. Successful exchanges in that same continuous window are collected as samples for one clicker-anchor measurement; the anchor queues the mesh report data after the window ends. If the packed sample list does not fit one connected packet, the anchor queues additional report packets for the remaining samples. The aggregate carries one received signal level measurement, included only in the first report packet.
 
 ### Four Quick Clickers On The Same Anchors
 
@@ -252,22 +266,24 @@ No anchor advertises BLE while its UWB receiver is active.
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 34, "padding": 6}, "themeVariables": {"fontSize": "12px"}} }%%
 flowchart TD
-    Found[BLE scan receives mesh packet] --> Queue[Queue packet with link hint]
+    Found[BLE advertisement or connection carries mesh packet] --> Queue[Queue packet with link hint]
     Queue --> Validate[Validate packet and duplicate state]
     Validate --> Decision{Relay decision}
+    Decision -->|route request| Request[Learn reverse path and reply or rebroadcast]
+    Decision -->|route reply| Reply[Install route and forward or mark ready]
     Decision -->|packet for this anchor| Local[Handle local command or status request]
     Decision -->|gateway-bound or forwarded packet| Route[Choose next hop]
-    Decision -->|route advertisement or status| Learn[Update route table]
     Decision -->|duplicate that can be finished| AckAgain[Repeat needed acknowledgement]
     Decision -->|cannot accept now| DropNoAck[Drop without custody ACK]
     Local --> Responses[Send command result if needed]
-    Route --> Forward[Forward after collision guard]
-    Learn --> MaybeAdvertise[Advertise route update if needed]
+    Route --> Forward[Send over selected BLE connection]
+    Request --> Discovery[Use discovery advertisement]
+    Reply --> Discovery
     AckAgain --> Done[Return to scan]
     DropNoAck --> Done
     Responses --> Done
     Forward --> Done
-    MaybeAdvertise --> Done
+    Discovery --> Done
 ```
 
 ### Anchor Report Queue Drain
@@ -281,11 +297,13 @@ flowchart TD
     Ready -->|yes| Oldest[Take oldest queued report]
     Oldest --> StartTx[Start reliable mesh send]
     StartTx -->|accepted| Remove[Remove from local queue]
-    StartTx -->|route missing or relay busy| RetryLater[Retry drain later]
+    StartTx -->|route missing| Discover[Advertise route request and retry later]
+    StartTx -->|relay busy| RetryLater[Retry drain later]
     StartTx -->|permanent build error| Drop[Drop report]
     Remove --> Await[Mesh relay waits for required ACKs]
     Await -->|delivery confirmed| Next[Try next queued report]
-    Await -->|route exhausted| Requeue[Requeue report for route recovery]
+    Await -->|route exhausted| Requeue[Requeue report and rediscover]
+    Discover --> Hold
     RetryLater --> Hold
     Requeue --> Hold
     Next --> Ready
@@ -315,11 +333,8 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 34, "padding": 6}, "themeVariables": {"fontSize": "12px"}} }%%
 flowchart TD
-    Start[Gateway runtime starts] --> Scan[Continuous coded BLE mesh scan]
-    Start --> Beacon[Route beacon every 2 s]
+    Start[Gateway runtime starts] --> Scan[Continuous BLE mesh scan]
     Start --> Usb[USB serial poll every 10 ms]
-    Beacon --> BeaconAdv[Advertise route beacon]
-    BeaconAdv --> Beacon
     Usb --> Frame{Complete USB frame?}
     Frame -->|yes| UsbCommand[Route USB command]
     Frame -->|no| Usb
@@ -327,10 +342,12 @@ flowchart TD
     MeshPacket --> PacketType{Gateway packet result}
     PacketType -->|report, result, or status| UsbOut[Emit packet over USB]
     PacketType -->|gateway ACK needed| AckBack[Send gateway ACK back through mesh]
-    PacketType -->|route status| Downlink[Refresh downlink route]
+    PacketType -->|route request| Reply[Advertise route reply]
+    PacketType -->|route reply| Downlink[Refresh downlink route]
     UsbCommand --> Scan
     UsbOut --> Scan
     AckBack --> Scan
+    Reply --> Scan
     Downlink --> Scan
 ```
 
@@ -345,7 +362,10 @@ flowchart TD
     Prepare -->|invalid command| Reject
     Prepare --> Reserve{Gateway command wait slot free?}
     Reserve -->|no| Busy[Emit gateway busy result]
-    Reserve -->|yes| Send[Start reliable mesh send]
+    Reserve -->|yes| Route{Known route to target?}
+    Route -->|yes| Send[Start reliable mesh send]
+    Route -->|no| Discover[Advertise route request and keep command pending]
+    Discover --> Wait
     Send -->|cannot start| SendFail[Clear wait slot and emit failure]
     Send -->|accepted| Wait[Wait up to 5 s for command result]
     Wait -->|matching result| UsbResult[Emit result over USB]
@@ -360,7 +380,7 @@ flowchart TD
 stateDiagram-v2
     state "Idle" as Idle
     state "Choose next hop" as Choose
-    state "Advertise packet" as Send
+    state "Send over selected connection" as Send
     state "Wait for hop ACK" as HopAck
     state "Wait for gateway ACK" as GatewayAck
     state "Retry current route" as Retry
@@ -383,7 +403,7 @@ stateDiagram-v2
     GatewayAck --> Idle: gateway confirmed delivery
     GatewayAck --> Retry: gateway ACK missing and retry budget remains
     GatewayAck --> Switch: gateway ACK route exhausted
-    NeedRoute --> Idle
+    NeedRoute --> Idle: advertise route request
 ```
 
 Hop ACK timeout is 500 ms; duplicate state lasts 60 s.
@@ -393,13 +413,13 @@ Hop ACK timeout is 500 ms; duplicate state lasts 60 s.
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 34, "padding": 6}, "themeVariables": {"fontSize": "12px"}} }%%
 flowchart TD
-    Start[Anchor has gateway-bound packet] --> Send[Send to selected next hop]
+    Start[Anchor has gateway-bound packet] --> Send[Send over selected connection]
     Send --> Hop{Next hop accepted custody?}
     Hop -->|yes| NeedGateway{End-to-end gateway ACK required?}
     Hop -->|no| HopFail[Record local hop failure]
     HopFail --> HopRetry{Retry same path or switch path?}
     HopRetry -->|yes| Send
-    HopRetry -->|no| Requeue[Wait for route discovery and requeue report]
+    HopRetry -->|no| Requeue[Requeue report and advertise route request]
     NeedGateway -->|no| Success[Mark route healthy]
     NeedGateway -->|yes| GatewayWait[Wait for gateway confirmation]
     GatewayWait -->|confirmed| Success
@@ -414,7 +434,10 @@ flowchart TD
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 24, "rankSpacing": 34, "padding": 6}, "themeVariables": {"fontSize": "12px"}} }%%
 flowchart TD
-    Start[Gateway command ready] --> Send[Send to cached next hop]
+    Start[Gateway command ready] --> Route{Known route to target?}
+    Route -->|yes| Send[Send over selected connection]
+    Route -->|no| Discover[Advertise route request and keep command pending]
+    Discover --> Result
     Send --> Hop{Next hop accepted custody?}
     Hop -->|yes| Result[Wait for target command result]
     Hop -->|no| Failure[Count downlink failure]
@@ -424,7 +447,7 @@ flowchart TD
     Invalidate --> Alternate{Alternate route available?}
     Alternate -->|yes| Switch[Switch next hop]
     Switch --> Send
-    Alternate -->|no| Timeout[Emit command timeout locally]
+    Alternate -->|no| Discover
     Result -->|result received| Done[Emit result over USB]
     Result -->|5 s timeout| Timeout
 ```
