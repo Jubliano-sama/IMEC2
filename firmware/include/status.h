@@ -51,6 +51,12 @@ enum self_test_failure {
     SELF_TEST_FAILURE_INTERNAL = 6,
 };
 
+enum click_failure {
+    CLICK_FAILURE_NONE = 0,
+    CLICK_FAILURE_NO_ANCHOR = 1,
+    CLICK_FAILURE_INSUFFICIENT_RANGES = 2,
+};
+
 struct button_fsm {
     bool pressed;
     bool armed;
@@ -70,6 +76,7 @@ struct status_inputs {
     bool charging;
     bool charged;
     enum self_test_failure failure;
+    enum click_failure click_failure;
 };
 
 struct status_indication {

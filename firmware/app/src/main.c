@@ -148,7 +148,8 @@ static struct bt_le_ext_adv *ble_ext_adv;
 #define ANCHOR_SCAN_INTERVAL_300MS 480u
 #define ANCHOR_SCAN_WINDOW_30MS 48u
 #define BLE_ADV_INTERVAL_20MS 32u
-#define MESH_DISCOVERY_ADV_TX_MS 250u
+#define MESH_DISCOVERY_ADV_TX_MS 150u
+#define MESH_DISCOVERY_SCAN_HIGH_DUTY_MS 100u
 #define MESH_ACK_REPLY_DELAY_MS 0u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
@@ -1505,6 +1506,7 @@ static bool parse_anchor_scan_ad(struct bt_data *data, void *user_data)
 
 static int anchor_start_ble_scan(void);
 static int gateway_start_mesh_scan(void);
+static bool anchor_uwb_window_active(void);
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 static bool mesh_queue_parsed(const struct mesh_frame_parse_context *context,
                               const bt_addr_le_t *addr,
@@ -2534,9 +2536,25 @@ static int mesh_send_advertisement_payload(const struct mesh_outbound *out,
                                            const char *reason)
 {
     int ret;
+    int scan_ret;
 
     mesh_stop_role_scan();
     ret = ble_advertise_mesh_payload(frame, frame_len, MESH_DISCOVERY_ADV_TX_MS, true);
+
+    if (DEVICE_ROLE == ROLE_ANCHOR && !anchor_uwb_window_active()) {
+        scan_ret = bt_le_scan_start(&anchor_full_duty_scan_param, anchor_scan_cb);
+        if (scan_ret == 0 || scan_ret == -EALREADY) {
+            anchor_scan_active = true;
+            LOG_INF("anchor high-duty scan after mesh ad: %u ms",
+                    MESH_DISCOVERY_SCAN_HIGH_DUTY_MS);
+            k_msleep(MESH_DISCOVERY_SCAN_HIGH_DUTY_MS);
+            (void)bt_le_scan_stop();
+            anchor_scan_active = false;
+        } else {
+            LOG_WRN("anchor high-duty scan after mesh ad failed: %d", scan_ret);
+        }
+    }
+
     mesh_restart_role_scan();
     if (ret < 0) {
         LOG_WRN("mesh BLE discovery advertisement failed for %s: msg=0x%02x next=0x%016llx len=%u ret=%d",
@@ -3539,6 +3557,11 @@ static void handle_button_action(enum button_action action)
             ble_runtime_shutdown();
         }
         status.click_accepted = ret == 0;
+        if (ret != 0) {
+            status.click_failure = (ret == -ETIMEDOUT) ?
+                                    CLICK_FAILURE_NO_ANCHOR :
+                                    CLICK_FAILURE_INSUFFICIENT_RANGES;
+        }
         status_apply(&status);
         if (ret == 0) {
             LOG_INF("normal click MVP completed");

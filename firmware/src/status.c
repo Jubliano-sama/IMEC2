@@ -106,6 +106,10 @@ int status_select(const struct status_inputs *inputs,
         inputs->failure > SELF_TEST_FAILURE_INTERNAL) {
         return PROTO_ERR_ARG;
     }
+    if (inputs->click_failure < CLICK_FAILURE_NONE ||
+        inputs->click_failure > CLICK_FAILURE_INSUFFICIENT_RANGES) {
+        return PROTO_ERR_ARG;
+    }
 
     memset(indication, 0, sizeof(*indication));
     indication->pattern = STATUS_PATTERN_OFF;
@@ -113,6 +117,13 @@ int status_select(const struct status_inputs *inputs,
     if (inputs->failure != SELF_TEST_FAILURE_NONE) {
         indication->pattern = STATUS_PATTERN_RED_BLINK_CODE;
         indication->red_blink_count = (uint8_t)inputs->failure;
+        indication->repeat_count = STATUS_FAILURE_REPEAT_COUNT;
+        return PROTO_OK;
+    }
+
+    if (inputs->click_failure != CLICK_FAILURE_NONE) {
+        indication->pattern = STATUS_PATTERN_RED_BLINK_CODE;
+        indication->red_blink_count = (uint8_t)inputs->click_failure;
         indication->repeat_count = STATUS_FAILURE_REPEAT_COUNT;
         return PROTO_OK;
     }
