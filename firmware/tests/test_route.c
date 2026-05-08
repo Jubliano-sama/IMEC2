@@ -150,9 +150,9 @@ static void test_failures_try_alternate_then_discovery(void)
     assert(route_upsert_candidate(&table, &route_a) == PROTO_OK);
     assert(route_upsert_candidate(&table, &route_b) == PROTO_OK);
 
-    assert(route_record_failure(&table, ROUTE_FAILURE_HOP_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&table, ROUTE_FAILURE_HOP_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&table, ROUTE_FAILURE_HOP_ACK) == ROUTE_DELIVERY_TRY_ALTERNATE);
+    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_TRY_ALTERNATE);
 
     selected = route_selected(&table);
     assert(selected != NULL);

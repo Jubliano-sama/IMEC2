@@ -26,7 +26,7 @@ static void test_tlv_and_packet_round_trip(void)
 
     struct proto_packet packet = {
         .msg_type = MSG_CLICK_REPORT,
-        .flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
         .src_id = 0x1122334455667788ull,
         .dst_id = 0,
         .session_id = 0xAABBCCDDu,

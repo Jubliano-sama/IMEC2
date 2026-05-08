@@ -75,7 +75,7 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
         out->packet.seq = 1u;
     }
     out->packet.ttl = host_packet->ttl == 0u ? MESH_DEFAULT_TTL : host_packet->ttl;
-    out->packet.flags = FLAG_ACK_REQUESTED;
+    out->packet.flags = 0u;
     if ((host_packet->flags & FLAG_DIAGNOSTIC) != 0u) {
         out->packet.flags |= FLAG_DIAGNOSTIC;
     }

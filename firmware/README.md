@@ -45,7 +45,7 @@ Implemented:
 - Multi-anchor MVP click path: clicker advertises discovery, collects up to eight READY anchors, sorts them by reciprocal RSSI score, ranges them sequentially, and builds one click report per successful range.
 - Clicker self-test gesture, diagnostic BLE advertisement, READY scan, DWM3000 wake/reset/DEV_ID probe, and diagnostic UWB dud range.
 - Anchor BLE scan gate: anchors listen with low-duty BLE, advertise READY after a valid discovery request, keep UWB awake for the scheduled responder window, and return the DWM3000 to standby afterward.
-- BLE mesh relay runtime with route advertisements, route status registration, hop ACKs, gateway ACKs, retry handling, duplicate suppression, and a small RX burst queue.
+- BLE mesh relay runtime with route advertisements, route status registration, gateway ACKs, retry handling, duplicate suppression, and a small RX burst queue.
 - USB CDC serial console with debug-level prototype logs plus COBS-framed gateway packet input/output over the USB-C port.
 - Gateway command routing for COBS-wrapped `MSG_COMMAND` packets, including basic anchor ping/status responses and host-visible command failure results.
 

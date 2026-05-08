@@ -8,7 +8,7 @@ static void test_serial_frame_round_trip_adds_zero_delimiter(void)
     const uint8_t payload[] = {0x01u, 0x00u, 0x02u, 0x03u};
     const struct proto_packet packet = {
         .msg_type = MSG_CLICK_REPORT,
-        .flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
         .src_id = 0x1111222233334444ull,
         .dst_id = 0x9999888877776666ull,
         .session_id = 123u,

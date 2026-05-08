@@ -176,7 +176,6 @@ static void test_reach_report_packet_is_diagnostic_gateway_bound(void)
                                            32u) == PROTO_OK);
     assert(packet.msg_type == MSG_SURVEY_REACH_REPORT);
     assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
-    assert((packet.flags & FLAG_ACK_REQUESTED) != 0u);
     assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
     assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
     assert(packet.src_id == 0x1111222233334444ull);
@@ -195,7 +194,6 @@ static void test_result_packet_is_diagnostic_not_click(void)
     assert(survey_init_result_packet(&packet, &value, 0x9999888877776666ull, 42u, 77u) == PROTO_OK);
     assert(packet.msg_type == MSG_SURVEY_PAIR_RESULT);
     assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
-    assert((packet.flags & FLAG_ACK_REQUESTED) != 0u);
     assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
     assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
     assert(packet.src_id == value.pair.initiator_id);

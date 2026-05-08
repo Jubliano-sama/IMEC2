@@ -50,31 +50,6 @@ int mesh_append_command_result(uint8_t *payload,
     return tlv_append_u8(payload, payload_cap, offset, TLV_REASON, reason);
 }
 
-int mesh_init_hop_ack(struct proto_packet *packet,
-                           uint64_t ack_sender_id,
-                           uint64_t previous_hop_id,
-                           uint32_t session_id,
-                           uint16_t ack_seq,
-                           uint8_t payload_len)
-{
-    if (packet == NULL) {
-        return PROTO_ERR_ARG;
-    }
-    if (!ids_are_valid(ack_sender_id, previous_hop_id) || session_id == 0u) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    packet->msg_type = MSG_MESH_ACK;
-    packet->flags = FLAG_HOP_ACK;
-    packet->src_id = ack_sender_id;
-    packet->dst_id = previous_hop_id;
-    packet->session_id = session_id;
-    packet->seq = ack_seq;
-    packet->ttl = 1u;
-    packet->payload_len = payload_len;
-    return PROTO_OK;
-}
-
 int mesh_init_gateway_ack(struct proto_packet *packet,
                                uint64_t gateway_id,
                                uint64_t original_src_id,
@@ -90,12 +65,12 @@ int mesh_init_gateway_ack(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_GATEWAY_ACK;
-    packet->flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK;
+    packet->flags = FLAG_GATEWAY_ACK;
     packet->src_id = gateway_id;
     packet->dst_id = original_src_id;
     packet->session_id = session_id;
     packet->seq = ack_seq;
-    packet->ttl = MESH_ACK_TTL;
+    packet->ttl = MESH_GATEWAY_ACK_TTL;
     packet->payload_len = payload_len;
     return PROTO_OK;
 }
@@ -115,7 +90,7 @@ int mesh_init_command(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_COMMAND;
-    packet->flags = FLAG_ACK_REQUESTED;
+    packet->flags = 0u;
     packet->src_id = gateway_id;
     packet->dst_id = target_id;
     packet->session_id = session_id;
@@ -141,7 +116,7 @@ int mesh_init_command_result(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_COMMAND_RESULT;
-    packet->flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK_REQUIRED;
+    packet->flags = FLAG_GATEWAY_ACK_REQUIRED;
     if (diagnostic) {
         packet->flags |= FLAG_DIAGNOSTIC;
     }

@@ -9,15 +9,15 @@
 #define ANCHOR_B 0x5555666677778888ull
 #define GATEWAY  0x9999888877776666ull
 
-static struct mesh_outbound hop_ack_outbound(void)
+static struct mesh_outbound command_outbound(void)
 {
     struct mesh_outbound out = {
         .next_hop_id = ANCHOR_A,
     };
     size_t payload_len = 0u;
 
-    assert(mesh_append_requested_seq(out.payload, sizeof(out.payload), &payload_len, 17u) == PROTO_OK);
-    assert(mesh_init_hop_ack(&out.packet,
+    assert(mesh_append_command_id(out.payload, sizeof(out.payload), &payload_len, CMD_GET_STATUS) == PROTO_OK);
+    assert(mesh_init_command(&out.packet,
                              ANCHOR_B,
                              ANCHOR_A,
                              123u,
@@ -29,7 +29,7 @@ static struct mesh_outbound hop_ack_outbound(void)
 
 static void test_frame_round_trip_keeps_next_hop_outside_inner_packet(void)
 {
-    struct mesh_outbound out = hop_ack_outbound();
+    struct mesh_outbound out = command_outbound();
     uint8_t frame[MESH_BLE_MAX_FRAME_LEN];
     size_t frame_len = 0u;
     uint64_t previous_hop_id = 0u;
@@ -50,7 +50,7 @@ static void test_frame_round_trip_keeps_next_hop_outside_inner_packet(void)
                                  &payload_len) == PROTO_OK);
 
     assert(previous_hop_id == ANCHOR_B);
-    assert(packet.msg_type == MSG_MESH_ACK);
+    assert(packet.msg_type == MSG_COMMAND);
     assert(packet.src_id == ANCHOR_B);
     assert(packet.dst_id == ANCHOR_A);
     assert(packet.session_id == out.packet.session_id);
@@ -61,7 +61,7 @@ static void test_frame_round_trip_keeps_next_hop_outside_inner_packet(void)
 
 static void test_decode_rejects_wrong_next_hop_and_self_echo(void)
 {
-    struct mesh_outbound out = hop_ack_outbound();
+    struct mesh_outbound out = command_outbound();
     uint8_t frame[MESH_BLE_MAX_FRAME_LEN];
     size_t frame_len = 0u;
     uint64_t previous_hop_id = 0u;
@@ -92,7 +92,7 @@ static void test_decode_rejects_wrong_next_hop_and_self_echo(void)
 
 static void test_decode_accepts_broadcast_next_hop(void)
 {
-    struct mesh_outbound out = hop_ack_outbound();
+    struct mesh_outbound out = command_outbound();
     uint8_t frame[MESH_BLE_MAX_FRAME_LEN];
     size_t frame_len = 0u;
     uint64_t previous_hop_id = 0u;
@@ -122,7 +122,7 @@ static void test_encode_rejects_payloads_that_do_not_fit_one_ad_structure(void)
         .next_hop_id = ANCHOR_B,
         .packet = {
             .msg_type = MSG_COMMAND,
-            .flags = FLAG_ACK_REQUESTED,
+            .flags = 0u,
             .src_id = GATEWAY,
             .dst_id = ANCHOR_A,
             .session_id = 55u,

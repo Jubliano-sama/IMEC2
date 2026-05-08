@@ -26,14 +26,12 @@ enum mesh_relay_role {
 
 enum mesh_relay_action {
     MESH_RELAY_ACTION_NONE = 0u,
-    MESH_RELAY_ACTION_SEND_HOP_ACK = 1u << 0,
     MESH_RELAY_ACTION_DELIVER_LOCAL = 1u << 1,
     MESH_RELAY_ACTION_FORWARD = 1u << 2,
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
     MESH_RELAY_ACTION_SEND_ROUTE_STATUS = 1u << 4,
     MESH_RELAY_ACTION_SEND_ROUTE_ADV = 1u << 5,
     MESH_RELAY_ACTION_DROP = 1u << 6,
-    MESH_RELAY_ACTION_TX_HOP_CONFIRMED = 1u << 7,
     MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED = 1u << 8,
     MESH_RELAY_ACTION_RETRANSMIT = 1u << 9,
     MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED = 1u << 10,
@@ -44,8 +42,7 @@ enum mesh_relay_action {
 
 enum mesh_relay_tx_state {
     MESH_RELAY_TX_IDLE = 0,
-    MESH_RELAY_TX_WAIT_HOP_ACK = 1,
-    MESH_RELAY_TX_WAIT_GATEWAY_ACK = 2,
+    MESH_RELAY_TX_WAIT_GATEWAY_ACK = 1,
 };
 
 struct mesh_outbound {
@@ -82,10 +79,7 @@ struct mesh_pending_tx {
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     uint8_t payload_len;
     uint64_t next_hop_id;
-    uint32_t hop_ack_deadline_ms;
     uint32_t gateway_ack_deadline_ms;
-    uint8_t failure_count;
-    bool await_gateway_ack;
 };
 
 struct mesh_relay {
@@ -107,7 +101,6 @@ struct mesh_relay {
 struct mesh_relay_result {
     uint32_t actions;
     int status;
-    struct mesh_outbound hop_ack;
     struct mesh_outbound forward;
     struct mesh_outbound gateway_ack;
     struct mesh_outbound route_status;
@@ -150,6 +143,9 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
                         size_t payload_len,
                         uint32_t now_ms,
                         struct mesh_outbound *out);
+void mesh_relay_note_tx_sent(struct mesh_relay *relay,
+                             const struct mesh_outbound *out,
+                             uint32_t now_ms);
 int mesh_relay_tick(struct mesh_relay *relay,
                     uint32_t now_ms,
                     struct mesh_relay_result *result);

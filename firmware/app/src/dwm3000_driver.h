@@ -28,7 +28,9 @@ struct dwm3000_range_result {
     int32_t distance_mm;
     uint8_t quality;
     int8_t rsl_dbm;
+    uint8_t cir_sample[UWB_CIR_SAMPLE_LEN];
     bool rsl_sampled;
+    bool cir_sampled;
     enum range_status status;
 };
 

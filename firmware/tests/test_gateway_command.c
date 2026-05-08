@@ -51,7 +51,7 @@ static void test_prepare_outbound_normalizes_host_command(void)
     assert(out.packet.session_id == 1234u);
     assert(out.packet.seq == 9u);
     assert(out.packet.ttl == MESH_DEFAULT_TTL);
-    assert(out.packet.flags == (FLAG_ACK_REQUESTED | FLAG_DIAGNOSTIC));
+    assert(out.packet.flags == FLAG_DIAGNOSTIC);
     assert(out.payload_len == payload_len);
     assert(memcmp(out.payload, payload, payload_len) == 0);
 }
@@ -86,7 +86,7 @@ static void test_prepare_outbound_preserves_host_session_sequence_and_ttl(void)
     assert(out.packet.session_id == 77u);
     assert(out.packet.seq == 22u);
     assert(out.packet.ttl == 2u);
-    assert(out.packet.flags == FLAG_ACK_REQUESTED);
+    assert(out.packet.flags == 0u);
 }
 
 static void test_prepare_outbound_rejects_invalid_host_packets(void)

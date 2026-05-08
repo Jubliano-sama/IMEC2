@@ -1,107 +1,42 @@
 #internship #imec #architecture #documentation #UWB #BLE
 
-Version: 0.4.21
+Version: 0.5.2
 
-Previous version: [[UWB+BLE Architecture 0.4.20]] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
+Previous version: [[UWB+BLE Architecture 0.5.1]] Design rationale: [[UWB+BLE Design Story 0.1]] Component selection: [[Selecting a UWB and BLE Chip]], [[05-03-2026 Internship]]
 
 ## Changelog
 
-### 2026-05-04 - 0.4.21
+### 2026-05-05 - 0.5.2
 
-- Reduce route discovery advertisement duration from 250 ms to 150 ms and add a 100 ms full-duty BLE scan window after each mesh advertisement on anchors, so clicker wake advertisements are received even when they arrive during the anchor's transmit window.
-- Document that after sending a mesh route discovery advertisement, anchors immediately scan at full duty for 100 ms before resuming their low-duty background scan, giving clickers a receive window that did not exist during the former 250 ms transmit-only period.
-- Add click failure LED indication: a failed normal click now shows a red blink code (1 blink = no anchor heard, 2 blinks = insufficient anchor ranges) instead of no indication.
+- Remove explicit mesh custody acknowledgement packets and their retry state. BLE connection write success now covers next-hop transport, while gateway-bound traffic still waits for an end-to-end gateway ACK.
 
-### 2026-05-04 - 0.4.20
+### 2026-05-05 - 0.5.1
 
-- Rewrite the mesh architecture around simple reactive routing: `ROUTE_REQ`/`ROUTE_REPLY` use advertisements for path discovery, while operational mesh packets use BLE connections to the selected next hop.
-- Document that anchors and the gateway keep their configured scan duty cycle active during mesh connection establishment and connection events.
-- Document click priority over mesh relay work: anchors preempt active relay transmission and pending mesh RX when a valid click wake advertisement arrives.
-- Document that oversized aggregated click sample lists are split across multiple connected report packets, while UWB received signal level appears only once per aggregate.
+- Add one first-path DWM3000 CIR accumulator sample to the first gateway-bound click range report packet, next to the once-per-aggregate UWB received signal level.
 
-### 2026-05-04 - 0.4.19
+### 2026-05-05 - 0.5
 
-- Update the click-to-ranging architecture to the robust wake/READY strategy: UWB politeness sniff, 330 ms clicker wake advertisements, 200 ms READY scan, deterministic anchor arbitration, 180 ms addressed READY advertisements, 500 ms UWB responder windows, and 4 unique anchor ranges required for click success.
-- Update DS-TWR packet sizes and timing notes: timing-critical UWB frames now use compact 16-bit UWB short addresses, and reply delays must be equal first and shortest second.
+Changes from version 0.4:
 
-### 2026-05-04 - 0.4.18
+- **Ranging protocol**: Replaced 200 ms anonymous BLE advertisement with 330 ms wake advertisement, 200 ms addressed READY scan, UWB politeness sniff, and deterministic anchor arbitration. Anchor READY is now addressed with a 180 ms advertisement window. UWB responder windows are 500 ms. Normal click requires 4 unique anchor ranges with up to 6 wake attempts within a 15 s budget. Added per-anchor DS-TWR retry with 4–10 ms backoff inside 50 ms windows.
+- **DS-TWR**: Replaced DW1000 measured exchange (~5.75 ms, 4-message poll/resp/final/report) with DWM3000 budgeted exchange (~3.5 ms) using compact 16-bit UWB short addresses, STS mode 1 with SDC, preamble 64, PAC8, channel 5, 6.8 Mbps. Equal reply delays (900 uus) with shortest-common-delay second priority. Documented all four DS-TWR frame sizes: POLL 13 B, RESPONSE 21 B, FINAL 25 B, REPORT 21 B before FCS.
+- **Clicker self-test**: Added UWB politeness sniff, diagnostic BLE advertisement, addressed READY scan, and diagnostic UWB ranging with explicit LED failure codes (1–6 blinks). Self-test traffic uses separate diagnostic flags that never set the normal click flag.
+- **Click failure indication**: Failed normal clicks now show a red blink code (1 = no anchor heard, 2 = insufficient ranges) instead of no indication.
+- **BLE mesh routing**: Replaced periodic `ROUTE_ADV`/`ROUTE_STATUS` beaconing with on-demand `ROUTE_REQ`/`ROUTE_REPLY` discovery using connectable extended advertisements. Operational mesh packets and gateway ACKs travel over established BLE connections. Route discovery advertisements are 150 ms with a 100 ms full-duty anchor scan afterward. Link quality weighting changed from floating-point RSSI normalization to integer `hop_count × 100 + (100 − quality)` with weakest-link quality propagation.
+- **Mesh reliability**: Documented single-pending-TX custody rule, duplicate re-forward repair, 60 s duplicate cache, 30 s route freshness, and gateway command serialization (one outstanding command at a time with 5 s timeout).
+- **Downlink delivery**: Gateway uses a flat next-hop directory from `ROUTE_REPLY` packets, not a full topology map. Failed downlink retries invalidate the cached entry and trigger rediscovery.
+- **Click priority over mesh**: Anchors preempt active mesh forwarding and pending mesh RX when a valid click wake advertisement arrives, keeping any already-built local click report queued for later delivery.
+- **Report fragmentation**: Oversized aggregated click sample lists split across multiple connected mesh report packets. UWB received signal level and one first-path CIR sample appear only once per aggregate.
+- **DWM3000 runtime policy**: Documented channel 5, preamble 64, PAC8, STS mode 1 with SDC, STS length 64, 6.8 Mbps, SPI 2 MHz init / 32 MHz runtime on SPIM3. IRQ line not connected; v1 uses bounded SPI polling inside BLE-arbitrated UWB windows. Wake pin parked inactive at boot.
+- **Hardware**: AP7354-30W5-7 LDO corrected to 150 mA max (was 200 mA). DWM3000 BOM description updated to note factory default channel 9 (7.9872 GHz) vs firmware channel 5 (6.5 GHz).
+- **Timing corrections**: DS-TWR timing table rewritten to reflect DWM3000 firmware constants and overlap between RX-enable and turnaround delays. Poll TX timestamp read moved from Phase 1 to Phase 3 where it occurs in code. Removed imprecise "27 B @ 32 MHz" SPI estimate.
+- **Anchor heartbeat**: Defined in protocol (`CMD_START_HEARTBEAT`, `CMD_STOP_HEARTBEAT`, `MSG_ANCHOR_HEARTBEAT`) but not yet implemented in firmware.
+- **Power budget**: Updated clicker budget for current firmware timing (330 ms wake, 200 ms READY scan, 400 ms UWB, 30 ms politeness). Updated anchor budget for 10% BLE scan duty, 180 ms READY advertisements, 500 ms UWB windows, 150 ms + 100 ms mesh discovery. Added gateway power budget.
+- **State machines**: Added detailed Mermaid flowcharts for clicker normal-click end-to-end, wake and READY attempt, anchor arbitration, anchor UWB responder window, self-test, gateway command handling, mesh relay state machine, anchor upstream retry, gateway downlink retry, and initiator/responder DS-TWR.
 
-- Document that queued click distance reports include UWB received signal level from DWM3000 RX diagnostics.
+### 2026-05-01 - 0.4
 
-### 2026-05-04 - 0.4.17
-
-- Update BLE radio policy to SoftDevice Controller with LE 1M PHY extended advertising and 1M scanning; Coded PHY and 2M PHY controller support are disabled.
-
-### 2026-05-02 - 0.4.16
-
-- Remove duplicated ranging timelines, stale 200 ms clicker advertisement references, and repeated mesh retry/self-healing explanations while preserving the current timing and routing behavior.
-
-### 2026-05-02 - 0.4.15
-
-- Simplify relay busy behavior wording by focusing on the custody rule and removing redundant scan-callback ordering detail.
-
-### 2026-05-02 - 0.4.14
-
-- Clarify link-quality weighting: route selection is hop-count first, then RSSI-derived quality within the same hop-count band; quality propagation uses the weakest-link value along the advertised path.
-
-### 2026-05-02 - 0.4.13
-
-- Correct the clicker and anchor power budgets to match the current BLE/UWB timing: 120 ms discovery advertisements, 150 ms READY scans, 400 ms anchor responder windows, 120 ms mesh advertisements, and gateway route advertisements every 2 s.
-
-### 2026-05-02 - 0.4.12
-
-- Rewrite downlink delivery section: clarify that the gateway has a flat next-hop directory (not a full topology map), retry is limited to 3 attempts against the cached next-hop, and failure means immediate COMMAND_TIMEOUT with no active discovery or reroute request. Passive recovery only via ongoing ROUTE_ADV/ROUTE_STATUS exchange.
-- Add cross-reference to retry flowcharts in [[Firmware State Machines and Status Report 0.1.1]].
-- Update link to [[UWB+BLE Protocols and Strategies 0.1]].
-
-### 2026-05-01 - 0.4.11
-
-- Add theoretical DWM3000 DS-TWR exchange breakdown and per-click timeline based on firmware delay constants and frame sizes, alongside the existing DW1000 proof-of-concept measurements.
-- Add mesh relay hop latency timeline.
-- Clarify mesh advertisement wording: coded advertisements and mesh advertisements are the same LE Coded PHY transmissions; document how the 30-60 ms advertising interval distributes 2-4 events within each 120 ms active period.
-- Document RSSI-to-link_quality mapping and mesh quality propagation (bottleneck principle).
-
-### 2026-05-01 - 0.4.10
-
-- Document queued anchor click-report delivery: anchors now buffer UWB range results during the responder window, put the DWM3000 into deep sleep when the window closes, then drain reports through the acknowledged BLE mesh. Reports that lose their route after retry exhaustion are requeued for later route recovery instead of being dropped immediately.
-- Document clicker BLE shutdown after normal click and self-test active windows, so the clicker returns to a no-background-radio idle state.
-
-### 2026-05-01 - 0.4.9
-
-- Document low-power mesh refresh behavior: passive route freshness is 30 s, anchors throttle routine route status/advertisement refreshes to 20 s, the DWM3000 wake pin is parked inactive at boot, and the DWM3000 enters deep sleep after each UWB window.
-
-### 2026-05-01 - 0.4.8
-
-- Document duplicate retry custody behavior: directed duplicate packets are re-forwarded when the relay can take custody, while busy relays stay silent instead of sending a false hop ACK.
-
-### 2026-05-01 - 0.4.7
-
-- Document anchor status route telemetry: `CMD_GET_STATUS` responses now include selected route TLVs, or a missing-route reason when no upstream path is selected.
-
-### 2026-05-01 - 0.4.6
-
-- Document low-duty BLE mesh timing: coded advertisements now use a 30-60 ms interval, mesh advertisements last 120 ms, hop ACK replies wait 130 ms before transmitting to avoid half-duplex collisions, and the hop ACK timeout is 500 ms.
-
-### 2026-05-01 - 0.4.5
-
-- Document custody-ACK mesh behavior: a node sends a hop ACK only after it can accept local handling or forwarding, busy relays stay silent so senders retry, and gateway ACKs now use hop ACKs on the return path.
-
-### 2026-05-01 - 0.4.4
-
-- Document gateway command-result timeout tracking: a routed command now remains pending until the target returns `COMMAND_RESULT` or a 5 s timeout emits `COMMAND_TIMEOUT` over USB.
-
-### 2026-05-01 - 0.4.3
-
-- Document the current mesh reliability approach: 7 s route freshness expiry, weighted upstream/downlink route selection, alternate downlink retry, 60 s duplicate cache expiry, and USB timeout reporting for failed gateway commands.
-
-### 2026-05-01 - 0.4.2
-
-- Document concrete BLE transmit power and DWM3000 UWB RF settings used by the firmware.
-
-### 2026-05-01 - 0.4.1
-
-- Document BLE long-range policy: all firmware BLE traffic uses LE Coded PHY/S=8 intent with coded-only scanning and highest configured nRF52 BLE TX power.
-- Document implemented RSSI/link-quality route weighting used by mesh route selection.
+Initial documented version with DW1000 TWR measurements, periodic ROUTE_ADV/ROUTE_STATUS mesh, and 200 ms clicker advertisement.
 
 ## System Architecture
 
@@ -131,7 +66,7 @@ Previous version: [[UWB+BLE Architecture 0.4.20]] Design rationale: [[UWB+BLE De
 | TSW-104-23-T-S | CONN HEADER VERT 4POS 2.54MM | J3 | 1 | 56 | 1237 | Samtec | TSW-104-23-T-S | Mouser | 200-TSW10423TS | 0.22368 | 12.53 |
 | USB4110-GF-A | USB-C (USB TYPE-C) USB 2.0 Receptacle Connector 24 (16+8 dummy) Posities Opbouwmontage, rechte hoek | J4 | 1 | 56 | 109246 | Global Connector Technology | USB4110-GF-A | DigiKey | 2073-USB4110-GF-A-1-ND | 0.82012 | 45.93 |
 | APF3236LSEEZGKQBKC | LED RGB CLEAR 6SMD | LED4, LED5 | 2 | 112 | 20537 | Kingbright | APF3236LSEEZGKQBKC | DigiKey | 754-1969-1-ND | 0.40297 | 45.13 |
-| DWM3000TR13 | DWM3000 module Freq: 7.9872 GHz 6.8Mbps SPI 2.5-3.6V 8 GPIO's | MD1 | 1 | 56 | 5596 | Qorvo | DWM3000TR13 | Mouser | 772-DWM3000TR13 | 17.24 | 965.29 |
+| DWM3000TR13 | DWM3000 module (factory default channel 9, 7.9872 GHz; firmware uses channel 5, 6.5 GHz) 6.8Mbps SPI 2.5-3.6V 8 GPIO's | MD1 | 1 | 56 | 5596 | Qorvo | DWM3000TR13 | Mouser | 772-DWM3000TR13 | 17.24 | 965.29 |
 | IRLML6401TRPBF | MOSFET P-CH 12V 4.3A SOT-23 | Q1, Q2 | 2 | 112 | 3943 | Infineon | IRLML6401TRPBF | DigiKey | IRLML6401PBFDKR-ND | 0.15052 | 16.86 |
 | MCS0402MD1000DE000 | RES SMD 1.2K OHM 1% 1/10W 0402 | R1, R6, R7, R11, R17, R22, R23 | 7 | 392 | 17935 | Vishay | MCS0402MD1000DE000 | DigiKey | MCS0402-100-MDCT-ND | 0.07325 | 28.71 |
 | AC0402JR-0727RL | RES 27Ω ±5% 0.063W 0402 | R2, R4 | 2 | 112 | 17885 | Yageo Group | AC0402JR-0727RL | Avnet | 58AK8894 | 0.00342 | 0.38248 |
@@ -170,7 +105,7 @@ Previous version: [[UWB+BLE Architecture 0.4.20]] Design rationale: [[UWB+BLE De
 - On clicker detection: advertises READY, wakes the UWB radio, opens a bounded DS-TWR responder window, queues any range result for mesh delivery, then puts the DWM3000 into deep sleep before draining queued reports.
 - Relays data toward gateway via BLE mesh.
 - Participates in routing protocol for self-organizing mesh.
-- Reports battery level and connection data via periodic heartbeat requested by gateway.
+- Reports battery level and connection data via periodic heartbeat requested by gateway (protocol defined; firmware implementation pending).
 - Responds to gateway commands, including status requests, route updates, diagnostics, and anchor-to-anchor distance survey commands.
 
 #### Gateway Anchor
@@ -178,7 +113,7 @@ Previous version: [[UWB+BLE Architecture 0.4.20]] Design rationale: [[UWB+BLE De
 - Acts as the mesh root.
 - Forwards all received data (own + relayed) to server over serial.
 - May or may not perform ranging sequences itself. Depending on processing headroom.
-- Issues mesh commands and receives both hop acknowledgements and end-to-end gateway acknowledgements.
+- Issues mesh commands and receives command results plus end-to-end gateway acknowledgements.
 - Schedules anchor-to-anchor distance surveys after anchors report which other anchors they can reach.
 
 ---
@@ -206,11 +141,11 @@ DS-TWR reply timing policy is equality first, shortest possible common delay sec
 
 | Phase | Description | Time |
 | --- | --- | --- |
-| 1. POLL TX | SPI write (27 B @ 32 MHz) + start + on-air + read TX timestamp | ~300 µs |
-| 2. Wait for RESPONSE | 690 µs RX enable delay + 900 uus responder turnaround + RESP on-air | ~1200 µs |
-| 3. Process RESPONSE | Read RX timestamp + read frame + validate + build FINAL | ~200 µs |
+| 1. POLL TX | SPI write + radio start + POLL on-air | ~300 µs |
+| 2. Wait for RESPONSE | 690 µs RX enable starts from POLL TX; turnaround + RESP on-air overlap with RX enable | ~1200 µs |
+| 3. Process RESPONSE | Read timestamps (RX + poll TX) + read frame + validate + build FINAL | ~200 µs |
 | 4. FINAL TX (delayed) | 900 uus delayed TX + FINAL on-air + read TX timestamp | ~1200 µs |
-| 5. Wait for REPORT | 670 µs RX enable + RESPONDER compute + REPORT on-air | ~500 µs |
+| 5. Wait for REPORT | RX enable + responder compute + REPORT on-air | ~500 µs |
 | 6. Read REPORT | Read frame + parse | ~100 µs |
 | **Total** | | **~3500 µs ≈ 3.5 ms** |
 
@@ -297,7 +232,7 @@ Anchors form a self-organizing BLE mesh using simple reactive routing. Each pack
 
 ### BLE PHY and TX Power Policy
 
-Clicker discovery and READY replies use non-connectable extended advertising through the SoftDevice Controller on LE 1M PHY. Reactive mesh path discovery uses connectable extended advertisements for `ROUTE_REQ` and `ROUTE_REPLY`. Once a path is found, mesh data packets, hop ACKs, gateway ACKs, commands, and reports are sent over a BLE connection to the selected next hop using the mesh GATT write characteristic.
+Clicker discovery and READY replies use non-connectable extended advertising through the SoftDevice Controller on LE 1M PHY. Reactive mesh path discovery uses connectable extended advertisements for `ROUTE_REQ` and `ROUTE_REPLY`. Once a path is found, mesh data packets, gateway ACKs, commands, and reports are sent over a BLE connection to the selected next hop using the mesh GATT write characteristic.
 
 Extended advertising disables the secondary 2M PHY with `BT_LE_ADV_OPT_NO_2M`, scanning uses LE 1M only, and the controller has `CONFIG_BT_CTLR_PHY_CODED=n` plus `CONFIG_BT_CTLR_PHY_2M=n`. The nRF52 controller is still configured for `CONFIG_BT_CTLR_TX_PWR_PLUS_8` (+8 dBm).
 
@@ -307,7 +242,7 @@ Route discovery advertisements run for 150 ms. On anchors, a 100 ms full-duty BL
 
 ### Mesh Packet Standard
 
-All routed packets use a versioned binary envelope. The detailed field list is documented in [[UWB+BLE Protocols and Strategies 0.1.8]], but each packet contains:
+All routed packets use a versioned binary envelope. The detailed field list is documented in [[UWB+BLE Protocols and Strategies 0.2.2]], but each packet contains:
 
 - protocol version
 - message type
@@ -322,17 +257,13 @@ All routed packets use a versioned binary envelope. The detailed field list is d
 
 `TLV` means Type-Length-Value. It allows new command payloads to be added without changing the shared IMEC packet envelope.
 
-### Required Acknowledgements
+### Gateway Delivery Confirmation
 
-Every routed packet that matters sets:
-
-- `ACK_REQUESTED`: the next hop must reply with a hop ACK only after it can accept custody of the packet for local handling or forwarding.
-
-Every gateway-bound packet that matters also sets:
+Every gateway-bound packet that matters sets:
 
 - `GATEWAY_ACK_REQUIRED`: the gateway must send an end-to-end gateway ACK back to the original sender.
 
-Reports, survey results, heartbeats, and command results require gateway ACKs. A hop ACK only proves next-hop custody; the original sender treats gateway-bound traffic as delivered only after the end-to-end gateway ACK returns. Gateway-originated commands instead complete when the target returns `COMMAND_RESULT`, or fail locally after the 5 s command-result timeout.
+Reports, survey results, heartbeats, and command results require gateway ACKs. The original sender treats gateway-bound traffic as delivered only after the end-to-end gateway ACK returns. Next-hop transfer is handled by the BLE connection write result. Gateway-originated commands complete when the target returns `COMMAND_RESULT`, or fail locally after the 5 s command-result timeout.
 
 Default retry behavior:
 
@@ -341,12 +272,10 @@ Default retry behavior:
 | Click/READY advertisement interval | 20 ms |
 | Route discovery advertisement duration | 150 ms |
 | Route discovery post-ad anchor high-duty scan | 100 ms |
-| Hop ACK reply delay | 0 ms; ACKs use the active/created BLE connection |
-| Hop ACK timeout | 500 ms |
 | Gateway ACK timeout | 2 s |
 | Max retries | 3 |
 | Retry backoff | 100 ms, 250 ms, 500 ms |
-| Route freshness window | 30 s since route discovery or successful ACK refresh |
+| Route freshness window | 30 s since route discovery, successful BLE send, or gateway ACK |
 | Duplicate suppression window | 60 s per message identity |
 | Gateway command-result timeout | 5 s for one outstanding gateway-originated command |
 
@@ -403,11 +332,11 @@ For anchor reports and command results, the target is the configured gateway. Fo
 
 ### Route Failure Behavior
 
-Mesh ACK packets (`MSG_MESH_ACK` and `MSG_GATEWAY_ACK`) update pending transmissions and route freshness before normal packet custody decisions are made.
+Gateway ACK packets update pending transmissions before normal packet forwarding decisions are made.
 
-When an anchor sends a gateway-bound packet, the pending transmission enters a two-phase wait: first for the hop ACK from its next-hop relay, then for the end-to-end gateway ACK from the gateway.
+When an anchor sends a gateway-bound packet, the successful BLE write refreshes the selected route age and the pending transmission waits for the end-to-end gateway ACK from the gateway.
 
-**Hop ACK failure** — if the hop ACK deadline (500 ms + retry backoff) expires without an ACK, `route_record_failure()` increments the candidate's `failure_count`. The function returns one of three actions:
+**Gateway ACK failure** — if the gateway ACK deadline (2 s) expires, the anchor records `ROUTE_FAILURE_GATEWAY_ACK`. `route_record_failure()` increments the candidate's `failure_count` and returns one of three actions:
 
 | Condition | Action |
 | --- | --- |
@@ -417,26 +346,26 @@ When an anchor sends a gateway-bound packet, the pending transmission enters a t
 
 If an alternative candidate is selected, the pending transmission is retransmitted through the new next hop with `failure_count` reset to 0. If no alternative exists and the original packet was a queued click report, it goes back into the report queue and triggers a new `ROUTE_REQ`.
 
-**Gateway ACK failure** — if the hop ACK succeeds but the gateway ACK deadline (2 s) expires, the anchor records `ROUTE_FAILURE_GATEWAY_ACK` and follows the same retry logic. The report may have reached the gateway, but the return ACK was lost, so the sender retransmits rather than dropping the report.
+The report may have reached the gateway, but the return ACK was lost, so the sender retransmits rather than dropping the report.
 
-**Success** — any successful hop ACK or gateway ACK calls `route_record_success()`, resetting `failure_count` to 0 and updating `last_seen_ms`. This keeps the route fresh and trusted.
+**Success** — a successful BLE write refreshes `last_seen_ms`; a matching gateway ACK also resets `failure_count` to 0. This keeps usable routes fresh without hiding repeated missing gateway confirmations.
 
-Each node can track exactly one pending transmission at a time. When a relay is already awaiting a hop ACK or gateway ACK (`pending.state != TX_IDLE`), it cannot take custody of another packet that would require forwarding or a local response (`COMMAND_RESULT`, `GATEWAY_ACK`). The relay drops that packet silently: it sends no hop ACK and does not add the packet to the duplicate cache. The sender treats the silence as a missed ACK and retries later.
+Each node can track exactly one pending gateway-bound transmission at a time. When a relay is already awaiting a gateway ACK (`pending.state != TX_IDLE`), it cannot start another packet that would require forwarding or a local response (`COMMAND_RESULT`, `GATEWAY_ACK`). The relay drops that packet and does not add it to the duplicate cache. The previous sender relies on its BLE write result and higher-level gateway confirmation to repair the path if needed.
 
 #### Duplicate Retry and Busy Relays
 
 When a relay receives a directed-unicast retry whose identity (`msg_type`, `src_id`, `dst_id`, `session_id`, `seq`) already exists in its duplicate cache, it recognizes the retry as a repair attempt rather than a new packet:
 
-- **Relay idle, route available** — the relay re-forwards the packet and sends a fresh hop ACK back to the previous hop. The duplicate cache prevents double delivery to the target.
-- **Relay busy (tx in flight) or no route** — the relay drops the packet without a hop ACK, since it cannot honestly take custody.
+- **Relay idle, route available** — the relay re-forwards the packet. The duplicate cache prevents double delivery to the target.
+- **Relay busy (tx in flight) or no route** — the relay drops the packet.
 
-For local or broadcast duplicates, the relay sends a fresh ACK if applicable but does not deliver the payload twice.
+Local or broadcast duplicates are not delivered twice.
 
 #### Downlink Delivery and Gateway Command Serialization
 
 Commands flow from the gateway toward a target anchor through a flat downlink directory learned from `ROUTE_REPLY` packets (`target_id -> next_hop_id`). The gateway does not maintain a full topology map and does not flood operational commands.
 
-If no downlink entry exists, the gateway advertises `ROUTE_REQ` and keeps the USB command pending. When the target's `ROUTE_REPLY` returns, the command is sent over the selected next-hop connection. For a command with a cached route, the gateway transmits to the cached next hop and retries missed hop ACKs up to three times with 100 ms, 250 ms, and 500 ms backoff. After three failures it invalidates the cached entry and starts discovery again while the 5 s command-result timeout remains the application-level limit.
+If no downlink entry exists, the gateway advertises `ROUTE_REQ` and keeps the USB command pending. When the target's `ROUTE_REPLY` returns, the command is sent over the selected next-hop connection. A command with a cached route relies on BLE write status for next-hop transport and waits for `COMMAND_RESULT`; the 5 s command-result timeout remains the application-level limit.
 
 The gateway serializes commands — it tracks exactly one outstanding command at a time. A second USB command is immediately rejected with `COMMAND_BUSY` until the first command is resolved. Resolution occurs when:
 
@@ -447,7 +376,7 @@ The gateway serializes commands — it tracks exactly one outstanding command at
 A command result matches when its `src_id` equals the command's target anchor, `dst_id` equals the gateway, and both `session_id` and `seq` match the original command.
 
 ### Data Forwarding (every click)
-Anchor-side UWB results are queued during the responder window. Each click distance report carries distance, quality, range status, and sample data. The first packet for an aggregated anchor-click measurement also carries the UWB received signal level in dBm. If all samples do not fit one connected mesh write, the remaining sample chunks are queued as additional report packets for the same anchor, clicker, and event sequence. After the DWM3000 returns to deep sleep, the anchor drains reports one at a time through the mesh. Each report waits for a hop ACK and then a gateway ACK. If all retries exhaust and the upstream route is lost, the report returns to the queue and starts reactive route discovery.
+Anchor-side UWB results are queued during the responder window. Each click distance report carries distance, quality, range status, and sample data. The first packet for an aggregated anchor-click measurement also carries the UWB received signal level in dBm and one raw first-path DWM3000 CIR accumulator sample. If all samples do not fit one connected mesh write, the remaining sample chunks are queued as additional report packets for the same anchor, clicker, and event sequence. After the DWM3000 returns to deep sleep, the anchor drains reports one at a time through the mesh. Each report waits for a gateway ACK. If all retries exhaust and the upstream route is lost, the report returns to the queue and starts reactive route discovery.
 
 ### Mesh Relay Hop Latency
 
@@ -462,15 +391,14 @@ T≈reply    Sender receives ROUTE_REPLY and opens/reuses next-hop connection
 
 Data hop:
 T=0ms      Sender writes mesh frame to next-hop GATT characteristic
-T≈conn     Receiver decodes frame and accepts custody
-T≈conn     Receiver writes MESH_ACK back over the connection
+T≈conn     Receiver decodes frame
 T≈conn     Receiver forwards data to its next hop if needed
 ```
 
-The first packet after a route miss pays the advertisement discovery cost. Once a route and connection exist, each hop is bounded mainly by BLE connection scheduling plus GATT write handling. The 500 ms hop-ACK timeout remains conservative enough to cover low-duty scan discovery, connection establishment, and a missed connection event.
+The first packet after a route miss pays the advertisement discovery cost. Once a route and connection exist, each hop is bounded mainly by BLE connection scheduling plus GATT write handling.
 
 ### Self-Healing
-Route entries expire after 30 s without refresh. Active traffic can remove bad selected routes faster after three missed hop ACKs. Anchors requeue undelivered reports and start a new `ROUTE_REQ`; the gateway keeps a pending command while discovery runs and reports `COMMAND_TIMEOUT` only if no matching command result arrives within 5 s. Duplicate identities expire after 60 s.
+Route entries expire after 30 s without refresh. Repeated missing gateway ACKs can invalidate a selected upstream route and start new discovery. Anchors requeue undelivered reports and start a new `ROUTE_REQ`; the gateway keeps a pending command while discovery runs and reports `COMMAND_TIMEOUT` only if no matching command result arrives within 5 s. Duplicate identities expire after 60 s.
 
 ### Click Priority Over Mesh Work
 
@@ -490,7 +418,7 @@ The gateway issues commands through the same mesh envelope and downlink director
 | Heartbeat control | Start/stop periodic anchor health reports |
 | Survey control | Start/abort anchor reachability and anchor-to-anchor distance measurements |
 
-The target executes or rejects the command and returns a `COMMAND_RESULT`; that result uses the standard hop ACK plus gateway ACK delivery path.
+The target executes or rejects the command and returns a `COMMAND_RESULT`; that result uses the standard gateway ACK delivery path.
 
 For `CMD_GET_STATUS`, an anchor includes the normal role, uptime, and status fields plus mesh route telemetry. If a route is selected, the response includes `GATEWAY_ID`, `NEXT_HOP_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, and `RETRY_COUNT`. If no upstream route is currently selected, the response includes `GATEWAY_ID` and `REASON=7`, where 7 maps to `PROTO_ERR_NOT_FOUND`.
 
@@ -590,7 +518,7 @@ Both the Clicker and Anchor share the same power regulation topology:
  ▼
 [LDO]
  3.0V regulated output
- 200 mA max, Iq < 1µA
+ 150 mA max, Iq < 1µA
  Dropout < 0.2V (operates down to 3.2V battery)
  │
  ├──► ANNA-B402-00B (nRF52833) VDD = 3.0V

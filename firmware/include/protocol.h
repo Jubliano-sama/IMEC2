@@ -15,6 +15,7 @@ extern "C" {
 #define PACKET_CRC_LEN 2u
 #define PACKET_MAX_PAYLOAD_LEN 255u
 #define PACKET_MAX_LEN (PACKET_HEADER_LEN + PACKET_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
+#define UWB_CIR_SAMPLE_LEN 6u
 
 enum result {
     PROTO_OK = 0,
@@ -44,7 +45,6 @@ enum msg_type {
     MSG_ANCHOR_HEARTBEAT = 0x22,
 
     MSG_MESH_DATA = 0x30,
-    MSG_MESH_ACK = 0x31,
     MSG_GATEWAY_ACK = 0x32,
     MSG_ROUTE_ADV = 0x33,
     MSG_ROUTE_STATUS = 0x34,
@@ -63,8 +63,6 @@ enum msg_type {
 };
 
 enum pkt_flags {
-    FLAG_ACK_REQUESTED = 0x01,
-    FLAG_HOP_ACK = 0x02,
     FLAG_GATEWAY_ACK_REQUIRED = 0x04,
     FLAG_GATEWAY_ACK = 0x08,
     FLAG_DIAGNOSTIC = 0x10,
@@ -110,6 +108,7 @@ enum tlv_type {
     TLV_HOP_COUNT = 0x23,
     TLV_UWB_RSL_DBM = 0x24,
     TLV_DISTANCE_SAMPLES_MM = 0x25,
+    TLV_UWB_CIR_SAMPLE = 0x26,
 };
 
 enum device_role {

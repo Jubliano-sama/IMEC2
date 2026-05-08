@@ -213,7 +213,7 @@ int survey_init_result_packet(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_SURVEY_PAIR_RESULT;
-    packet->flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
     packet->src_id = sample->pair.initiator_id;
     packet->dst_id = gateway_id;
     packet->session_id = sample->pair.survey_id;
@@ -238,7 +238,7 @@ int survey_init_reach_report_packet(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_SURVEY_REACH_REPORT;
-    packet->flags = FLAG_ACK_REQUESTED | FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
     packet->src_id = anchor_id;
     packet->dst_id = gateway_id;
     packet->session_id = survey_id;

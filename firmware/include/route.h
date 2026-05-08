@@ -14,14 +14,12 @@ extern "C" {
 #define ROUTE_MAX_CANDIDATES 8u
 #define ROUTE_NO_SELECTION 0xFFu
 #define ROUTE_MAX_FAILURES 3u
-#define ROUTE_HOP_ACK_TIMEOUT_MS 500u
 #define ROUTE_GATEWAY_ACK_TIMEOUT_MS 2000u
 #define ROUTE_CANDIDATE_MAX_AGE_MS 30000u
 #define ROUTE_DEDUP_WINDOW_MS 60000u
 
 enum route_failure_kind {
-    ROUTE_FAILURE_HOP_ACK = 1,
-    ROUTE_FAILURE_GATEWAY_ACK = 2,
+    ROUTE_FAILURE_GATEWAY_ACK = 1,
 };
 
 enum route_delivery_action {
@@ -55,6 +53,7 @@ uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t 
 const struct route_candidate *route_selected(const struct route_table *table);
 void route_record_success(struct route_table *table);
 void route_record_success_at(struct route_table *table, uint32_t now_ms);
+void route_refresh_selected_at(struct route_table *table, uint32_t now_ms);
 enum route_delivery_action route_record_failure(struct route_table *table,
                                                           enum route_failure_kind kind);
 uint32_t route_retry_backoff_ms(uint8_t failure_count);

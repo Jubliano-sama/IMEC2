@@ -213,12 +213,27 @@ void route_record_success_at(struct route_table *table, uint32_t now_ms)
     }
 }
 
+void route_refresh_selected_at(struct route_table *table, uint32_t now_ms)
+{
+    struct route_candidate *candidate;
+
+    if (table == NULL || table->selected_index == ROUTE_NO_SELECTION ||
+        table->selected_index >= ROUTE_MAX_CANDIDATES) {
+        return;
+    }
+
+    candidate = &table->candidates[table->selected_index];
+    if (candidate_valid_for_epoch(candidate, table->current_epoch)) {
+        candidate->last_seen_ms = now_ms;
+    }
+}
+
 enum route_delivery_action route_record_failure(struct route_table *table,
                                                           enum route_failure_kind kind)
 {
     struct route_candidate *candidate;
 
-    if (kind != ROUTE_FAILURE_HOP_ACK && kind != ROUTE_FAILURE_GATEWAY_ACK) {
+    if (kind != ROUTE_FAILURE_GATEWAY_ACK) {
         return ROUTE_DELIVERY_DISCOVER;
     }
     if (table == NULL || table->selected_index == ROUTE_NO_SELECTION ||

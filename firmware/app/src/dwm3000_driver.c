@@ -27,6 +27,7 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
 #define DWM3000_LOG2_TO_DB_Q8 771
 #define DWM3000_IPATOV_POWER_SCALE_DB_Q8 13101
 #define DWM3000_IPATOV_RSL_OFFSET_DB_Q8 31165
+#define DWM3000_ACCUM_CIR_SAMPLE_READ_LEN (UWB_CIR_SAMPLE_LEN + 1u)
 
 #define POLL_TX_TO_RESP_RX_DLY_UUS 690u
 /*
@@ -290,17 +291,51 @@ static int8_t estimate_ipatov_rsl_dbm(const dwt_rxdiag_t *diagnostics)
     return clamp_i8(rounded_dbm);
 }
 
-static void read_received_signal_level(int8_t *rsl_dbm)
+static bool read_cir_sample(const dwt_rxdiag_t *diagnostics,
+                            uint8_t cir_sample[UWB_CIR_SAMPLE_LEN])
+{
+    uint8_t accum[DWM3000_ACCUM_CIR_SAMPLE_READ_LEN];
+    uint16_t fp_int;
+
+    if (diagnostics == NULL ||
+        cir_sample == NULL ||
+        diagnostics->ipatovAccumCount == 0u) {
+        return false;
+    }
+
+    fp_int = diagnostics->ipatovFpIndex >> 6;
+    if ((uint32_t)fp_int + DWM3000_ACCUM_CIR_SAMPLE_READ_LEN > ACC_BUFFER_MAX_LEN) {
+        return false;
+    }
+
+    dwt_readaccdata(accum, sizeof(accum), fp_int);
+    memcpy(cir_sample, &accum[1], UWB_CIR_SAMPLE_LEN);
+    return true;
+}
+
+static void read_rx_diagnostics(int8_t *rsl_dbm,
+                                uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
+                                bool *cir_sampled)
 {
     dwt_rxdiag_t diagnostics;
 
-    if (rsl_dbm == NULL) {
+    if (rsl_dbm == NULL && cir_sample == NULL) {
         return;
+    }
+    if (cir_sampled != NULL) {
+        *cir_sampled = false;
     }
 
     memset(&diagnostics, 0, sizeof(diagnostics));
     dwt_readdiagnostics(&diagnostics);
-    *rsl_dbm = estimate_ipatov_rsl_dbm(&diagnostics);
+    if (rsl_dbm != NULL) {
+        *rsl_dbm = estimate_ipatov_rsl_dbm(&diagnostics);
+    }
+    if (read_cir_sample(&diagnostics, cir_sample)) {
+        if (cir_sampled != NULL) {
+            *cir_sampled = true;
+        }
+    }
 }
 
 static uint16_t read_rx_frame(uint8_t *buffer, size_t buffer_len)
@@ -503,7 +538,8 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
 static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          uint8_t *buffer, size_t buffer_len, size_t *frame_len,
                          uint64_t *rx_timestamp, uint8_t *quality,
-                         int8_t *rsl_dbm, bool capture_rsl)
+                         int8_t *rsl_dbm, uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
+                         bool *cir_sampled, bool capture_rsl)
 {
     int ret;
 
@@ -529,7 +565,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         return -EBADMSG;
     }
     if (capture_rsl) {
-        read_received_signal_level(rsl_dbm);
+        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled);
     }
 
     *frame_len = read_rx_frame(buffer, buffer_len);
@@ -547,6 +583,8 @@ static int receive_response(const struct dwm3000_range_request *request,
                             uint64_t *resp_rx_ts,
                             uint8_t *quality,
                             int8_t *rsl_dbm,
+                            uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
+                            bool *cir_sampled,
                             enum range_status *status_out,
                             bool capture_rsl)
 {
@@ -579,7 +617,7 @@ static int receive_response(const struct dwm3000_range_request *request,
         return -EBADMSG;
     }
     if (capture_rsl) {
-        read_received_signal_level(rsl_dbm);
+        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled);
     }
 
     frame_len = read_rx_frame(rx_buffer, sizeof(rx_buffer));
@@ -616,7 +654,8 @@ static int receive_report(const struct dwm3000_range_request *request,
     int ret;
 
     ret = receive_frame(REPORT_RX_TIMEOUT_MS, &status,
-                        rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL, NULL, false);
+                        rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL,
+                        NULL, NULL, NULL, false);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->responder_id = responder_id;
@@ -838,7 +877,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     }
 
     ret = receive_response(request, &response, &resp_rx_ts, &quality, &rsl_dbm,
-                           &range_status, false);
+                           NULL, NULL, &range_status, false);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->quality = quality;
@@ -919,8 +958,10 @@ static int responder_poll_once(uint64_t local_anchor_id,
     uint64_t final_rx_ts;
     uint8_t quality = 0u;
     int8_t rsl_dbm = 0;
+    uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0};
     int32_t distance_mm = 0;
     enum range_status report_status = RANGE_OK;
+    bool cir_sampled = false;
     bool capture_final_rsl;
     int ret;
 
@@ -949,7 +990,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
-                        &poll_rx_ts, &quality, &rsl_dbm, false);
+                        &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL, false);
     if (ret < 0) {
         return ret == -ETIMEDOUT ? -ETIMEDOUT : ret;
     }
@@ -1012,6 +1053,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     ret = receive_frame(FINAL_RX_TIMEOUT_MS, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len,
                         &final_rx_ts, &quality, &rsl_dbm,
+                        cir_sample, &cir_sampled,
                         capture_final_rsl);
     if (ret < 0) {
         if (result != NULL) {
@@ -1077,6 +1119,10 @@ static int responder_poll_once(uint64_t local_anchor_id,
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
         result->rsl_sampled = capture_final_rsl;
+        if (cir_sampled) {
+            memcpy(result->cir_sample, cir_sample, UWB_CIR_SAMPLE_LEN);
+        }
+        result->cir_sampled = cir_sampled;
         result->status = report_status;
     }
     return report_status == RANGE_OK ? 0 : -EIO;

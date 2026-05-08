@@ -150,7 +150,6 @@ static struct bt_le_ext_adv *ble_ext_adv;
 #define BLE_ADV_INTERVAL_20MS 32u
 #define MESH_DISCOVERY_ADV_TX_MS 150u
 #define MESH_DISCOVERY_SCAN_HIGH_DUTY_MS 100u
-#define MESH_ACK_REPLY_DELAY_MS 0u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
 #define MESH_RX_QUEUE_DEPTH 8
@@ -1781,6 +1780,7 @@ struct anchor_range_window_report {
     uint16_t sample_count;
     bool have_result;
     bool rsl_sampled;
+    bool cir_sampled;
 };
 
 static int32_t average_i32_nearest(int64_t sum, uint16_t count)
@@ -1799,6 +1799,7 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
                                        const struct dwm3000_range_result *result)
 {
     int8_t sampled_rsl = 0;
+    uint8_t sampled_cir[UWB_CIR_SAMPLE_LEN] = {0};
 
     if (report == NULL || result == NULL) {
         return;
@@ -1806,6 +1807,9 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
 
     if (report->rsl_sampled) {
         sampled_rsl = report->result.rsl_dbm;
+    }
+    if (report->cir_sampled) {
+        memcpy(sampled_cir, report->result.cir_sample, UWB_CIR_SAMPLE_LEN);
     }
 
     if (!report->have_result || result->status == RANGE_OK) {
@@ -1819,6 +1823,14 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
     if (report->rsl_sampled) {
         report->result.rsl_dbm = sampled_rsl;
         report->result.rsl_sampled = true;
+    }
+    if (result->cir_sampled && !report->cir_sampled) {
+        memcpy(sampled_cir, result->cir_sample, UWB_CIR_SAMPLE_LEN);
+        report->cir_sampled = true;
+    }
+    if (report->cir_sampled) {
+        memcpy(report->result.cir_sample, sampled_cir, UWB_CIR_SAMPLE_LEN);
+        report->result.cir_sampled = true;
     }
 
     if (result->status != RANGE_OK ||
@@ -1898,7 +1910,7 @@ static void run_anchor_uwb_window(const struct anchor_service_slot *slot)
             break;
         }
         expected.timeout_ms = (uint32_t)remaining_ms;
-        expected.capture_rsl = !window_report.rsl_sampled;
+        expected.capture_rsl = !window_report.rsl_sampled || !window_report.cir_sampled;
         ret = dwm3000_driver_responder_poll_expected(DEVICE_ID,
                                                      &expected,
                                                      expected.timeout_ms,
@@ -2450,9 +2462,7 @@ static void mesh_schedule_tx_timeout(void)
         return;
     }
 
-    deadline = mesh_runtime.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ?
-               mesh_runtime.pending.gateway_ack_deadline_ms :
-               mesh_runtime.pending.hop_ack_deadline_ms;
+    deadline = mesh_runtime.pending.gateway_ack_deadline_ms;
     delay_ms = deadline > now ? deadline - now : 1u;
     (void)k_work_reschedule(&mesh_tx_timeout_work, K_MSEC(delay_ms));
 }
@@ -2697,6 +2707,7 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
         }
         return ret;
     }
+    mesh_relay_note_tx_sent(&mesh_runtime, &tx, k_uptime_get_32());
     mesh_schedule_tx_timeout();
     return 0;
 }
@@ -2782,12 +2793,6 @@ static int queue_anchor_report(const struct mesh_outbound *outbound)
 
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
 {
-    if (result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) {
-        if (MESH_ACK_REPLY_DELAY_MS > 0u) {
-            k_msleep(MESH_ACK_REPLY_DELAY_MS);
-        }
-        (void)mesh_send_outbound(&result->hop_ack, "hop-ack");
-    }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
         (void)mesh_start_tracked_tx(&result->gateway_ack, "gateway-ack");
     }
@@ -2801,7 +2806,9 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         (void)mesh_send_outbound(&result->route_reply, "route-reply");
     }
     if (result->actions & MESH_RELAY_ACTION_RETRANSMIT) {
-        (void)mesh_send_outbound(&result->retransmit, "retransmit");
+        if (mesh_send_outbound(&result->retransmit, "retransmit") == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime, &result->retransmit, k_uptime_get_32());
+        }
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) {
@@ -2810,10 +2817,6 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
     if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY) {
         LOG_INF("mesh reactive route ready");
         mesh_try_route_waiting_tx();
-    }
-    if (result->actions & MESH_RELAY_ACTION_TX_HOP_CONFIRMED) {
-        LOG_INF("mesh pending TX hop acknowledged");
-        mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
         LOG_INF("mesh pending TX gateway acknowledged");
@@ -3078,12 +3081,14 @@ static int build_range_report_samples(uint64_t clicker_id,
         fields.distance_mm = range_result->distance_mm;
         fields.quality = range_result->quality;
         fields.rsl_dbm = range_result->rsl_dbm;
+        fields.cir_sample = range_result->cir_sampled ? range_result->cir_sample : NULL;
         fields.range_status = range_result->status;
         fields.distance_samples_mm = chunk_count > 0u ? &distance_samples_mm[sample_index] : NULL;
         fields.sample_index = sample_index;
         fields.sample_count = sample_count;
         fields.distance_sample_count = chunk_count;
         fields.omit_rsl = packet_index != 0u;
+        fields.omit_cir = packet_index != 0u;
 
         ret = report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields);
         if (ret != PROTO_OK) {
