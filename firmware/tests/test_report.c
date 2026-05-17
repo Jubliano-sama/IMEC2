@@ -14,7 +14,8 @@ static void test_click_report_packet_counts_as_click(void)
         .clicker_id = 0x1111222233334444ull,
         .anchor_id = 0x5555666677778888ull,
         .event_seq = 123u,
-        .timestamp_ms = 987654u,
+        .timestamp_ms = 1234567890123ull,
+        .time_sync_age_ms = 250u,
         .distance_mm = 4567,
         .quality = 95u,
         .rsl_dbm = -73,
@@ -47,8 +48,12 @@ static void test_click_report_packet_counts_as_click(void)
     assert(proto_get_u64_le(value) == fields.clicker_id);
 
     assert(tlv_find(payload, payload_len, TLV_TIMESTAMP_MS, &value, &value_len) == PROTO_OK);
+    assert(value_len == 8u);
+    assert(proto_get_u64_le(value) == fields.timestamp_ms);
+
+    assert(tlv_find(payload, payload_len, TLV_TIME_SYNC_AGE_MS, &value, &value_len) == PROTO_OK);
     assert(value_len == 4u);
-    assert(proto_get_u32_le(value) == fields.timestamp_ms);
+    assert(proto_get_u32_le(value) == fields.time_sync_age_ms);
 
     assert(tlv_find(payload, payload_len, TLV_RANGE_STATUS, &value, &value_len) == PROTO_OK);
     assert(value_len == 1u);
@@ -226,8 +231,12 @@ static void test_anchor_heartbeat_report_requires_gateway_ack(void)
     const struct anchor_heartbeat_fields fields = {
         .device_role = ROLE_ANCHOR,
         .battery_mv = 0u,
-        .status_bits = STATUS_BIT_UWB_SCAN_ACTIVE | STATUS_BIT_UWB_TIMING_REJECTION,
+        .status_bits = STATUS_BIT_UWB_SCAN_ACTIVE |
+                       STATUS_BIT_UWB_TIMING_REJECTION |
+                       STATUS_BIT_TIME_SYNCED,
         .uptime_ms = 123456u,
+        .timestamp_ms = 9876543210ull,
+        .time_sync_age_ms = 500u,
     };
     uint8_t payload[64];
     size_t payload_len = 0u;
@@ -251,6 +260,12 @@ static void test_anchor_heartbeat_report_requires_gateway_ack(void)
     assert(tlv_find(payload, payload_len, TLV_UPTIME_MS, &value, &value_len) == PROTO_OK);
     assert(value_len == 4u);
     assert(proto_get_u32_le(value) == fields.uptime_ms);
+    assert(tlv_find(payload, payload_len, TLV_TIMESTAMP_MS, &value, &value_len) == PROTO_OK);
+    assert(value_len == 8u);
+    assert(proto_get_u64_le(value) == fields.timestamp_ms);
+    assert(tlv_find(payload, payload_len, TLV_TIME_SYNC_AGE_MS, &value, &value_len) == PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == fields.time_sync_age_ms);
 
     assert(report_init_anchor_heartbeat_packet(&packet,
                                                0x5555666677778888ull,

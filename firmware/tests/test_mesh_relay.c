@@ -363,6 +363,53 @@ static void test_survey_reach_broadcast_delivers_and_floods(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
+static void test_time_sync_broadcast_delivers_and_floods(void)
+{
+    struct mesh_relay relay;
+    struct mesh_relay_result result;
+    uint8_t payload[24];
+    size_t payload_len = 0u;
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 0x12345679u,
+        .seq = 12u,
+        .ttl = 3u,
+    };
+
+    assert(mesh_append_command_id(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  CMD_SYNC_TIME) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_TIMESTAMP_MS,
+                          1234567890123ull) == PROTO_OK);
+    packet.payload_len = (uint8_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                GATEWAY,
+                                80u,
+                                3020u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(result.forward.next_hop_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.msg_type == MSG_COMMAND);
+    assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.ttl == 2u);
+    assert(result.forward.payload_len == payload_len);
+    assert(memcmp(result.forward.payload, payload, payload_len) == 0);
+}
+
 static void test_busy_survey_reach_broadcast_still_delivers_local(void)
 {
     struct mesh_relay relay;
@@ -1641,6 +1688,7 @@ int main(void)
     test_status_tlvs_report_missing_route_reason();
     test_legacy_route_beacons_are_dropped();
     test_survey_reach_broadcast_delivers_and_floods();
+    test_time_sync_broadcast_delivers_and_floods();
     test_busy_survey_reach_broadcast_still_delivers_local();
     test_downlink_routes_expire_when_not_refreshed();
     test_downlink_route_selection_uses_weighted_quality();

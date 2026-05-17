@@ -19,7 +19,8 @@ struct range_report_fields {
     uint64_t clicker_id;
     uint64_t anchor_id;
     uint32_t event_seq;
-    uint32_t timestamp_ms;
+    uint64_t timestamp_ms;
+    uint32_t time_sync_age_ms;
     int32_t distance_mm;
     uint8_t quality;
     int8_t rsl_dbm;
@@ -45,6 +46,8 @@ struct anchor_heartbeat_fields {
     uint16_t battery_mv;
     uint32_t status_bits;
     uint32_t uptime_ms;
+    uint64_t timestamp_ms;
+    uint32_t time_sync_age_ms;
 };
 
 int report_append_range_tlvs(uint8_t *payload,

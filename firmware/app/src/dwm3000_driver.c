@@ -1183,6 +1183,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         return ret;
     }
     result_set_request_metadata(result, request);
+    result->exchange_start_ms = k_uptime_get();
     result->exchange_started = true;
 
     ret = receive_response(request, &response, &resp_rx_ts, &quality, &rsl_dbm,
@@ -1359,6 +1360,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     }
     if (result != NULL) {
         result_set_poll_metadata(result, &poll, local_anchor_id);
+        result->exchange_start_ms = k_uptime_get();
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
         result->exchange_started = true;

@@ -100,6 +100,30 @@ int gateway_command_extract_duration_ms(const uint8_t *payload,
     return *duration_ms == 0u ? PROTO_ERR_MALFORMED : PROTO_OK;
 }
 
+int gateway_command_extract_timestamp_ms(const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint64_t *timestamp_ms)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || timestamp_ms == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(payload, payload_len, TLV_TIMESTAMP_MS, &value, &value_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint64_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *timestamp_ms = proto_get_u64_le(value);
+    return PROTO_OK;
+}
+
 int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      const uint8_t *payload,
                                      size_t payload_len,

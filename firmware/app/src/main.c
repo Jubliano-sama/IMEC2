@@ -117,7 +117,9 @@ static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
 static struct k_work_delayable gateway_serial_rx_work;
 static struct k_work_delayable gateway_command_result_timeout_work;
+static struct k_work_delayable gateway_time_sync_work;
 static struct k_spinlock anchor_uwb_lock;
+static struct k_spinlock anchor_time_sync_lock;
 static bool anchor_uwb_busy;
 static bool mesh_uwb_rx_active;
 static bool anchor_heartbeat_enabled;
@@ -249,6 +251,14 @@ static struct uwb_anchor_session anchor_uwb_session;
 #define GATEWAY_SURVEY_AUTO_RETRY_MS 100u
 #define GATEWAY_SURVEY_PAIR_SETTLE_MS 50u
 #define GATEWAY_COMMAND_MESH_TIMEOUT_MARGIN_MS 1000u
+#define TIME_SYNC_MAX_DRIFT_MS 60000u
+#define TIME_SYNC_WORST_CASE_DRIFT_PPM 500u
+#define GATEWAY_TIME_SYNC_MAX_INTERVAL_MS \
+    (((uint64_t)TIME_SYNC_MAX_DRIFT_MS * 1000000ull) / \
+     TIME_SYNC_WORST_CASE_DRIFT_PPM)
+#define GATEWAY_TIME_SYNC_DEFAULT_INTERVAL_MS 3600000u
+#define GATEWAY_TIME_SYNC_INITIAL_DELAY_MS 5000u
+#define GATEWAY_TIME_SYNC_RETRY_MS 5000u
 
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS * 1000u >= ANCHOR_UWB_SCAN_RX_US,
              "anchor scan millisecond timeout must cover configured RX microseconds");
@@ -280,6 +290,10 @@ BUILD_ASSERT(GATEWAY_COMMAND_RESULT_TIMEOUT_MS >=
              (UWB_MESH_ANCHOR_RX_INTERVAL_MS + ROUTE_GATEWAY_ACK_TIMEOUT_MS +
               GATEWAY_COMMAND_MESH_TIMEOUT_MARGIN_MS),
              "gateway command timeout must cover anchor UWB mesh RX cadence and ACK");
+BUILD_ASSERT(TIME_SYNC_WORST_CASE_DRIFT_PPM > 0u,
+             "time sync drift calculation must have a nonzero ppm bound");
+BUILD_ASSERT(GATEWAY_TIME_SYNC_DEFAULT_INTERVAL_MS <= GATEWAY_TIME_SYNC_MAX_INTERVAL_MS,
+             "gateway time sync interval must keep drift under the configured limit");
 #define REPORT_TX_RETRY_DELAY_MS 1000u
 #define UWB_MESH_TX_TIMEOUT_MS 20u
 
@@ -325,6 +339,15 @@ static bool gateway_survey_active;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
 
+struct anchor_time_sync_state {
+    int64_t gateway_offset_ms;
+    int64_t synced_local_ms;
+    uint64_t synced_gateway_ms;
+    bool valid;
+};
+
+static struct anchor_time_sync_state anchor_time_sync;
+
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 static int mesh_request_route(uint64_t target_id, const char *reason);
@@ -346,6 +369,7 @@ static int anchor_start_survey_pair_from_command(const struct proto_packet *pack
 static void anchor_abort_survey_pair(void);
 static void anchor_reboot_work_handler(struct k_work *work);
 static void gateway_survey_work_handler(struct k_work *work);
+static void gateway_time_sync_work_handler(struct k_work *work);
 static void gateway_survey_auto_note_command_result(const struct proto_packet *command,
                                                     enum command_id command_id,
                                                     enum command_status status,
@@ -633,18 +657,152 @@ static uint16_t gateway_next_command_seq(void)
     return gateway_command_seq;
 }
 
+static int anchor_apply_gateway_time_sync(uint64_t gateway_time_ms)
+{
+    k_spinlock_key_t key;
+    int64_t local_ms;
+    int64_t offset_ms;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || gateway_time_ms > (uint64_t)INT64_MAX) {
+        return -EINVAL;
+    }
+
+    local_ms = k_uptime_get();
+    offset_ms = (int64_t)gateway_time_ms - local_ms;
+    key = k_spin_lock(&anchor_time_sync_lock);
+    anchor_time_sync.gateway_offset_ms = offset_ms;
+    anchor_time_sync.synced_local_ms = local_ms;
+    anchor_time_sync.synced_gateway_ms = gateway_time_ms;
+    anchor_time_sync.valid = true;
+    k_spin_unlock(&anchor_time_sync_lock, key);
+
+    LOG_INF("anchor gateway time synced: gateway_ms=%llu local_ms=%lld offset_ms=%lld",
+            (unsigned long long)gateway_time_ms,
+            (long long)local_ms,
+            (long long)offset_ms);
+    return 0;
+}
+
+static bool anchor_gateway_time_snapshot_at(int64_t local_ms,
+                                            uint64_t *gateway_time_ms,
+                                            uint32_t *time_sync_age_ms)
+{
+    struct anchor_time_sync_state snapshot;
+    k_spinlock_key_t key;
+    int64_t gateway_ms;
+    int64_t age_ms;
+
+    if (gateway_time_ms == NULL || time_sync_age_ms == NULL || local_ms < 0) {
+        return false;
+    }
+
+    key = k_spin_lock(&anchor_time_sync_lock);
+    snapshot = anchor_time_sync;
+    k_spin_unlock(&anchor_time_sync_lock, key);
+    if (!snapshot.valid) {
+        return false;
+    }
+
+    gateway_ms = local_ms + snapshot.gateway_offset_ms;
+    if (gateway_ms < 0) {
+        return false;
+    }
+
+    age_ms = local_ms - snapshot.synced_local_ms;
+    if (age_ms < 0) {
+        age_ms = 0;
+    }
+
+    *gateway_time_ms = (uint64_t)gateway_ms;
+    *time_sync_age_ms = age_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)age_ms;
+    return true;
+}
+
+static void anchor_sequence_timestamp_at(int64_t local_ms,
+                                         uint64_t *timestamp_ms,
+                                         uint32_t *time_sync_age_ms)
+{
+    if (local_ms < 0) {
+        local_ms = k_uptime_get();
+    }
+    if (timestamp_ms == NULL || time_sync_age_ms == NULL) {
+        return;
+    }
+
+    if (anchor_gateway_time_snapshot_at(local_ms, timestamp_ms, time_sync_age_ms)) {
+        return;
+    }
+
+    *timestamp_ms = (uint64_t)local_ms;
+    *time_sync_age_ms = UINT32_MAX;
+}
+
+static bool anchor_gateway_time_synced(uint32_t *age_ms)
+{
+    uint64_t gateway_time_ms;
+    uint32_t sync_age_ms;
+
+    if (!anchor_gateway_time_snapshot_at(k_uptime_get(),
+                                         &gateway_time_ms,
+                                         &sync_age_ms)) {
+        return false;
+    }
+    if (age_ms != NULL) {
+        *age_ms = sync_age_ms;
+    }
+    return true;
+}
+
+static int anchor_append_sequence_time_tlvs(uint8_t *payload,
+                                            size_t payload_cap,
+                                            size_t *payload_len,
+                                            int64_t local_ms)
+{
+    uint64_t timestamp_ms = 0u;
+    uint32_t time_sync_age_ms = 0u;
+    int ret;
+
+    anchor_sequence_timestamp_at(local_ms, &timestamp_ms, &time_sync_age_ms);
+
+    ret = tlv_append_u64(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_TIMESTAMP_MS,
+                         timestamp_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload,
+                          payload_cap,
+                          payload_len,
+                          TLV_TIME_SYNC_AGE_MS,
+                          time_sync_age_ms);
+}
+
 static uint32_t anchor_status_bits(void)
 {
+    uint32_t sync_age_ms = 0u;
+    uint32_t status_bits;
+
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return 0u;
     }
 
-    return uwb_session_status_bits_from_diagnostics(&anchor_uwb_session.diagnostics);
+    status_bits = uwb_session_status_bits_from_diagnostics(&anchor_uwb_session.diagnostics);
+    if (anchor_gateway_time_synced(&sync_age_ms)) {
+        status_bits |= STATUS_BIT_TIME_SYNCED;
+        if ((uint64_t)sync_age_ms > GATEWAY_TIME_SYNC_MAX_INTERVAL_MS) {
+            status_bits |= STATUS_BIT_TIME_SYNC_STALE;
+        }
+    } else {
+        status_bits |= STATUS_BIT_TIME_SYNC_STALE;
+    }
+    return status_bits;
 }
 
 static int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_t *payload_len)
 {
-    const struct anchor_heartbeat_fields fields = {
+    struct anchor_heartbeat_fields fields = {
         .device_role = (uint8_t)DEVICE_ROLE,
         .battery_mv = ANCHOR_BATTERY_MV_UNKNOWN,
         .status_bits = anchor_status_bits(),
@@ -652,6 +810,9 @@ static int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_
     };
     int ret;
 
+    anchor_sequence_timestamp_at(k_uptime_get(),
+                                 &fields.timestamp_ms,
+                                 &fields.time_sync_age_ms);
     ret = report_append_anchor_heartbeat_tlvs(payload, payload_cap, payload_len, &fields);
     if (ret != PROTO_OK) {
         return ret;
@@ -1503,6 +1664,87 @@ static int gateway_begin_command_result_wait(const struct proto_packet *command,
     return 0;
 }
 
+static void gateway_time_sync_schedule(uint32_t delay_ms)
+{
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        (void)k_work_reschedule(&gateway_time_sync_work, K_MSEC(delay_ms));
+    }
+}
+
+static int gateway_time_sync_broadcast(void)
+{
+    struct mesh_outbound outbound = {0};
+    size_t payload_len = 0u;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -EINVAL;
+    }
+
+    ret = mesh_append_command_id(outbound.payload,
+                                 sizeof(outbound.payload),
+                                 &payload_len,
+                                 CMD_SYNC_TIME);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = tlv_append_u64(outbound.payload,
+                         sizeof(outbound.payload),
+                         &payload_len,
+                         TLV_TIMESTAMP_MS,
+                         (uint64_t)k_uptime_get());
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    outbound.packet.msg_type = MSG_COMMAND;
+    outbound.packet.src_id = DEVICE_ID;
+    outbound.packet.dst_id = MESH_BROADCAST_ID;
+    outbound.packet.session_id = nonzero_uptime_session_id();
+    outbound.packet.seq = gateway_next_command_seq();
+    outbound.packet.ttl = MESH_DEFAULT_TTL;
+    outbound.packet.payload_len = (uint8_t)payload_len;
+    outbound.payload_len = (uint8_t)payload_len;
+
+    ret = mesh_send_outbound(&outbound, "time-sync-broadcast");
+    if (ret < 0) {
+        return ret;
+    }
+
+    LOG_INF("gateway time sync broadcast sent: session=%u seq=%u",
+            outbound.packet.session_id,
+            outbound.packet.seq);
+    return 0;
+}
+
+static void gateway_time_sync_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    if (gateway_survey_active ||
+        gateway_survey_auto.running ||
+        gateway_command_pending_state.active ||
+        mesh_relay_tx_active(&mesh_runtime)) {
+        gateway_time_sync_schedule(GATEWAY_TIME_SYNC_RETRY_MS);
+        return;
+    }
+
+    ret = gateway_time_sync_broadcast();
+    if (ret == 0) {
+        gateway_time_sync_schedule(GATEWAY_TIME_SYNC_DEFAULT_INTERVAL_MS);
+        return;
+    }
+
+    LOG_WRN("gateway time sync broadcast failed: ret=%d", ret);
+    gateway_time_sync_schedule(GATEWAY_TIME_SYNC_RETRY_MS);
+}
+
 static void anchor_handle_local_command(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len)
@@ -1510,21 +1752,32 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
     enum command_id command_id = CMD_VENDOR_BASE;
     enum command_status status = COMMAND_OK;
     enum device_role requested_role = ROLE_ANCHOR;
+    uint64_t timestamp_ms = 0u;
     bool reboot_after_result = false;
+    bool broadcast_command = false;
     uint8_t reason = 0u;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR ||
         packet == NULL ||
-        packet->msg_type != MSG_COMMAND ||
-        packet->dst_id != DEVICE_ID) {
+        packet->msg_type != MSG_COMMAND) {
+        return;
+    }
+    broadcast_command = packet->dst_id == MESH_BROADCAST_ID;
+    if (packet->dst_id != DEVICE_ID && !broadcast_command) {
         return;
     }
 
     ret = gateway_command_extract_id(payload, payload_len, &command_id);
     if (ret != PROTO_OK) {
+        if (broadcast_command) {
+            LOG_WRN("anchor ignored malformed broadcast command: ret=%d", ret);
+            return;
+        }
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = (uint8_t)(-ret);
+    } else if (broadcast_command && command_id != CMD_SYNC_TIME) {
+        return;
     } else if (command_id == CMD_REBOOT) {
         reboot_after_result = true;
     } else if (command_id == CMD_SET_ROLE) {
@@ -1560,6 +1813,17 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
         if (ret < 0) {
             status = COMMAND_MALFORMED_PAYLOAD;
         }
+    } else if (command_id == CMD_SYNC_TIME) {
+        ret = gateway_command_extract_timestamp_ms(payload,
+                                                   payload_len,
+                                                   &timestamp_ms);
+        if (ret != PROTO_OK) {
+            status = COMMAND_MALFORMED_PAYLOAD;
+            reason = (uint8_t)(-ret);
+        } else if (anchor_apply_gateway_time_sync(timestamp_ms) < 0) {
+            status = COMMAND_MALFORMED_PAYLOAD;
+            reason = 1u;
+        }
     } else if (command_id == CMD_SURVEY_START_PAIR) {
         ret = anchor_start_survey_pair_from_command(packet,
                                                     payload,
@@ -1575,6 +1839,14 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
     } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
         status = COMMAND_UNSUPPORTED_COMMAND;
         reason = 1u;
+    }
+
+    if (broadcast_command) {
+        LOG_INF("anchor broadcast command handled: cmd=0x%04x status=%u reason=%u",
+                (unsigned int)command_id,
+                status,
+                reason);
+        return;
     }
 
     ret = anchor_send_command_result(packet, command_id, status, reason);
@@ -2486,6 +2758,7 @@ static int anchor_queue_survey_sample_result(const struct survey_pair *pair,
     struct survey_sample sample = {0};
     size_t payload_len = 0u;
     enum range_status status;
+    int64_t sample_local_ms;
     int ret;
 
     if (pair == NULL || reporter_id == 0u || range_result == NULL) {
@@ -2505,6 +2778,16 @@ static int anchor_queue_survey_sample_result(const struct survey_pair *pair,
                                     sizeof(outbound.payload),
                                     &payload_len,
                                     &sample);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    sample_local_ms = range_result->exchange_started ?
+                      range_result->exchange_start_ms :
+                      k_uptime_get();
+    ret = anchor_append_sequence_time_tlvs(outbound.payload,
+                                           sizeof(outbound.payload),
+                                           &payload_len,
+                                           sample_local_ms);
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
@@ -3002,9 +3285,11 @@ struct anchor_range_window_report {
     struct dwm3000_range_result result;
     int32_t distance_samples_mm[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
     int64_t distance_sum_mm;
+    int64_t first_exchange_start_ms;
     uint32_t quality_sum;
     uint16_t sample_count;
     bool have_result;
+    bool have_exchange_start_ms;
     bool rsl_sampled;
     bool cir_sampled;
 };
@@ -3037,10 +3322,18 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
     if (report->cir_sampled) {
         memcpy(sampled_cir, report->result.cir_sample, UWB_CIR_SAMPLE_LEN);
     }
+    if (!report->have_exchange_start_ms && result->exchange_started) {
+        report->first_exchange_start_ms = result->exchange_start_ms;
+        report->have_exchange_start_ms = true;
+    }
 
     if (!report->have_result || result->status == RANGE_OK) {
         report->result = *result;
         report->have_result = true;
+    }
+    if (report->have_exchange_start_ms) {
+        report->result.exchange_start_ms = report->first_exchange_start_ms;
+        report->result.exchange_started = true;
     }
     if (result->rsl_sampled && !report->rsl_sampled) {
         sampled_rsl = result->rsl_dbm;
@@ -4381,6 +4674,7 @@ static int build_range_report_samples(uint64_t clicker_id,
         size_t encoded_len = 0u;
         uint16_t chunk_count = 0u;
         uint16_t packet_seq;
+        int64_t range_local_ms;
 
         if (sample_count > 0u) {
             uint16_t chunk_cap = fragmented ?
@@ -4390,10 +4684,17 @@ static int build_range_report_samples(uint64_t clicker_id,
             chunk_count = MIN(chunk_cap, sample_count - sample_index);
         }
 
+        memset(&fields, 0, sizeof(fields));
+        range_local_ms = range_result->exchange_started ?
+                         range_result->exchange_start_ms :
+                         k_uptime_get();
+
         fields.clicker_id = clicker_id;
         fields.anchor_id = range_result->responder_id;
         fields.event_seq = event_seq;
-        fields.timestamp_ms = k_uptime_get_32();
+        anchor_sequence_timestamp_at(range_local_ms,
+                                     &fields.timestamp_ms,
+                                     &fields.time_sync_age_ms);
         fields.distance_mm = range_result->distance_mm;
         fields.quality = range_result->quality;
         fields.rsl_dbm = range_result->rsl_dbm;
@@ -5856,8 +6157,9 @@ int main(void)
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
+    k_work_init_delayable(&gateway_time_sync_work, gateway_time_sync_work_handler);
     LOG_INF("UWB firmware starting as %s", role_name());
-    LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_scheduled=%u wake_ms=%u max_attempts=%u min_unique_anchors=%u anchor_scan_interval_ms=%u anchor_scan_window_ms=%u anchor_mesh_rx_interval_ms=%u anchor_idle_uwb_us_per_s=%u anchor_uwb_wait_ms=%u",
+    LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_scheduled=%u wake_ms=%u max_attempts=%u min_unique_anchors=%u anchor_scan_interval_ms=%u anchor_scan_window_ms=%u anchor_mesh_rx_interval_ms=%u anchor_idle_uwb_us_per_s=%u anchor_uwb_wait_ms=%u gateway_time_sync_interval_ms=%u gateway_time_sync_worst_case_ppm=%u",
             (unsigned long long)DEVICE_ID,
             (unsigned long long)GATEWAY_ID,
             MAX_SCHEDULED_ANCHORS,
@@ -5868,7 +6170,9 @@ int main(void)
             ANCHOR_UWB_SCAN_RX_MS,
             UWB_MESH_ANCHOR_RX_INTERVAL_MS,
             (unsigned int)ANCHOR_UWB_PERIODIC_IDLE_US_PER_S,
-            ANCHOR_UWB_WAIT_MS);
+            ANCHOR_UWB_WAIT_MS,
+            GATEWAY_TIME_SYNC_DEFAULT_INTERVAL_MS,
+            TIME_SYNC_WORST_CASE_DRIFT_PPM);
 
     ret = status_leds_init();
     if (ret < 0) {
@@ -5937,6 +6241,8 @@ int main(void)
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
         }
         (void)k_work_schedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
+        (void)k_work_schedule(&gateway_time_sync_work,
+                              K_MSEC(GATEWAY_TIME_SYNC_INITIAL_DELAY_MS));
         LOG_INF("gateway reactive mesh root active; USB COBS packet input/output active");
     }
 

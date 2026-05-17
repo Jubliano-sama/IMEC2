@@ -494,11 +494,32 @@ static bool packet_needs_forward(const struct mesh_relay *relay, const struct pr
     return packet->dst_id != relay->local_id && packet->dst_id != MESH_BROADCAST_ID;
 }
 
-static bool broadcast_packet_needs_forward(const struct proto_packet *packet)
+static bool broadcast_time_sync_command(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    if (packet == NULL ||
+        packet->msg_type != MSG_COMMAND ||
+        payload == NULL ||
+        tlv_find(payload, payload_len, TLV_COMMAND_ID, &value, &value_len) != PROTO_OK ||
+        value_len != sizeof(uint16_t)) {
+        return false;
+    }
+
+    return proto_get_u16_le(value) == CMD_SYNC_TIME;
+}
+
+static bool broadcast_packet_needs_forward(const struct proto_packet *packet,
+                                           const uint8_t *payload,
+                                           size_t payload_len)
 {
     return packet->dst_id == MESH_BROADCAST_ID &&
            packet->ttl > 0u &&
-           packet->msg_type == MSG_SURVEY_REACH_REQ;
+           (packet->msg_type == MSG_SURVEY_REACH_REQ ||
+            broadcast_time_sync_command(packet, payload, payload_len));
 }
 
 static int build_broadcast_forward(const struct proto_packet *packet,
@@ -506,7 +527,7 @@ static int build_broadcast_forward(const struct proto_packet *packet,
                                    size_t payload_len,
                                    struct mesh_outbound *out)
 {
-    if (!broadcast_packet_needs_forward(packet)) {
+    if (!broadcast_packet_needs_forward(packet, payload, payload_len)) {
         return PROTO_ERR_STALE;
     }
 
@@ -1380,7 +1401,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
             if (ret == PROTO_OK) {
                 result->actions |= MESH_RELAY_ACTION_FORWARD;
             }
-        } else if (broadcast_packet_needs_forward(packet)) {
+        } else if (broadcast_packet_needs_forward(packet, payload, payload_len)) {
             result->status = PROTO_ERR_BUSY;
         }
         return PROTO_OK;

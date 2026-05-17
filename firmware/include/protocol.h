@@ -113,6 +113,7 @@ enum tlv_type {
     TLV_UWB_RSL_DBM = 0x24,
     TLV_DISTANCE_SAMPLES_MM = 0x25,
     TLV_UWB_CIR_SAMPLE = 0x26,
+    TLV_TIME_SYNC_AGE_MS = 0x27,
 };
 
 enum status_bit {
@@ -122,6 +123,8 @@ enum status_bit {
     STATUS_BIT_UWB_DS_TWR_FAILURE = 1u << 3,
     STATUS_BIT_UWB_TIMING_REJECTION = 1u << 4,
     STATUS_BIT_UWB_MESH_RX = 1u << 5,
+    STATUS_BIT_TIME_SYNCED = 1u << 6,
+    STATUS_BIT_TIME_SYNC_STALE = 1u << 7,
 };
 
 enum device_role {
@@ -141,6 +144,7 @@ enum command_id {
     CMD_SET_SCAN_DUTY = 0x0008,
     CMD_START_HEARTBEAT = 0x0009,
     CMD_STOP_HEARTBEAT = 0x000A,
+    CMD_SYNC_TIME = 0x000B,
     CMD_SURVEY_REACHABILITY = 0x0100,
     CMD_SURVEY_PREPARE_PAIR = 0x0101,
     CMD_SURVEY_START_PAIR = 0x0102,
