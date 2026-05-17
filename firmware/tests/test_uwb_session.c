@@ -1471,6 +1471,7 @@ static void test_anchor_rejects_out_of_schedule_range_exchange_identity(void)
     struct uwb_wake_claim_frame claim = claim_for(100u, 200u, 1u);
     struct uwb_range_schedule_frame schedule = {0};
     struct uwb_range_exchange_identity identity;
+    uint8_t round_index = 0xffu;
 
     assert(uwb_anchor_session_init(&anchor, &config) == PROTO_OK);
     assert(uwb_anchor_accept_wake_claim(&anchor, &claim, 1000u, NULL) == PROTO_OK);
@@ -1507,6 +1508,8 @@ static void test_anchor_rejects_out_of_schedule_range_exchange_identity(void)
     };
 
     assert(uwb_anchor_accepts_range_exchange(&anchor, &identity));
+    assert(uwb_anchor_range_round_index(&anchor, &identity, &round_index) == PROTO_OK);
+    assert(round_index == 0u);
     identity.network_id = config.network_id + 1u;
     assert(!uwb_anchor_accepts_range_exchange(&anchor, &identity));
     identity.network_id = config.network_id;
@@ -1527,6 +1530,8 @@ static void test_anchor_rejects_out_of_schedule_range_exchange_identity(void)
     identity.flags = claim.flags;
     identity.seq = 8u;
     assert(uwb_anchor_accepts_range_exchange(&anchor, &identity));
+    assert(uwb_anchor_range_round_index(&anchor, &identity, &round_index) == PROTO_OK);
+    assert(round_index == 1u);
     identity.seq = 6u;
     assert(!uwb_anchor_accepts_range_exchange(&anchor, &identity));
     identity.seq = 9u;
@@ -1549,6 +1554,7 @@ static void test_anchor_accepts_schedule_sequence_range_ending_at_255(void)
     struct uwb_wake_claim_frame claim = claim_for(100u, 200u, 1u);
     struct uwb_range_schedule_frame schedule = {0};
     struct uwb_range_exchange_identity identity;
+    uint8_t round_index = 0xffu;
 
     assert(uwb_anchor_session_init(&anchor, &config) == PROTO_OK);
     assert(uwb_anchor_accept_wake_claim(&anchor, &claim, 1000u, NULL) == PROTO_OK);
@@ -1585,8 +1591,12 @@ static void test_anchor_accepts_schedule_sequence_range_ending_at_255(void)
     };
 
     assert(uwb_anchor_accepts_range_exchange(&anchor, &identity));
+    assert(uwb_anchor_range_round_index(&anchor, &identity, &round_index) == PROTO_OK);
+    assert(round_index == 0u);
     identity.seq = 255u;
     assert(uwb_anchor_accepts_range_exchange(&anchor, &identity));
+    assert(uwb_anchor_range_round_index(&anchor, &identity, &round_index) == PROTO_OK);
+    assert(round_index == 1u);
     identity.seq = 253u;
     assert(!uwb_anchor_accepts_range_exchange(&anchor, &identity));
 }

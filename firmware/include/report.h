@@ -12,8 +12,8 @@ extern "C" {
 
 #define REPORT_DEFAULT_TTL 4u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES 96u
-#define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 33u
-#define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 32u
+#define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 25u
+#define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 25u
 
 struct range_report_fields {
     uint64_t clicker_id;
@@ -27,6 +27,8 @@ struct range_report_fields {
     const uint8_t *cir_sample;
     enum range_status range_status;
     const int32_t *distance_samples_mm;
+    const uint8_t *range_round_indices;
+    const uint16_t *sample_time_offsets_ms;
     uint16_t sample_index;
     uint16_t sample_count;
     uint16_t distance_sample_count;

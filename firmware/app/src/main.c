@@ -3190,6 +3190,8 @@ static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
                                       const struct dwm3000_range_result *range_result,
                                       const int32_t *distance_samples_mm,
+                                      const uint8_t *range_round_indices,
+                                      const int64_t *sample_exchange_start_ms,
                                       uint16_t sample_count);
 
 static uint16_t delay_ms_to_u16(int64_t delay_ms)
@@ -3284,6 +3286,8 @@ static bool rx_failure_detected_preamble(enum dwm3000_rx_failure failure)
 struct anchor_range_window_report {
     struct dwm3000_range_result result;
     int32_t distance_samples_mm[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
+    int64_t sample_exchange_start_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
+    uint8_t range_round_indices[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
     int64_t distance_sum_mm;
     int64_t first_exchange_start_ms;
     uint32_t quality_sum;
@@ -3307,7 +3311,8 @@ static int32_t average_i32_nearest(int64_t sum, uint16_t count)
 }
 
 static void anchor_range_window_record(struct anchor_range_window_report *report,
-                                       const struct dwm3000_range_result *result)
+                                       const struct dwm3000_range_result *result,
+                                       uint8_t range_round_index)
 {
     int8_t sampled_rsl = 0;
     uint8_t sampled_cir[UWB_CIR_SAMPLE_LEN] = {0};
@@ -3358,6 +3363,9 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
     }
 
     report->distance_samples_mm[report->sample_count] = result->distance_mm;
+    report->sample_exchange_start_ms[report->sample_count] =
+        result->exchange_started ? result->exchange_start_ms : k_uptime_get();
+    report->range_round_indices[report->sample_count] = range_round_index;
     report->distance_sum_mm += result->distance_mm;
     report->quality_sum += result->quality;
     report->sample_count++;
@@ -3394,6 +3402,8 @@ static void build_uwb_schedule_report_if_relevant(const struct uwb_anchor_sessio
                                      session->epoch.click_event_id,
                                      &report->result,
                                      report->distance_samples_mm,
+                                     report->range_round_indices,
+                                     report->sample_exchange_start_ms,
                                      report->sample_count);
     if (ret < 0) {
         LOG_WRN("failed to build UWB scheduled anchor range report: %d", ret);
@@ -3499,12 +3509,14 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         identity.reply_delay_us = schedule->reply_delay_us;
         identity.seq = seq;
         identity.flags = schedule->flags;
-        if (!uwb_anchor_accepts_range_exchange(&anchor_uwb_session, &identity)) {
+        ret = uwb_anchor_range_round_index(&anchor_uwb_session,
+                                           &identity,
+                                           &round_index);
+        if (ret != PROTO_OK) {
             uwb_anchor_note_timing_rejection(&anchor_uwb_session);
             continue;
         }
         uwb_anchor_note_sample_order(&anchor_uwb_session);
-        round_index = (uint8_t)(seq - anchor_uwb_session.schedule_entry.seq);
 
         listen_start_ms = (int64_t)schedule_rx_ms + schedule->first_poll_delay_ms +
                           ((int64_t)sample_index * schedule->poll_spacing_ms);
@@ -3582,7 +3594,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     ret);
         } else if (ret == 0 && range_result.status == RANGE_OK) {
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, RANGE_OK);
-            anchor_range_window_record(&window_report, &range_result);
+            anchor_range_window_record(&window_report, &range_result, round_index);
             LOG_INF("anchor scheduled UWB sample complete: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u count=%u",
                     (unsigned long long)range_result.initiator_id,
                     range_result.session_id,
@@ -3599,7 +3611,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             }
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, range_result.status);
             if (range_result.initiator_id != 0u && range_result.responder_id != 0u) {
-                anchor_range_window_record(&window_report, &range_result);
+                anchor_range_window_record(&window_report, &range_result, round_index);
             }
             LOG_WRN("anchor scheduled UWB sample failed: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
                     (unsigned long long)schedule->clicker_id,
@@ -4648,6 +4660,8 @@ static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
                                       const struct dwm3000_range_result *range_result,
                                       const int32_t *distance_samples_mm,
+                                      const uint8_t *range_round_indices,
+                                      const int64_t *sample_exchange_start_ms,
                                       uint16_t sample_count)
 {
     struct range_report_fields fields;
@@ -4663,7 +4677,10 @@ static int build_range_report_samples(uint64_t clicker_id,
         clicker_id == 0u ||
         event_seq == 0u ||
         range_result->responder_id == 0u ||
-        (sample_count > 0u && distance_samples_mm == NULL) ||
+        (sample_count > 0u &&
+         (distance_samples_mm == NULL ||
+          range_round_indices == NULL ||
+          sample_exchange_start_ms == NULL)) ||
         sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES) {
         return -EINVAL;
     }
@@ -4674,6 +4691,7 @@ static int build_range_report_samples(uint64_t clicker_id,
         size_t encoded_len = 0u;
         uint16_t chunk_count = 0u;
         uint16_t packet_seq;
+        uint16_t time_offsets_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET] = {0};
         int64_t range_local_ms;
 
         if (sample_count > 0u) {
@@ -4685,9 +4703,21 @@ static int build_range_report_samples(uint64_t clicker_id,
         }
 
         memset(&fields, 0, sizeof(fields));
-        range_local_ms = range_result->exchange_started ?
-                         range_result->exchange_start_ms :
-                         k_uptime_get();
+        if (chunk_count > 0u) {
+            range_local_ms = sample_exchange_start_ms[sample_index];
+            if (range_local_ms < 0) {
+                range_local_ms = k_uptime_get();
+            }
+            for (uint16_t i = 0u; i < chunk_count; i++) {
+                time_offsets_ms[i] =
+                    delay_ms_to_u16(sample_exchange_start_ms[sample_index + i] -
+                                    range_local_ms);
+            }
+        } else {
+            range_local_ms = range_result->exchange_started ?
+                             range_result->exchange_start_ms :
+                             k_uptime_get();
+        }
 
         fields.clicker_id = clicker_id;
         fields.anchor_id = range_result->responder_id;
@@ -4701,6 +4731,10 @@ static int build_range_report_samples(uint64_t clicker_id,
         fields.cir_sample = range_result->cir_sampled ? range_result->cir_sample : NULL;
         fields.range_status = range_result->status;
         fields.distance_samples_mm = chunk_count > 0u ? &distance_samples_mm[sample_index] : NULL;
+        fields.range_round_indices = chunk_count > 0u ?
+                                     &range_round_indices[sample_index] :
+                                     NULL;
+        fields.sample_time_offsets_ms = chunk_count > 0u ? time_offsets_ms : NULL;
         fields.sample_index = sample_index;
         fields.sample_count = sample_count;
         fields.distance_sample_count = chunk_count;
@@ -4731,7 +4765,7 @@ static int build_range_report_samples(uint64_t clicker_id,
             return -EINVAL;
         }
 
-        LOG_INF("range report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d samples=%u chunk_index=%u chunk_samples=%u quality=%u diagnostic=%u rsl_included=%u packet_len=%u",
+        LOG_INF("range report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d samples=%u chunk_index=%u chunk_samples=%u first_round=%u quality=%u diagnostic=%u rsl_included=%u packet_len=%u",
                 (unsigned long long)clicker_id,
                 event_seq,
                 (unsigned long long)range_result->responder_id,
@@ -4739,6 +4773,7 @@ static int build_range_report_samples(uint64_t clicker_id,
                 sample_count,
                 sample_index,
                 chunk_count,
+                chunk_count > 0u ? range_round_indices[sample_index] : 0u,
                 range_result->quality,
                 (range_result->flags & FLAG_DIAGNOSTIC) != 0u ? 1u : 0u,
                 packet_index == 0u ? 1u : 0u,

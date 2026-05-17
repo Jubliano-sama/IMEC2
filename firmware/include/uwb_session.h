@@ -227,6 +227,9 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
                                      uint16_t guard_ms);
 bool uwb_anchor_accepts_range_exchange(const struct uwb_anchor_session *session,
                                        const struct uwb_range_exchange_identity *identity);
+int uwb_anchor_range_round_index(const struct uwb_anchor_session *session,
+                                 const struct uwb_range_exchange_identity *identity,
+                                 uint8_t *round_index);
 void uwb_anchor_abort_epoch(struct uwb_anchor_session *session);
 
 int uwb_session_validate_reply_timing(uint16_t poll_to_resp_us,

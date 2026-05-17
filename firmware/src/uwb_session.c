@@ -997,29 +997,46 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
 bool uwb_anchor_accepts_range_exchange(const struct uwb_anchor_session *session,
                                        const struct uwb_range_exchange_identity *identity)
 {
+    uint8_t round_index = 0u;
+
+    return uwb_anchor_range_round_index(session, identity, &round_index) == PROTO_OK;
+}
+
+int uwb_anchor_range_round_index(const struct uwb_anchor_session *session,
+                                 const struct uwb_range_exchange_identity *identity,
+                                 uint8_t *round_index)
+{
     uint16_t first_seq;
     uint16_t seq_after_last;
+    uint16_t identity_seq;
 
     if (session == NULL || identity == NULL ||
+        round_index == NULL ||
         !session->scheduled ||
         session->state != UWB_ANCHOR_SCHEDULED) {
-        return false;
+        return PROTO_ERR_ARG;
     }
 
     first_seq = session->schedule_entry.seq;
     seq_after_last = first_seq + session->schedule_entry.sample_count;
+    identity_seq = identity->seq;
 
-    return identity->network_id == session->config.network_id &&
-           identity->clicker_id == session->epoch.clicker_id &&
-           identity->click_event_id == session->epoch.click_event_id &&
-           identity->attempt_index == session->epoch.attempt_index &&
-           identity->nonce == session->epoch.nonce &&
-           identity->anchor_id == session->config.anchor_id &&
-           identity->ranging_channel == session->expected_ranging_channel &&
-           identity->reply_delay_us == session->reply_delay_us &&
-           identity->flags == session->epoch.flags &&
-           (uint16_t)identity->seq >= first_seq &&
-           (uint16_t)identity->seq < seq_after_last;
+    if (identity->network_id != session->config.network_id ||
+        identity->clicker_id != session->epoch.clicker_id ||
+        identity->click_event_id != session->epoch.click_event_id ||
+        identity->attempt_index != session->epoch.attempt_index ||
+        identity->nonce != session->epoch.nonce ||
+        identity->anchor_id != session->config.anchor_id ||
+        identity->ranging_channel != session->expected_ranging_channel ||
+        identity->reply_delay_us != session->reply_delay_us ||
+        identity->flags != session->epoch.flags ||
+        identity_seq < first_seq ||
+        identity_seq >= seq_after_last) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *round_index = (uint8_t)(identity_seq - first_seq);
+    return PROTO_OK;
 }
 
 void uwb_anchor_abort_epoch(struct uwb_anchor_session *session)

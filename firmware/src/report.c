@@ -16,9 +16,11 @@ static int append_distance_samples(uint8_t *payload,
                                    const struct range_report_fields *fields)
 {
     uint8_t samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET * sizeof(int32_t)];
+    uint8_t time_offsets[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET * sizeof(uint16_t)];
     uint16_t chunk_count;
     bool fragmented;
     size_t sample_bytes;
+    size_t time_offset_bytes;
     int ret;
 
     if (fields->sample_count == 0u) {
@@ -29,6 +31,8 @@ static int append_distance_samples(uint8_t *payload,
                   fields->distance_sample_count;
     fragmented = fields->sample_index != 0u || chunk_count != fields->sample_count;
     if (fields->distance_samples_mm == NULL ||
+        fields->range_round_indices == NULL ||
+        fields->sample_time_offsets_ms == NULL ||
         fields->sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES ||
         chunk_count == 0u ||
         chunk_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET ||
@@ -56,9 +60,29 @@ static int append_distance_samples(uint8_t *payload,
         proto_put_u32_le(&samples[(size_t)i * sizeof(int32_t)],
                          (uint32_t)fields->distance_samples_mm[i]);
     }
+    ret = tlv_append_bytes(payload, payload_cap, offset,
+                           TLV_DISTANCE_SAMPLES_MM,
+                           samples, (uint8_t)sample_bytes);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    ret = tlv_append_bytes(payload, payload_cap, offset,
+                           TLV_RANGE_ROUND_INDICES,
+                           fields->range_round_indices,
+                           (uint8_t)chunk_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    time_offset_bytes = (size_t)chunk_count * sizeof(uint16_t);
+    for (uint16_t i = 0u; i < chunk_count; i++) {
+        proto_put_u16_le(&time_offsets[(size_t)i * sizeof(uint16_t)],
+                         fields->sample_time_offsets_ms[i]);
+    }
     return tlv_append_bytes(payload, payload_cap, offset,
-                            TLV_DISTANCE_SAMPLES_MM,
-                            samples, (uint8_t)sample_bytes);
+                            TLV_SAMPLE_TIME_OFFSETS_MS,
+                            time_offsets, (uint8_t)time_offset_bytes);
 }
 
 int report_append_range_tlvs(uint8_t *payload,
