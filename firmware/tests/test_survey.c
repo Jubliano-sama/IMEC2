@@ -43,6 +43,33 @@ static void test_pair_and_sample_validation(void)
     value = sample();
     value.pair.responder_id = value.pair.initiator_id;
     assert(survey_sample_validate(&value) == PROTO_ERR_MALFORMED);
+
+    value = sample();
+    value.range_status = RANGE_TIMING_INVALID;
+    assert(survey_sample_validate(&value) == PROTO_OK);
+}
+
+static void test_sample_nonce_is_unique_across_sequence_wrap(void)
+{
+    struct survey_sample value = sample();
+    uint64_t first_nonce;
+    uint64_t second_nonce;
+    uint64_t wrapped_seq_nonce;
+
+    value.pair.sample_count = 1000u;
+    first_nonce = survey_sample_nonce(&value.pair, 0u);
+    second_nonce = survey_sample_nonce(&value.pair, 1u);
+    wrapped_seq_nonce = survey_sample_nonce(&value.pair, 255u);
+
+    assert(first_nonce != 0u);
+    assert(second_nonce != 0u);
+    assert(wrapped_seq_nonce != 0u);
+    assert(first_nonce != second_nonce);
+    assert(first_nonce != wrapped_seq_nonce);
+    assert(survey_sample_nonce(&value.pair, value.pair.sample_count) == 0u);
+
+    value.pair.survey_id = 0u;
+    assert(survey_sample_nonce(&value.pair, 0u) == 0u);
 }
 
 static void expect_u64_tlv(const uint8_t *payload, size_t payload_len, uint8_t type, uint64_t expected)
@@ -99,6 +126,8 @@ static void test_reach_request_tlvs_include_survey_and_duration(void)
     size_t payload_len = 0u;
     const uint8_t *tlv_value = NULL;
     uint8_t tlv_len = 0u;
+    uint32_t survey_id = 0u;
+    uint32_t duration_ms = 0u;
 
     assert(survey_append_reach_request_tlvs(payload,
                                             sizeof(payload),
@@ -111,6 +140,62 @@ static void test_reach_request_tlvs_include_survey_and_duration(void)
     assert(tlv_find(payload, payload_len, TLV_DURATION_MS, &tlv_value, &tlv_len) == PROTO_OK);
     assert(tlv_len == 4u);
     assert(proto_get_u32_le(tlv_value) == 250u);
+
+    assert(survey_extract_reach_request_tlvs(payload,
+                                             payload_len,
+                                             &survey_id,
+                                             &duration_ms) == PROTO_OK);
+    assert(survey_id == 0xABCDEF01u);
+    assert(duration_ms == 250u);
+}
+
+static void test_reach_request_parser_rejects_malformed_tlvs(void)
+{
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+    uint32_t survey_id = 0u;
+    uint32_t duration_ms = 0u;
+
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SURVEY_ID,
+                          0xABCDEF01u) == PROTO_OK);
+    assert(survey_extract_reach_request_tlvs(payload,
+                                             payload_len,
+                                             &survey_id,
+                                             &duration_ms) == PROTO_ERR_NOT_FOUND);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SURVEY_ID,
+                          0u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_DURATION_MS,
+                          250u) == PROTO_OK);
+    assert(survey_extract_reach_request_tlvs(payload,
+                                             payload_len,
+                                             &survey_id,
+                                             &duration_ms) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    payload[payload_len++] = TLV_SURVEY_ID;
+    payload[payload_len++] = 2u;
+    payload[payload_len++] = 0x01u;
+    payload[payload_len++] = 0x02u;
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_DURATION_MS,
+                          250u) == PROTO_OK);
+    assert(survey_extract_reach_request_tlvs(payload,
+                                             payload_len,
+                                             &survey_id,
+                                             &duration_ms) == PROTO_ERR_MALFORMED);
 }
 
 static void test_reach_report_tlvs_include_peer_entries(void)
@@ -164,6 +249,154 @@ static void test_reach_report_tlvs_include_peer_entries(void)
     assert(entry_count == 2u);
 }
 
+static void test_reach_report_tlv_parser_round_trips_entries(void)
+{
+    const struct survey_reachability_entry entries[] = {
+        {
+            .peer_id = 0x1111222233334444ull,
+            .rssi_dbm = -61,
+            .quality = 82u,
+        },
+        {
+            .peer_id = 0x5555666677778888ull,
+            .rssi_dbm = -74,
+            .quality = 63u,
+        },
+    };
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    uint32_t survey_id = 0u;
+    uint64_t anchor_id = 0u;
+    struct survey_reachability_entry decoded[2] = {0};
+    size_t entry_count = 99u;
+
+    assert(survey_append_reach_report_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           0xAABBCCDDu,
+                                           0x9999888877776666ull,
+                                           entries,
+                                           sizeof(entries) / sizeof(entries[0])) == PROTO_OK);
+    assert(survey_extract_reach_report_tlvs(payload,
+                                            payload_len,
+                                            &survey_id,
+                                            &anchor_id,
+                                            decoded,
+                                            sizeof(decoded) / sizeof(decoded[0]),
+                                            &entry_count) == PROTO_OK);
+    assert(survey_id == 0xAABBCCDDu);
+    assert(anchor_id == 0x9999888877776666ull);
+    assert(entry_count == 2u);
+    assert(decoded[0].peer_id == entries[0].peer_id);
+    assert(decoded[0].rssi_dbm == entries[0].rssi_dbm);
+    assert(decoded[0].quality == entries[0].quality);
+    assert(decoded[1].peer_id == entries[1].peer_id);
+    assert(decoded[1].rssi_dbm == entries[1].rssi_dbm);
+    assert(decoded[1].quality == entries[1].quality);
+}
+
+static void test_reach_report_tlv_parser_accepts_empty_peer_list(void)
+{
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+    uint32_t survey_id = 0u;
+    uint64_t anchor_id = 0u;
+    size_t entry_count = 99u;
+
+    assert(survey_append_reach_report_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           0xAABBCCDDu,
+                                           0x9999888877776666ull,
+                                           NULL,
+                                           0u) == PROTO_OK);
+    assert(survey_extract_reach_report_tlvs(payload,
+                                            payload_len,
+                                            &survey_id,
+                                            &anchor_id,
+                                            NULL,
+                                            0u,
+                                            &entry_count) == PROTO_OK);
+    assert(survey_id == 0xAABBCCDDu);
+    assert(anchor_id == 0x9999888877776666ull);
+    assert(entry_count == 0u);
+}
+
+static void test_reach_report_tlv_parser_rejects_invalid_entries(void)
+{
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    uint32_t survey_id = 0u;
+    uint64_t anchor_id = 0u;
+    struct survey_reachability_entry decoded[1] = {0};
+    size_t entry_count = 0u;
+    uint8_t raw[SURVEY_REACHABILITY_ENTRY_LEN] = {0};
+
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SURVEY_ID,
+                          0xAABBCCDDu) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_ANCHOR_ID,
+                          0x9999888877776666ull) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_REACHABILITY_ENTRY,
+                            raw,
+                            2u) == PROTO_OK);
+    assert(survey_extract_reach_report_tlvs(payload,
+                                            payload_len,
+                                            &survey_id,
+                                            &anchor_id,
+                                            decoded,
+                                            sizeof(decoded) / sizeof(decoded[0]),
+                                            &entry_count) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(survey_append_reach_report_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           0xAABBCCDDu,
+                                           0x9999888877776666ull,
+                                           &(struct survey_reachability_entry){
+                                               .peer_id = 0x1111222233334444ull,
+                                               .rssi_dbm = -61,
+                                               .quality = 82u,
+                                           },
+                                           1u) == PROTO_OK);
+    assert(survey_extract_reach_report_tlvs(payload,
+                                            payload_len,
+                                            &survey_id,
+                                            &anchor_id,
+                                            decoded,
+                                            0u,
+                                            &entry_count) == PROTO_ERR_NO_SPACE);
+
+    payload_len = 0u;
+    assert(survey_append_reach_report_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           0xAABBCCDDu,
+                                           0x9999888877776666ull,
+                                           &(struct survey_reachability_entry){
+                                               .peer_id = 0x9999888877776666ull,
+                                               .rssi_dbm = -61,
+                                               .quality = 82u,
+                                           },
+                                           1u) == PROTO_OK);
+    assert(survey_extract_reach_report_tlvs(payload,
+                                            payload_len,
+                                            &survey_id,
+                                            &anchor_id,
+                                            decoded,
+                                            sizeof(decoded) / sizeof(decoded[0]),
+                                            &entry_count) == PROTO_ERR_MALFORMED);
+}
+
 static void test_reach_report_packet_is_diagnostic_gateway_bound(void)
 {
     struct proto_packet packet = {0};
@@ -186,6 +419,520 @@ static void test_reach_report_packet_is_diagnostic_gateway_bound(void)
     assert(packet.payload_len == 32u);
 }
 
+static void test_reach_request_packet_is_diagnostic_broadcast(void)
+{
+    struct proto_packet packet = {0};
+
+    assert(survey_init_reach_request_packet(&packet,
+                                            0x9999888877776666ull,
+                                            0xAABBCCDDu,
+                                            10u,
+                                            12u) == PROTO_OK);
+    assert(packet.msg_type == MSG_SURVEY_REACH_REQ);
+    assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
+    assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u);
+    assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
+    assert(packet.src_id == 0x9999888877776666ull);
+    assert(packet.dst_id == 0u);
+    assert(packet.session_id == 0xAABBCCDDu);
+    assert(packet.seq == 10u);
+    assert(packet.ttl == SURVEY_DEFAULT_TTL);
+    assert(packet.payload_len == 12u);
+}
+
+static void test_pair_tlv_parser_round_trips_prepare_payload(void)
+{
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+    const struct survey_pair pair = {
+        .survey_id = 0xAABBCCDDu,
+        .initiator_id = 0x1111222233334444ull,
+        .responder_id = 0x5555666677778888ull,
+        .sample_count = 7u,
+    };
+    struct survey_pair decoded = {0};
+
+    assert(survey_append_pair_tlvs(payload, sizeof(payload), &payload_len, &pair) == PROTO_OK);
+    assert(survey_extract_pair_tlvs(payload, payload_len, &decoded) == PROTO_OK);
+    assert(decoded.survey_id == pair.survey_id);
+    assert(decoded.initiator_id == pair.initiator_id);
+    assert(decoded.responder_id == pair.responder_id);
+    assert(decoded.sample_count == pair.sample_count);
+}
+
+static void test_pair_tlv_parser_rejects_missing_or_invalid_fields(void)
+{
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+    struct survey_pair decoded = {0};
+
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SURVEY_ID,
+                          0xAABBCCDDu) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_INITIATOR_ID,
+                          0x1111222233334444ull) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_RESPONDER_ID,
+                          0x5555666677778888ull) == PROTO_OK);
+    assert(survey_extract_pair_tlvs(payload, payload_len, &decoded) == PROTO_ERR_NOT_FOUND);
+
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SAMPLE_COUNT,
+                          0u) == PROTO_OK);
+    assert(survey_extract_pair_tlvs(payload, payload_len, &decoded) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SURVEY_ID,
+                          0xAABBCCDDu) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_INITIATOR_ID,
+                          0x1111222233334444ull) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_RESPONDER_ID,
+                          0x1111222233334444ull) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SAMPLE_COUNT,
+                          7u) == PROTO_OK);
+    assert(survey_extract_pair_tlvs(payload, payload_len, &decoded) == PROTO_ERR_MALFORMED);
+}
+
+static void test_pair_prepare_packet_targets_initiator_anchor(void)
+{
+    const struct survey_pair pair = {
+        .survey_id = 0xAABBCCDDu,
+        .initiator_id = 0x1111222233334444ull,
+        .responder_id = 0x5555666677778888ull,
+        .sample_count = 7u,
+    };
+    struct proto_packet packet = {0};
+
+    assert(survey_init_pair_prepare_packet(&packet,
+                                           &pair,
+                                           0x9999888877776666ull,
+                                           11u,
+                                           24u) == PROTO_OK);
+    assert(packet.msg_type == MSG_SURVEY_PAIR_PREPARE);
+    assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
+    assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u);
+    assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
+    assert(packet.src_id == 0x9999888877776666ull);
+    assert(packet.dst_id == pair.initiator_id);
+    assert(packet.session_id == pair.survey_id);
+    assert(packet.seq == 11u);
+    assert(packet.ttl == SURVEY_DEFAULT_TTL);
+    assert(packet.payload_len == 24u);
+
+    assert(survey_init_pair_prepare_packet(&packet,
+                                           &(struct survey_pair){
+                                               .survey_id = 0xAABBCCDDu,
+                                               .initiator_id = pair.initiator_id,
+                                               .responder_id = pair.initiator_id,
+                                               .sample_count = 7u,
+                                           },
+                                           0x9999888877776666ull,
+                                           11u,
+                                           24u) == PROTO_ERR_MALFORMED);
+}
+
+static void test_reachability_graph_plans_unique_pairs_with_requested_samples(void)
+{
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
+        {.peer_id = 0x3333000000000003ull, .rssi_dbm = -64, .quality = 78u},
+        {.peer_id = 0x9999000000000009ull, .rssi_dbm = -70, .quality = 60u},
+    };
+    const struct survey_reachability_entry b_entries[] = {
+        {.peer_id = 0x1111000000000001ull, .rssi_dbm = -62, .quality = 81u},
+    };
+    const struct survey_reachability_entry c_entries[] = {
+        {.peer_id = 0x1111000000000001ull, .rssi_dbm = -63, .quality = 79u},
+    };
+    const struct survey_reachability_report reports[] = {
+        {
+            .anchor_id = 0x1111000000000001ull,
+            .entries = a_entries,
+            .entry_count = sizeof(a_entries) / sizeof(a_entries[0]),
+        },
+        {
+            .anchor_id = 0x2222000000000002ull,
+            .entries = b_entries,
+            .entry_count = sizeof(b_entries) / sizeof(b_entries[0]),
+        },
+        {
+            .anchor_id = 0x3333000000000003ull,
+            .entries = c_entries,
+            .entry_count = sizeof(c_entries) / sizeof(c_entries[0]),
+        },
+    };
+    struct survey_pair pairs[4] = {0};
+    size_t pair_count = 99u;
+
+    assert(survey_plan_pairs_from_reachability(0xAABBCCDDu,
+                                               reports,
+                                               sizeof(reports) / sizeof(reports[0]),
+                                               5u,
+                                               pairs,
+                                               sizeof(pairs) / sizeof(pairs[0]),
+                                               &pair_count) == PROTO_OK);
+    assert(pair_count == 2u);
+    assert(pairs[0].survey_id == 0xAABBCCDDu);
+    assert(pairs[0].initiator_id == 0x1111000000000001ull);
+    assert(pairs[0].responder_id == 0x2222000000000002ull);
+    assert(pairs[0].sample_count == 5u);
+    assert(pairs[1].initiator_id == 0x1111000000000001ull);
+    assert(pairs[1].responder_id == 0x3333000000000003ull);
+    assert(pairs[1].sample_count == 5u);
+}
+
+static void test_gateway_context_collects_reports_and_sequences_pairs(void)
+{
+    struct survey_gateway_context context;
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
+        {.peer_id = 0x3333000000000003ull, .rssi_dbm = -64, .quality = 78u},
+        {.peer_id = 0x9999000000000009ull, .rssi_dbm = -70, .quality = 60u},
+    };
+    const struct survey_reachability_entry b_entries[] = {
+        {.peer_id = 0x1111000000000001ull, .rssi_dbm = -62, .quality = 81u},
+    };
+    const struct survey_reachability_entry c_entries[] = {
+        {.peer_id = 0x1111000000000001ull, .rssi_dbm = -63, .quality = 79u},
+    };
+    struct survey_pair pair = {0};
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 5u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            a_entries,
+                                            sizeof(a_entries) / sizeof(a_entries[0])) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x2222000000000002ull,
+                                            b_entries,
+                                            sizeof(b_entries) / sizeof(b_entries[0])) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x3333000000000003ull,
+                                            c_entries,
+                                            sizeof(c_entries) / sizeof(c_entries[0])) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(context.report_count == 3u);
+    assert(context.pair_count == 2u);
+
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(pair.survey_id == 0xAABBCCDDu);
+    assert(pair.initiator_id == 0x1111000000000001ull);
+    assert(pair.responder_id == 0x2222000000000002ull);
+    assert(pair.sample_count == 5u);
+
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(pair.initiator_id == 0x1111000000000001ull);
+    assert(pair.responder_id == 0x3333000000000003ull);
+    assert(pair.sample_count == 5u);
+
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_ERR_NOT_FOUND);
+}
+
+static void test_gateway_context_updates_duplicate_report(void)
+{
+    struct survey_gateway_context context;
+    const struct survey_reachability_entry first_entries[] = {
+        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
+    };
+    const struct survey_reachability_entry replacement_entries[] = {
+        {.peer_id = 0x3333000000000003ull, .rssi_dbm = -64, .quality = 78u},
+    };
+    const struct survey_reachability_entry c_entries[] = {
+        {.peer_id = 0x1111000000000001ull, .rssi_dbm = -63, .quality = 79u},
+    };
+    struct survey_pair pair = {0};
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 2u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            first_entries,
+                                            sizeof(first_entries) / sizeof(first_entries[0])) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            replacement_entries,
+                                            sizeof(replacement_entries) /
+                                            sizeof(replacement_entries[0])) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x2222000000000002ull,
+                                            NULL,
+                                            0u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x3333000000000003ull,
+                                            c_entries,
+                                            sizeof(c_entries) / sizeof(c_entries[0])) == PROTO_OK);
+
+    assert(context.report_count == 3u);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(context.pair_count == 1u);
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(pair.initiator_id == 0x1111000000000001ull);
+    assert(pair.responder_id == 0x3333000000000003ull);
+    assert(pair.sample_count == 2u);
+}
+
+static void test_gateway_context_rejects_stale_or_oversized_reports(void)
+{
+    struct survey_gateway_context context;
+    struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT + 1u];
+
+    for (size_t i = 0u; i < sizeof(entries) / sizeof(entries[0]); i++) {
+        entries[i].peer_id = 0x1111000000000001ull + i + 1u;
+        entries[i].rssi_dbm = -70;
+        entries[i].quality = 80u;
+    }
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 2u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDEu,
+                                            0x1111000000000001ull,
+                                            entries,
+                                            1u) == PROTO_ERR_STALE);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            entries,
+                                            sizeof(entries) / sizeof(entries[0])) == PROTO_ERR_NO_SPACE);
+    entries[0].peer_id = 0x1111000000000001ull;
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            entries,
+                                            1u) == PROTO_ERR_MALFORMED);
+}
+
+static void test_gateway_auto_sequences_prepare_and_start_actions(void)
+{
+    struct survey_gateway_context context;
+    struct survey_gateway_auto_context auto_context;
+    struct survey_gateway_auto_action action = {0};
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
+    };
+    bool launched = false;
+    bool skipped = false;
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 4u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            a_entries,
+                                            sizeof(a_entries) / sizeof(a_entries[0])) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x2222000000000002ull,
+                                            NULL,
+                                            0u) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
+
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(!action.complete);
+    assert(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
+    assert(action.command_id == CMD_SURVEY_PREPARE_PAIR);
+    assert(action.target_id == 0x1111000000000001ull);
+    assert(action.pair.responder_id == 0x2222000000000002ull);
+    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    assert(survey_gateway_auto_command_matches(&auto_context,
+                                               CMD_SURVEY_PREPARE_PAIR,
+                                               0x1111000000000001ull,
+                                               0xAABBCCDDu));
+    assert(!survey_gateway_auto_command_matches(&auto_context,
+                                                CMD_SURVEY_START_PAIR,
+                                                0x1111000000000001ull,
+                                                0xAABBCCDDu));
+    assert(survey_gateway_auto_note_result(&auto_context,
+                                           CMD_SURVEY_PREPARE_PAIR,
+                                           0x1111000000000001ull,
+                                           0xAABBCCDDu,
+                                           COMMAND_OK,
+                                           &launched,
+                                           &skipped) == PROTO_OK);
+    assert(!launched && !skipped);
+
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER);
+    assert(action.command_id == CMD_SURVEY_PREPARE_PAIR);
+    assert(action.target_id == 0x2222000000000002ull);
+    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    assert(survey_gateway_auto_note_result(&auto_context,
+                                           action.command_id,
+                                           action.target_id,
+                                           action.pair.survey_id,
+                                           COMMAND_OK,
+                                           &launched,
+                                           &skipped) == PROTO_OK);
+    assert(!launched && !skipped);
+
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(action.stage == SURVEY_GATEWAY_AUTO_START_RESPONDER);
+    assert(action.command_id == CMD_SURVEY_START_PAIR);
+    assert(action.target_id == 0x2222000000000002ull);
+    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    assert(survey_gateway_auto_note_result(&auto_context,
+                                           action.command_id,
+                                           action.target_id,
+                                           action.pair.survey_id,
+                                           COMMAND_OK,
+                                           &launched,
+                                           &skipped) == PROTO_OK);
+    assert(!launched && !skipped);
+
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(action.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR);
+    assert(action.command_id == CMD_SURVEY_START_PAIR);
+    assert(action.target_id == 0x1111000000000001ull);
+    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    assert(survey_gateway_auto_note_result(&auto_context,
+                                           action.command_id,
+                                           action.target_id,
+                                           action.pair.survey_id,
+                                           COMMAND_OK,
+                                           &launched,
+                                           &skipped) == PROTO_OK);
+    assert(launched && !skipped);
+
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(action.complete);
+    assert(!auto_context.running);
+    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_IDLE);
+}
+
+static void test_gateway_auto_skips_pair_on_failed_command_result(void)
+{
+    struct survey_gateway_context context;
+    struct survey_gateway_auto_context auto_context;
+    struct survey_gateway_auto_action action = {0};
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
+    };
+    bool launched = true;
+    bool skipped = false;
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 4u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x1111000000000001ull,
+                                            a_entries,
+                                            sizeof(a_entries) / sizeof(a_entries[0])) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&context,
+                                            0xAABBCCDDu,
+                                            0x2222000000000002ull,
+                                            NULL,
+                                            0u) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+
+    assert(survey_gateway_auto_note_result(&auto_context,
+                                           CMD_SURVEY_PREPARE_PAIR,
+                                           0x1111000000000001ull,
+                                           0xAABBCCDDu,
+                                           COMMAND_TIMEOUT,
+                                           &launched,
+                                           &skipped) == PROTO_OK);
+    assert(!launched && skipped);
+    assert(!auto_context.waiting);
+    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_LOAD_PAIR);
+
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(action.complete);
+}
+
+static void test_reachability_plan_rejects_invalid_graph_or_capacity(void)
+{
+    const struct survey_reachability_entry self_entry = {
+        .peer_id = 0x1111000000000001ull,
+        .rssi_dbm = -61,
+        .quality = 82u,
+    };
+    const struct survey_reachability_entry invalid_entry = {
+        .peer_id = 0x2222000000000002ull,
+        .rssi_dbm = -61,
+        .quality = 101u,
+    };
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
+    };
+    const struct survey_reachability_report reports[] = {
+        {
+            .anchor_id = 0x1111000000000001ull,
+            .entries = a_entries,
+            .entry_count = sizeof(a_entries) / sizeof(a_entries[0]),
+        },
+        {
+            .anchor_id = 0x2222000000000002ull,
+        },
+    };
+    struct survey_reachability_report bad_reports[] = {
+        {
+            .anchor_id = 0x1111000000000001ull,
+            .entries = &self_entry,
+            .entry_count = 1u,
+        },
+    };
+    struct survey_pair pairs[1] = {0};
+    size_t pair_count = 0u;
+
+    assert(survey_plan_pairs_from_reachability(0xAABBCCDDu,
+                                               reports,
+                                               sizeof(reports) / sizeof(reports[0]),
+                                               0u,
+                                               pairs,
+                                               sizeof(pairs) / sizeof(pairs[0]),
+                                               &pair_count) == PROTO_ERR_MALFORMED);
+    assert(survey_plan_pairs_from_reachability(0xAABBCCDDu,
+                                               reports,
+                                               sizeof(reports) / sizeof(reports[0]),
+                                               5u,
+                                               pairs,
+                                               0u,
+                                               &pair_count) == PROTO_ERR_NO_SPACE);
+    assert(survey_plan_pairs_from_reachability(0xAABBCCDDu,
+                                               bad_reports,
+                                               sizeof(bad_reports) / sizeof(bad_reports[0]),
+                                               5u,
+                                               pairs,
+                                               sizeof(pairs) / sizeof(pairs[0]),
+                                               &pair_count) == PROTO_ERR_MALFORMED);
+    bad_reports[0].entries = &invalid_entry;
+    assert(survey_plan_pairs_from_reachability(0xAABBCCDDu,
+                                               bad_reports,
+                                               sizeof(bad_reports) / sizeof(bad_reports[0]),
+                                               5u,
+                                               pairs,
+                                               sizeof(pairs) / sizeof(pairs[0]),
+                                               &pair_count) == PROTO_ERR_MALFORMED);
+}
+
 static void test_result_packet_is_diagnostic_not_click(void)
 {
     struct proto_packet packet = {0};
@@ -202,14 +949,56 @@ static void test_result_packet_is_diagnostic_not_click(void)
     assert(packet.payload_len == 77u);
 }
 
+static void test_result_packet_can_use_responder_as_reporter(void)
+{
+    struct proto_packet packet = {0};
+    const struct survey_sample value = sample();
+
+    assert(survey_init_result_packet_from_reporter(&packet,
+                                                   &value,
+                                                   value.pair.responder_id,
+                                                   0x9999888877776666ull,
+                                                   43u,
+                                                   78u) == PROTO_OK);
+    assert(packet.msg_type == MSG_SURVEY_PAIR_RESULT);
+    assert(packet.src_id == value.pair.responder_id);
+    assert(packet.dst_id == 0x9999888877776666ull);
+    assert(packet.session_id == value.pair.survey_id);
+    assert(packet.seq == 43u);
+    assert(packet.payload_len == 78u);
+    assert(survey_init_result_packet_from_reporter(&packet,
+                                                   &value,
+                                                   0x5555000000000005ull,
+                                                   0x9999888877776666ull,
+                                                   43u,
+                                                   78u) == PROTO_ERR_MALFORMED);
+}
+
 int main(void)
 {
     test_sample_count_validation();
     test_pair_and_sample_validation();
+    test_sample_nonce_is_unique_across_sequence_wrap();
     test_sample_tlvs_include_required_fields();
     test_reach_request_tlvs_include_survey_and_duration();
+    test_reach_request_parser_rejects_malformed_tlvs();
     test_reach_report_tlvs_include_peer_entries();
+    test_reach_report_tlv_parser_round_trips_entries();
+    test_reach_report_tlv_parser_accepts_empty_peer_list();
+    test_reach_report_tlv_parser_rejects_invalid_entries();
     test_reach_report_packet_is_diagnostic_gateway_bound();
+    test_reach_request_packet_is_diagnostic_broadcast();
+    test_pair_tlv_parser_round_trips_prepare_payload();
+    test_pair_tlv_parser_rejects_missing_or_invalid_fields();
+    test_pair_prepare_packet_targets_initiator_anchor();
+    test_reachability_graph_plans_unique_pairs_with_requested_samples();
+    test_gateway_context_collects_reports_and_sequences_pairs();
+    test_gateway_context_updates_duplicate_report();
+    test_gateway_context_rejects_stale_or_oversized_reports();
+    test_gateway_auto_sequences_prepare_and_start_actions();
+    test_gateway_auto_skips_pair_on_failed_command_result();
+    test_reachability_plan_rejects_invalid_graph_or_capacity();
     test_result_packet_is_diagnostic_not_click();
+    test_result_packet_can_use_responder_as_reporter();
     return 0;
 }

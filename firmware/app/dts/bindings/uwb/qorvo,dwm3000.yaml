@@ -27,5 +27,5 @@ properties:
 
   irq-gpios:
     type: phandle-array
-    required: false
-    description: Optional DWM3000 IRQ pin. Current v1 firmware supports SPI polling when this is absent.
+    required: true
+    description: DWM3000 IRQ pin. Required by the firmware; populate the board overlay when the final pin assignment is known.

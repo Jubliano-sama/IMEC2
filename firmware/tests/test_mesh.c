@@ -83,10 +83,21 @@ static void test_rejects_invalid_ids(void)
     assert(mesh_init_gateway_ack(&packet, 1u, 2u, 0u, 1u, 0u) == PROTO_ERR_MALFORMED);
 }
 
+static void test_rejects_zero_sequence_numbers(void)
+{
+    struct proto_packet packet = {0};
+
+    assert(mesh_init_gateway_ack(&packet, 1u, 2u, 1u, 0u, 0u) == PROTO_ERR_MALFORMED);
+    assert(mesh_init_command(&packet, 1u, 2u, 1u, 0u, 0u) == PROTO_ERR_MALFORMED);
+    assert(mesh_init_command_result(&packet, 1u, 2u, 1u, 0u, 0u, false) ==
+           PROTO_ERR_MALFORMED);
+}
+
 int main(void)
 {
     test_gateway_ack_is_end_to_end();
     test_command_and_result_are_acknowledged_not_clicks();
     test_rejects_invalid_ids();
+    test_rejects_zero_sequence_numbers();
     return 0;
 }

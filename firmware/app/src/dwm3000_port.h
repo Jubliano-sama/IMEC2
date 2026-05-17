@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef void (*dwm3000_port_irq_callback_t)(void);
+
 #define DWM3000_DEV_ID_A0 0xDECA0300u
 #define DWM3000_DEV_ID_A0_PDOA 0xDECA0310u
 #define DWM3000_DEV_ID_B0 0xDECA0301u
@@ -18,6 +20,9 @@ int dwm3000_port_set_fast_spi(void);
 uint32_t dwm3000_port_current_spi_hz(void);
 int dwm3000_port_hw_reset(void);
 int dwm3000_port_wakeup(void);
+void dwm3000_port_irq_reset(void);
+int dwm3000_port_wait_for_irq(uint32_t timeout_ms);
+int dwm3000_port_set_irq_callback(dwm3000_port_irq_callback_t callback);
 bool dwm3000_port_dev_id_supported(uint32_t dev_id);
 int dwm3000_port_read_dev_id(uint32_t *dev_id);
 int dwm3000_port_transceive(const uint8_t *tx, uint8_t *rx, size_t len);

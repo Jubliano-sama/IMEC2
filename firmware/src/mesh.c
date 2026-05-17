@@ -60,7 +60,9 @@ int mesh_init_gateway_ack(struct proto_packet *packet,
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(gateway_id, original_src_id) || session_id == 0u) {
+    if (!ids_are_valid(gateway_id, original_src_id) ||
+        session_id == 0u ||
+        ack_seq == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -85,7 +87,9 @@ int mesh_init_command(struct proto_packet *packet,
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(gateway_id, target_id) || session_id == 0u) {
+    if (!ids_are_valid(gateway_id, target_id) ||
+        session_id == 0u ||
+        seq == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -111,7 +115,9 @@ int mesh_init_command_result(struct proto_packet *packet,
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(target_id, gateway_id) || session_id == 0u) {
+    if (!ids_are_valid(target_id, gateway_id) ||
+        session_id == 0u ||
+        seq == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 

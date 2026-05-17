@@ -7,7 +7,7 @@ static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
 
 static bool range_status_valid(enum range_status status)
 {
-    return status >= RANGE_OK && status <= RANGE_INTERNAL_ERROR;
+    return status >= RANGE_OK && status <= RANGE_TIMING_INVALID;
 }
 
 static int append_distance_samples(uint8_t *payload,
@@ -154,22 +154,58 @@ int report_append_self_test_tlvs(uint8_t *payload,
     return tlv_append_u16(payload, payload_cap, offset, TLV_BATTERY_MV, fields->battery_mv);
 }
 
-int report_init_click_packet(struct proto_packet *packet,
+int report_append_anchor_heartbeat_tlvs(uint8_t *payload,
+                                        size_t payload_cap,
+                                        size_t *offset,
+                                        const struct anchor_heartbeat_fields *fields)
+{
+    int ret;
+
+    if (fields == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (fields->device_role == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_DEVICE_ROLE, fields->device_role);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_BATTERY_MV, fields->battery_mv);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_STATUS_BITS, fields->status_bits);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload, payload_cap, offset, TLV_UPTIME_MS, fields->uptime_ms);
+}
+
+int report_init_range_packet(struct proto_packet *packet,
                                   uint64_t anchor_id,
                                   uint64_t gateway_id,
                                   uint32_t session_id,
                                   uint16_t seq,
+                                  uint8_t report_flags,
                                   uint8_t payload_len)
 {
+    uint8_t mode_flags = report_flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC);
+
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(anchor_id, gateway_id) || session_id == 0u) {
+    if (!ids_are_valid(anchor_id, gateway_id) ||
+        session_id == 0u ||
+        seq == 0u ||
+        mode_flags == 0u ||
+        mode_flags == (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) {
         return PROTO_ERR_MALFORMED;
     }
 
     packet->msg_type = MSG_CLICK_REPORT;
-    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK;
+    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | mode_flags;
     packet->src_id = anchor_id;
     packet->dst_id = gateway_id;
     packet->session_id = session_id;
@@ -177,6 +213,47 @@ int report_init_click_packet(struct proto_packet *packet,
     packet->ttl = REPORT_DEFAULT_TTL;
     packet->payload_len = payload_len;
     return PROTO_OK;
+}
+
+int report_init_anchor_heartbeat_packet(struct proto_packet *packet,
+                                        uint64_t anchor_id,
+                                        uint64_t gateway_id,
+                                        uint32_t session_id,
+                                        uint16_t seq,
+                                        uint8_t payload_len)
+{
+    if (packet == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!ids_are_valid(anchor_id, gateway_id) || session_id == 0u || seq == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    packet->msg_type = MSG_ANCHOR_HEARTBEAT;
+    packet->flags = FLAG_GATEWAY_ACK_REQUIRED;
+    packet->src_id = anchor_id;
+    packet->dst_id = gateway_id;
+    packet->session_id = session_id;
+    packet->seq = seq;
+    packet->ttl = REPORT_DEFAULT_TTL;
+    packet->payload_len = payload_len;
+    return PROTO_OK;
+}
+
+int report_init_click_packet(struct proto_packet *packet,
+                                  uint64_t anchor_id,
+                                  uint64_t gateway_id,
+                                  uint32_t session_id,
+                                  uint16_t seq,
+                                  uint8_t payload_len)
+{
+    return report_init_range_packet(packet,
+                                    anchor_id,
+                                    gateway_id,
+                                    session_id,
+                                    seq,
+                                    FLAG_COUNT_AS_CLICK,
+                                    payload_len);
 }
 
 int report_init_self_test_packet(struct proto_packet *packet,
@@ -189,7 +266,7 @@ int report_init_self_test_packet(struct proto_packet *packet,
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(clicker_id, gateway_id) || session_id == 0u) {
+    if (!ids_are_valid(clicker_id, gateway_id) || session_id == 0u || seq == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 

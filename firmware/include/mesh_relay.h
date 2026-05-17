@@ -17,7 +17,6 @@ extern "C" {
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
 #define MESH_RELAY_DOWNLINK_MAX_AGE_MS ROUTE_CANDIDATE_MAX_AGE_MS
-#define MESH_RELAY_ROUTE_REFRESH_MS 20000u
 
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,
@@ -29,8 +28,6 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_DELIVER_LOCAL = 1u << 1,
     MESH_RELAY_ACTION_FORWARD = 1u << 2,
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
-    MESH_RELAY_ACTION_SEND_ROUTE_STATUS = 1u << 4,
-    MESH_RELAY_ACTION_SEND_ROUTE_ADV = 1u << 5,
     MESH_RELAY_ACTION_DROP = 1u << 6,
     MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED = 1u << 8,
     MESH_RELAY_ACTION_RETRANSMIT = 1u << 9,
@@ -92,10 +89,6 @@ struct mesh_relay {
     struct mesh_pending_tx pending;
     uint8_t duplicate_next;
     uint16_t next_seq;
-    uint32_t last_route_status_ms;
-    uint32_t last_route_adv_ms;
-    bool route_status_sent;
-    bool route_adv_sent;
 };
 
 struct mesh_relay_result {
@@ -103,8 +96,6 @@ struct mesh_relay_result {
     int status;
     struct mesh_outbound forward;
     struct mesh_outbound gateway_ack;
-    struct mesh_outbound route_status;
-    struct mesh_outbound route_adv;
     struct mesh_outbound route_request;
     struct mesh_outbound route_reply;
     struct mesh_outbound retransmit;
@@ -121,12 +112,6 @@ int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms);
-int mesh_relay_build_route_adv(struct mesh_relay *relay,
-                               struct mesh_outbound *out,
-                               uint32_t now_ms);
-int mesh_relay_build_route_status(struct mesh_relay *relay,
-                                  struct mesh_outbound *out,
-                                  uint32_t now_ms);
 int mesh_relay_build_route_request(struct mesh_relay *relay,
                                    uint64_t target_id,
                                    struct mesh_outbound *out,

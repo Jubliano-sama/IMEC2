@@ -9,6 +9,12 @@ static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
     return (int32_t)(now_ms - deadline_ms) >= 0;
 }
 
+static bool command_wait_packet_type(uint8_t msg_type)
+{
+    return msg_type == MSG_COMMAND ||
+           msg_type == MSG_SURVEY_PAIR_PREPARE;
+}
+
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id)
@@ -31,6 +37,67 @@ int gateway_command_extract_id(const uint8_t *payload,
 
     *command_id = (enum command_id)proto_get_u16_le(value);
     return PROTO_OK;
+}
+
+int gateway_command_extract_role(const uint8_t *payload,
+                                 size_t payload_len,
+                                 enum device_role *role)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    uint8_t parsed_role;
+    int ret;
+
+    if (payload == NULL || role == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(payload, payload_len, TLV_DEVICE_ROLE, &value, &value_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    parsed_role = value[0];
+    if (parsed_role != ROLE_CLICKER &&
+        parsed_role != ROLE_ANCHOR &&
+        parsed_role != ROLE_GATEWAY) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *role = (enum device_role)parsed_role;
+    return PROTO_OK;
+}
+
+int gateway_command_extract_duration_ms(const uint8_t *payload,
+                                        size_t payload_len,
+                                        uint32_t default_duration_ms,
+                                        uint32_t *duration_ms)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || duration_ms == NULL || default_duration_ms == 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(payload, payload_len, TLV_DURATION_MS, &value, &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *duration_ms = default_duration_ms;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *duration_ms = proto_get_u32_le(value);
+    return *duration_ms == 0u ? PROTO_ERR_MALFORMED : PROTO_OK;
 }
 
 int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
@@ -149,7 +216,7 @@ int gateway_command_pending_start(struct gateway_command_pending *pending,
                                   uint32_t timeout_ms)
 {
     if (pending == NULL || command == NULL || timeout_ms == 0u ||
-        command->msg_type != MSG_COMMAND ||
+        !command_wait_packet_type(command->msg_type) ||
         command->src_id == 0u ||
         command->dst_id == 0u ||
         command->src_id == command->dst_id ||

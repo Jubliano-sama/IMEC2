@@ -6,8 +6,12 @@ set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker, anchor, or gat
 set_property(CACHE FIRMWARE_ROLE PROPERTY STRINGS clicker anchor gateway)
 set(DWM3000_SDK_DIR "${CMAKE_CURRENT_LIST_DIR}/../../dwm3000 examples and sdk")
 
+if(FIRMWARE_ROLE STREQUAL "clicker")
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj-clicker.conf")
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(uwb_ble_firmware)
+project(uwb_firmware)
 
 if(FIRMWARE_ROLE STREQUAL "clicker")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=1)
@@ -19,6 +23,7 @@ else()
     message(FATAL_ERROR "FIRMWARE_ROLE must be clicker, anchor, or gateway")
 endif()
 
+# Operational wake, discovery, ranging, and relay traffic use UWB frames.
 target_sources(app PRIVATE
     src/main.c
     src/dwm3000_driver.c
@@ -26,11 +31,11 @@ target_sources(app PRIVATE
     src/dwm3000_sdk_port.c
     "${DWM3000_SDK_DIR}/decadriver/deca_device.c"
     ../src/protocol.c
-    ../src/discovery.c
     ../src/gateway_command.c
     ../src/uwb.c
+    ../src/uwb_ble_courtesy.c
+    ../src/uwb_session.c
     ../src/mesh.c
-    ../src/mesh_ble.c
     ../src/mesh_relay.c
     ../src/report.c
     ../src/serial_frame.c

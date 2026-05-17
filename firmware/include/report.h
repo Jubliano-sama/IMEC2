@@ -40,6 +40,13 @@ struct self_test_report_fields {
     uint16_t battery_mv;
 };
 
+struct anchor_heartbeat_fields {
+    uint8_t device_role;
+    uint16_t battery_mv;
+    uint32_t status_bits;
+    uint32_t uptime_ms;
+};
+
 int report_append_range_tlvs(uint8_t *payload,
                                   size_t payload_cap,
                                   size_t *offset,
@@ -48,6 +55,17 @@ int report_append_self_test_tlvs(uint8_t *payload,
                                       size_t payload_cap,
                                       size_t *offset,
                                       const struct self_test_report_fields *fields);
+int report_append_anchor_heartbeat_tlvs(uint8_t *payload,
+                                        size_t payload_cap,
+                                        size_t *offset,
+                                        const struct anchor_heartbeat_fields *fields);
+int report_init_range_packet(struct proto_packet *packet,
+                                  uint64_t anchor_id,
+                                  uint64_t gateway_id,
+                                  uint32_t session_id,
+                                  uint16_t seq,
+                                  uint8_t report_flags,
+                                  uint8_t payload_len);
 int report_init_click_packet(struct proto_packet *packet,
                                   uint64_t anchor_id,
                                   uint64_t gateway_id,
@@ -60,6 +78,12 @@ int report_init_self_test_packet(struct proto_packet *packet,
                                       uint32_t session_id,
                                       uint16_t seq,
                                       uint8_t payload_len);
+int report_init_anchor_heartbeat_packet(struct proto_packet *packet,
+                                        uint64_t anchor_id,
+                                        uint64_t gateway_id,
+                                        uint32_t session_id,
+                                        uint16_t seq,
+                                        uint8_t payload_len);
 
 #ifdef __cplusplus
 }

@@ -13,19 +13,53 @@ extern "C" {
 
 #define UWB_MARKER 0xCAu
 #define UWB_VERSION 0x01u
-#define UWB_HEADER_LEN 13u
+#define UWB_SYNC_HEADER_LEN 3u
+#define UWB_FRAME_CRC_LEN 2u
+#define UWB_HEADER_LEN 41u
 #define UWB_POLL_LEN UWB_HEADER_LEN
 #define UWB_RESP_LEN (UWB_HEADER_LEN + 8u)
 #define UWB_FINAL_LEN (UWB_HEADER_LEN + 12u)
 #define UWB_REPORT_LEN (UWB_HEADER_LEN + 8u)
+#define UWB_WAKE_CLAIM_LEN 49u
+#define UWB_DISCOVER_LEN 32u
+#define UWB_DISCOVERY_REPLY_LEN 44u
+#define UWB_DISCOVERY_SLOT_COUNT 50u
+#define UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS 1000u
+#define UWB_WAKE_CLAIM_MAX_DISCOVERY_START_MS 1000u
+#define UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS 2000u
+#define UWB_RANGE_SCHEDULE_FIXED_LEN 38u
+#define UWB_RANGE_SCHEDULE_ENTRY_LEN 10u
+#define UWB_RANGE_SCHEDULE_MAX_ANCHORS 8u
+#define UWB_RANGE_SCHEDULE_MIN_LEN \
+    (UWB_RANGE_SCHEDULE_FIXED_LEN + UWB_FRAME_CRC_LEN)
+#define UWB_RANGE_SCHEDULE_MAX_LEN \
+    (UWB_RANGE_SCHEDULE_FIXED_LEN + \
+     (UWB_RANGE_SCHEDULE_ENTRY_LEN * UWB_RANGE_SCHEDULE_MAX_ANCHORS) + \
+     UWB_FRAME_CRC_LEN)
+#define UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS 50u
+#define UWB_RANGING_REQUESTS_MAX_PER_ANCHOR 15u
+#define UWB_DS_TWR_REPLY_DELAY_US 900u
+#define UWB_DS_TWR_REPLY_DELAY_MIN_US UWB_DS_TWR_REPLY_DELAY_US
+#define UWB_DS_TWR_REPLY_DELAY_MAX_US UWB_DS_TWR_REPLY_DELAY_US
+#define UWB_MESH_FRAME_HEADER_LEN 25u
+#define UWB_MESH_MAX_FRAME_LEN \
+    (UWB_MESH_FRAME_HEADER_LEN + PACKET_MAX_LEN + UWB_FRAME_CRC_LEN)
+
+#define UWB_DISCOVERY_REPLY_PRESENT 0x01u
+#define UWB_DISCOVERY_REPLY_BUSY 0x02u
+#define UWB_DISCOVERY_REPLY_COLLISION 0x03u
 
 struct uwb_range_header {
     uint8_t type;
     uint8_t seq;
+    uint32_t network_id;
     uint32_t session_id;
+    uint64_t session_nonce;
     uint16_t initiator_short_addr;
     uint16_t responder_short_addr;
     uint8_t flags;
+    uint64_t initiator_id;
+    uint64_t responder_id;
 };
 
 struct uwb_response_frame {
@@ -47,6 +81,90 @@ struct uwb_report_frame {
     uint8_t quality;
     enum range_status status;
     int8_t rsl_dbm;
+};
+
+struct uwb_wake_claim_frame {
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t click_event_id;
+    uint8_t attempt_index;
+    uint64_t priority_id;
+    uint8_t wake_channel;
+    uint8_t ranging_channel;
+    uint16_t wake_train_ends_in_ms;
+    uint16_t discovery_starts_in_ms;
+    uint16_t claimed_duration_ms;
+    uint8_t min_anchor_count;
+    uint8_t max_anchor_count;
+    uint64_t nonce;
+    uint8_t flags;
+};
+
+struct uwb_discover_frame {
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t click_event_id;
+    uint8_t attempt_index;
+    uint64_t nonce;
+    uint8_t discovery_slot_count;
+    uint8_t flags;
+};
+
+struct uwb_discovery_reply_frame {
+    uint32_t network_id;
+    uint64_t anchor_id;
+    uint64_t selected_clicker_id;
+    uint32_t click_event_id;
+    uint8_t attempt_index;
+    uint64_t nonce;
+    uint8_t anchor_slot;
+    uint8_t status;
+    uint8_t rx_quality;
+    uint16_t battery_mv;
+    uint8_t flags;
+};
+
+struct uwb_range_schedule_entry {
+    uint64_t anchor_id;
+    uint8_t seq;
+    uint8_t sample_count;
+};
+
+struct uwb_range_schedule_frame {
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t click_event_id;
+    uint8_t attempt_index;
+    uint64_t nonce;
+    uint8_t selected_count;
+    uint8_t ranging_channel;
+    uint16_t reply_delay_us;
+    uint16_t first_poll_delay_ms;
+    uint16_t poll_spacing_ms;
+    uint8_t samples_per_anchor;
+    uint8_t flags;
+    struct uwb_range_schedule_entry entries[UWB_RANGE_SCHEDULE_MAX_ANCHORS];
+};
+
+enum uwb_anchor_claim_decision {
+    UWB_ANCHOR_CLAIM_ACCEPTED = 0,
+    UWB_ANCHOR_CLAIM_REJECTED_STALE = 1,
+    UWB_ANCHOR_CLAIM_REJECTED_BUSY = 2,
+    UWB_ANCHOR_CLAIM_REJECTED_LOST_ARBITRATION = 3,
+    UWB_ANCHOR_CLAIM_REPLACED_BY_PRIORITY = 4,
+    UWB_ANCHOR_CLAIM_REJECTED_MALFORMED = 5,
+};
+
+struct uwb_anchor_epoch {
+    bool active;
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t click_event_id;
+    uint8_t attempt_index;
+    uint64_t priority_id;
+    uint64_t nonce;
+    uint32_t epoch_ends_at_ms;
+    uint8_t flags;
 };
 
 bool uwb_frame_type_valid(uint8_t type);
@@ -79,6 +197,81 @@ int uwb_encode_report(const struct uwb_report_frame *frame,
 int uwb_decode_report(const uint8_t *data,
                            size_t len,
                            struct uwb_report_frame *frame);
+
+int uwb_encode_wake_claim(const struct uwb_wake_claim_frame *frame,
+                          uint8_t *out,
+                          size_t out_cap,
+                          size_t *written);
+int uwb_decode_wake_claim(const uint8_t *data,
+                          size_t len,
+                          struct uwb_wake_claim_frame *frame);
+int uwb_validate_wake_claim(const struct uwb_wake_claim_frame *frame);
+int uwb_encode_discover(const struct uwb_discover_frame *frame,
+                        uint8_t *out,
+                        size_t out_cap,
+                        size_t *written);
+int uwb_decode_discover(const uint8_t *data,
+                        size_t len,
+                        struct uwb_discover_frame *frame);
+int uwb_encode_discovery_reply(const struct uwb_discovery_reply_frame *frame,
+                               uint8_t *out,
+                               size_t out_cap,
+                               size_t *written);
+int uwb_decode_discovery_reply(const uint8_t *data,
+                               size_t len,
+                               struct uwb_discovery_reply_frame *frame);
+int uwb_encode_range_schedule(const struct uwb_range_schedule_frame *frame,
+                              uint8_t *out,
+                              size_t out_cap,
+                              size_t *written);
+int uwb_decode_range_schedule(const uint8_t *data,
+                              size_t len,
+                              struct uwb_range_schedule_frame *frame);
+int uwb_validate_range_schedule(const struct uwb_range_schedule_frame *frame);
+size_t uwb_range_schedule_encoded_len(uint8_t selected_count);
+size_t uwb_range_schedule_total_samples(const struct uwb_range_schedule_frame *frame);
+int uwb_range_schedule_sample_at(const struct uwb_range_schedule_frame *frame,
+                                 size_t sample_index,
+                                 uint64_t *anchor_id,
+                                 uint8_t *seq);
+int uwb_claim_precedence_compare(uint8_t left_attempt_index,
+                                 uint64_t left_priority_id,
+                                 uint64_t left_clicker_id,
+                                 uint32_t left_click_event_id,
+                                 uint8_t right_attempt_index,
+                                 uint64_t right_priority_id,
+                                 uint64_t right_clicker_id,
+                                 uint32_t right_click_event_id);
+
+int uwb_mesh_frame_encode(uint32_t network_id,
+                          uint64_t previous_hop_id,
+                          uint64_t next_hop_id,
+                          const struct proto_packet *packet,
+                          const uint8_t *payload,
+                          uint8_t *out,
+                          size_t out_cap,
+                          size_t *written);
+int uwb_mesh_frame_decode(const uint8_t *data,
+                          size_t len,
+                          uint32_t expected_network_id,
+                          uint64_t local_id,
+                          uint64_t *previous_hop_id,
+                          struct proto_packet *packet,
+                          uint8_t *payload,
+                          size_t payload_cap,
+                          size_t *payload_len);
+
+void uwb_anchor_epoch_clear(struct uwb_anchor_epoch *epoch);
+int uwb_anchor_epoch_consider_claim(struct uwb_anchor_epoch *epoch,
+                                    const struct uwb_wake_claim_frame *claim,
+                                    uint32_t now_ms,
+                                    enum uwb_anchor_claim_decision *decision);
+bool uwb_anchor_epoch_matches(const struct uwb_anchor_epoch *epoch,
+                              uint32_t network_id,
+                              uint64_t clicker_id,
+                              uint32_t click_event_id,
+                              uint8_t attempt_index,
+                              uint64_t nonce);
 
 #ifdef __cplusplus
 }

@@ -84,6 +84,69 @@ static void test_decode_rejects_bad_crc(void)
     assert(proto_packet_decode(encoded, encoded_len, &decoded, &decoded_payload, &decoded_payload_len) == PROTO_ERR_BAD_CRC);
 }
 
+static void set_packet_type_and_refresh_crc(uint8_t *encoded, size_t encoded_len, uint8_t msg_type)
+{
+    encoded[2] = msg_type;
+    proto_put_u16_le(&encoded[encoded_len - PACKET_CRC_LEN],
+                     proto_crc16_ccitt_false(encoded, encoded_len - PACKET_CRC_LEN));
+}
+
+static void test_packet_rejects_retired_and_compact_only_message_types(void)
+{
+    uint8_t encoded[PACKET_MAX_LEN];
+    size_t encoded_len = 0u;
+    const uint8_t payload[] = {TLV_EVENT_SEQ, 4u, 1u, 0u, 0u, 0u};
+    struct proto_packet packet = {
+        .msg_type = MSG_CLICK_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = 1u,
+        .dst_id = 2u,
+        .session_id = 3u,
+        .seq = 4u,
+        .ttl = 1u,
+        .payload_len = sizeof(payload),
+    };
+    struct proto_packet decoded = {0};
+    const uint8_t *decoded_payload = NULL;
+    size_t decoded_payload_len = 0u;
+
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_OK);
+
+    packet.msg_type = 0x01u;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = 0x02u;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = MSG_UWB_WAKE_CLAIM;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = MSG_UWB_POLL;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = 0x33u;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = 0x34u;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+
+    set_packet_type_and_refresh_crc(encoded, encoded_len, 0x01u);
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_ERR_MALFORMED);
+
+    set_packet_type_and_refresh_crc(encoded, encoded_len, MSG_UWB_RANGE_SCHEDULE);
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_ERR_MALFORMED);
+
+    set_packet_type_and_refresh_crc(encoded, encoded_len, 0x33u);
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_ERR_MALFORMED);
+}
+
 static void test_cobs_round_trip(void)
 {
     const uint8_t raw[] = {0x11u, 0x00u, 0x22u, 0x33u, 0x00u, 0x00u, 0x44u};
@@ -106,6 +169,7 @@ int main(void)
     test_crc_known_vector();
     test_tlv_and_packet_round_trip();
     test_decode_rejects_bad_crc();
+    test_packet_rejects_retired_and_compact_only_message_types();
     test_cobs_round_trip();
     return 0;
 }

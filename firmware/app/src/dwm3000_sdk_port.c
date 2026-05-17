@@ -1,7 +1,5 @@
 #include "dwm3000_port.h"
 
-#include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
@@ -11,30 +9,9 @@
 
 LOG_MODULE_REGISTER(dwm3000_sdk_port, LOG_LEVEL_INF);
 
-#define DWM3000_NODE DT_ALIAS(dwm3000)
-
 typedef void (*port_deca_isr_t)(void);
 
 static port_deca_isr_t dwm3000_isr;
-
-#if DT_NODE_HAS_PROP(DWM3000_NODE, irq_gpios)
-static const struct gpio_dt_spec dwm_irq =
-    GPIO_DT_SPEC_GET(DWM3000_NODE, irq_gpios);
-static struct gpio_callback dwm_irq_cb;
-
-static void dwm3000_irq_handler(const struct device *dev,
-                                struct gpio_callback *cb,
-                                uint32_t pins)
-{
-    ARG_UNUSED(dev);
-    ARG_UNUSED(cb);
-    ARG_UNUSED(pins);
-
-    if (dwm3000_isr != NULL) {
-        dwm3000_isr();
-    }
-}
-#endif
 
 int openspi(void)
 {
@@ -189,23 +166,12 @@ void spi_peripheral_init(void)
 
 void port_set_dwic_isr(port_deca_isr_t deca_isr)
 {
+    int ret;
+
     dwm3000_isr = deca_isr;
 
-#if DT_NODE_HAS_PROP(DWM3000_NODE, irq_gpios)
-    if (!gpio_is_ready_dt(&dwm_irq)) {
-        LOG_WRN("DWM3000 IRQ GPIO is not ready");
-        return;
+    ret = dwm3000_port_set_irq_callback(deca_isr);
+    if (ret < 0) {
+        LOG_ERR("DWM3000 IRQ callback setup failed: %d", ret);
     }
-
-    if (gpio_pin_configure_dt(&dwm_irq, GPIO_INPUT) < 0) {
-        LOG_WRN("failed to configure DWM3000 IRQ GPIO");
-        return;
-    }
-
-    gpio_init_callback(&dwm_irq_cb, dwm3000_irq_handler, BIT(dwm_irq.pin));
-    (void)gpio_add_callback(dwm_irq.port, &dwm_irq_cb);
-    (void)gpio_pin_interrupt_configure_dt(&dwm_irq, GPIO_INT_EDGE_RISING);
-#else
-    LOG_WRN("DWM3000 IRQ registration requested, but irq-gpios is not defined");
-#endif
 }

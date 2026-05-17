@@ -32,8 +32,13 @@ enum result {
 };
 
 enum msg_type {
-    MSG_BLE_DISCOVERY_REQ = 0x01,
-    MSG_BLE_DISCOVERY_READY = 0x02,
+    /* 0x01 and 0x02 are retired legacy discovery advertising IDs. */
+
+    MSG_UWB_WAKE_CLAIM = 0x08,
+    MSG_UWB_DISCOVER = 0x09,
+    MSG_UWB_DISCOVERY_REPLY = 0x0A,
+    MSG_UWB_RANGE_SCHEDULE = 0x0B,
+    MSG_UWB_MESH = 0x0C,
 
     MSG_UWB_POLL = 0x10,
     MSG_UWB_RESP = 0x11,
@@ -46,8 +51,7 @@ enum msg_type {
 
     MSG_MESH_DATA = 0x30,
     MSG_GATEWAY_ACK = 0x32,
-    MSG_ROUTE_ADV = 0x33,
-    MSG_ROUTE_STATUS = 0x34,
+    /* 0x33 and 0x34 are reserved; legacy route beacons must not be emitted. */
     MSG_ROUTE_REQ = 0x35,
     MSG_ROUTE_REPLY = 0x36,
 
@@ -111,6 +115,15 @@ enum tlv_type {
     TLV_UWB_CIR_SAMPLE = 0x26,
 };
 
+enum status_bit {
+    STATUS_BIT_UWB_SCAN_ACTIVE = 1u << 0,
+    STATUS_BIT_UWB_WAKE_DECODE_FAILURE = 1u << 1,
+    STATUS_BIT_UWB_CLAIM_COLLISION = 1u << 2,
+    STATUS_BIT_UWB_DS_TWR_FAILURE = 1u << 3,
+    STATUS_BIT_UWB_TIMING_REJECTION = 1u << 4,
+    STATUS_BIT_UWB_MESH_RX = 1u << 5,
+};
+
 enum device_role {
     ROLE_CLICKER = 1,
     ROLE_ANCHOR = 2,
@@ -156,6 +169,7 @@ enum range_status {
     RANGE_STS_QUALITY_FAIL = 5,
     RANGE_DELAYED_TX_MISSED = 6,
     RANGE_INTERNAL_ERROR = 7,
+    RANGE_TIMING_INVALID = 8,
 };
 
 struct proto_packet {

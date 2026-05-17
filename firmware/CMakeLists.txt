@@ -8,11 +8,11 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
     src/protocol.c
-    src/discovery.c
     src/gateway_command.c
     src/uwb.c
+    src/uwb_ble_courtesy.c
+    src/uwb_session.c
     src/mesh.c
-    src/mesh_ble.c
     src/mesh_relay.c
     src/report.c
     src/serial_frame.c
@@ -37,10 +37,6 @@ add_executable(test_status tests/test_status.c)
 target_link_libraries(test_status PRIVATE core)
 add_test(NAME status COMMAND test_status)
 
-add_executable(test_discovery tests/test_discovery.c)
-target_link_libraries(test_discovery PRIVATE core)
-add_test(NAME discovery COMMAND test_discovery)
-
 add_executable(test_gateway_command tests/test_gateway_command.c)
 target_link_libraries(test_gateway_command PRIVATE core)
 add_test(NAME gateway_command COMMAND test_gateway_command)
@@ -48,6 +44,14 @@ add_test(NAME gateway_command COMMAND test_gateway_command)
 add_executable(test_uwb tests/test_uwb.c)
 target_link_libraries(test_uwb PRIVATE core)
 add_test(NAME uwb COMMAND test_uwb)
+
+add_executable(test_uwb_ble_courtesy tests/test_uwb_ble_courtesy.c)
+target_link_libraries(test_uwb_ble_courtesy PRIVATE core)
+add_test(NAME uwb_ble_courtesy COMMAND test_uwb_ble_courtesy)
+
+add_executable(test_uwb_session tests/test_uwb_session.c)
+target_link_libraries(test_uwb_session PRIVATE core)
+add_test(NAME uwb_session COMMAND test_uwb_session)
 
 add_executable(test_route tests/test_route.c)
 target_link_libraries(test_route PRIVATE core)
@@ -60,10 +64,6 @@ add_test(NAME mesh COMMAND test_mesh)
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)
-
-add_executable(test_mesh_ble tests/test_mesh_ble.c)
-target_link_libraries(test_mesh_ble PRIVATE core)
-add_test(NAME mesh_ble COMMAND test_mesh_ble)
 
 add_executable(test_serial_frame tests/test_serial_frame.c)
 target_link_libraries(test_serial_frame PRIVATE core)

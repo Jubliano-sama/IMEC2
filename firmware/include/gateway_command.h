@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 5000u
+#define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
 
 struct gateway_command_pending {
     struct proto_packet command;
@@ -24,6 +24,13 @@ struct gateway_command_pending {
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id);
+int gateway_command_extract_role(const uint8_t *payload,
+                                 size_t payload_len,
+                                 enum device_role *role);
+int gateway_command_extract_duration_ms(const uint8_t *payload,
+                                        size_t payload_len,
+                                        uint32_t default_duration_ms,
+                                        uint32_t *duration_ms);
 int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      const uint8_t *payload,
                                      size_t payload_len,

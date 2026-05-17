@@ -68,6 +68,29 @@ size_t proto_packet_encoded_len(uint8_t payload_len)
     return PACKET_HEADER_LEN + (size_t)payload_len + PACKET_CRC_LEN;
 }
 
+static bool proto_packet_msg_type_valid(uint8_t msg_type)
+{
+    switch (msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
+    case MSG_GATEWAY_ACK:
+    case MSG_ROUTE_REQ:
+    case MSG_ROUTE_REPLY:
+    case MSG_COMMAND:
+    case MSG_COMMAND_RESULT:
+    case MSG_SURVEY_REACH_REQ:
+    case MSG_SURVEY_REACH_REPORT:
+    case MSG_SURVEY_PAIR_PREPARE:
+    case MSG_SURVEY_PAIR_RESULT:
+    case MSG_ERROR:
+        return true;
+    default:
+        return false;
+    }
+}
+
 int proto_packet_encode(const struct proto_packet *packet,
                        const uint8_t *payload,
                        uint8_t *out,
@@ -81,6 +104,9 @@ int proto_packet_encode(const struct proto_packet *packet,
     }
     if (packet->payload_len > 0u && payload == NULL) {
         return PROTO_ERR_ARG;
+    }
+    if (!proto_packet_msg_type_valid(packet->msg_type)) {
+        return PROTO_ERR_MALFORMED;
     }
     if (out_len < total_len) {
         return PROTO_ERR_NO_SPACE;
@@ -137,6 +163,9 @@ int proto_packet_decode(const uint8_t *data,
     const uint16_t actual_crc = proto_crc16_ccitt_false(data, len - PACKET_CRC_LEN);
     if (actual_crc != expected_crc) {
         return PROTO_ERR_BAD_CRC;
+    }
+    if (!proto_packet_msg_type_valid(data[2])) {
+        return PROTO_ERR_MALFORMED;
     }
 
     packet->msg_type = data[2];
