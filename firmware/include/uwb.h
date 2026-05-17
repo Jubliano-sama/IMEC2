@@ -15,7 +15,7 @@ extern "C" {
 #define UWB_VERSION 0x01u
 #define UWB_SYNC_HEADER_LEN 3u
 #define UWB_FRAME_CRC_LEN 2u
-#define UWB_HEADER_LEN 41u
+#define UWB_HEADER_LEN 42u
 #define UWB_POLL_LEN UWB_HEADER_LEN
 #define UWB_RESP_LEN (UWB_HEADER_LEN + 8u)
 #define UWB_FINAL_LEN (UWB_HEADER_LEN + 12u)
@@ -52,6 +52,7 @@ extern "C" {
 struct uwb_range_header {
     uint8_t type;
     uint8_t seq;
+    uint8_t round_index;
     uint32_t network_id;
     uint32_t session_id;
     uint64_t session_nonce;

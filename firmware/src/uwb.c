@@ -97,6 +97,7 @@ static int encode_header(const struct uwb_range_header *header,
     out[24] = header->flags;
     proto_put_u64_le(&out[25], header->initiator_id);
     proto_put_u64_le(&out[33], header->responder_id);
+    out[41] = header->round_index;
     return PROTO_OK;
 }
 
@@ -129,6 +130,7 @@ static int decode_header(const uint8_t *data,
     header->flags = data[24];
     header->initiator_id = proto_get_u64_le(&data[25]);
     header->responder_id = proto_get_u64_le(&data[33]);
+    header->round_index = data[41];
     return uwb_header_validate(header, expected_type);
 }
 

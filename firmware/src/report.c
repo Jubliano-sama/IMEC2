@@ -16,11 +16,12 @@ static int append_distance_samples(uint8_t *payload,
                                    const struct range_report_fields *fields)
 {
     uint8_t samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET * sizeof(int32_t)];
-    uint8_t time_offsets[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET * sizeof(uint16_t)];
+    uint8_t sequence_start_timestamps[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET *
+                                      sizeof(uint64_t)];
     uint16_t chunk_count;
     bool fragmented;
     size_t sample_bytes;
-    size_t time_offset_bytes;
+    size_t sequence_timestamp_bytes;
     int ret;
 
     if (fields->sample_count == 0u) {
@@ -32,7 +33,7 @@ static int append_distance_samples(uint8_t *payload,
     fragmented = fields->sample_index != 0u || chunk_count != fields->sample_count;
     if (fields->distance_samples_mm == NULL ||
         fields->range_round_indices == NULL ||
-        fields->sample_time_offsets_ms == NULL ||
+        fields->sequence_start_timestamps_ms == NULL ||
         fields->sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES ||
         chunk_count == 0u ||
         chunk_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET ||
@@ -75,14 +76,15 @@ static int append_distance_samples(uint8_t *payload,
         return ret;
     }
 
-    time_offset_bytes = (size_t)chunk_count * sizeof(uint16_t);
+    sequence_timestamp_bytes = (size_t)chunk_count * sizeof(uint64_t);
     for (uint16_t i = 0u; i < chunk_count; i++) {
-        proto_put_u16_le(&time_offsets[(size_t)i * sizeof(uint16_t)],
-                         fields->sample_time_offsets_ms[i]);
+        proto_put_u64_le(&sequence_start_timestamps[(size_t)i * sizeof(uint64_t)],
+                         fields->sequence_start_timestamps_ms[i]);
     }
     return tlv_append_bytes(payload, payload_cap, offset,
-                            TLV_SAMPLE_TIME_OFFSETS_MS,
-                            time_offsets, (uint8_t)time_offset_bytes);
+                            TLV_SEQUENCE_START_TIMESTAMPS_MS,
+                            sequence_start_timestamps,
+                            (uint8_t)sequence_timestamp_bytes);
 }
 
 int report_append_range_tlvs(uint8_t *payload,

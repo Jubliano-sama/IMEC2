@@ -8,6 +8,7 @@ static struct uwb_range_header header(uint8_t type, uint8_t flags)
     const struct uwb_range_header value = {
         .type = type,
         .seq = 17u,
+        .round_index = 3u,
         .network_id = 0x494D4543u,
         .session_id = 0xAABBCCDDu,
         .session_nonce = UINT64_C(0x0102030405060708),
@@ -25,6 +26,7 @@ static void assert_same_header(const struct uwb_range_header *actual,
 {
     assert(actual->type == expected->type);
     assert(actual->seq == expected->seq);
+    assert(actual->round_index == expected->round_index);
     assert(actual->network_id == expected->network_id);
     assert(actual->session_id == expected->session_id);
     assert(actual->session_nonce == expected->session_nonce);
@@ -47,10 +49,10 @@ static void test_poll_round_trip_diagnostic_not_click(void)
     assert(buf[0] == UWB_MARKER);
     assert(buf[1] == UWB_VERSION);
     assert(buf[2] == MSG_UWB_POLL);
-    assert(UWB_POLL_LEN == 41u);
-    assert(UWB_RESP_LEN == 49u);
-    assert(UWB_FINAL_LEN == 53u);
-    assert(UWB_REPORT_LEN == 49u);
+    assert(UWB_POLL_LEN == 42u);
+    assert(UWB_RESP_LEN == 50u);
+    assert(UWB_FINAL_LEN == 54u);
+    assert(UWB_REPORT_LEN == 50u);
 
     assert(uwb_decode_poll(buf, written, &decoded) == PROTO_OK);
     assert_same_header(&decoded, &poll);

@@ -609,6 +609,7 @@ static bool header_matches_request(const struct uwb_range_header *header,
     }
     if (header->type != expected_type ||
         header->seq != request->seq ||
+        header->round_index != request->round_index ||
         header->network_id != request->network_id ||
         header->session_id != request->session_id ||
         header->session_nonce != request->session_nonce ||
@@ -648,6 +649,7 @@ static bool poll_matches_expected(const struct uwb_range_header *poll,
            poll->session_id == expected->session_id &&
            poll->session_nonce == expected->session_nonce &&
            poll->seq == expected->seq &&
+           poll->round_index == expected->round_index &&
            poll->flags == expected->flags;
 }
 
@@ -668,6 +670,7 @@ static void result_set_request_metadata(struct dwm3000_range_result *result,
     result->responder_id = request->responder_id;
     result->session_id = request->session_id;
     result->seq = request->seq;
+    result->round_index = request->round_index;
     result->flags = request->flags;
 }
 
@@ -683,6 +686,7 @@ static void result_set_poll_metadata(struct dwm3000_range_result *result,
     result->responder_id = local_anchor_id;
     result->session_id = poll->session_id;
     result->seq = poll->seq;
+    result->round_index = poll->round_index;
     result->flags = poll->flags;
 }
 
@@ -867,6 +871,7 @@ static int receive_report(const struct dwm3000_range_request *request,
     result->responder_id = responder_id;
     result->session_id = report.header.session_id;
     result->seq = report.header.seq;
+    result->round_index = report.header.round_index;
     result->flags = report.header.flags;
     result->distance_mm = report.distance_mm;
     result->quality = report.quality;
@@ -1167,6 +1172,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 
     poll_header.type = MSG_UWB_POLL;
     poll_header.seq = request->seq;
+    poll_header.round_index = request->round_index;
     poll_header.network_id = request->network_id;
     poll_header.session_id = request->session_id;
     poll_header.session_nonce = request->session_nonce;
@@ -1212,6 +1218,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 
     final.header.type = MSG_UWB_FINAL;
     final.header.seq = request->seq;
+    final.header.round_index = request->round_index;
     final.header.network_id = request->network_id;
     final.header.session_id = request->session_id;
     final.header.session_nonce = request->session_nonce;
@@ -1382,6 +1389,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     response.header.type = MSG_UWB_RESP;
     response.header.seq = poll.seq;
+    response.header.round_index = poll.round_index;
     response.header.network_id = poll.network_id;
     response.header.session_id = poll.session_id;
     response.header.session_nonce = poll.session_nonce;
@@ -1433,6 +1441,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     if (ret < 0) {
         report_status = RANGE_BAD_FRAME;
     } else if (final.header.seq != poll.seq ||
+               final.header.round_index != poll.round_index ||
                final.header.network_id != poll.network_id ||
                final.header.session_id != poll.session_id ||
                final.header.session_nonce != poll.session_nonce ||
@@ -1457,6 +1466,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     report.header.type = MSG_UWB_REPORT;
     report.header.seq = poll.seq;
+    report.header.round_index = poll.round_index;
     report.header.network_id = poll.network_id;
     report.header.session_id = poll.session_id;
     report.header.session_nonce = poll.session_nonce;

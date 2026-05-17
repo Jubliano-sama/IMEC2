@@ -7,13 +7,14 @@
 #include <string.h>
 
 static void fill_sample_metadata(uint8_t *round_indices,
-                                 uint16_t *time_offsets_ms,
+                                 uint64_t *sequence_start_timestamps_ms,
                                  uint16_t count,
                                  uint8_t first_round)
 {
     for (uint16_t i = 0u; i < count; i++) {
         round_indices[i] = (uint8_t)(first_round + i);
-        time_offsets_ms[i] = (uint16_t)(i * 50u);
+        sequence_start_timestamps_ms[i] = UINT64_C(1000000) +
+                                          ((uint64_t)(first_round + i) * 50u);
     }
 }
 
@@ -21,7 +22,11 @@ static void test_click_report_packet_counts_as_click(void)
 {
     const int32_t distance_samples[] = {4550, 4567, 4580};
     const uint8_t round_indices[] = {0u, 1u, 2u};
-    const uint16_t time_offsets_ms[] = {0u, 50u, 100u};
+    const uint64_t sequence_start_timestamps_ms[] = {
+        UINT64_C(1234567890123),
+        UINT64_C(1234567890173),
+        UINT64_C(1234567890223),
+    };
     const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0x01u, 0x02u, 0x03u, 0xF1u, 0xF2u, 0xF3u};
     const struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
@@ -36,7 +41,7 @@ static void test_click_report_packet_counts_as_click(void)
         .range_status = RANGE_OK,
         .distance_samples_mm = distance_samples,
         .range_round_indices = round_indices,
-        .sample_time_offsets_ms = time_offsets_ms,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = 3u,
     };
     uint8_t payload[220];
@@ -97,12 +102,12 @@ static void test_click_report_packet_counts_as_click(void)
     assert(value_len == sizeof(round_indices));
     assert(memcmp(value, round_indices, sizeof(round_indices)) == 0);
 
-    assert(tlv_find(payload, payload_len, TLV_SAMPLE_TIME_OFFSETS_MS, &value, &value_len) ==
+    assert(tlv_find(payload, payload_len, TLV_SEQUENCE_START_TIMESTAMPS_MS, &value, &value_len) ==
            PROTO_OK);
-    assert(value_len == sizeof(time_offsets_ms));
-    assert(proto_get_u16_le(&value[0]) == time_offsets_ms[0]);
-    assert(proto_get_u16_le(&value[2]) == time_offsets_ms[1]);
-    assert(proto_get_u16_le(&value[4]) == time_offsets_ms[2]);
+    assert(value_len == sizeof(sequence_start_timestamps_ms));
+    assert(proto_get_u64_le(&value[0]) == sequence_start_timestamps_ms[0]);
+    assert(proto_get_u64_le(&value[8]) == sequence_start_timestamps_ms[1]);
+    assert(proto_get_u64_le(&value[16]) == sequence_start_timestamps_ms[2]);
 }
 
 static void test_diagnostic_range_packet_is_not_click(void)
@@ -345,7 +350,7 @@ static void test_max_single_packet_range_samples_fit_one_uwb_mesh_frame(void)
 {
     int32_t distance_samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
     uint8_t round_indices[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
-    uint16_t time_offsets_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
+    uint64_t sequence_start_timestamps_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET];
     const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0x10u, 0x11u, 0x12u, 0x20u, 0x21u, 0x22u};
     const struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
@@ -359,7 +364,7 @@ static void test_max_single_packet_range_samples_fit_one_uwb_mesh_frame(void)
         .range_status = RANGE_OK,
         .distance_samples_mm = distance_samples,
         .range_round_indices = round_indices,
-        .sample_time_offsets_ms = time_offsets_ms,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET,
     };
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
@@ -375,7 +380,7 @@ static void test_max_single_packet_range_samples_fit_one_uwb_mesh_frame(void)
         distance_samples[i] = 4500 + (int32_t)i;
     }
     fill_sample_metadata(round_indices,
-                         time_offsets_ms,
+                         sequence_start_timestamps_ms,
                          RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET,
                          0u);
 
@@ -407,7 +412,7 @@ static void test_first_fragmented_range_chunk_has_single_diagnostics(void)
 {
     int32_t distance_samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
     uint8_t round_indices[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
-    uint16_t time_offsets_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
+    uint64_t sequence_start_timestamps_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
     const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0x30u, 0x31u, 0x32u, 0x40u, 0x41u, 0x42u};
     const struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
@@ -421,7 +426,7 @@ static void test_first_fragmented_range_chunk_has_single_diagnostics(void)
         .range_status = RANGE_OK,
         .distance_samples_mm = distance_samples,
         .range_round_indices = round_indices,
-        .sample_time_offsets_ms = time_offsets_ms,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES,
         .distance_sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT,
     };
@@ -434,7 +439,7 @@ static void test_first_fragmented_range_chunk_has_single_diagnostics(void)
         distance_samples[i] = 4600 + (int32_t)i;
     }
     fill_sample_metadata(round_indices,
-                         time_offsets_ms,
+                         sequence_start_timestamps_ms,
                          RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT,
                          0u);
 
@@ -461,20 +466,20 @@ static void test_first_fragmented_range_chunk_has_single_diagnostics(void)
     assert(value[0] == 0u);
     assert(value[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u] ==
            RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u);
-    assert(tlv_find(payload, payload_len, TLV_SAMPLE_TIME_OFFSETS_MS, &value, &value_len) ==
+    assert(tlv_find(payload, payload_len, TLV_SEQUENCE_START_TIMESTAMPS_MS, &value, &value_len) ==
            PROTO_OK);
-    assert(value_len == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT * sizeof(uint16_t));
-    assert(proto_get_u16_le(&value[0]) == 0u);
-    assert(proto_get_u16_le(&value[(RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u) *
-                                   sizeof(uint16_t)]) ==
-           (RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u) * 50u);
+    assert(value_len == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT * sizeof(uint64_t));
+    assert(proto_get_u64_le(&value[0]) == UINT64_C(1000000));
+    assert(proto_get_u64_le(&value[(RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u) *
+                                   sizeof(uint64_t)]) ==
+           UINT64_C(1000000) + ((RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u) * 50u));
 }
 
 static void test_later_fragmented_range_chunk_omits_single_diagnostics(void)
 {
     int32_t distance_samples[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
     uint8_t round_indices[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
-    uint16_t time_offsets_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
+    uint64_t sequence_start_timestamps_ms[RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT];
     const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0x50u, 0x51u, 0x52u, 0x60u, 0x61u, 0x62u};
     const struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
@@ -488,7 +493,7 @@ static void test_later_fragmented_range_chunk_omits_single_diagnostics(void)
         .range_status = RANGE_OK,
         .distance_samples_mm = distance_samples,
         .range_round_indices = round_indices,
-        .sample_time_offsets_ms = time_offsets_ms,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_index = RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT,
         .sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES,
         .distance_sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT,
@@ -504,7 +509,7 @@ static void test_later_fragmented_range_chunk_omits_single_diagnostics(void)
         distance_samples[i] = 4600 + (int32_t)i;
     }
     fill_sample_metadata(round_indices,
-                         time_offsets_ms,
+                         sequence_start_timestamps_ms,
                          RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT,
                          RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT);
 
@@ -528,9 +533,9 @@ static void test_later_fragmented_range_chunk_omits_single_diagnostics(void)
            PROTO_OK);
     assert(value_len == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT);
     assert(value[0] == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT);
-    assert(tlv_find(payload, payload_len, TLV_SAMPLE_TIME_OFFSETS_MS, &value, &value_len) ==
+    assert(tlv_find(payload, payload_len, TLV_SEQUENCE_START_TIMESTAMPS_MS, &value, &value_len) ==
            PROTO_OK);
-    assert(value_len == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT * sizeof(uint16_t));
+    assert(value_len == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT * sizeof(uint64_t));
 }
 
 int main(void)

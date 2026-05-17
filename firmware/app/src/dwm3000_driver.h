@@ -15,6 +15,7 @@ struct dwm3000_range_request {
     uint16_t responder_short_addr;
     uint32_t session_id;
     uint8_t seq;
+    uint8_t round_index;
     uint8_t flags;
     uint32_t timeout_ms;
     bool capture_rsl;
@@ -26,6 +27,7 @@ struct dwm3000_range_result {
     uint32_t session_id;
     int64_t exchange_start_ms;
     uint8_t seq;
+    uint8_t round_index;
     uint8_t flags;
     int32_t distance_mm;
     uint8_t quality;

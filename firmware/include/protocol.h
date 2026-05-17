@@ -115,7 +115,7 @@ enum tlv_type {
     TLV_UWB_CIR_SAMPLE = 0x26,
     TLV_TIME_SYNC_AGE_MS = 0x27,
     TLV_RANGE_ROUND_INDICES = 0x28,
-    TLV_SAMPLE_TIME_OFFSETS_MS = 0x29,
+    TLV_SEQUENCE_START_TIMESTAMPS_MS = 0x29,
 };
 
 enum status_bit {
