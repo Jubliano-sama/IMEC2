@@ -60,7 +60,13 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
 #define FINAL_RX_TIMEOUT_MS 8u
 #define REPORT_RX_TIMEOUT_UUS 2500u
 #define REPORT_RX_TIMEOUT_MS 12u
-#define PREAMBLE_TIMEOUT_PAC 5u
+/*
+ * A zero preamble-detect timeout disables the preamble hunt timeout. That is
+ * acceptable on optimized DS-TWR delayed-RX legs because the receiver is armed
+ * at a scheduled offset and still bounded by the frame wait timeout.
+ */
+#define IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC 5u
+#define DELAYED_RX_PREAMBLE_TIMEOUT_PAC 0u
 #define DEFAULT_RESPONDER_WINDOW_MS 50u
 #define DWM3000_SLEEP_MODE DWT_CONFIG
 #define DWM3000_SLEEP_WAKE_FLAGS (DWT_PRES_SLEEP | DWT_WAKE_WUP | DWT_SLP_EN)
@@ -214,7 +220,7 @@ static int apply_radio_config(const dwt_config_t *config,
     dwt_configciadiag(DW_CIA_DIAG_LOG_ALL);
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
     dwt_settxantennadelay(DWM3000_TX_ANT_DLY);
-    dwt_setpreambledetecttimeout(PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
     dwt_setinterrupt(DWM3000_IRQ_EVENT_MASK, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
 
@@ -1066,7 +1072,7 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
         return ret;
     }
 
-    dwt_setpreambledetecttimeout(PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
     dwt_setrxtimeout(0u);
     clear_all_events();
     if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
@@ -1157,7 +1163,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 
     dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
     dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
-    dwt_setpreambledetecttimeout(PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
     poll_header.type = MSG_UWB_POLL;
     poll_header.seq = request->seq;
@@ -1240,7 +1246,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 
     dwt_setrxaftertxdelay(0u);
     dwt_setrxtimeout(REPORT_RX_TIMEOUT_UUS);
-    dwt_setpreambledetecttimeout(PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
     ret = send_range_frame(tx_buffer, tx_len,
                            DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
@@ -1397,7 +1403,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
     dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
-    dwt_setpreambledetecttimeout(PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
     ret = send_range_frame(tx_buffer, tx_len,
                            DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
