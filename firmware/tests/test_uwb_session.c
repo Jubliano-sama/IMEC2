@@ -12,7 +12,7 @@ static struct uwb_clicker_config clicker_config(void)
         .click_event_id = 77u,
         .nonce = UINT64_C(0xAABBCCDDEEFF0011),
         .min_anchor_count = 4u,
-        .max_anchor_count = 8u,
+        .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
         .max_attempts = UWB_SESSION_DEFAULT_MAX_ATTEMPTS,
         .samples_per_anchor = 2u,
         .wake_channel = 5u,
@@ -102,6 +102,20 @@ static void anchor_mark_discovery_replied(struct uwb_anchor_session *anchor)
 
     assert(uwb_anchor_build_discovery_reply(anchor, &discover, 80u, 3000u, &reply) ==
            PROTO_OK);
+}
+
+static void set_schedule_burst_defaults(struct uwb_range_schedule_frame *schedule,
+                                        uint8_t min_successful_unique_anchors)
+{
+    assert(schedule != NULL);
+
+    schedule->burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
+    schedule->exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    schedule->max_exchanges = (uint8_t)(schedule->selected_count *
+                                        schedule->samples_per_anchor);
+    schedule->min_successful_unique_anchors = min_successful_unique_anchors;
+    schedule->sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED;
+    schedule->diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED;
 }
 
 static void test_clicker_builds_wake_claim_and_rejects_bad_timing(void)
@@ -218,7 +232,7 @@ static void test_clicker_contention_delay_bounds_and_diagnostics(void)
     assert(session.diagnostics.wake_claim_tx_count == UINT32_MAX);
 }
 
-static void test_clicker_discovers_50_and_schedules_best_8_only(void)
+static void test_clicker_discovers_50_and_schedules_best_6_only(void)
 {
     struct uwb_clicker_session session;
     struct uwb_range_schedule_frame schedule;
@@ -233,6 +247,7 @@ static void test_clicker_discovers_50_and_schedules_best_8_only(void)
     assert(session.successful_unique_count == 0u);
     assert(uwb_clicker_build_range_schedule(&session, 900u, 3u, UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS, &schedule) == PROTO_OK);
     assert(schedule.selected_count == UWB_RANGE_SCHEDULE_MAX_ANCHORS);
+    assert(schedule.selected_count == 6u);
 
     for (uint8_t i = 0u; i < schedule.selected_count; i++) {
         uint64_t expected_anchor = UINT64_C(0xAA00000000000000) +
@@ -243,12 +258,12 @@ static void test_clicker_discovers_50_and_schedules_best_8_only(void)
     }
 }
 
-static void test_clicker_discovers_sparse_50_slots_with_8_present(void)
+static void test_clicker_discovers_sparse_50_slots_with_6_present(void)
 {
     struct uwb_clicker_session session;
     struct uwb_range_schedule_frame schedule;
     struct uwb_clicker_config config = clicker_config();
-    const uint8_t present_slots[] = {0u, 7u, 13u, 21u, 29u, 37u, 43u, 49u};
+    const uint8_t present_slots[] = {0u, 7u, 13u, 29u, 43u, 49u};
     const uint64_t present_base = UINT64_C(0xBB00000000000000);
 
     assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
@@ -292,13 +307,52 @@ static void test_clicker_discovers_sparse_50_slots_with_8_present(void)
     }
 }
 
+static void test_clicker_releases_replied_anchors_when_too_few_for_normal_click(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_clicker_config config = clicker_config();
+    struct uwb_range_release_frame release;
+    struct uwb_range_schedule_frame schedule;
+
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    add_reply(&session, 1u, 0u, 80u);
+    add_reply(&session, 2u, 1u, 90u);
+    add_reply(&session, 3u, 2u, 70u);
+
+    assert(session.candidate_count == config.min_anchor_count - 1u);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            UWB_DS_TWR_REPLY_DELAY_US,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_ERR_NOT_FOUND);
+    assert(uwb_clicker_build_range_release(
+               &session,
+               UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+               &release) == PROTO_OK);
+    assert(release.network_id == config.network_id);
+    assert(release.clicker_id == config.clicker_id);
+    assert(release.click_event_id == config.click_event_id);
+    assert(release.attempt_index == session.attempt_index);
+    assert(release.nonce == config.nonce);
+    assert(release.discovered_anchor_count == session.candidate_count);
+    assert(release.min_anchor_count == config.min_anchor_count);
+    assert(release.reason == UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS);
+    assert(release.flags == config.flags);
+
+    add_reply(&session, 4u, 3u, 60u);
+    assert(uwb_clicker_build_range_release(
+               &session,
+               UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+               &release) == PROTO_ERR_MALFORMED);
+}
+
 static void test_clicker_rejects_success_history_overflow_config(void)
 {
     struct uwb_clicker_session session;
     struct uwb_clicker_config config = clicker_config();
 
     config.max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS;
-    config.max_attempts = 7u;
+    config.max_attempts = 9u;
 
     assert(uwb_clicker_session_start(&session, &config) == PROTO_ERR_MALFORMED);
     config = clicker_config();
@@ -353,6 +407,10 @@ static void test_clicker_serializes_failures_and_retries_without_counting_discov
                                            &step,
                                            (enum range_status)(RANGE_TIMING_INVALID + 1u)) ==
            PROTO_ERR_MALFORMED);
+    assert(uwb_clicker_record_range_result(&session,
+                                           &step,
+                                           RANGE_STS_QUALITY_FAIL) ==
+           PROTO_ERR_MALFORMED);
     assert(uwb_clicker_next_range_step(&session, &(struct uwb_range_step){0}) ==
            PROTO_ERR_BUSY);
     assert(session.next_sample_index == step.sample_index);
@@ -391,16 +449,24 @@ static void test_clicker_serializes_failures_and_retries_without_counting_discov
     assert(uwb_clicker_prepare_retry(&session) == PROTO_OK);
     assert(session.attempt_index == 2u);
     add_reply(&session, 5u, 4u, 100u);
-    assert(uwb_clicker_build_range_schedule(&session, 900u, 3u, UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS, &schedule) == PROTO_OK);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            900u,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_ERR_NOT_FOUND);
+    add_reply(&session, 6u, 5u, 90u);
+    add_reply(&session, 7u, 6u, 80u);
+    add_reply(&session, 8u, 7u, 70u);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            900u,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
     assert(uwb_clicker_next_range_step(&session, &step) == PROTO_OK);
     assert(step.anchor_id == 5u);
     assert(uwb_clicker_record_range_result(&session, &step, RANGE_OK) == PROTO_OK);
-    assert(session.state == UWB_CLICKER_RANGING);
-    assert(uwb_clicker_next_range_step(&session, &step) == PROTO_OK);
-    assert(step.anchor_id == 5u);
-    assert(step.round_index == 1u);
-    assert(uwb_clicker_record_range_result(&session, &step, RANGE_OK) == PROTO_OK);
-    assert(uwb_clicker_next_range_step(&session, &step) == PROTO_ERR_NOT_FOUND);
+    assert(session.successful_unique_count == config.min_anchor_count);
+    assert(uwb_clicker_abort_attempt(&session) == PROTO_OK);
     assert(session.state == UWB_CLICKER_SUCCEEDED);
     assert(session.successful_unique_count == config.min_anchor_count);
     assert(session.diagnostics.retries == 1u);
@@ -440,13 +506,26 @@ static void test_retry_ignores_already_successful_anchors(void)
     add_reply(&session, 5u, 4u, 70u);
 
     assert(session.candidate_count == 1u);
-    assert(uwb_clicker_build_range_schedule(&session, 900u, 3u, UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS, &schedule) == PROTO_OK);
-    assert(schedule.selected_count == 1u);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            900u,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_ERR_NOT_FOUND);
+    add_reply(&session, 6u, 5u, 60u);
+    add_reply(&session, 7u, 6u, 50u);
+    add_reply(&session, 8u, 7u, 40u);
+    assert(session.candidate_count == config.min_anchor_count);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            900u,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
+    assert(schedule.selected_count == config.min_anchor_count);
     assert(schedule.entries[0].anchor_id == 5u);
     assert(uwb_clicker_next_range_step(&session, &step) == PROTO_OK);
     assert(step.anchor_id == 5u);
     assert(uwb_clicker_record_range_result(&session, &step, RANGE_OK) == PROTO_OK);
-    assert(uwb_clicker_next_range_step(&session, &step) == PROTO_ERR_NOT_FOUND);
+    assert(uwb_clicker_abort_attempt(&session) == PROTO_OK);
     assert(session.state == UWB_CLICKER_SUCCEEDED);
     assert(session.successful_unique_count == config.min_anchor_count);
 }
@@ -551,17 +630,25 @@ static void test_clicker_abort_after_successes_preserves_completed_ranges_only(v
                                             900u,
                                             3u,
                                             UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_ERR_NOT_FOUND);
+    add_reply(&session, 6u, 5u, 90u);
+    add_reply(&session, 7u, 6u, 80u);
+    add_reply(&session, 8u, 7u, 70u);
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            900u,
+                                            3u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
                                             &schedule) == PROTO_OK);
-    assert(schedule.selected_count == 1u);
+    assert(schedule.selected_count == config.min_anchor_count);
     assert(schedule.entries[0].anchor_id == 5u);
 
-    while (uwb_clicker_next_range_step(&session, &step) == PROTO_OK) {
-        assert(step.anchor_id == 5u);
-        assert(uwb_clicker_record_range_result(&session, &step, RANGE_OK) == PROTO_OK);
-    }
+    assert(uwb_clicker_next_range_step(&session, &step) == PROTO_OK);
+    assert(step.anchor_id == 5u);
+    assert(uwb_clicker_record_range_result(&session, &step, RANGE_OK) == PROTO_OK);
+    assert(uwb_clicker_abort_attempt(&session) == PROTO_OK);
     assert(session.state == UWB_CLICKER_SUCCEEDED);
     assert(session.successful_unique_count == config.min_anchor_count);
-    assert(session.diagnostics.ds_twr_successes == 5u);
+    assert(session.diagnostics.ds_twr_successes == 4u);
     assert(session.diagnostics.ds_twr_failures == 0u);
     assert(session.diagnostics.retries == 1u);
 }
@@ -710,6 +797,139 @@ static void test_round_robin_sample_order_completes_before_success(void)
     assert(session.state == UWB_CLICKER_SUCCEEDED);
     assert(session.successful_unique_count == config.min_anchor_count);
     assert(session.diagnostics.sample_order_count == 8u);
+}
+
+static void test_six_anchor_single_sample_runs_full_schedule_before_success(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_range_schedule_frame schedule;
+    struct uwb_range_step step;
+    struct uwb_clicker_config config = clicker_config();
+    size_t completed_samples = 0u;
+
+    config.samples_per_anchor = 1u;
+    config.max_anchor_count = 6u;
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    for (uint8_t i = 0u; i < 6u; i++) {
+        add_reply(&session, (uint64_t)i + 1u, i, (uint8_t)(100u - i));
+    }
+
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            UWB_DS_TWR_REPLY_DELAY_US,
+                                            5u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
+    assert(schedule.selected_count == 6u);
+    assert(uwb_range_schedule_total_samples(&schedule) == 6u);
+
+    while (uwb_clicker_next_range_step(&session, &step) == PROTO_OK) {
+        assert(uwb_clicker_record_range_result(&session, &step, RANGE_OK) == PROTO_OK);
+        completed_samples++;
+        if (completed_samples < 6u) {
+            assert(session.state == UWB_CLICKER_RANGING);
+        }
+    }
+
+    assert(completed_samples == 6u);
+    assert(session.state == UWB_CLICKER_SUCCEEDED);
+    assert(session.successful_unique_count == 6u);
+    assert(session.diagnostics.ds_twr_successes == 6u);
+}
+
+static void test_four_anchor_click_uses_shared_200_ms_burst_window(void)
+{
+    struct uwb_clicker_session clicker;
+    struct uwb_anchor_session anchors[4];
+    struct uwb_clicker_config clicker_cfg = clicker_config();
+    struct uwb_wake_claim_frame claim;
+    struct uwb_discover_frame discover;
+    struct uwb_range_schedule_frame schedule;
+    struct uwb_range_step step;
+    const uint64_t anchor_ids[] = {1u, 2u, 3u, 4u};
+    uint8_t completed_samples = 0u;
+
+    clicker_cfg.max_anchor_count = 4u;
+    clicker_cfg.samples_per_anchor = 1u;
+    assert(uwb_clicker_session_start(&clicker, &clicker_cfg) == PROTO_OK);
+    assert(uwb_clicker_build_wake_claim(&clicker,
+                                        UINT64_C(0x0102030405060708),
+                                        430u,
+                                        430u,
+                                        1365u,
+                                        &claim) == PROTO_OK);
+    assert(uwb_clicker_build_discover(&clicker, &discover) == PROTO_OK);
+
+    for (uint8_t i = 0u; i < 4u; i++) {
+        struct uwb_discovery_reply_frame reply;
+
+        assert(uwb_anchor_session_init(&anchors[i],
+                                       &(struct uwb_anchor_config){
+                                           .network_id = clicker_cfg.network_id,
+                                           .anchor_id = anchor_ids[i],
+                                           .anchor_slot = i,
+                                           .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+                                           .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+                                       }) == PROTO_OK);
+        assert(uwb_anchor_accept_wake_claim(&anchors[i], &claim, 1000u, NULL) ==
+               PROTO_OK);
+        assert(uwb_anchor_build_discovery_reply(&anchors[i],
+                                                &discover,
+                                                (uint8_t)(90u - i),
+                                                3000u,
+                                                &reply) == PROTO_OK);
+        assert(uwb_clicker_note_discovery_reply(&clicker, &reply) == PROTO_OK);
+    }
+
+    assert(uwb_clicker_build_range_schedule(&clicker,
+                                            UWB_DS_TWR_REPLY_DELAY_US,
+                                            5u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
+    assert(schedule.selected_count == 4u);
+    assert(schedule.samples_per_anchor == 1u);
+    assert(schedule.sts_mode == UWB_RANGE_SCHEDULE_STS_DISABLED);
+    assert(schedule.diagnostics_required == UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
+    assert(schedule.exchange_stride_us == UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US);
+    assert(schedule.max_exchanges == 4u);
+    assert(schedule.burst_window_ms == UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS);
+
+    for (uint8_t i = 0u; i < 4u; i++) {
+        assert(uwb_anchor_accept_range_schedule(&anchors[i], &schedule, 1200u, 10u) ==
+               PROTO_OK);
+        assert(anchors[i].uwb_wait_deadline_ms ==
+               1200u + schedule.first_poll_delay_ms + schedule.burst_window_ms + 10u);
+    }
+
+    while (uwb_clicker_next_range_step(&clicker, &step) == PROTO_OK) {
+        struct uwb_range_exchange_identity identity = {
+            .network_id = clicker_cfg.network_id,
+            .clicker_id = clicker_cfg.clicker_id,
+            .click_event_id = clicker_cfg.click_event_id,
+            .attempt_index = clicker.attempt_index,
+            .nonce = clicker_cfg.nonce,
+            .anchor_id = step.anchor_id,
+            .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+            .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
+            .seq = step.seq,
+            .flags = clicker_cfg.flags,
+        };
+        uint8_t accepted = 0u;
+
+        for (uint8_t i = 0u; i < 4u; i++) {
+            if (uwb_anchor_accepts_range_exchange(&anchors[i], &identity)) {
+                accepted++;
+                assert(uwb_anchor_note_range_result(&anchors[i], RANGE_OK) == PROTO_OK);
+                uwb_anchor_note_sample_order(&anchors[i]);
+            }
+        }
+        assert(accepted == 1u);
+        assert(uwb_clicker_record_range_result(&clicker, &step, RANGE_OK) == PROTO_OK);
+        completed_samples++;
+    }
+
+    assert(completed_samples == 4u);
+    assert(clicker.state == UWB_CLICKER_SUCCEEDED);
+    assert(clicker.successful_unique_count == 4u);
 }
 
 static void test_complete_four_anchor_click_flow_reports_after_selected_ds_twr(void)
@@ -861,16 +1081,16 @@ static void test_complete_four_anchor_click_flow_reports_after_selected_ds_twr(v
     }
 }
 
-static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
+static void test_four_simultaneous_clickers_converge_across_six_anchors(void)
 {
     struct uwb_clicker_session clickers[4];
     struct uwb_clicker_config clicker_cfgs[4];
     struct uwb_wake_claim_frame claims[4];
-    struct uwb_anchor_session anchors[8];
+    struct uwb_anchor_session anchors[UWB_RANGE_SCHEDULE_MAX_ANCHORS];
     struct uwb_discover_frame winner_discover;
     struct uwb_range_schedule_frame schedule;
     struct uwb_range_step step;
-    uint8_t samples_per_anchor[8] = {0};
+    uint8_t samples_per_anchor[UWB_RANGE_SCHEDULE_MAX_ANCHORS] = {0};
     const uint8_t winner = 3u;
 
     for (uint8_t i = 0u; i < 4u; i++) {
@@ -878,7 +1098,7 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
         clicker_cfgs[i].clicker_id = UINT64_C(0x4400000000000000) + i + 1u;
         clicker_cfgs[i].click_event_id = 400u + i;
         clicker_cfgs[i].nonce = UINT64_C(0x6600000000000000) + i + 1u;
-        clicker_cfgs[i].max_anchor_count = 8u;
+        clicker_cfgs[i].max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS;
         clicker_cfgs[i].samples_per_anchor = 2u;
         assert(uwb_clicker_session_start(&clickers[i], &clicker_cfgs[i]) == PROTO_OK);
         assert(uwb_clicker_build_wake_claim(&clickers[i],
@@ -889,7 +1109,7 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
                                             &claims[i]) == PROTO_OK);
     }
 
-    for (uint8_t anchor_index = 0u; anchor_index < 8u; anchor_index++) {
+    for (uint8_t anchor_index = 0u; anchor_index < UWB_RANGE_SCHEDULE_MAX_ANCHORS; anchor_index++) {
         struct uwb_anchor_config anchor_cfg =
             anchor_config(UINT64_C(0xAA55000000000000) + anchor_index + 1u,
                           anchor_index);
@@ -935,7 +1155,7 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
     }
 
     assert(uwb_clicker_build_discover(&clickers[winner], &winner_discover) == PROTO_OK);
-    for (uint8_t anchor_index = 0u; anchor_index < 8u; anchor_index++) {
+    for (uint8_t anchor_index = 0u; anchor_index < UWB_RANGE_SCHEDULE_MAX_ANCHORS; anchor_index++) {
         struct uwb_discovery_reply_frame reply;
 
         assert(uwb_anchor_build_discovery_reply(&anchors[anchor_index],
@@ -947,16 +1167,17 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
         assert(uwb_clicker_note_discovery_reply(&clickers[winner], &reply) == PROTO_OK);
     }
 
-    assert(clickers[winner].candidate_count == 8u);
+    assert(clickers[winner].candidate_count == UWB_RANGE_SCHEDULE_MAX_ANCHORS);
     assert(uwb_clicker_build_range_schedule(&clickers[winner],
                                             UWB_DS_TWR_REPLY_DELAY_US,
                                             5u,
                                             UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
                                             &schedule) == PROTO_OK);
-    assert(schedule.selected_count == 8u);
-    assert(uwb_range_schedule_total_samples(&schedule) == 16u);
+    assert(schedule.selected_count == UWB_RANGE_SCHEDULE_MAX_ANCHORS);
+    assert(uwb_range_schedule_total_samples(&schedule) ==
+           UWB_RANGE_SCHEDULE_MAX_ANCHORS * clicker_cfgs[winner].samples_per_anchor);
 
-    for (uint8_t anchor_index = 0u; anchor_index < 8u; anchor_index++) {
+    for (uint8_t anchor_index = 0u; anchor_index < UWB_RANGE_SCHEDULE_MAX_ANCHORS; anchor_index++) {
         assert(uwb_anchor_accept_range_schedule(&anchors[anchor_index],
                                                 &schedule,
                                                 1200u,
@@ -984,7 +1205,7 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
         hidden_identity.click_event_id = clicker_cfgs[0].click_event_id;
         hidden_identity.nonce = clicker_cfgs[0].nonce;
 
-        for (uint8_t anchor_index = 0u; anchor_index < 8u; anchor_index++) {
+        for (uint8_t anchor_index = 0u; anchor_index < UWB_RANGE_SCHEDULE_MAX_ANCHORS; anchor_index++) {
             assert(!uwb_anchor_accepts_range_exchange(&anchors[anchor_index],
                                                       &hidden_identity));
             if (uwb_anchor_accepts_range_exchange(&anchors[anchor_index],
@@ -995,7 +1216,7 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
         }
 
         assert(accept_count == 1u);
-        assert(accepting_anchor < 8u);
+        assert(accepting_anchor < UWB_RANGE_SCHEDULE_MAX_ANCHORS);
         assert(anchors[accepting_anchor].config.anchor_id == step.anchor_id);
         assert(uwb_anchor_note_range_result(&anchors[accepting_anchor], RANGE_OK) ==
                PROTO_OK);
@@ -1006,12 +1227,14 @@ static void test_four_simultaneous_clickers_converge_across_eight_anchors(void)
     }
 
     assert(clickers[winner].state == UWB_CLICKER_SUCCEEDED);
-    assert(clickers[winner].successful_unique_count == 8u);
-    assert(clickers[winner].diagnostics.ds_twr_successes == 16u);
+    assert(clickers[winner].successful_unique_count == UWB_RANGE_SCHEDULE_MAX_ANCHORS);
+    assert(clickers[winner].diagnostics.ds_twr_successes ==
+           UWB_RANGE_SCHEDULE_MAX_ANCHORS * clicker_cfgs[winner].samples_per_anchor);
     assert(clickers[winner].diagnostics.ds_twr_failures == 0u);
-    assert(clickers[winner].diagnostics.sample_order_count == 16u);
+    assert(clickers[winner].diagnostics.sample_order_count ==
+           UWB_RANGE_SCHEDULE_MAX_ANCHORS * clicker_cfgs[winner].samples_per_anchor);
 
-    for (uint8_t anchor_index = 0u; anchor_index < 8u; anchor_index++) {
+    for (uint8_t anchor_index = 0u; anchor_index < UWB_RANGE_SCHEDULE_MAX_ANCHORS; anchor_index++) {
         assert(samples_per_anchor[anchor_index] == 2u);
         assert(anchors[anchor_index].diagnostics.discovery_replies == 1u);
         assert(anchors[anchor_index].diagnostics.schedules == 1u);
@@ -1037,7 +1260,7 @@ static struct uwb_wake_claim_frame claim_for(uint64_t clicker_id,
         .discovery_starts_in_ms = 150u,
         .claimed_duration_ms = 400u,
         .min_anchor_count = 4u,
-        .max_anchor_count = 8u,
+        .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
         .nonce = UINT64_C(0xCAFEBABE00000000) + clicker_id,
         .flags = FLAG_COUNT_AS_CLICK,
     };
@@ -1142,6 +1365,7 @@ static void test_anchor_arbitrates_four_clickers_and_rejects_hidden_ds_twr(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 7u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     schedule.flags = FLAG_DIAGNOSTIC;
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1200u, 10u) ==
@@ -1421,6 +1645,7 @@ static void test_anchor_schedule_validation_and_presence_only_discovery(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 1u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     schedule.ranging_channel = config.ranging_channel;
     schedule.samples_per_anchor = 2u;
@@ -1464,6 +1689,46 @@ static void test_anchor_schedule_validation_and_presence_only_discovery(void)
     assert(anchor.uwb_wait_deadline_ms == 0u);
 }
 
+static void test_anchor_accepts_range_release_after_discovery_reply(void)
+{
+    struct uwb_anchor_session anchor;
+    struct uwb_anchor_config config = anchor_config(42u, 2u);
+    struct uwb_wake_claim_frame claim = claim_for(100u, 200u, 1u);
+    struct uwb_range_release_frame release = {
+        .network_id = claim.network_id,
+        .clicker_id = claim.clicker_id,
+        .click_event_id = claim.click_event_id,
+        .attempt_index = claim.attempt_index,
+        .nonce = claim.nonce,
+        .discovered_anchor_count = 3u,
+        .min_anchor_count = 4u,
+        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+        .flags = claim.flags,
+    };
+
+    assert(uwb_anchor_session_init(&anchor, &config) == PROTO_OK);
+    assert(uwb_anchor_accept_range_release(&anchor, &release) == PROTO_ERR_BUSY);
+    assert(uwb_anchor_accept_wake_claim(&anchor, &claim, 1000u, NULL) == PROTO_OK);
+    anchor_mark_discovery_replied(&anchor);
+    assert(anchor.state == UWB_ANCHOR_DISCOVERY_REPLIED);
+    assert(anchor.epoch.active);
+
+    release.flags = FLAG_DIAGNOSTIC;
+    assert(uwb_anchor_accept_range_release(&anchor, &release) == PROTO_ERR_MALFORMED);
+    assert(anchor.state == UWB_ANCHOR_DISCOVERY_REPLIED);
+    assert(anchor.epoch.active);
+
+    release.flags = claim.flags;
+    assert(uwb_anchor_accept_range_release(&anchor, &release) == PROTO_OK);
+    assert(anchor.state == UWB_ANCHOR_IDLE);
+    assert(!anchor.epoch.active);
+    assert(!anchor.scheduled);
+    assert(anchor.schedule_entry.anchor_id == 0u);
+    assert(anchor.reply_delay_us == 0u);
+    assert(anchor.expected_ranging_channel == 0u);
+    assert(anchor.uwb_wait_deadline_ms == 0u);
+}
+
 static void test_anchor_rejects_out_of_schedule_range_exchange_identity(void)
 {
     struct uwb_anchor_session anchor;
@@ -1492,6 +1757,7 @@ static void test_anchor_rejects_out_of_schedule_range_exchange_identity(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 7u;
     schedule.entries[0].sample_count = 2u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1200u, 10u) == PROTO_OK);
     identity = (struct uwb_range_exchange_identity){
@@ -1575,6 +1841,7 @@ static void test_anchor_accepts_schedule_sequence_range_ending_at_255(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 254u;
     schedule.entries[0].sample_count = 2u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1200u, 10u) == PROTO_OK);
     identity = (struct uwb_range_exchange_identity){
@@ -1638,6 +1905,7 @@ static void test_anchor_rejects_duplicate_discover_after_schedule(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 9u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1200u, 10u) == PROTO_OK);
     assert(anchor.state == UWB_ANCHOR_SCHEDULED);
@@ -1682,6 +1950,7 @@ static void test_anchor_rejects_new_claim_while_scheduled_until_epoch_expiry(voi
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 9u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1200u, 10u) == PROTO_OK);
     assert(anchor.state == UWB_ANCHOR_SCHEDULED);
@@ -1841,9 +2110,10 @@ static void test_anchor_deadline_covers_last_round_robin_sample(void)
         schedule.entries[i].seq = (uint8_t)(i + 1u);
         schedule.entries[i].sample_count = 2u;
     }
+    set_schedule_burst_defaults(&schedule, 4u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, now_ms, 10u) == PROTO_OK);
-    assert(anchor.uwb_wait_deadline_ms == now_ms + 3u + (7u * UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS) + 10u);
+    assert(anchor.uwb_wait_deadline_ms == now_ms + 3u + schedule.burst_window_ms + 10u);
 }
 
 static void test_anchor_rejects_wrong_schedule_identity_without_clearing_epoch(void)
@@ -1873,6 +2143,7 @@ static void test_anchor_rejects_wrong_schedule_identity_without_clearing_epoch(v
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 9u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, now_ms, 10u) ==
            PROTO_ERR_BUSY);
@@ -1949,6 +2220,7 @@ static void test_anchor_new_claim_clears_stale_schedule(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 9u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1300u, 10u) == PROTO_OK);
     identity = (struct uwb_range_exchange_identity){
@@ -2003,6 +2275,7 @@ static void test_anchor_abort_clears_epoch_and_scheduled_window(void)
     schedule.entries[0].anchor_id = config.anchor_id;
     schedule.entries[0].seq = 9u;
     schedule.entries[0].sample_count = 1u;
+    set_schedule_burst_defaults(&schedule, 1u);
 
     assert(uwb_anchor_accept_range_schedule(&anchor, &schedule, 1300u, 10u) == PROTO_OK);
     identity = (struct uwb_range_exchange_identity){
@@ -2052,6 +2325,8 @@ static void test_anchor_scan_accounting_and_timing_rejection(void)
     uwb_anchor_note_timing_rejection(&anchor);
     assert(uwb_anchor_note_range_result(&anchor, RANGE_OK) == PROTO_OK);
     assert(uwb_anchor_note_range_result(&anchor, RANGE_TIMING_INVALID) == PROTO_OK);
+    assert(uwb_anchor_note_range_result(&anchor, RANGE_STS_QUALITY_FAIL) ==
+           PROTO_ERR_MALFORMED);
     assert(uwb_anchor_note_range_result(&anchor, (enum range_status)99) ==
            PROTO_ERR_MALFORMED);
     uwb_anchor_note_mesh_packet(&anchor);
@@ -2108,8 +2383,9 @@ int main(void)
 {
     test_clicker_builds_wake_claim_and_rejects_bad_timing();
     test_clicker_contention_delay_bounds_and_diagnostics();
-    test_clicker_discovers_50_and_schedules_best_8_only();
-    test_clicker_discovers_sparse_50_slots_with_8_present();
+    test_clicker_discovers_50_and_schedules_best_6_only();
+    test_clicker_discovers_sparse_50_slots_with_6_present();
+    test_clicker_releases_replied_anchors_when_too_few_for_normal_click();
     test_clicker_rejects_success_history_overflow_config();
     test_clicker_serializes_failures_and_retries_without_counting_discovery();
     test_retry_ignores_already_successful_anchors();
@@ -2120,8 +2396,10 @@ int main(void)
     test_clicker_abort_last_attempt_fails_without_counting_ds_twr();
     test_failing_anchor_is_capped_and_others_continue();
     test_round_robin_sample_order_completes_before_success();
+    test_six_anchor_single_sample_runs_full_schedule_before_success();
+    test_four_anchor_click_uses_shared_200_ms_burst_window();
     test_complete_four_anchor_click_flow_reports_after_selected_ds_twr();
-    test_four_simultaneous_clickers_converge_across_eight_anchors();
+    test_four_simultaneous_clickers_converge_across_six_anchors();
     test_anchor_bad_first_wake_claim_does_not_create_epoch();
     test_anchor_arbitrates_four_clickers_and_rejects_hidden_ds_twr();
     test_anchor_rejects_foreign_claim_without_clearing_epoch();
@@ -2137,6 +2415,7 @@ int main(void)
     test_clicker_treats_non_present_replies_as_presence_only();
     test_clicker_retries_after_discovery_without_present_candidates();
     test_anchor_deadline_covers_last_round_robin_sample();
+    test_anchor_accepts_range_release_after_discovery_reply();
     test_anchor_rejects_wrong_schedule_identity_without_clearing_epoch();
     test_anchor_new_claim_clears_stale_schedule();
     test_anchor_abort_clears_epoch_and_scheduled_window();

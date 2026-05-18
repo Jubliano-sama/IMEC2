@@ -7,7 +7,9 @@ static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
 
 static bool range_status_valid(enum range_status status)
 {
-    return status >= RANGE_OK && status <= RANGE_TIMING_INVALID;
+    return status >= RANGE_OK &&
+           status <= RANGE_TIMING_INVALID &&
+           status != RANGE_STS_QUALITY_FAIL;
 }
 
 static int append_distance_samples(uint8_t *payload,
@@ -87,6 +89,130 @@ static int append_distance_samples(uint8_t *payload,
                             (uint8_t)sequence_timestamp_bytes);
 }
 
+static int append_diagnostics(uint8_t *payload,
+                              size_t payload_cap,
+                              size_t *offset,
+                              const struct range_report_diagnostics *diagnostics)
+{
+    int ret;
+
+    if (diagnostics == NULL) {
+        return PROTO_OK;
+    }
+    if ((diagnostics->clicker_diag_len > 0u && diagnostics->clicker_diag == NULL) ||
+        (diagnostics->anchor_diag_len > 0u && diagnostics->anchor_diag == NULL)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (diagnostics->clicker_diag_len > RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET ||
+        diagnostics->anchor_diag_len > RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_DIAG_STATUS_FLAGS,
+                         diagnostics->status_flags);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_BURST_ID,
+                         diagnostics->burst_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_EXCHANGE_STRIDE_US,
+                         diagnostics->exchange_stride_us);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_BURST_DURATION_MS,
+                         diagnostics->burst_duration_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_CLICK_LATENCY_MS,
+                         diagnostics->click_latency_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_UWB_AWAKE_TIME_US,
+                         diagnostics->uwb_awake_time_us);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_DIAG_BYTES_CAPTURED,
+                         diagnostics->diag_bytes_captured);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_DIAG_BYTES_TRANSMITTED,
+                         diagnostics->diag_bytes_transmitted);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_DIAG_BYTES_TRUNCATED,
+                         diagnostics->diag_bytes_truncated);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_DIAG_FRAMES_DROPPED,
+                         diagnostics->diag_frames_dropped);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_REPORT_FRAGMENT_COUNT,
+                         diagnostics->report_fragment_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_CHANNEL9_REPORT_LATENCY_MS,
+                         diagnostics->channel9_report_latency_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_GATEWAY_ACK_LATENCY_MS,
+                         diagnostics->gateway_ack_latency_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset,
+                        TLV_PHY_CONFIG_ID,
+                        diagnostics->phy_config_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (diagnostics->clicker_diag_len > 0u) {
+        ret = tlv_append_bytes(payload, payload_cap, offset,
+                               TLV_CLICKER_DIAG_BYTES,
+                               diagnostics->clicker_diag,
+                               diagnostics->clicker_diag_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    if (diagnostics->anchor_diag_len > 0u) {
+        ret = tlv_append_bytes(payload, payload_cap, offset,
+                               TLV_ANCHOR_DIAG_BYTES,
+                               diagnostics->anchor_diag,
+                               diagnostics->anchor_diag_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    return PROTO_OK;
+}
+
 int report_append_range_tlvs(uint8_t *payload,
                                   size_t payload_cap,
                                   size_t *offset,
@@ -132,6 +258,10 @@ int report_append_range_tlvs(uint8_t *payload,
         return ret;
     }
     ret = append_distance_samples(payload, payload_cap, offset, fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = append_diagnostics(payload, payload_cap, offset, fields->diagnostics);
     if (ret != PROTO_OK) {
         return ret;
     }

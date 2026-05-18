@@ -7,6 +7,7 @@ static void test_gateway_ack_is_end_to_end(void)
     uint8_t payload[16];
     size_t payload_len = 0u;
     struct proto_packet packet = {0};
+    struct mesh_event_timing parsed = {0};
 
     assert(mesh_append_requested_seq(payload, sizeof(payload), &payload_len, 101u) == PROTO_OK);
     assert(mesh_init_gateway_ack(&packet,
@@ -93,11 +94,182 @@ static void test_rejects_zero_sequence_numbers(void)
            PROTO_ERR_MALFORMED);
 }
 
+static struct mesh_event_params event_params(void)
+{
+    const struct mesh_event_params params = {
+        .event_interval_ms = 100u,
+        .event_window_ms = 20u,
+        .first_event_time_ms = 1000u,
+        .guard_ms = 4u,
+        .peer_clock_skew_estimate_ppm = 30,
+        .max_missed_events = 2u,
+        .supervision_timeout_ms = 300u,
+    };
+    return params;
+}
+
+static void test_channel9_timing_requires_channel5_contact(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_timing parsed = {0};
+    struct mesh_event_params params = event_params();
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    struct proto_packet packet = {0};
+
+    assert(mesh_event_timing_negotiate(&timing, &params, false) == PROTO_ERR_BUSY);
+    assert(!mesh_event_timing_usable(&timing, 1000u));
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(timing.mesh_channel == MESH_EVENT_CHANNEL);
+    assert(timing.mesh_channel == UWB_CHANNEL_MESH_PAYLOAD);
+    assert(timing.route_fresh);
+    assert(timing.timing_fresh);
+    assert(mesh_event_timing_usable(&timing, 1000u));
+
+    assert(mesh_append_event_timing_tlvs(payload, sizeof(payload), &payload_len, &timing) ==
+           PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_MESH_CHANNEL, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == UWB_CHANNEL_MESH_PAYLOAD);
+    assert(tlv_find(payload, payload_len, TLV_MESH_EVENT_WINDOW_MS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 2u);
+    assert(proto_get_u16_le(value) == params.event_window_ms);
+    assert(mesh_event_timing_from_tlvs(&parsed, payload, payload_len, false) ==
+           PROTO_ERR_BUSY);
+    assert(mesh_event_timing_from_tlvs(&parsed, payload, payload_len, true) == PROTO_OK);
+    assert(parsed.mesh_channel == MESH_EVENT_CHANNEL);
+    assert(parsed.event_interval_ms == timing.event_interval_ms);
+    assert(parsed.event_window_ms == timing.event_window_ms);
+    assert(parsed.next_event_time_ms == timing.next_event_time_ms);
+    assert(parsed.guard_ms == timing.guard_ms);
+    assert(parsed.peer_clock_skew_estimate_ppm == timing.peer_clock_skew_estimate_ppm);
+    assert(parsed.max_missed_events == timing.max_missed_events);
+    assert(parsed.supervision_timeout_ms == timing.supervision_timeout_ms);
+
+    assert(mesh_init_event_control(&packet,
+                                   MSG_MESH_EVENT_PROPOSE,
+                                   0x1111u,
+                                   0x2222u,
+                                   0x1234u,
+                                   1u,
+                                   (uint8_t)payload_len) == PROTO_OK);
+    assert(packet.msg_type == MSG_MESH_EVENT_PROPOSE);
+    assert(packet.flags == 0u);
+    assert(packet.ttl == MESH_DEFAULT_TTL);
+    assert(mesh_init_event_control(&packet,
+                                   MSG_MESH_DATA,
+                                   0x1111u,
+                                   0x2222u,
+                                   0x1234u,
+                                   1u,
+                                   0u) == PROTO_ERR_MALFORMED);
+}
+
+static void test_channel9_event_planner_reserves_channel5_scan(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    struct mesh_event_diagnostics diagnostics = {0};
+    struct mesh_channel5_requirements requirements = {
+        .next_required_scan_start_ms = 1015u,
+        .retune_guard_ms = 5u,
+    };
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_plan_channel9(&timing, &requirements, 1000u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_CLIP);
+    assert(plan.start_ms == 1000u);
+    assert(plan.end_ms == 1010u);
+    assert(plan.window_ms == 10u);
+    mesh_event_note_plan_action(&diagnostics, plan.action);
+    assert(diagnostics.mesh_deferrals == 1u);
+    assert(diagnostics.channel5_preemptions == 0u);
+
+    requirements.next_required_scan_start_ms = 1003u;
+    assert(mesh_event_plan_channel9(&timing, &requirements, 1000u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_SKIP_CH5_SCAN_GUARD);
+    assert(plan.window_ms == 0u);
+    mesh_event_note_plan_action(&diagnostics, plan.action);
+    assert(diagnostics.mesh_deferrals == 2u);
+    assert(diagnostics.channel5_preemptions == 1u);
+}
+
+static void test_channel5_activity_preempts_channel9_mesh(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    struct mesh_event_diagnostics diagnostics = {0};
+    const struct mesh_channel5_requirements click_requirements = {
+        .next_required_scan_start_ms = 1100u,
+        .active_until_ms = 1030u,
+        .retune_guard_ms = 5u,
+        .click_epoch_active = true,
+    };
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_plan_channel9(&timing, &click_requirements, 1000u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_DEFER_CH5_ACTIVE);
+    mesh_event_note_plan_action(&diagnostics, plan.action);
+    assert(diagnostics.mesh_deferrals == 1u);
+    assert(diagnostics.channel5_preemptions == 1u);
+
+    mesh_event_note_channel_switch(&diagnostics, false, true);
+    assert(diagnostics.channel_switches == 1u);
+    assert(diagnostics.pll_ready_failures == 1u);
+    assert(diagnostics.late_channel5_returns == 1u);
+}
+
+static void test_channel9_missed_events_fall_back_to_channel5_refresh(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    struct mesh_event_diagnostics diagnostics = {0};
+    const struct mesh_channel5_requirements requirements = {
+        .next_required_scan_start_ms = 1200u,
+        .retune_guard_ms = 5u,
+    };
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    mesh_event_note_success(&timing, 1000u);
+    assert(timing.event_counter == 1u);
+    assert(timing.next_event_time_ms == 1100u);
+    assert(mesh_event_timing_usable(&timing, 1100u));
+
+    mesh_event_note_missed(&timing, &diagnostics);
+    assert(timing.missed_event_count == 1u);
+    assert(diagnostics.ch9_event_misses == 1u);
+    assert(!timing.fallback_required);
+
+    mesh_event_note_missed(&timing, &diagnostics);
+    assert(timing.missed_event_count == 2u);
+    assert(diagnostics.ch9_event_misses == 2u);
+    assert(timing.fallback_required);
+    assert(!mesh_event_timing_usable(&timing, 1200u));
+
+    assert(mesh_event_plan_channel9(&timing, &requirements, 1200u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_REFRESH_CONTACT_CH5);
+
+    mesh_event_note_report_latency(&diagnostics, 42u);
+    mesh_event_note_report_latency(&diagnostics, 8u);
+    assert(diagnostics.ch9_report_latency_ms == 50u);
+}
+
 int main(void)
 {
     test_gateway_ack_is_end_to_end();
     test_command_and_result_are_acknowledged_not_clicks();
     test_rejects_invalid_ids();
     test_rejects_zero_sequence_numbers();
+    test_channel9_timing_requires_channel5_contact();
+    test_channel9_event_planner_reserves_channel5_scan();
+    test_channel5_activity_preempts_channel9_mesh();
+    test_channel9_missed_events_fall_back_to_channel5_refresh();
     return 0;
 }

@@ -175,6 +175,9 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
                                      uint16_t first_poll_delay_ms,
                                      uint16_t poll_spacing_ms,
                                      struct uwb_range_schedule_frame *schedule);
+int uwb_clicker_build_range_release(struct uwb_clicker_session *session,
+                                    uint8_t reason,
+                                    struct uwb_range_release_frame *release);
 int uwb_clicker_next_range_step(struct uwb_clicker_session *session,
                                 struct uwb_range_step *step);
 int uwb_clicker_record_range_result(struct uwb_clicker_session *session,
@@ -225,6 +228,8 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
                                      const struct uwb_range_schedule_frame *schedule,
                                      uint32_t now_ms,
                                      uint16_t guard_ms);
+int uwb_anchor_accept_range_release(struct uwb_anchor_session *session,
+                                    const struct uwb_range_release_frame *release);
 bool uwb_anchor_accepts_range_exchange(const struct uwb_anchor_session *session,
                                        const struct uwb_range_exchange_identity *identity);
 int uwb_anchor_range_round_index(const struct uwb_anchor_session *session,

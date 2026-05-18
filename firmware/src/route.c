@@ -107,31 +107,10 @@ int route_select_best(struct route_table *table)
 
 uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t max_age_ms)
 {
-    uint8_t expired = 0u;
-
-    if (table == NULL || max_age_ms == 0u) {
-        return 0u;
-    }
-
-    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
-        struct route_candidate *candidate = &table->candidates[i];
-        uint32_t age_ms;
-
-        if (!candidate->valid) {
-            continue;
-        }
-
-        age_ms = now_ms - candidate->last_seen_ms;
-        if (age_ms > max_age_ms) {
-            candidate->valid = false;
-            expired++;
-        }
-    }
-
-    if (expired > 0u) {
-        (void)route_select_best(table);
-    }
-    return expired;
+    (void)table;
+    (void)now_ms;
+    (void)max_age_ms;
+    return 0u;
 }
 
 int route_upsert_candidate(struct route_table *table,

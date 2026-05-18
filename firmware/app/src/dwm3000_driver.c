@@ -60,6 +60,9 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
 #define FINAL_RX_TIMEOUT_MS 8u
 #define REPORT_RX_TIMEOUT_UUS 2500u
 #define REPORT_RX_TIMEOUT_MS 12u
+#define CLICKER_DIAG_TX_TIMEOUT_MS 4u
+#define CLICKER_DIAG_RX_TIMEOUT_MS 4u
+#define CLICKER_DIAG_COMPACT_BYTES_LEN 12u
 /*
  * A zero preamble-detect timeout disables the preamble hunt timeout. That is
  * acceptable on optimized DS-TWR delayed-RX legs because the receiver is armed
@@ -67,7 +70,7 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
  */
 #define IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC 5u
 #define DELAYED_RX_PREAMBLE_TIMEOUT_PAC 0u
-#define DEFAULT_RESPONDER_WINDOW_MS 50u
+#define DEFAULT_RESPONDER_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define DWM3000_SLEEP_MODE DWT_CONFIG
 #define DWM3000_SLEEP_WAKE_FLAGS (DWT_PRES_SLEEP | DWT_WAKE_WUP | DWT_SLP_EN)
 #define DWM3000_IRQ_EVENT_MASK (SYS_ENABLE_LO_TXFRS_ENABLE_BIT_MASK | \
@@ -78,15 +81,18 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
                                 SYS_ENABLE_LO_RXFCE_ENABLE_BIT_MASK | \
                                 SYS_ENABLE_LO_RXFSL_ENABLE_BIT_MASK | \
                                 SYS_ENABLE_LO_RXSTO_ENABLE_BIT_MASK)
+#define DWM3000_FIRST_PATH_NTM_LOW 12u
 
 BUILD_ASSERT(DS_TWR_RX_PATH_DELTA_US == 76u,
              "Update the DS-TWR equal-reply timing calculation when UWB frame sizes change");
 BUILD_ASSERT(DS_TWR_REPLY_DLY_UUS == UWB_DS_TWR_REPLY_DELAY_US,
              "UWB schedule validation must match the fixed DWM3000 DS-TWR reply delay");
+BUILD_ASSERT(DWM3000_FIRST_PATH_NTM_LOW <= IP_CONFIG_LO_IP_NTM_BIT_MASK,
+             "DWM3000 first-path threshold must fit in IP_CONFIG_LO.IP_NTM");
 
 static dwt_config_t default_config = {
     5,
-    DWT_PLEN_64,
+    DWT_PLEN_1024,
     DWT_PAC8,
     9,
     9,
@@ -94,8 +100,8 @@ static dwt_config_t default_config = {
     DWT_BR_850K,
     DWT_PHRMODE_STD,
     DWT_PHRRATE_STD,
-    65,
-    DWT_STS_MODE_1 | DWT_STS_MODE_SDC,
+    1025,
+    DWT_STS_MODE_OFF,
     DWT_STS_LEN_64,
     DWT_PDOA_M0,
 };
@@ -103,15 +109,15 @@ static dwt_config_t default_config = {
 static dwt_config_t wake_config = {
     5,
     DWT_PLEN_1024,
-    DWT_PAC32,
+    DWT_PAC8,
     9,
     9,
     1,
     DWT_BR_850K,
     DWT_PHRMODE_STD,
     DWT_PHRRATE_STD,
-    1057,
-    DWT_STS_MODE_1 | DWT_STS_MODE_SDC,
+    1025,
+    DWT_STS_MODE_OFF,
     DWT_STS_LEN_64,
     DWT_PDOA_M0,
 };
@@ -133,6 +139,18 @@ static bool radio_awake;
 static enum dwm3000_phy_mode active_phy_mode;
 
 static void clear_all_events(void);
+
+static void configure_first_path_sensitivity(void)
+{
+    /*
+     * Use the lower recommended CIA first-path threshold. It can increase
+     * outliers, but the ranging/report path keeps sample-level rejection.
+     */
+    dwt_modify8bitoffsetreg(IP_CONFIG_LO_ID,
+                            0,
+                            (uint8_t)~IP_CONFIG_LO_IP_NTM_BIT_MASK,
+                            DWM3000_FIRST_PATH_NTM_LOW);
+}
 
 static uint16_t short_addr_from_id(uint64_t device_id)
 {
@@ -216,6 +234,7 @@ static int apply_radio_config(const dwt_config_t *config,
         return -EIO;
     }
 
+    configure_first_path_sensitivity();
     dwt_configuretxrf(&default_txconfig);
     dwt_configciadiag(DW_CIA_DIAG_LOG_ALL);
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
@@ -252,6 +271,7 @@ static int wake_configured_radio(void)
     }
 
     dwt_restoreconfig();
+    configure_first_path_sensitivity();
     dwt_setinterrupt(DWM3000_IRQ_EVENT_MASK, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
     radio_awake = true;
@@ -379,25 +399,6 @@ static enum dwm3000_rx_failure status_to_rx_failure(uint32_t status)
         return DWM3000_RX_FAILURE_CRC_OR_PHY;
     }
     return DWM3000_RX_FAILURE_NONE;
-}
-
-static int check_sts_quality(uint8_t *quality)
-{
-    int16_t sts_quality;
-    int ret;
-
-    ret = dwt_readstsquality(&sts_quality);
-    if (ret < 0) {
-        if (quality != NULL) {
-            *quality = 0u;
-        }
-        return -EBADMSG;
-    }
-
-    if (quality != NULL) {
-        *quality = sts_quality >= 100 ? 100u : (uint8_t)sts_quality;
-    }
-    return 0;
 }
 
 static uint8_t floor_log2_u32(uint32_t value)
@@ -584,6 +585,20 @@ static int decode_report_frame(const uint8_t *buffer, size_t frame_len,
     return ret == PROTO_OK ? 0 : -EBADMSG;
 }
 
+static int decode_clicker_diag_frame(const uint8_t *buffer, size_t frame_len,
+                                     struct uwb_clicker_diag_frame *frame)
+{
+    int ret;
+
+    ret = uwb_decode_clicker_diag(buffer, frame_len, frame);
+    if (ret == PROTO_OK) {
+        return 0;
+    }
+
+    ret = uwb_decode_clicker_diag(buffer, payload_len_without_fcs(frame_len), frame);
+    return ret == PROTO_OK ? 0 : -EBADMSG;
+}
+
 static int write_tx_frame(const uint8_t *frame, size_t frame_len)
 {
     if (frame == NULL || frame_len > UINT16_MAX) {
@@ -748,10 +763,8 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     if (rx_timestamp != NULL) {
         *rx_timestamp = read_rx_timestamp_u64();
     }
-    if (check_sts_quality(quality) < 0) {
-        clear_status(SYS_STATUS_RXFCG_BIT_MASK);
-        dwt_forcetrxoff();
-        return -EBADMSG;
+    if (quality != NULL) {
+        *quality = 100u;
     }
     if (capture_rsl) {
         read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled);
@@ -799,11 +812,8 @@ static int receive_response(const struct dwm3000_range_request *request,
     }
 
     *resp_rx_ts = read_rx_timestamp_u64();
-    if (check_sts_quality(quality) < 0) {
-        clear_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_TXFRS_BIT_MASK);
-        dwt_forcetrxoff();
-        *status_out = RANGE_STS_QUALITY_FAIL;
-        return -EBADMSG;
+    if (quality != NULL) {
+        *quality = 100u;
     }
     if (capture_rsl) {
         read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled);
@@ -879,6 +889,166 @@ static int receive_report(const struct dwm3000_range_request *request,
     result->rsl_sampled = report.rsl_dbm != 0;
     result->status = report.status;
     return report.status == RANGE_OK ? 0 : -EIO;
+}
+
+static bool clicker_diag_matches_poll(const struct uwb_clicker_diag_frame *diag,
+                                      const struct uwb_range_header *poll,
+                                      uint64_t local_anchor_id)
+{
+    if (diag == NULL || poll == NULL) {
+        return false;
+    }
+
+    return diag->header.seq == poll->seq &&
+           diag->header.round_index == poll->round_index &&
+           diag->header.network_id == poll->network_id &&
+           diag->header.session_id == poll->session_id &&
+           diag->header.session_nonce == poll->session_nonce &&
+           diag->header.initiator_short_addr == poll->initiator_short_addr &&
+           diag->header.responder_short_addr == short_addr_from_id(local_anchor_id) &&
+           diag->header.flags == poll->flags &&
+           diag->header.initiator_id == poll->initiator_id &&
+           diag->header.responder_id == local_anchor_id;
+}
+
+static void store_clicker_diag_result(struct dwm3000_range_result *result,
+                                      const struct uwb_clicker_diag_frame *diag)
+{
+    uint8_t raw_len;
+    uint8_t copy_len;
+
+    if (result == NULL || diag == NULL) {
+        return;
+    }
+
+    raw_len = diag->diag_len;
+    copy_len = raw_len;
+    if (copy_len > UWB_CLICKER_DIAG_MAX_BYTES - 15u) {
+        copy_len = UWB_CLICKER_DIAG_MAX_BYTES - 15u;
+    }
+
+    proto_put_u32_le(&result->clicker_diag[0], diag->final_tx_ts_32);
+    proto_put_u32_le(&result->clicker_diag[4], diag->status_flags);
+    proto_put_u32_le(&result->clicker_diag[8], diag->irq_latency_us);
+    result->clicker_diag[12] = diag->resp_quality;
+    result->clicker_diag[13] = (uint8_t)diag->resp_rsl_dbm;
+    result->clicker_diag[14] = raw_len;
+    if (copy_len > 0u) {
+        memcpy(&result->clicker_diag[15], diag->diag_bytes, copy_len);
+    }
+    result->clicker_diag_len = 15u + copy_len;
+    result->clicker_diag_status_flags = diag->status_flags;
+    result->clicker_diag_irq_latency_us = diag->irq_latency_us;
+    result->clicker_diag_received = true;
+    result->clicker_diag_truncated = copy_len != raw_len;
+}
+
+static int send_clicker_diag(const struct dwm3000_range_request *request,
+                             const struct uwb_response_frame *response,
+                             const struct uwb_final_frame *final,
+                             uint64_t resp_rx_ts,
+                             uint8_t resp_quality,
+                             int8_t resp_rsl_dbm,
+                             bool resp_rsl_sampled)
+{
+    struct uwb_clicker_diag_frame diag = {0};
+    uint8_t tx_buffer[UWB_CLICKER_DIAG_MAX_LEN];
+    size_t tx_len = 0u;
+    int ret;
+
+    if (request == NULL || response == NULL || final == NULL) {
+        return -EINVAL;
+    }
+
+    diag.header.type = MSG_UWB_CLICKER_DIAG;
+    diag.header.seq = request->seq;
+    diag.header.round_index = request->round_index;
+    diag.header.network_id = request->network_id;
+    diag.header.session_id = request->session_id;
+    diag.header.session_nonce = request->session_nonce;
+    diag.header.initiator_short_addr = short_addr_from_id(request->initiator_id);
+    diag.header.responder_short_addr = response->header.responder_short_addr;
+    diag.header.flags = request->flags;
+    diag.header.initiator_id = request->initiator_id;
+    diag.header.responder_id = response->header.responder_id;
+    diag.final_tx_ts_32 = final->final_tx_ts_32;
+    diag.status_flags = UWB_CLICKER_DIAG_STATUS_RESP_RX_PRESENT |
+                        UWB_CLICKER_DIAG_STATUS_COMPACT_BYTES_PRESENT;
+    if (resp_rsl_sampled) {
+        diag.status_flags |= UWB_CLICKER_DIAG_STATUS_RESP_RSL_PRESENT;
+    }
+    diag.irq_latency_us = 0u;
+    diag.resp_quality = resp_quality;
+    diag.resp_rsl_dbm = resp_rsl_dbm;
+    diag.diag_len = CLICKER_DIAG_COMPACT_BYTES_LEN;
+    proto_put_u32_le(&diag.diag_bytes[0], (uint32_t)resp_rx_ts);
+    proto_put_u32_le(&diag.diag_bytes[4], response->poll_rx_ts_32);
+    proto_put_u32_le(&diag.diag_bytes[8], response->resp_tx_ts_32);
+
+    ret = uwb_encode_clicker_diag(&diag, tx_buffer, sizeof(tx_buffer), &tx_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
+    if (ret < 0) {
+        return ret;
+    }
+    return wait_tx_complete(CLICKER_DIAG_TX_TIMEOUT_MS);
+}
+
+static int receive_clicker_diag(const struct uwb_range_header *poll,
+                                uint64_t local_anchor_id,
+                                struct dwm3000_range_result *result)
+{
+    struct uwb_clicker_diag_frame diag;
+    uint8_t rx_buffer[UWB_CLICKER_DIAG_MAX_LEN + FCS_LEN];
+    uint32_t status = 0u;
+    size_t frame_len = 0u;
+    int ret;
+
+    if (poll == NULL) {
+        return -EINVAL;
+    }
+
+    dwt_setrxaftertxdelay(0u);
+    dwt_setrxtimeout(0u);
+    dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
+    clear_all_events();
+    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+        return -EIO;
+    }
+
+    ret = receive_frame(CLICKER_DIAG_RX_TIMEOUT_MS,
+                        &status,
+                        rx_buffer,
+                        sizeof(rx_buffer),
+                        &frame_len,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        false);
+    if (ret < 0) {
+        if (result != NULL) {
+            result->clicker_diag_dropped = true;
+        }
+        return ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
+    }
+
+    memset(&diag, 0, sizeof(diag));
+    ret = decode_clicker_diag_frame(rx_buffer, frame_len, &diag);
+    if (ret < 0 || !clicker_diag_matches_poll(&diag, poll, local_anchor_id)) {
+        if (result != NULL) {
+            result->clicker_diag_dropped = true;
+        }
+        return -EBADMSG;
+    }
+
+    store_clicker_diag_result(result, &diag);
+    return 0;
 }
 
 static int compute_distance_mm(const struct uwb_final_frame *final,
@@ -974,7 +1144,7 @@ int dwm3000_driver_configure_default(void)
     if (ret < 0) {
         return ret;
     }
-    LOG_INF("DWM3000 configured for channel 5 STS-SDC DS-TWR at 850 kbps, %u Hz SPI; waiting on IRQ",
+    LOG_INF("DWM3000 configured for channel 5 1024-symbol no-STS DS-TWR at 850 kbps, %u Hz SPI; waiting on IRQ",
             (unsigned int)dwm3000_port_current_spi_hz());
     return 0;
 }
@@ -988,7 +1158,26 @@ int dwm3000_driver_configure_wake_mode(void)
         return ret;
     }
 
-    LOG_DBG("DWM3000 configured for UWB wake/discovery long-preamble mode");
+    LOG_DBG("DWM3000 configured for UWB wake/discovery 1024-symbol mode");
+    return 0;
+}
+
+int dwm3000_driver_configure_mesh_payload_mode(void)
+{
+    dwt_config_t config = default_config;
+    int ret;
+
+    config.chan = UWB_CHANNEL_MESH_PAYLOAD;
+    ret = ensure_current_phy_or_range();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = apply_radio_config(&config, DWM3000_PHY_RANGE);
+    if (ret < 0) {
+        return ret;
+    }
+    LOG_INF("DWM3000 configured for channel %u 1024-symbol no-STS mesh payload at 850 kbps",
+            UWB_CHANNEL_MESH_PAYLOAD);
     return 0;
 }
 
@@ -1099,9 +1288,7 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
         if (failure != NULL) {
             *failure = status_to_rx_failure(status);
             if (*failure == DWM3000_RX_FAILURE_NONE) {
-                if (ret == -EBADMSG) {
-                    *failure = DWM3000_RX_FAILURE_STS_QUALITY;
-                } else if (ret == -EMSGSIZE) {
+                if (ret == -EMSGSIZE) {
                     *failure = DWM3000_RX_FAILURE_BAD_FRAME;
                 }
             }
@@ -1138,7 +1325,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     struct uwb_response_frame response;
     struct uwb_final_frame final;
     struct uwb_range_header poll_header;
-    uint8_t tx_buffer[UWB_FINAL_LEN];
+    uint8_t tx_buffer[UWB_CLICKER_DIAG_MAX_LEN];
     size_t tx_len;
     uint64_t poll_tx_ts;
     uint64_t resp_rx_ts;
@@ -1267,6 +1454,22 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     }
 
     ret = receive_report(request, response.header.responder_id, result);
+    if (ret == 0 && result->status == RANGE_OK) {
+        int diag_ret = send_clicker_diag(request,
+                                         &response,
+                                         &final,
+                                         resp_rx_ts,
+                                         quality,
+                                         rsl_dbm,
+                                         false);
+
+        if (diag_ret < 0) {
+            LOG_WRN("UWB clicker diagnostic TX failed: anchor=0x%016llx seq=%u ret=%d",
+                    (unsigned long long)response.header.responder_id,
+                    request->seq,
+                    diag_ret);
+        }
+    }
     if (ret < 0 && result->status == RANGE_OK) {
         result->status = RANGE_INTERNAL_ERROR;
     }
@@ -1337,8 +1540,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
         if (result != NULL) {
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
-            result->status = ret == -EBADMSG ? RANGE_STS_QUALITY_FAIL :
-                             ret == -EMSGSIZE ? RANGE_BAD_FRAME :
+            result->status = ret == -EMSGSIZE ? RANGE_BAD_FRAME :
                              RANGE_RX_ERROR;
         }
         return -EAGAIN;
@@ -1494,6 +1696,17 @@ static int responder_poll_once(uint64_t local_anchor_id,
     ret = wait_tx_complete(REPORT_RX_TIMEOUT_MS);
     if (ret < 0) {
         return ret;
+    }
+
+    if (report_status == RANGE_OK) {
+        int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
+
+        if (diag_ret < 0) {
+            LOG_DBG("UWB clicker diagnostic not received: short=0x%04x seq=%u ret=%d",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    diag_ret);
+        }
     }
 
     LOG_INF("UWB report sent to short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",

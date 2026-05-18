@@ -1,6 +1,7 @@
 #ifndef MESH_RELAY_H
 #define MESH_RELAY_H
 
+#include "mesh.h"
 #include "protocol.h"
 #include "route.h"
 
@@ -15,8 +16,8 @@ extern "C" {
 #define MESH_BROADCAST_ID 0u
 #define MESH_RELAY_DOWNLINK_ROUTES 16u
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
+#define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
-#define MESH_RELAY_DOWNLINK_MAX_AGE_MS ROUTE_CANDIDATE_MAX_AGE_MS
 
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,
@@ -46,6 +47,7 @@ struct mesh_outbound {
     struct proto_packet packet;
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     uint8_t payload_len;
+    uint8_t radio_channel;
     uint64_t next_hop_id;
 };
 
@@ -70,11 +72,18 @@ struct mesh_duplicate_entry {
     bool valid;
 };
 
+struct mesh_relay_event_timing_entry {
+    uint64_t next_hop_id;
+    struct mesh_event_timing timing;
+    bool valid;
+};
+
 struct mesh_pending_tx {
     enum mesh_relay_tx_state state;
     struct proto_packet packet;
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     uint8_t payload_len;
+    uint8_t radio_channel;
     uint64_t next_hop_id;
     uint32_t gateway_ack_deadline_ms;
 };
@@ -86,6 +95,7 @@ struct mesh_relay {
     struct route_table upstream;
     struct mesh_downlink_entry downlinks[MESH_RELAY_DOWNLINK_ROUTES];
     struct mesh_duplicate_entry duplicates[MESH_RELAY_DUP_CACHE_SIZE];
+    struct mesh_relay_event_timing_entry event_timings[MESH_RELAY_EVENT_TIMINGS];
     struct mesh_pending_tx pending;
     uint8_t duplicate_next;
     uint16_t next_seq;
@@ -111,6 +121,16 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
+int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
+                                   uint64_t next_hop_id,
+                                   const struct mesh_event_timing *timing);
+void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
+                                      uint64_t next_hop_id);
+int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
+                                      uint64_t next_hop_id,
+                                      const struct mesh_channel5_requirements *requirements,
+                                      uint32_t now_ms,
+                                      struct mesh_event_plan *plan);
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms);
 int mesh_relay_build_route_request(struct mesh_relay *relay,
                                    uint64_t target_id,
@@ -128,9 +148,22 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
                         size_t payload_len,
                         uint32_t now_ms,
                         struct mesh_outbound *out);
+int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
+                                 const struct proto_packet *packet,
+                                 const uint8_t *payload,
+                                 size_t payload_len,
+                                 const struct mesh_channel5_requirements *requirements,
+                                 uint32_t now_ms,
+                                 struct mesh_event_plan *plan,
+                                 struct mesh_outbound *out);
+void mesh_relay_note_channel9_success(struct mesh_relay *relay,
+                                      uint64_t next_hop_id,
+                                      uint32_t event_start_ms);
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);
+void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
+                                      uint64_t dst_id);
 int mesh_relay_tick(struct mesh_relay *relay,
                     uint32_t now_ms,
                     struct mesh_relay_result *result);

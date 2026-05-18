@@ -34,6 +34,33 @@ static struct route_candidate direct_gateway_route(uint64_t next_hop_id,
     return candidate;
 }
 
+static struct mesh_event_params channel9_params(uint32_t first_event_time_ms)
+{
+    const struct mesh_event_params params = {
+        .event_interval_ms = 100u,
+        .event_window_ms = 20u,
+        .first_event_time_ms = first_event_time_ms,
+        .guard_ms = 5u,
+        .peer_clock_skew_estimate_ppm = 20,
+        .max_missed_events = 2u,
+        .supervision_timeout_ms = 500u,
+    };
+    return params;
+}
+
+static struct mesh_channel5_requirements clear_channel5_requirements(void)
+{
+    const struct mesh_channel5_requirements requirements = {
+        .next_required_scan_start_ms = 0u,
+        .active_until_ms = 0u,
+        .retune_guard_ms = 5u,
+        .click_epoch_active = false,
+        .discovery_active = false,
+        .ranging_active = false,
+    };
+    return requirements;
+}
+
 static void seed_downlink(struct mesh_relay *relay,
                           uint64_t target_id,
                           uint64_t next_hop_id,
@@ -460,7 +487,7 @@ static void test_busy_survey_reach_broadcast_still_delivers_local(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
 }
 
-static void test_downlink_routes_expire_when_not_refreshed(void)
+static void test_downlink_routes_survive_age_until_delivery_failure(void)
 {
     struct mesh_relay gateway;
     uint64_t next_hop_id = 0u;
@@ -470,7 +497,11 @@ static void test_downlink_routes_expire_when_not_refreshed(void)
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_OK);
     assert(next_hop_id == ANCHOR_B);
 
-    assert(mesh_relay_expire_routes(&gateway, 31001u) == 1u);
+    assert(mesh_relay_expire_routes(&gateway, 31001u) == 0u);
+    assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_OK);
+    assert(next_hop_id == ANCHOR_B);
+
+    mesh_relay_note_delivery_failure(&gateway, ANCHOR_A);
     assert(mesh_relay_find_downlink(&gateway, ANCHOR_A) == NULL);
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_ERR_NOT_FOUND);
 }
@@ -488,7 +519,7 @@ static void test_downlink_route_selection_uses_weighted_quality(void)
     assert(next_hop_id == ANCHOR_B);
 }
 
-static void test_start_tx_rejects_stale_upstream_route(void)
+static void test_start_tx_accepts_aged_upstream_route_until_failures(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 32u, 90u);
@@ -505,7 +536,14 @@ static void test_start_tx_rejects_stale_upstream_route(void)
                                payload,
                                sizeof(payload),
                                31001u,
-                               &tx) == PROTO_ERR_NOT_FOUND);
+                               &tx) == PROTO_OK);
+    assert(route_selected(&relay.upstream) != NULL);
+
+    mesh_relay_cancel_tx(&relay);
+    mesh_relay_note_delivery_failure(&relay, GATEWAY);
+    mesh_relay_note_delivery_failure(&relay, GATEWAY);
+    assert(route_selected(&relay.upstream) != NULL);
+    mesh_relay_note_delivery_failure(&relay, GATEWAY);
     assert(route_selected(&relay.upstream) == NULL);
 }
 
@@ -1680,6 +1718,140 @@ static void test_reactive_gateway_discovers_downlink_anchor(void)
     assert(command_tx.next_hop_id == ANCHOR_B);
 }
 
+static void test_channel9_report_tx_requires_negotiated_event(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 70u, 90u);
+    struct proto_packet report;
+    struct mesh_outbound tx;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_plan plan = {0};
+    struct mesh_channel5_requirements requirements = clear_channel5_requirements();
+    struct mesh_event_params params = channel9_params(2000u);
+    uint8_t payload[1] = {0x77u};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 70u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&report,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    700u,
+                                    1u,
+                                    sizeof(payload)) == PROTO_OK);
+
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        2000u,
+                                        &plan,
+                                        &tx) == PROTO_ERR_STALE);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        1999u,
+                                        &plan,
+                                        &tx) == PROTO_ERR_BUSY);
+    assert(plan.action == MESH_EVENT_PLAN_WAIT);
+
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        2000u,
+                                        &plan,
+                                        &tx) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(tx.next_hop_id == GATEWAY);
+    assert(tx.radio_channel == MESH_EVENT_CHANNEL);
+    assert(mesh_relay_tx_active(&relay));
+}
+
+static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay gateway;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 71u, 90u);
+    struct proto_packet report;
+    struct mesh_outbound tx;
+    struct mesh_relay_result gateway_result;
+    struct mesh_relay_result origin_result;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_plan plan = {0};
+    struct mesh_channel5_requirements requirements = clear_channel5_requirements();
+    struct mesh_event_params params = channel9_params(3000u);
+    uint8_t payload[1] = {0x78u};
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 71u);
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 71u);
+    assert(route_upsert_candidate(&origin.upstream, &route) == PROTO_OK);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&origin, GATEWAY, &timing) == PROTO_OK);
+
+    assert(report_init_click_packet(&report,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    710u,
+                                    2u,
+                                    sizeof(payload)) == PROTO_OK);
+    assert(mesh_relay_start_channel9_tx(&origin,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        3000u,
+                                        &plan,
+                                        &tx) == PROTO_OK);
+    assert(tx.radio_channel == MESH_EVENT_CHANNEL);
+    mesh_relay_note_channel9_success(&origin, tx.next_hop_id, plan.start_ms);
+    mesh_relay_note_tx_sent(&origin, &tx, 3000u);
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &tx.packet,
+                                tx.payload,
+                                tx.payload_len,
+                                ANCHOR_A,
+                                90u,
+                                3010u,
+                                &gateway_result) == PROTO_OK);
+    assert(has_action(&gateway_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(gateway_result.gateway_ack.next_hop_id == ANCHOR_A);
+
+    assert(mesh_relay_require_channel9_event(&gateway,
+                                             gateway_result.gateway_ack.next_hop_id,
+                                             &requirements,
+                                             3010u,
+                                             &plan) == PROTO_ERR_STALE);
+    params = channel9_params(3010u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&gateway, ANCHOR_A, &timing) == PROTO_OK);
+    assert(mesh_relay_require_channel9_event(&gateway,
+                                             gateway_result.gateway_ack.next_hop_id,
+                                             &requirements,
+                                             3010u,
+                                             &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+
+    assert(mesh_relay_handle_rx(&origin,
+                                &gateway_result.gateway_ack.packet,
+                                gateway_result.gateway_ack.payload,
+                                gateway_result.gateway_ack.payload_len,
+                                GATEWAY,
+                                90u,
+                                3020u,
+                                &origin_result) == PROTO_OK);
+    assert(has_action(&origin_result, MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED));
+    assert(!mesh_relay_tx_active(&origin));
+}
+
 int main(void)
 {
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
@@ -1690,9 +1862,9 @@ int main(void)
     test_survey_reach_broadcast_delivers_and_floods();
     test_time_sync_broadcast_delivers_and_floods();
     test_busy_survey_reach_broadcast_still_delivers_local();
-    test_downlink_routes_expire_when_not_refreshed();
+    test_downlink_routes_survive_age_until_delivery_failure();
     test_downlink_route_selection_uses_weighted_quality();
-    test_start_tx_rejects_stale_upstream_route();
+    test_start_tx_accepts_aged_upstream_route_until_failures();
     test_downlink_next_hop_send_completes_immediately();
     test_downlink_send_refreshes_route_age();
     test_ttl_zero_packet_is_dropped_without_ack();
@@ -1712,5 +1884,7 @@ int main(void)
     test_malformed_route_reply_does_not_poison_upstream_route();
     test_reactive_route_and_report_flow_over_uwb_mesh_frames();
     test_reactive_gateway_discovers_downlink_anchor();
+    test_channel9_report_tx_requires_negotiated_event();
+    test_channel9_report_delivery_and_gateway_ack_require_events();
     return 0;
 }

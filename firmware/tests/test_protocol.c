@@ -118,7 +118,11 @@ static void test_packet_rejects_retired_and_compact_only_message_types(void)
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
     packet.msg_type = MSG_UWB_WAKE_CLAIM;
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = MSG_UWB_RANGE_RELEASE;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
     packet.msg_type = MSG_UWB_POLL;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = MSG_UWB_CLICKER_DIAG;
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
     packet.msg_type = 0x33u;
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
@@ -139,12 +143,71 @@ static void test_packet_rejects_retired_and_compact_only_message_types(void)
                                &decoded_payload,
                                &decoded_payload_len) == PROTO_ERR_MALFORMED);
 
+    set_packet_type_and_refresh_crc(encoded, encoded_len, MSG_UWB_RANGE_RELEASE);
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_ERR_MALFORMED);
+
+    set_packet_type_and_refresh_crc(encoded, encoded_len, MSG_UWB_CLICKER_DIAG);
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_ERR_MALFORMED);
+
     set_packet_type_and_refresh_crc(encoded, encoded_len, 0x33u);
     assert(proto_packet_decode(encoded,
                                encoded_len,
                                &decoded,
                                &decoded_payload,
                                &decoded_payload_len) == PROTO_ERR_MALFORMED);
+}
+
+static void test_mesh_event_packet_types_round_trip(void)
+{
+    const uint8_t payload[] = {
+        TLV_MESH_CHANNEL, 1u, 9u,
+        TLV_MESH_EVENT_WINDOW_MS, 2u, 20u, 0u,
+    };
+    uint8_t encoded[PACKET_MAX_LEN];
+    size_t encoded_len = 0u;
+    const uint8_t *decoded_payload = NULL;
+    size_t decoded_payload_len = 0u;
+    const uint8_t event_types[] = {
+        MSG_MESH_EVENT_PROPOSE,
+        MSG_MESH_EVENT_ACCEPT,
+        MSG_MESH_EVENT_UPDATE,
+        MSG_MESH_EVENT_END,
+    };
+
+    for (size_t i = 0u; i < sizeof(event_types); i++) {
+        struct proto_packet packet = {
+            .msg_type = event_types[i],
+            .src_id = 1u,
+            .dst_id = 2u,
+            .session_id = 3u,
+            .seq = (uint16_t)(4u + i),
+            .ttl = 1u,
+            .payload_len = sizeof(payload),
+        };
+        struct proto_packet decoded = {0};
+
+        assert(proto_packet_encode(&packet,
+                                   payload,
+                                   encoded,
+                                   sizeof(encoded),
+                                   &encoded_len) == PROTO_OK);
+        assert(proto_packet_decode(encoded,
+                                   encoded_len,
+                                   &decoded,
+                                   &decoded_payload,
+                                   &decoded_payload_len) == PROTO_OK);
+        assert(decoded.msg_type == event_types[i]);
+        assert(decoded_payload_len == sizeof(payload));
+        assert(memcmp(decoded_payload, payload, sizeof(payload)) == 0);
+    }
 }
 
 static void test_cobs_round_trip(void)
@@ -170,6 +233,7 @@ int main(void)
     test_tlv_and_packet_round_trip();
     test_decode_rejects_bad_crc();
     test_packet_rejects_retired_and_compact_only_message_types();
+    test_mesh_event_packet_types_round_trip();
     test_cobs_round_trip();
     return 0;
 }

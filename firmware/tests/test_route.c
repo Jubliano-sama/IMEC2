@@ -86,39 +86,42 @@ static void test_epoch_change_invalidates_old_routes(void)
     assert(selected->route_epoch == 2u);
 }
 
-static void test_expire_stale_selected_route_falls_back(void)
+static void test_age_alone_keeps_selected_route(void)
 {
     struct route_table table;
-    struct route_candidate stale = candidate(0x02u, 3u, 1u, 90u, 1000u);
-    struct route_candidate fresh = candidate(0x03u, 3u, 2u, 80u, 7000u);
+    struct route_candidate old_direct = candidate(0x02u, 3u, 1u, 90u, 1000u);
+    struct route_candidate newer_relay = candidate(0x03u, 3u, 2u, 80u, 7000u);
     const struct route_candidate *selected;
 
     route_table_init(&table, 3u);
-    assert(route_upsert_candidate(&table, &stale) == PROTO_OK);
-    assert(route_upsert_candidate(&table, &fresh) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &old_direct) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &newer_relay) == PROTO_OK);
 
     selected = route_selected(&table);
     assert(selected != NULL);
     assert(selected->next_hop_id == 0x02u);
 
-    assert(route_expire_stale(&table, 31001u, ROUTE_CANDIDATE_MAX_AGE_MS) == 1u);
+    assert(route_expire_stale(&table, 31001u, ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
     selected = route_selected(&table);
     assert(selected != NULL);
-    assert(selected->next_hop_id == 0x03u);
+    assert(selected->next_hop_id == 0x02u);
 }
 
-static void test_expire_stale_all_routes_clears_selection(void)
+static void test_age_alone_keeps_all_routes_selectable(void)
 {
     struct route_table table;
     struct route_candidate route_a = candidate(0x02u, 3u, 1u, 90u, 1000u);
     struct route_candidate route_b = candidate(0x03u, 3u, 2u, 80u, 1500u);
+    const struct route_candidate *selected;
 
     route_table_init(&table, 3u);
     assert(route_upsert_candidate(&table, &route_a) == PROTO_OK);
     assert(route_upsert_candidate(&table, &route_b) == PROTO_OK);
 
-    assert(route_expire_stale(&table, 31501u, ROUTE_CANDIDATE_MAX_AGE_MS) == 2u);
-    assert(route_selected(&table) == NULL);
+    assert(route_expire_stale(&table, 31501u, ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x02u);
 }
 
 static void test_success_refreshes_selected_route_age(void)
@@ -177,8 +180,8 @@ int main(void)
     test_weighted_cost_avoids_unusable_direct_route();
     test_same_hop_uses_link_quality();
     test_epoch_change_invalidates_old_routes();
-    test_expire_stale_selected_route_falls_back();
-    test_expire_stale_all_routes_clears_selection();
+    test_age_alone_keeps_selected_route();
+    test_age_alone_keeps_all_routes_selectable();
     test_success_refreshes_selected_route_age();
     test_failures_try_alternate_then_discovery();
     test_retry_backoff_values();

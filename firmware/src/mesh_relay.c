@@ -334,6 +334,7 @@ static void outbound_from_pending(const struct mesh_pending_tx *pending,
         memcpy(out->payload, pending->payload, pending->payload_len);
     }
     out->payload_len = pending->payload_len;
+    out->radio_channel = pending->radio_channel;
     out->next_hop_id = pending->next_hop_id;
 }
 
@@ -374,24 +375,6 @@ static void refresh_downlink(struct mesh_relay *relay,
             return;
         }
     }
-}
-
-static uint8_t expire_downlinks(struct mesh_relay *relay, uint32_t now_ms)
-{
-    uint8_t expired = 0u;
-
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        struct mesh_downlink_entry *entry = &relay->downlinks[i];
-
-        if (!entry->valid) {
-            continue;
-        }
-        if ((uint32_t)(now_ms - entry->last_seen_ms) > MESH_RELAY_DOWNLINK_MAX_AGE_MS) {
-            entry->valid = false;
-            expired++;
-        }
-    }
-    return expired;
 }
 
 static int build_gateway_ack(struct mesh_relay *relay,
@@ -492,6 +475,29 @@ static int build_forward(const struct mesh_relay *relay,
 static bool packet_needs_forward(const struct mesh_relay *relay, const struct proto_packet *packet)
 {
     return packet->dst_id != relay->local_id && packet->dst_id != MESH_BROADCAST_ID;
+}
+
+static bool packet_requires_channel9_payload_event(const struct proto_packet *packet)
+{
+    if (packet == NULL) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
+    case MSG_GATEWAY_ACK:
+    case MSG_COMMAND:
+    case MSG_COMMAND_RESULT:
+    case MSG_SURVEY_REACH_REPORT:
+    case MSG_SURVEY_PAIR_PREPARE:
+    case MSG_SURVEY_PAIR_RESULT:
+        return true;
+    default:
+        return false;
+    }
 }
 
 static bool broadcast_time_sync_command(const struct proto_packet *packet,
@@ -999,15 +1005,12 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
 {
-    uint8_t expired;
-
     if (relay == NULL) {
         return 0u;
     }
 
-    expired = route_expire_stale(&relay->upstream, now_ms, ROUTE_CANDIDATE_MAX_AGE_MS);
-    expired = (uint8_t)(expired + expire_downlinks(relay, now_ms));
-    return expired;
+    (void)now_ms;
+    return 0u;
 }
 
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
@@ -1042,6 +1045,104 @@ int mesh_relay_select_next_hop(const struct mesh_relay *relay,
     }
     *next_hop_id = downlink->next_hop_id;
     return PROTO_OK;
+}
+
+static int event_timing_index(const struct mesh_relay *relay, uint64_t next_hop_id)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        if (relay->event_timings[i].valid &&
+            relay->event_timings[i].next_hop_id == next_hop_id) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int free_event_timing_index(const struct mesh_relay *relay)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        if (!relay->event_timings[i].valid) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
+                                   uint64_t next_hop_id,
+                                   const struct mesh_event_timing *timing)
+{
+    int index;
+
+    if (relay == NULL || timing == NULL || !id_is_unicast(next_hop_id) ||
+        next_hop_id == relay->local_id ||
+        timing->mesh_channel != MESH_EVENT_CHANNEL) {
+        return PROTO_ERR_ARG;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index < 0) {
+        index = free_event_timing_index(relay);
+    }
+    if (index < 0) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    relay->event_timings[index].next_hop_id = next_hop_id;
+    relay->event_timings[index].timing = *timing;
+    relay->event_timings[index].valid = true;
+    return PROTO_OK;
+}
+
+void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
+                                      uint64_t next_hop_id)
+{
+    int index;
+
+    if (relay == NULL || !id_is_unicast(next_hop_id)) {
+        return;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index >= 0) {
+        relay->event_timings[index].valid = false;
+    }
+}
+
+int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
+                                      uint64_t next_hop_id,
+                                      const struct mesh_channel5_requirements *requirements,
+                                      uint32_t now_ms,
+                                      struct mesh_event_plan *plan)
+{
+    int index;
+    int ret;
+
+    if (relay == NULL || requirements == NULL || plan == NULL ||
+        !id_is_unicast(next_hop_id)) {
+        return PROTO_ERR_ARG;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index < 0) {
+        return PROTO_ERR_STALE;
+    }
+
+    ret = mesh_event_plan_channel9(&relay->event_timings[index].timing,
+                                   requirements,
+                                   now_ms,
+                                   plan);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (plan->action == MESH_EVENT_PLAN_START ||
+        plan->action == MESH_EVENT_PLAN_CLIP) {
+        return PROTO_OK;
+    }
+    if (plan->action == MESH_EVENT_PLAN_REFRESH_CONTACT_CH5) {
+        return PROTO_ERR_STALE;
+    }
+    return PROTO_ERR_BUSY;
 }
 
 int mesh_relay_build_route_request(struct mesh_relay *relay,
@@ -1212,10 +1313,76 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
         memcpy(relay->pending.payload, payload, payload_len);
     }
     relay->pending.payload_len = (uint8_t)payload_len;
+    relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     relay->pending.next_hop_id = next_hop_id;
     pending_set_deadlines(&relay->pending, now_ms);
     outbound_from_pending(&relay->pending, out);
     return PROTO_OK;
+}
+
+int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
+                                 const struct proto_packet *packet,
+                                 const uint8_t *payload,
+                                 size_t payload_len,
+                                 const struct mesh_channel5_requirements *requirements,
+                                 uint32_t now_ms,
+                                 struct mesh_event_plan *plan,
+                                 struct mesh_outbound *out)
+{
+    uint64_t next_hop_id = 0u;
+    int ret;
+
+    if (relay == NULL || packet == NULL || plan == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!packet_requires_channel9_payload_event(packet)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_relay_require_channel9_event(relay,
+                                            next_hop_id,
+                                            requirements,
+                                            now_ms,
+                                            plan);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    ret = mesh_relay_start_tx(relay,
+                              packet,
+                              payload,
+                              payload_len,
+                              now_ms,
+                              out);
+    if (ret == PROTO_OK) {
+        out->radio_channel = MESH_EVENT_CHANNEL;
+        if (mesh_relay_tx_active(relay) &&
+            relay->pending.packet.session_id == packet->session_id &&
+            relay->pending.packet.seq == packet->seq) {
+            relay->pending.radio_channel = MESH_EVENT_CHANNEL;
+        }
+    }
+    return ret;
+}
+
+void mesh_relay_note_channel9_success(struct mesh_relay *relay,
+                                      uint64_t next_hop_id,
+                                      uint32_t event_start_ms)
+{
+    int index;
+
+    if (relay == NULL || !id_is_unicast(next_hop_id)) {
+        return;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index >= 0) {
+        mesh_event_note_success(&relay->event_timings[index].timing, event_start_ms);
+    }
 }
 
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
@@ -1230,6 +1397,28 @@ void mesh_relay_note_tx_sent(struct mesh_relay *relay,
         route_refresh_selected_at(&relay->upstream, now_ms);
     } else if (out->packet.dst_id != MESH_BROADCAST_ID) {
         refresh_downlink(relay, out->packet.dst_id, out->next_hop_id, now_ms);
+    }
+}
+
+void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
+                                      uint64_t dst_id)
+{
+    int index;
+
+    if (relay == NULL || !id_is_unicast(dst_id) || dst_id == relay->local_id) {
+        return;
+    }
+
+    if (dst_id == relay->gateway_id) {
+        if (relay->role != MESH_RELAY_ROLE_GATEWAY) {
+            (void)route_record_failure(&relay->upstream, ROUTE_FAILURE_GATEWAY_ACK);
+        }
+        return;
+    }
+
+    index = downlink_index(relay, dst_id);
+    if (index >= 0) {
+        relay->downlinks[index].valid = false;
     }
 }
 

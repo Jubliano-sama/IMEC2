@@ -14,6 +14,38 @@ extern "C" {
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES 96u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 13u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 13u
+#define RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET 48u
+
+enum range_diagnostic_status_flag {
+    RANGE_DIAG_CLICKER_PRESENT = 1u << 0,
+    RANGE_DIAG_CLICKER_MISSING = 1u << 1,
+    RANGE_DIAG_ANCHOR_PRESENT = 1u << 2,
+    RANGE_DIAG_ANCHOR_MISSING = 1u << 3,
+    RANGE_DIAG_TRUNCATED = 1u << 4,
+    RANGE_DIAG_CAPTURE_FAILED = 1u << 5,
+    RANGE_DIAG_CHANNEL9_DELIVERED = 1u << 6,
+};
+
+struct range_report_diagnostics {
+    uint32_t status_flags;
+    uint32_t burst_id;
+    uint16_t exchange_stride_us;
+    uint16_t burst_duration_ms;
+    uint32_t click_latency_ms;
+    uint32_t uwb_awake_time_us;
+    uint32_t diag_bytes_captured;
+    uint32_t diag_bytes_transmitted;
+    uint32_t diag_bytes_truncated;
+    uint32_t diag_frames_dropped;
+    uint16_t report_fragment_count;
+    uint32_t channel9_report_latency_ms;
+    uint32_t gateway_ack_latency_ms;
+    uint8_t phy_config_id;
+    const uint8_t *clicker_diag;
+    uint8_t clicker_diag_len;
+    const uint8_t *anchor_diag;
+    uint8_t anchor_diag_len;
+};
 
 struct range_report_fields {
     uint64_t clicker_id;
@@ -34,6 +66,7 @@ struct range_report_fields {
     uint16_t distance_sample_count;
     bool omit_rsl;
     bool omit_cir;
+    const struct range_report_diagnostics *diagnostics;
 };
 
 struct self_test_report_fields {

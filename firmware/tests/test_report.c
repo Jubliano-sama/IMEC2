@@ -179,6 +179,143 @@ static void test_timing_invalid_range_report_is_preserved(void)
     assert(value[0] == RANGE_TIMING_INVALID);
 }
 
+static void test_range_report_combines_clicker_and_anchor_diagnostics(void)
+{
+    const uint8_t clicker_diag[] = {0x10u, 0x11u, 0x12u, 0x13u};
+    const uint8_t anchor_diag[] = {0xA0u, 0xA1u, 0xA2u};
+    const struct range_report_diagnostics diagnostics = {
+        .status_flags = RANGE_DIAG_CLICKER_PRESENT |
+                        RANGE_DIAG_ANCHOR_PRESENT |
+                        RANGE_DIAG_TRUNCATED |
+                        RANGE_DIAG_CHANNEL9_DELIVERED,
+        .burst_id = 0x12345678u,
+        .exchange_stride_us = 7000u,
+        .burst_duration_ms = 200u,
+        .click_latency_ms = 640u,
+        .uwb_awake_time_us = 22100u,
+        .diag_bytes_captured = 19u,
+        .diag_bytes_transmitted = sizeof(clicker_diag) + sizeof(anchor_diag),
+        .diag_bytes_truncated = 12u,
+        .diag_frames_dropped = 1u,
+        .report_fragment_count = 3u,
+        .channel9_report_latency_ms = 42u,
+        .gateway_ack_latency_ms = 18u,
+        .phy_config_id = 5u,
+        .clicker_diag = clicker_diag,
+        .clicker_diag_len = sizeof(clicker_diag),
+        .anchor_diag = anchor_diag,
+        .anchor_diag_len = sizeof(anchor_diag),
+    };
+    const struct range_report_fields fields = {
+        .clicker_id = 0x1111222233334444ull,
+        .anchor_id = 0x5555666677778888ull,
+        .event_seq = 126u,
+        .timestamp_ms = 987655u,
+        .distance_mm = 4567,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+        .omit_rsl = true,
+        .diagnostics = &diagnostics,
+    };
+    uint8_t payload[220];
+    size_t payload_len = 0u;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
+           PROTO_OK);
+
+    assert(tlv_find(payload, payload_len, TLV_DIAG_STATUS_FLAGS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.status_flags);
+    assert(tlv_find(payload, payload_len, TLV_BURST_ID, &value, &value_len) == PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.burst_id);
+    assert(tlv_find(payload, payload_len, TLV_EXCHANGE_STRIDE_US, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 2u);
+    assert(proto_get_u16_le(value) == diagnostics.exchange_stride_us);
+    assert(tlv_find(payload, payload_len, TLV_BURST_DURATION_MS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 2u);
+    assert(proto_get_u16_le(value) == diagnostics.burst_duration_ms);
+    assert(tlv_find(payload, payload_len, TLV_CLICK_LATENCY_MS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.click_latency_ms);
+    assert(tlv_find(payload, payload_len, TLV_UWB_AWAKE_TIME_US, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.uwb_awake_time_us);
+    assert(tlv_find(payload, payload_len, TLV_DIAG_BYTES_CAPTURED, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.diag_bytes_captured);
+    assert(tlv_find(payload, payload_len, TLV_DIAG_BYTES_TRANSMITTED, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.diag_bytes_transmitted);
+    assert(tlv_find(payload, payload_len, TLV_DIAG_BYTES_TRUNCATED, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.diag_bytes_truncated);
+    assert(tlv_find(payload, payload_len, TLV_DIAG_FRAMES_DROPPED, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.diag_frames_dropped);
+    assert(tlv_find(payload, payload_len, TLV_REPORT_FRAGMENT_COUNT, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 2u);
+    assert(proto_get_u16_le(value) == diagnostics.report_fragment_count);
+    assert(tlv_find(payload, payload_len, TLV_CHANNEL9_REPORT_LATENCY_MS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.channel9_report_latency_ms);
+    assert(tlv_find(payload, payload_len, TLV_GATEWAY_ACK_LATENCY_MS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.gateway_ack_latency_ms);
+    assert(tlv_find(payload, payload_len, TLV_PHY_CONFIG_ID, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == diagnostics.phy_config_id);
+    assert(tlv_find(payload, payload_len, TLV_CLICKER_DIAG_BYTES, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == sizeof(clicker_diag));
+    assert(memcmp(value, clicker_diag, sizeof(clicker_diag)) == 0);
+    assert(tlv_find(payload, payload_len, TLV_ANCHOR_DIAG_BYTES, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == sizeof(anchor_diag));
+    assert(memcmp(value, anchor_diag, sizeof(anchor_diag)) == 0);
+}
+
+static void test_rejects_unbounded_diagnostic_bytes(void)
+{
+    uint8_t oversized[RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET + 1u] = {0};
+    const struct range_report_diagnostics diagnostics = {
+        .status_flags = RANGE_DIAG_CLICKER_PRESENT,
+        .clicker_diag = oversized,
+        .clicker_diag_len = sizeof(oversized),
+    };
+    const struct range_report_fields fields = {
+        .clicker_id = 0x1111222233334444ull,
+        .anchor_id = 0x5555666677778888ull,
+        .event_seq = 126u,
+        .timestamp_ms = 987655u,
+        .distance_mm = 4567,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+        .omit_rsl = true,
+        .diagnostics = &diagnostics,
+    };
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
+           PROTO_ERR_NO_SPACE);
+}
+
 static void test_self_test_report_is_diagnostic_not_click(void)
 {
     const struct self_test_report_fields fields = {
@@ -326,6 +463,10 @@ static void test_rejects_bad_range_fields(void)
     size_t payload_len = 0u;
 
     assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) == PROTO_ERR_MALFORMED);
+    fields.quality = 100u;
+    fields.range_status = RANGE_STS_QUALITY_FAIL;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
+           PROTO_ERR_MALFORMED);
 }
 
 static void test_rejects_missing_sample_data(void)
@@ -543,6 +684,8 @@ int main(void)
     test_click_report_packet_counts_as_click();
     test_diagnostic_range_packet_is_not_click();
     test_timing_invalid_range_report_is_preserved();
+    test_range_report_combines_clicker_and_anchor_diagnostics();
+    test_rejects_unbounded_diagnostic_bytes();
     test_self_test_report_is_diagnostic_not_click();
     test_anchor_heartbeat_report_requires_gateway_ack();
     test_rejects_bad_range_fields();

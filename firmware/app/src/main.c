@@ -124,9 +124,11 @@ static bool anchor_uwb_busy;
 static bool mesh_uwb_rx_active;
 static bool anchor_heartbeat_enabled;
 static struct mesh_relay mesh_runtime;
+static struct mesh_event_diagnostics mesh_event_stats;
 static struct uwb_anchor_session anchor_uwb_session;
+static uint16_t mesh_event_control_seq;
 
-#define MAX_SCHEDULED_ANCHORS 8u
+#define MAX_SCHEDULED_ANCHORS UWB_RANGE_SCHEDULE_MAX_ANCHORS
 #define MAX_SUCCESSFUL_ANCHORS 16u
 #define WAKE_ADV_MS 430u
 #define ANCHOR_UWB_WAIT_MS 500u
@@ -158,16 +160,15 @@ static struct uwb_anchor_session anchor_uwb_session;
 #define UWB_CONTROL_TX_TIMEOUT_MS 20u
 #define UWB_RANGE_SCHEDULE_RX_MS 80u
 #define UWB_SCHEDULE_GUARD_MS 10u
-#define UWB_WAKE_CHANNEL 5u
-#define UWB_RANGING_CHANNEL 5u
+#define UWB_WAKE_CHANNEL UWB_CHANNEL_WAKE_CONTACT
+#define UWB_RANGING_CHANNEL UWB_CHANNEL_WAKE_CONTACT
 #define UWB_RANGE_REPLY_DELAY_US UWB_DS_TWR_REPLY_DELAY_US
 #define UWB_RANGE_FIRST_POLL_DELAY_MS 5u
 #define UWB_SAMPLES_PER_ANCHOR 2u
 #define UWB_DISCOVERY_WINDOW_MS \
     (((UWB_DISCOVERY_SLOT_COUNT * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
 #define UWB_SCHEDULED_RANGE_SPAN_MS \
-    (UWB_RANGE_FIRST_POLL_DELAY_MS + \
-     (MAX_SCHEDULED_ANCHORS * UWB_SAMPLES_PER_ANCHOR * UWB_ANCHOR_RANGE_WINDOW_MS) + \
+    (UWB_RANGE_FIRST_POLL_DELAY_MS + UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS + \
      UWB_SCHEDULE_GUARD_MS)
 #define UWB_POST_WAKE_CLAIMED_DURATION_MS \
     (UWB_DISCOVERY_WINDOW_MS + UWB_RANGE_SCHEDULE_RX_MS + \
@@ -179,7 +180,7 @@ static struct uwb_anchor_session anchor_uwb_session;
 #endif
 #define MAX_WAKE_ATTEMPTS 6u
 #define MIN_UNIQUE_RANGED_ANCHORS 4u
-#define UWB_ANCHOR_RANGE_WINDOW_MS UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS
+#define UWB_ANCHOR_RANGE_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define UWB_POLITE_SAMPLE_RX_MS 2u
 #define UWB_POLITE_SAMPLE_PERIOD_MS 25u
 #define UWB_POLITE_BUSY_SAMPLE_PERIOD_MS 75u
@@ -231,6 +232,12 @@ static struct uwb_anchor_session anchor_uwb_session;
     (ANCHOR_UWB_SCAN_US_PER_S + UWB_MESH_ANCHOR_RX_US_PER_S)
 #define UWB_MESH_GATEWAY_RX_WINDOW_MS 50u
 #define UWB_MESH_GATEWAY_RX_IDLE_MS 2u
+#define MESH_EVENT_DEFAULT_INTERVAL_MS 80u
+#define MESH_EVENT_DEFAULT_WINDOW_MS 12u
+#define MESH_EVENT_DEFAULT_FIRST_DELAY_MS 20u
+#define MESH_EVENT_DEFAULT_GUARD_MS UWB_SCHEDULE_GUARD_MS
+#define MESH_EVENT_DEFAULT_MAX_MISSED 3u
+#define MESH_EVENT_DEFAULT_SUPERVISION_MS 1000u
 #define GATEWAY_SERIAL_POLL_MS 10u
 #define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
 #define MESH_RX_QUEUE_DEPTH 8
@@ -351,6 +358,10 @@ static struct anchor_time_sync_state anchor_time_sync;
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 static int mesh_request_route(uint64_t target_id, const char *reason);
+static bool mesh_handle_event_control(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint64_t previous_hop_id);
 static void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
 static void report_tx_schedule(uint32_t delay_ms);
 static int queue_anchor_report(const struct mesh_outbound *outbound);
@@ -409,8 +420,6 @@ static const char *range_status_name(enum range_status status)
         return "bad-frame";
     case RANGE_WRONG_TARGET:
         return "wrong-target";
-    case RANGE_STS_QUALITY_FAIL:
-        return "sts-quality-fail";
     case RANGE_DELAYED_TX_MISSED:
         return "delayed-tx-missed";
     case RANGE_INTERNAL_ERROR:
@@ -817,7 +826,63 @@ static int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_
     if (ret != PROTO_OK) {
         return ret;
     }
-    return mesh_relay_append_status_tlvs(&mesh_runtime, payload, payload_cap, payload_len);
+    ret = mesh_relay_append_status_tlvs(&mesh_runtime, payload, payload_cap, payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_MESH_CHANNEL_SWITCHES,
+                         mesh_event_stats.channel_switches);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_MESH_PLL_READY_FAILURES,
+                         mesh_event_stats.pll_ready_failures);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_MESH_LATE_CHANNEL5_RETURNS,
+                         mesh_event_stats.late_channel5_returns);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_MESH_DEFERRALS,
+                         mesh_event_stats.mesh_deferrals);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_MESH_CH9_EVENT_MISSES,
+                         mesh_event_stats.ch9_event_misses);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         payload_len,
+                         TLV_MESH_CHANNEL5_PREEMPTIONS,
+                         mesh_event_stats.channel5_preemptions);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload,
+                          payload_cap,
+                          payload_len,
+                          TLV_MESH_CH9_REPORT_LATENCY_MS,
+                          mesh_event_stats.ch9_report_latency_ms);
 }
 
 static int anchor_send_command_result(const struct proto_packet *command,
@@ -930,6 +995,15 @@ static uint16_t anchor_next_survey_seq(void)
         anchor_survey_seq = 1u;
     }
     return anchor_survey_seq;
+}
+
+static uint16_t mesh_next_event_control_seq(void)
+{
+    mesh_event_control_seq++;
+    if (mesh_event_control_seq == 0u) {
+        mesh_event_control_seq = 1u;
+    }
+    return mesh_event_control_seq;
 }
 
 static uint32_t nonzero_uptime_session_id(void)
@@ -1599,6 +1673,7 @@ static void gateway_command_result_timeout_handler(struct k_work *work)
             (unsigned long long)command.dst_id,
             command.session_id,
             command.seq);
+    mesh_relay_note_delivery_failure(&mesh_runtime, command.dst_id);
     mesh_clear_route_waiting_tx(&command);
     gateway_survey_auto_note_command_timeout(&command, command_id);
     gateway_emit_serial_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
@@ -3173,6 +3248,23 @@ static void sleep_precise_us(uint32_t delay_us)
     }
 }
 
+static void sleep_until_us(int64_t target_us)
+{
+    int64_t target_ms;
+    uint32_t sub_ms_us;
+
+    if (target_us <= 0) {
+        return;
+    }
+
+    target_ms = target_us / 1000;
+    sub_ms_us = (uint32_t)(target_us % 1000);
+    sleep_until_ms(target_ms);
+    if (sub_ms_us > 0u && k_uptime_get() <= target_ms) {
+        sleep_precise_us(sub_ms_us);
+    }
+}
+
 struct mesh_frame_parse_context {
     bool found;
     uint64_t previous_hop_id;
@@ -3186,6 +3278,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work);
 static int mesh_start_uwb_rx(const char *reason);
 static bool anchor_uwb_window_active(void);
 static void mesh_preempt_for_click_event(void);
+static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
                                       const struct dwm3000_range_result *range_result,
@@ -3205,6 +3298,22 @@ static uint16_t delay_ms_to_u16(int64_t delay_ms)
     return (uint16_t)delay_ms;
 }
 
+static int64_t scheduled_range_sample_target_us(int64_t schedule_start_ms,
+                                                const struct uwb_range_schedule_frame *schedule,
+                                                size_t sample_index)
+{
+    return ((schedule_start_ms + schedule->first_poll_delay_ms) * 1000) +
+           ((int64_t)sample_index * schedule->exchange_stride_us);
+}
+
+static int64_t ceil_us_to_ms(int64_t value_us)
+{
+    if (value_us <= 0) {
+        return 0;
+    }
+    return (value_us + 999) / 1000;
+}
+
 static enum uwb_wake_decode_failure wake_failure_from_rx(enum dwm3000_rx_failure failure)
 {
     switch (failure) {
@@ -3215,7 +3324,6 @@ static enum uwb_wake_decode_failure wake_failure_from_rx(enum dwm3000_rx_failure
     case DWM3000_RX_FAILURE_NONE:
         return UWB_WAKE_DECODE_FRAME_TIMEOUT;
     case DWM3000_RX_FAILURE_CRC_OR_PHY:
-    case DWM3000_RX_FAILURE_STS_QUALITY:
     case DWM3000_RX_FAILURE_BAD_FRAME:
         return UWB_WAKE_DECODE_CRC_FAILURE;
     default:
@@ -3258,8 +3366,6 @@ static const char *rx_failure_name(enum dwm3000_rx_failure failure)
         return "frame_timeout";
     case DWM3000_RX_FAILURE_CRC_OR_PHY:
         return "crc_or_phy";
-    case DWM3000_RX_FAILURE_STS_QUALITY:
-        return "sts_quality";
     case DWM3000_RX_FAILURE_BAD_FRAME:
         return "bad_frame";
     default:
@@ -3273,7 +3379,6 @@ static bool rx_failure_detected_preamble(enum dwm3000_rx_failure failure)
     case DWM3000_RX_FAILURE_SFD_TIMEOUT:
     case DWM3000_RX_FAILURE_FRAME_TIMEOUT:
     case DWM3000_RX_FAILURE_CRC_OR_PHY:
-    case DWM3000_RX_FAILURE_STS_QUALITY:
     case DWM3000_RX_FAILURE_BAD_FRAME:
         return true;
     case DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT:
@@ -3450,7 +3555,7 @@ static void log_uwb_range_schedule_entries(const char *role,
     for (uint8_t i = 0u; i < schedule->selected_count; i++) {
         const struct uwb_range_schedule_entry *entry = &schedule->entries[i];
 
-        LOG_INF("%s UWB RANGE_SCHEDULE entry: order=%u/%u anchor=0x%016llx seq_base=%u samples=%u first_poll_ms=%u spacing_ms=%u",
+        LOG_INF("%s UWB RANGE_SCHEDULE entry: order=%u/%u anchor=0x%016llx seq_base=%u samples=%u first_poll_ms=%u stride_us=%u burst_ms=%u",
                 role,
                 (unsigned int)(i + 1u),
                 schedule->selected_count,
@@ -3458,7 +3563,8 @@ static void log_uwb_range_schedule_entries(const char *role,
                 entry->seq,
                 entry->sample_count,
                 schedule->first_poll_delay_ms,
-                schedule->poll_spacing_ms);
+                schedule->exchange_stride_us,
+                schedule->burst_window_ms);
     }
 }
 
@@ -3517,16 +3623,16 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         }
         uwb_anchor_note_sample_order(&anchor_uwb_session);
 
-        listen_start_ms = (int64_t)schedule_rx_ms + schedule->first_poll_delay_ms +
-                          ((int64_t)sample_index * schedule->poll_spacing_ms);
+        listen_start_ms =
+            scheduled_range_sample_target_us(schedule_rx_ms, schedule, sample_index) / 1000;
         listen_start_ms -= UWB_SCHEDULE_GUARD_MS;
         retained_sleep_us = u32_saturating_add(
             retained_sleep_us,
             sleep_with_uwb_standby_until_ms(listen_start_ms));
 
-        listen_deadline_ms = (int64_t)schedule_rx_ms + schedule->first_poll_delay_ms +
-                             ((int64_t)(sample_index + 1u) * schedule->poll_spacing_ms) +
-                             UWB_SCHEDULE_GUARD_MS;
+        listen_deadline_ms = ceil_us_to_ms(
+            scheduled_range_sample_target_us(schedule_rx_ms, schedule, sample_index + 1u));
+        listen_deadline_ms += UWB_SCHEDULE_GUARD_MS;
 
         memset(&expected, 0, sizeof(expected));
         memset(&range_result, 0, sizeof(range_result));
@@ -3540,7 +3646,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         expected.seq = seq;
         expected.round_index = round_index;
         expected.flags = schedule->flags;
-        expected.capture_rsl = !window_report.rsl_sampled || !window_report.cir_sampled;
+        expected.capture_rsl = true;
 
         LOG_INF("anchor scheduled UWB sample listen: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u",
                 (unsigned long long)schedule->clicker_id,
@@ -3571,8 +3677,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                             seq,
                             range_result.seq);
                 } else if (range_result.status == RANGE_BAD_FRAME ||
-                           range_result.status == RANGE_RX_ERROR ||
-                           range_result.status == RANGE_STS_QUALITY_FAIL) {
+                           range_result.status == RANGE_RX_ERROR) {
                     LOG_DBG("anchor ignored pre-POLL UWB frame inside scheduled slot: status=%s(%u) expected_clicker=0x%016llx event_seq=%u seq=%u",
                             range_status_name(range_result.status),
                             range_result.status,
@@ -3818,6 +3923,31 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     if (ret == 0) {
         struct uwb_range_schedule_frame schedule;
         int64_t schedule_rx_ms = k_uptime_get();
+
+        if (frame_len >= UWB_SYNC_HEADER_LEN &&
+            frame[2] == MSG_UWB_RANGE_RELEASE) {
+            struct uwb_range_release_frame release;
+
+            ret = uwb_decode_range_release(frame, frame_len, &release);
+            if (ret != PROTO_OK) {
+                LOG_WRN("anchor UWB RANGE_RELEASE decode failed: %d", ret);
+                return true;
+            }
+
+            ret = uwb_anchor_accept_range_release(&anchor_uwb_session, &release);
+            if (ret != PROTO_OK) {
+                LOG_WRN("anchor rejected UWB RANGE_RELEASE: %d", ret);
+                return true;
+            }
+
+            LOG_INF("anchor UWB RANGE_RELEASE accepted: clicker=0x%016llx event_seq=%u discovered=%u min=%u reason=%u",
+                    (unsigned long long)release.clicker_id,
+                    release.click_event_id,
+                    release.discovered_anchor_count,
+                    release.min_anchor_count,
+                    release.reason);
+            return true;
+        }
 
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
         if (ret != PROTO_OK) {
@@ -4074,6 +4204,65 @@ static uint32_t mesh_uwb_rx_idle_delay_ms(void)
            UWB_MESH_ANCHOR_RX_INTERVAL_MS;
 }
 
+static bool mesh_select_channel9_rx_event(uint32_t now_ms,
+                                          struct mesh_event_plan *selected_plan,
+                                          uint64_t *selected_peer,
+                                          uint8_t *selected_index)
+{
+    struct mesh_channel5_requirements requirements;
+    bool selected = false;
+
+    if (selected_plan == NULL || selected_peer == NULL || selected_index == NULL) {
+        return false;
+    }
+
+    mesh_fill_channel5_requirements(&requirements);
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        struct mesh_relay_event_timing_entry *entry = &mesh_runtime.event_timings[i];
+        struct mesh_event_plan plan = {0};
+        int ret;
+
+        if (!entry->valid) {
+            continue;
+        }
+        ret = mesh_event_plan_channel9(&entry->timing, &requirements, now_ms, &plan);
+        if (ret != PROTO_OK) {
+            continue;
+        }
+        mesh_event_note_plan_action(&mesh_event_stats, plan.action);
+        if (plan.action != MESH_EVENT_PLAN_START &&
+            plan.action != MESH_EVENT_PLAN_CLIP) {
+            continue;
+        }
+        if (!selected || uptime_deadline_reached(selected_plan->start_ms, plan.start_ms)) {
+            *selected_plan = plan;
+            *selected_peer = entry->next_hop_id;
+            *selected_index = i;
+            selected = true;
+        }
+    }
+    return selected;
+}
+
+static uint32_t mesh_next_channel9_rx_delay_ms(uint32_t now_ms)
+{
+    uint32_t delay_ms = mesh_uwb_rx_idle_delay_ms();
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry = &mesh_runtime.event_timings[i];
+        uint32_t candidate_delay_ms;
+
+        if (!entry->valid || !mesh_event_timing_usable(&entry->timing, now_ms)) {
+            continue;
+        }
+        candidate_delay_ms = uptime_ms_until_deadline(now_ms, entry->timing.next_event_time_ms);
+        if (candidate_delay_ms < delay_ms) {
+            delay_ms = candidate_delay_ms;
+        }
+    }
+    return delay_ms;
+}
+
 static void mesh_schedule_uwb_rx(uint32_t delay_ms)
 {
     if (!mesh_role_uses_uwb_rx()) {
@@ -4136,7 +4325,12 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
         return ret;
     }
     uwb_window_start_ms = k_uptime_get();
-    ret = dwm3000_driver_configure_default();
+    ret = out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
+          dwm3000_driver_configure_mesh_payload_mode() :
+          dwm3000_driver_configure_default();
+    if (out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
+    }
     if (ret == 0) {
         ret = dwm3000_driver_send_frame(frame, frame_len, UWB_MESH_TX_TIMEOUT_MS);
     }
@@ -4154,7 +4348,7 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
         return ret;
     }
 
-    LOG_INF("mesh UWB TX %s: msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u ttl=%u frame_len=%u",
+    LOG_INF("mesh UWB TX %s: msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u ttl=%u channel=%u frame_len=%u",
             reason,
             out->packet.msg_type,
             (unsigned long long)out->packet.src_id,
@@ -4162,6 +4356,8 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
             (unsigned long long)out->next_hop_id,
             out->packet.seq,
             out->packet.ttl,
+            out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
+            UWB_CHANNEL_MESH_PAYLOAD : UWB_CHANNEL_WAKE_CONTACT,
             (unsigned int)frame_len);
     return 0;
 }
@@ -4187,6 +4383,209 @@ static int mesh_request_route(uint64_t target_id, const char *reason)
             (unsigned long long)target_id,
             reason);
     return mesh_send_outbound(&route_req, "route-request");
+}
+
+static bool mesh_packet_prefers_channel9(const struct proto_packet *packet)
+{
+    if (packet == NULL) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
+    case MSG_GATEWAY_ACK:
+    case MSG_COMMAND:
+    case MSG_COMMAND_RESULT:
+    case MSG_SURVEY_REACH_REPORT:
+    case MSG_SURVEY_PAIR_PREPARE:
+    case MSG_SURVEY_PAIR_RESULT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements)
+{
+    uint32_t now_ms;
+
+    if (requirements == NULL) {
+        return;
+    }
+
+    memset(requirements, 0, sizeof(*requirements));
+    requirements->retune_guard_ms = UWB_SCHEDULE_GUARD_MS;
+    if (DEVICE_ROLE == ROLE_ANCHOR) {
+        now_ms = k_uptime_get_32();
+        requirements->next_required_scan_start_ms = now_ms + anchor_uwb_scan_interval_ms;
+        requirements->click_epoch_active = anchor_uwb_window_active();
+        requirements->discovery_active = requirements->click_epoch_active;
+        requirements->ranging_active = requirements->click_epoch_active;
+    }
+}
+
+static int mesh_prepare_event_timing(struct mesh_event_timing *timing, uint32_t now_ms)
+{
+    const struct mesh_event_params params = {
+        .event_interval_ms = MESH_EVENT_DEFAULT_INTERVAL_MS,
+        .event_window_ms = MESH_EVENT_DEFAULT_WINDOW_MS,
+        .first_event_time_ms = now_ms + MESH_EVENT_DEFAULT_FIRST_DELAY_MS,
+        .guard_ms = MESH_EVENT_DEFAULT_GUARD_MS,
+        .peer_clock_skew_estimate_ppm = 0,
+        .max_missed_events = MESH_EVENT_DEFAULT_MAX_MISSED,
+        .supervision_timeout_ms = MESH_EVENT_DEFAULT_SUPERVISION_MS,
+    };
+
+    return mesh_event_timing_negotiate(timing, &params, true);
+}
+
+static int mesh_send_event_control(uint64_t peer_id,
+                                   uint8_t msg_type,
+                                   const struct mesh_event_timing *accepted_timing,
+                                   bool install_local,
+                                   const char *reason)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_outbound outbound = {0};
+    size_t payload_len = 0u;
+    uint32_t now_ms = k_uptime_get_32();
+    int ret;
+
+    if (!mesh_id_is_unicast(peer_id) || peer_id == DEVICE_ID) {
+        return -EINVAL;
+    }
+
+    if (accepted_timing != NULL) {
+        timing = *accepted_timing;
+    } else {
+        ret = mesh_prepare_event_timing(&timing, now_ms);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+    }
+
+    ret = mesh_append_event_timing_tlvs(outbound.payload,
+                                        sizeof(outbound.payload),
+                                        &payload_len,
+                                        &timing);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    ret = mesh_init_event_control(&outbound.packet,
+                                  msg_type,
+                                  DEVICE_ID,
+                                  peer_id,
+                                  nonzero_uptime_session_id(),
+                                  mesh_next_event_control_seq(),
+                                  (uint8_t)payload_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    outbound.payload_len = (uint8_t)payload_len;
+    outbound.next_hop_id = peer_id;
+    outbound.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    if (install_local) {
+        ret = mesh_relay_set_channel9_timing(&mesh_runtime, peer_id, &timing);
+        if (ret != PROTO_OK) {
+            return mesh_errno_from_proto(ret);
+        }
+        mesh_schedule_uwb_rx(uptime_ms_until_deadline(now_ms, timing.next_event_time_ms));
+    }
+
+    LOG_INF("mesh channel-9 event control TX: msg=0x%02x peer=0x%016llx interval_ms=%u window_ms=%u next_ms=%u reason=%s",
+            msg_type,
+            (unsigned long long)peer_id,
+            timing.event_interval_ms,
+            timing.event_window_ms,
+            timing.next_event_time_ms,
+            reason == NULL ? "event-control" : reason);
+    return mesh_send_outbound(&outbound, reason == NULL ? "mesh-event-control" : reason);
+}
+
+static void mesh_propose_event_after_channel5_contact(uint64_t peer_id, const char *reason)
+{
+    int ret;
+
+    ret = mesh_send_event_control(peer_id,
+                                  MSG_MESH_EVENT_PROPOSE,
+                                  NULL,
+                                  true,
+                                  reason);
+    if (ret < 0) {
+        LOG_WRN("mesh channel-9 event proposal failed: peer=0x%016llx ret=%d reason=%s",
+                (unsigned long long)peer_id,
+                ret,
+                reason == NULL ? "event-propose" : reason);
+    }
+}
+
+static bool mesh_handle_event_control(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint64_t previous_hop_id)
+{
+    struct mesh_event_timing timing = {0};
+    int ret;
+
+    if (packet == NULL) {
+        return false;
+    }
+
+    if (packet->msg_type != MSG_MESH_EVENT_PROPOSE &&
+        packet->msg_type != MSG_MESH_EVENT_ACCEPT &&
+        packet->msg_type != MSG_MESH_EVENT_UPDATE &&
+        packet->msg_type != MSG_MESH_EVENT_END) {
+        return false;
+    }
+    if (!mesh_id_is_unicast(previous_hop_id)) {
+        LOG_WRN("mesh event control ignored without unicast previous hop");
+        return true;
+    }
+    if (packet->msg_type == MSG_MESH_EVENT_END) {
+        mesh_relay_clear_channel9_timing(&mesh_runtime, previous_hop_id);
+        LOG_INF("mesh channel-9 event timing cleared for next=0x%016llx",
+                (unsigned long long)previous_hop_id);
+        return true;
+    }
+
+    ret = mesh_event_timing_from_tlvs(&timing, payload, payload_len, true);
+    if (ret != PROTO_OK) {
+        LOG_WRN("mesh event control timing parse failed: msg=0x%02x ret=%d",
+                packet->msg_type,
+                ret);
+        return true;
+    }
+    ret = mesh_relay_set_channel9_timing(&mesh_runtime, previous_hop_id, &timing);
+    if (ret != PROTO_OK) {
+        LOG_WRN("mesh event control timing install failed: next=0x%016llx ret=%d",
+                (unsigned long long)previous_hop_id,
+                ret);
+        return true;
+    }
+
+    LOG_INF("mesh channel-9 event timing installed: next=0x%016llx interval_ms=%u window_ms=%u next_ms=%u",
+            (unsigned long long)previous_hop_id,
+            timing.event_interval_ms,
+            timing.event_window_ms,
+            timing.next_event_time_ms);
+    mesh_schedule_uwb_rx(uptime_ms_until_deadline(k_uptime_get_32(), timing.next_event_time_ms));
+    if (packet->msg_type == MSG_MESH_EVENT_PROPOSE) {
+        ret = mesh_send_event_control(previous_hop_id,
+                                      MSG_MESH_EVENT_ACCEPT,
+                                      &timing,
+                                      false,
+                                      "mesh-event-accept");
+        if (ret < 0) {
+            LOG_WRN("mesh channel-9 event ACCEPT failed: next=0x%016llx ret=%d",
+                    (unsigned long long)previous_hop_id,
+                    ret);
+        }
+    }
+    return true;
 }
 
 static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
@@ -4232,7 +4631,48 @@ static void mesh_try_route_waiting_tx(void)
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
 {
     struct mesh_outbound tx;
+    struct mesh_channel5_requirements requirements;
+    struct mesh_event_plan plan = {0};
+    uint32_t now_ms;
     int ret;
+
+    if (mesh_packet_prefers_channel9(&out->packet)) {
+        now_ms = k_uptime_get_32();
+        mesh_fill_channel5_requirements(&requirements);
+        ret = mesh_relay_start_channel9_tx(&mesh_runtime,
+                                           &out->packet,
+                                           out->payload,
+                                           out->payload_len,
+                                           &requirements,
+                                           now_ms,
+                                           &plan,
+                                           &tx);
+        if (ret != PROTO_ERR_NOT_FOUND) {
+            mesh_event_note_plan_action(&mesh_event_stats, plan.action);
+        }
+        if (ret == PROTO_OK) {
+            mesh_relay_note_channel9_success(&mesh_runtime, tx.next_hop_id, plan.start_ms);
+            if (out->packet.msg_type == MSG_CLICK_REPORT) {
+                mesh_event_note_report_latency(&mesh_event_stats,
+                                               plan.start_ms > now_ms ?
+                                               plan.start_ms - now_ms : 0u);
+            }
+            goto send_prepared;
+        }
+        if (ret == PROTO_ERR_BUSY) {
+            return -EBUSY;
+        }
+        if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
+            LOG_WRN("mesh channel-9 timing unavailable for %s; refreshing channel-5 contact: ret=%d",
+                    reason,
+                    ret);
+            mesh_store_route_waiting_tx(out);
+            (void)mesh_request_route(out->packet.dst_id, reason);
+            return -EHOSTUNREACH;
+        }
+        LOG_WRN("mesh channel-9 TX rejected for %s: ret=%d", reason, ret);
+        return mesh_errno_from_proto(ret);
+    }
 
     ret = mesh_relay_start_tx(&mesh_runtime,
                               &out->packet,
@@ -4248,10 +4688,12 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
         }
         return mesh_errno_from_proto(ret);
     }
+send_prepared:
     ret = mesh_send_outbound(&tx, reason);
     if (ret < 0) {
         mesh_relay_cancel_tx(&mesh_runtime);
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
+            mesh_relay_note_delivery_failure(&mesh_runtime, out->packet.dst_id);
             mesh_store_route_waiting_tx(out);
             (void)mesh_request_route(out->packet.dst_id, reason);
         }
@@ -4345,8 +4787,32 @@ static int queue_anchor_report(const struct mesh_outbound *outbound)
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
 {
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
-        if (mesh_send_outbound(&result->gateway_ack, "gateway-ack") == 0) {
-            mesh_relay_note_tx_sent(&mesh_runtime, &result->gateway_ack, k_uptime_get_32());
+        struct mesh_outbound gateway_ack = result->gateway_ack;
+        struct mesh_channel5_requirements requirements;
+        struct mesh_event_plan plan = {0};
+        int ret;
+
+        mesh_fill_channel5_requirements(&requirements);
+        ret = mesh_relay_require_channel9_event(&mesh_runtime,
+                                                gateway_ack.next_hop_id,
+                                                &requirements,
+                                                k_uptime_get_32(),
+                                                &plan);
+        if (ret != PROTO_ERR_STALE) {
+            mesh_event_note_plan_action(&mesh_event_stats, plan.action);
+        }
+        if (ret != PROTO_OK) {
+            LOG_WRN("gateway ACK deferred until channel-9 timing is refreshed: next=0x%016llx",
+                    (unsigned long long)gateway_ack.next_hop_id);
+            (void)mesh_request_route(gateway_ack.next_hop_id, "gateway-ack-channel9-refresh");
+        } else {
+            gateway_ack.radio_channel = MESH_EVENT_CHANNEL;
+            mesh_relay_note_channel9_success(&mesh_runtime,
+                                             gateway_ack.next_hop_id,
+                                             plan.start_ms);
+            if (mesh_send_outbound(&gateway_ack, "gateway-ack") == 0) {
+                mesh_relay_note_tx_sent(&mesh_runtime, &gateway_ack, k_uptime_get_32());
+            }
         }
     }
     if (result->actions & MESH_RELAY_ACTION_FORWARD) {
@@ -4360,7 +4826,11 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         (void)mesh_send_outbound(&result->route_request, "route-request-forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
-        (void)mesh_send_outbound(&result->route_reply, "route-reply");
+        if (mesh_send_outbound(&result->route_reply, "route-reply") == 0 &&
+            mesh_id_is_unicast(result->route_reply.next_hop_id)) {
+            mesh_propose_event_after_channel5_contact(result->route_reply.next_hop_id,
+                                                      "route-reply-event-propose");
+        }
     }
     if (result->actions & MESH_RELAY_ACTION_RETRANSMIT) {
         if (mesh_send_outbound(&result->retransmit, "retransmit") == 0) {
@@ -4372,7 +4842,13 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         LOG_WRN("mesh route discovery needed after delivery failure");
     }
     if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY) {
+        const struct route_candidate *selected = route_selected(&mesh_runtime.upstream);
+
         LOG_INF("mesh reactive route ready");
+        if (selected != NULL) {
+            mesh_propose_event_after_channel5_contact(selected->next_hop_id,
+                                                      "route-ready-event-propose");
+        }
         mesh_try_route_waiting_tx();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
@@ -4425,6 +4901,13 @@ static void mesh_rx_work_handler(struct k_work *work)
             (void)mesh_request_route(pending.packet.dst_id, "rx-forward-miss");
         }
         mesh_handle_result_actions(&result);
+        if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
+            mesh_handle_event_control(&pending.packet,
+                                      pending.payload,
+                                      pending.payload_len,
+                                      pending.previous_hop_id)) {
+            continue;
+        }
         if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             DEVICE_ROLE == ROLE_GATEWAY) {
             if (pending.packet.msg_type == MSG_COMMAND_RESULT) {
@@ -4589,8 +5072,12 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
     size_t frame_len = 0u;
     uint8_t quality = 0u;
+    uint64_t channel9_peer_id = 0u;
+    struct mesh_event_plan channel9_plan = {0};
     uint32_t window_ms;
+    uint8_t channel9_timing_index = 0u;
     int64_t uwb_window_start_ms = -1;
+    bool channel9_event;
     int ret;
 
     ARG_UNUSED(work);
@@ -4611,9 +5098,18 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         return;
     }
 
-    window_ms = mesh_uwb_rx_window_ms();
+    channel9_event = mesh_select_channel9_rx_event(k_uptime_get_32(),
+                                                   &channel9_plan,
+                                                   &channel9_peer_id,
+                                                   &channel9_timing_index);
+    window_ms = channel9_event ? channel9_plan.window_ms : mesh_uwb_rx_window_ms();
     uwb_window_start_ms = k_uptime_get();
-    ret = dwm3000_driver_configure_default();
+    ret = channel9_event ?
+          dwm3000_driver_configure_mesh_payload_mode() :
+          dwm3000_driver_configure_default();
+    if (channel9_event) {
+        mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
+    }
     if (ret == 0) {
         ret = dwm3000_driver_receive_frame(window_ms,
                                            frame,
@@ -4629,6 +5125,11 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     if (ret == 0) {
         bool valid_mesh_frame = false;
 
+        if (channel9_event) {
+            mesh_relay_note_channel9_success(&mesh_runtime,
+                                             channel9_peer_id,
+                                             channel9_plan.start_ms);
+        }
         if (mesh_queue_from_frame(frame, frame_len, quality, &valid_mesh_frame)) {
             LOG_DBG("mesh UWB RX frame accepted: len=%u", (unsigned int)frame_len);
         } else if (!valid_mesh_frame) {
@@ -4638,9 +5139,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         }
     } else if (ret != -ETIMEDOUT) {
         LOG_WRN("mesh UWB RX failed: ret=%d role=%s", ret, role_name());
+    } else if (channel9_event && channel9_timing_index < MESH_RELAY_EVENT_TIMINGS &&
+               mesh_runtime.event_timings[channel9_timing_index].valid) {
+        mesh_event_note_missed(&mesh_runtime.event_timings[channel9_timing_index].timing,
+                               &mesh_event_stats);
     }
 
-    mesh_schedule_uwb_rx(mesh_uwb_rx_idle_delay_ms());
+    mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
 }
 
 static int mesh_start_uwb_rx(const char *reason)
@@ -4689,6 +5194,7 @@ static int build_range_report_samples(uint64_t clicker_id,
     fragmented = sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET;
 
     do {
+        struct range_report_diagnostics diagnostics;
         size_t payload_len = 0u;
         size_t encoded_len = 0u;
         uint16_t chunk_count = 0u;
@@ -4757,6 +5263,58 @@ static int build_range_report_samples(uint64_t clicker_id,
         fields.distance_sample_count = chunk_count;
         fields.omit_rsl = packet_index != 0u;
         fields.omit_cir = packet_index != 0u;
+        if (packet_index == 0u) {
+            uint32_t anchor_diag_len = range_result->cir_sampled ?
+                                       UWB_CIR_SAMPLE_LEN : 0u;
+            uint32_t clicker_diag_len = range_result->clicker_diag_received ?
+                                        range_result->clicker_diag_len : 0u;
+            uint32_t clicker_diag_copy_len = clicker_diag_len > 15u ?
+                                             clicker_diag_len - 15u : 0u;
+            uint32_t clicker_diag_raw_len =
+                (range_result->clicker_diag_received && clicker_diag_len >= 15u) ?
+                range_result->clicker_diag[14] : clicker_diag_copy_len;
+
+            memset(&diagnostics, 0, sizeof(diagnostics));
+            diagnostics.status_flags = range_result->cir_sampled ?
+                                       RANGE_DIAG_ANCHOR_PRESENT :
+                                       RANGE_DIAG_ANCHOR_MISSING;
+            diagnostics.status_flags |= range_result->clicker_diag_received ?
+                                        RANGE_DIAG_CLICKER_PRESENT :
+                                        RANGE_DIAG_CLICKER_MISSING;
+            if (range_result->clicker_diag_truncated) {
+                diagnostics.status_flags |= RANGE_DIAG_TRUNCATED;
+            }
+            if (range_result->clicker_diag_dropped) {
+                diagnostics.status_flags |= RANGE_DIAG_CAPTURE_FAILED;
+            }
+            diagnostics.burst_id = event_seq;
+            diagnostics.exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+            diagnostics.burst_duration_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
+            diagnostics.uwb_awake_time_us = anchor_uwb_session.diagnostics.awake_time_us;
+            diagnostics.diag_bytes_captured = anchor_diag_len + clicker_diag_len;
+            diagnostics.diag_bytes_transmitted = anchor_diag_len + clicker_diag_len;
+            diagnostics.diag_bytes_truncated = clicker_diag_raw_len > clicker_diag_copy_len ?
+                                               clicker_diag_raw_len - clicker_diag_copy_len :
+                                               0u;
+            diagnostics.diag_frames_dropped = range_result->clicker_diag_dropped ?
+                                              1u : 0u;
+            diagnostics.report_fragment_count = fragmented ?
+                                                (uint16_t)((sample_count +
+                                                           RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT -
+                                                           1u) /
+                                                          RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT) :
+                                                1u;
+            diagnostics.phy_config_id = UWB_CHANNEL_WAKE_CONTACT;
+            diagnostics.clicker_diag = range_result->clicker_diag_received ?
+                                       range_result->clicker_diag : NULL;
+            diagnostics.clicker_diag_len = range_result->clicker_diag_received ?
+                                           range_result->clicker_diag_len : 0u;
+            diagnostics.anchor_diag = range_result->cir_sampled ?
+                                      range_result->cir_sample : NULL;
+            diagnostics.anchor_diag_len = range_result->cir_sampled ?
+                                          UWB_CIR_SAMPLE_LEN : 0u;
+            fields.diagnostics = &diagnostics;
+        }
 
         ret = report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields);
         if (ret != PROTO_OK) {
@@ -5527,6 +6085,45 @@ static int clicker_send_range_schedule(const struct uwb_range_schedule_frame *sc
     return 0;
 }
 
+static int clicker_send_range_release(struct uwb_clicker_session *session,
+                                      uint8_t reason)
+{
+    struct uwb_range_release_frame release;
+    uint8_t frame[UWB_RANGE_RELEASE_LEN];
+    size_t frame_len = 0u;
+    int ret;
+
+    ret = uwb_clicker_build_range_release(session, reason, &release);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    ret = uwb_encode_range_release(&release, frame, sizeof(frame), &frame_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    ret = radio_guard_uwb_start("clicker UWB RANGE_RELEASE");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret == 0) {
+        ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
+    }
+    (void)dwm3000_driver_standby();
+    radio_guard_uwb_stop();
+
+    if (ret < 0) {
+        LOG_WRN("clicker UWB RANGE_RELEASE TX failed: ret=%d", ret);
+        return ret;
+    }
+    LOG_INF("clicker UWB RANGE_RELEASE TX complete: candidates=%u min=%u reason=%u",
+            release.discovered_anchor_count,
+            release.min_anchor_count,
+            release.reason);
+    return 0;
+}
+
 static int clicker_collect_uwb_attempt(struct uwb_clicker_session *session,
                                        uint64_t priority_id,
                                        struct uwb_range_schedule_frame *schedule)
@@ -5541,6 +6138,23 @@ static int clicker_collect_uwb_attempt(struct uwb_clicker_session *session,
     ret = clicker_discover_uwb_anchors(session);
     if (ret < 0) {
         return ret;
+    }
+
+    if ((session->config.flags & FLAG_COUNT_AS_CLICK) != 0u &&
+        session->candidate_count > 0u &&
+        session->candidate_count < session->config.min_anchor_count) {
+        int release_ret = clicker_send_range_release(
+            session,
+            UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS);
+
+        if (release_ret < 0) {
+            LOG_WRN("clicker could not release anchors after insufficient discovery: ret=%d candidates=%u min=%u",
+                    release_ret,
+                    session->candidate_count,
+                    session->config.min_anchor_count);
+        }
+        (void)uwb_clicker_abort_attempt(session);
+        return -ETIMEDOUT;
     }
 
     ret = uwb_clicker_build_range_schedule(session,
@@ -5577,7 +6191,7 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
         struct uwb_range_step step;
         struct dwm3000_range_request range_request;
         struct dwm3000_range_result range_result;
-        int64_t target_ms;
+        int64_t target_us;
         int64_t remaining_ms;
         uint32_t slot_timeout_ms = CLICK_UWB_TIMEOUT_MS;
         int ret;
@@ -5590,9 +6204,8 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
             return -EINVAL;
         }
 
-        target_ms = schedule_tx_ms + schedule->first_poll_delay_ms +
-                    ((int64_t)step.sample_index * schedule->poll_spacing_ms);
-        sleep_until_ms(target_ms);
+        target_us = scheduled_range_sample_target_us(schedule_tx_ms, schedule, step.sample_index);
+        sleep_until_us(target_us);
 
         remaining_ms = click_deadline_ms - k_uptime_get();
         if (remaining_ms <= CLICK_REPORT_BUILD_GUARD_MS) {
@@ -5624,17 +6237,9 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
         range_request.seq = step.seq;
         range_request.round_index = step.round_index;
         range_request.flags = session->config.flags;
-        if (schedule->poll_spacing_ms <= UWB_SCHEDULE_GUARD_MS) {
-            (void)uwb_clicker_abort_attempt(session);
-            LOG_WRN("scheduled click DS-TWR not started: reason=invalid_slot_spacing spacing_ms=%u guard_ms=%u attempt=%u ds_fail=%u",
-                    schedule->poll_spacing_ms,
-                    UWB_SCHEDULE_GUARD_MS,
-                    session->attempt_index,
-                    session->diagnostics.ds_twr_failures);
-            return -EINVAL;
-        }
         slot_timeout_ms = MIN(slot_timeout_ms,
-                              (uint32_t)(schedule->poll_spacing_ms - UWB_SCHEDULE_GUARD_MS));
+                              (uint32_t)ceil_us_to_ms(schedule->exchange_stride_us) +
+                              UWB_SCHEDULE_GUARD_MS);
         range_request.timeout_ms = MIN(slot_timeout_ms,
                                        (uint32_t)(remaining_ms - CLICK_REPORT_BUILD_GUARD_MS));
 

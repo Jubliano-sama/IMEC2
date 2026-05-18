@@ -13,6 +13,8 @@ extern "C" {
 
 #define UWB_MARKER 0xCAu
 #define UWB_VERSION 0x01u
+#define UWB_CHANNEL_WAKE_CONTACT 5u
+#define UWB_CHANNEL_MESH_PAYLOAD 9u
 #define UWB_SYNC_HEADER_LEN 3u
 #define UWB_FRAME_CRC_LEN 2u
 #define UWB_HEADER_LEN 42u
@@ -20,16 +22,24 @@ extern "C" {
 #define UWB_RESP_LEN (UWB_HEADER_LEN + 8u)
 #define UWB_FINAL_LEN (UWB_HEADER_LEN + 12u)
 #define UWB_REPORT_LEN (UWB_HEADER_LEN + 8u)
+#define UWB_CLICKER_DIAG_FIXED_LEN (UWB_HEADER_LEN + 15u)
+#define UWB_CLICKER_DIAG_MAX_BYTES 48u
+#define UWB_CLICKER_DIAG_MAX_LEN (UWB_CLICKER_DIAG_FIXED_LEN + UWB_CLICKER_DIAG_MAX_BYTES)
+#define UWB_CLICKER_DIAG_STATUS_RESP_RX_PRESENT (1u << 0)
+#define UWB_CLICKER_DIAG_STATUS_RESP_RSL_PRESENT (1u << 1)
+#define UWB_CLICKER_DIAG_STATUS_COMPACT_BYTES_PRESENT (1u << 2)
 #define UWB_WAKE_CLAIM_LEN 49u
 #define UWB_DISCOVER_LEN 32u
 #define UWB_DISCOVERY_REPLY_LEN 44u
 #define UWB_DISCOVERY_SLOT_COUNT 50u
+#define UWB_RANGE_RELEASE_LEN 34u
+#define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
 #define UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_DISCOVERY_START_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS 2000u
-#define UWB_RANGE_SCHEDULE_FIXED_LEN 38u
+#define UWB_RANGE_SCHEDULE_FIXED_LEN 46u
 #define UWB_RANGE_SCHEDULE_ENTRY_LEN 10u
-#define UWB_RANGE_SCHEDULE_MAX_ANCHORS 8u
+#define UWB_RANGE_SCHEDULE_MAX_ANCHORS 6u
 #define UWB_RANGE_SCHEDULE_MIN_LEN \
     (UWB_RANGE_SCHEDULE_FIXED_LEN + UWB_FRAME_CRC_LEN)
 #define UWB_RANGE_SCHEDULE_MAX_LEN \
@@ -37,6 +47,11 @@ extern "C" {
      (UWB_RANGE_SCHEDULE_ENTRY_LEN * UWB_RANGE_SCHEDULE_MAX_ANCHORS) + \
      UWB_FRAME_CRC_LEN)
 #define UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS 50u
+#define UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS 200u
+#define UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS 200u
+#define UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US 7000u
+#define UWB_RANGE_SCHEDULE_STS_DISABLED 0u
+#define UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED 1u
 #define UWB_RANGING_REQUESTS_MAX_PER_ANCHOR 15u
 #define UWB_DS_TWR_REPLY_DELAY_US 900u
 #define UWB_DS_TWR_REPLY_DELAY_MIN_US UWB_DS_TWR_REPLY_DELAY_US
@@ -82,6 +97,17 @@ struct uwb_report_frame {
     uint8_t quality;
     enum range_status status;
     int8_t rsl_dbm;
+};
+
+struct uwb_clicker_diag_frame {
+    struct uwb_range_header header;
+    uint32_t final_tx_ts_32;
+    uint32_t status_flags;
+    uint32_t irq_latency_us;
+    uint8_t resp_quality;
+    int8_t resp_rsl_dbm;
+    uint8_t diag_len;
+    uint8_t diag_bytes[UWB_CLICKER_DIAG_MAX_BYTES];
 };
 
 struct uwb_wake_claim_frame {
@@ -142,9 +168,27 @@ struct uwb_range_schedule_frame {
     uint16_t reply_delay_us;
     uint16_t first_poll_delay_ms;
     uint16_t poll_spacing_ms;
+    uint16_t burst_window_ms;
+    uint16_t exchange_stride_us;
+    uint8_t max_exchanges;
+    uint8_t min_successful_unique_anchors;
+    uint8_t sts_mode;
+    uint8_t diagnostics_required;
     uint8_t samples_per_anchor;
     uint8_t flags;
     struct uwb_range_schedule_entry entries[UWB_RANGE_SCHEDULE_MAX_ANCHORS];
+};
+
+struct uwb_range_release_frame {
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t click_event_id;
+    uint8_t attempt_index;
+    uint64_t nonce;
+    uint8_t discovered_anchor_count;
+    uint8_t min_anchor_count;
+    uint8_t reason;
+    uint8_t flags;
 };
 
 enum uwb_anchor_claim_decision {
@@ -198,6 +242,13 @@ int uwb_encode_report(const struct uwb_report_frame *frame,
 int uwb_decode_report(const uint8_t *data,
                            size_t len,
                            struct uwb_report_frame *frame);
+int uwb_encode_clicker_diag(const struct uwb_clicker_diag_frame *frame,
+                            uint8_t *out,
+                            size_t out_cap,
+                            size_t *written);
+int uwb_decode_clicker_diag(const uint8_t *data,
+                            size_t len,
+                            struct uwb_clicker_diag_frame *frame);
 
 int uwb_encode_wake_claim(const struct uwb_wake_claim_frame *frame,
                           uint8_t *out,
@@ -229,6 +280,14 @@ int uwb_decode_range_schedule(const uint8_t *data,
                               size_t len,
                               struct uwb_range_schedule_frame *frame);
 int uwb_validate_range_schedule(const struct uwb_range_schedule_frame *frame);
+int uwb_encode_range_release(const struct uwb_range_release_frame *frame,
+                             uint8_t *out,
+                             size_t out_cap,
+                             size_t *written);
+int uwb_decode_range_release(const uint8_t *data,
+                             size_t len,
+                             struct uwb_range_release_frame *frame);
+int uwb_validate_range_release(const struct uwb_range_release_frame *frame);
 size_t uwb_range_schedule_encoded_len(uint8_t selected_count);
 size_t uwb_range_schedule_total_samples(const struct uwb_range_schedule_frame *frame);
 int uwb_range_schedule_sample_at(const struct uwb_range_schedule_frame *frame,

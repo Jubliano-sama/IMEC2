@@ -162,8 +162,8 @@ static int validate_clicker_config(const struct uwb_clicker_config *config)
         UWB_SESSION_DISCOVERY_CAPACITY ||
         config->samples_per_anchor == 0u ||
         config->samples_per_anchor > UWB_RANGING_REQUESTS_MAX_PER_ANCHOR ||
-        config->wake_channel == 0u ||
-        config->ranging_channel == 0u ||
+        config->wake_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        config->ranging_channel != UWB_CHANNEL_WAKE_CONTACT ||
         !flags_valid(config->flags)) {
         return PROTO_ERR_MALFORMED;
     }
@@ -178,8 +178,8 @@ static int validate_anchor_config(const struct uwb_anchor_config *config)
     if (config->network_id == 0u ||
         config->anchor_id == 0u ||
         config->anchor_slot >= UWB_DISCOVERY_SLOT_COUNT ||
-        config->wake_channel == 0u ||
-        config->ranging_channel == 0u) {
+        config->wake_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        config->ranging_channel != UWB_CHANNEL_WAKE_CONTACT) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
@@ -208,7 +208,25 @@ static int candidate_index(const struct uwb_clicker_session *session, uint64_t a
 
 static bool range_status_valid(enum range_status status)
 {
-    return status >= RANGE_OK && status <= RANGE_TIMING_INVALID;
+    return status >= RANGE_OK &&
+           status <= RANGE_TIMING_INVALID &&
+           status != RANGE_STS_QUALITY_FAIL;
+}
+
+static uint16_t burst_window_for_exchange_count(uint8_t exchange_count)
+{
+    uint32_t required_ms;
+
+    required_ms = ((uint32_t)exchange_count *
+                   UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US +
+                   999u) / 1000u;
+    if (required_ms < UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS) {
+        required_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS;
+    }
+    if (required_ms > UINT16_MAX) {
+        return UINT16_MAX;
+    }
+    return (uint16_t)required_ms;
 }
 
 static int schedule_entry_index(const struct uwb_range_schedule_frame *schedule, uint64_t anchor_id)
@@ -469,6 +487,10 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
 
     selected_count = session->candidate_count < session->config.max_anchor_count ?
                      session->candidate_count : session->config.max_anchor_count;
+    if ((session->config.flags & FLAG_COUNT_AS_CLICK) != 0u &&
+        selected_count < session->config.min_anchor_count) {
+        return PROTO_ERR_NOT_FOUND;
+    }
     memset(schedule, 0, sizeof(*schedule));
     schedule->network_id = session->config.network_id;
     schedule->clicker_id = session->config.clicker_id;
@@ -480,6 +502,12 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
     schedule->reply_delay_us = reply_delay_us;
     schedule->first_poll_delay_ms = first_poll_delay_ms;
     schedule->poll_spacing_ms = poll_spacing_ms;
+    schedule->exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    schedule->max_exchanges = (uint8_t)(selected_count * session->config.samples_per_anchor);
+    schedule->burst_window_ms = burst_window_for_exchange_count(schedule->max_exchanges);
+    schedule->min_successful_unique_anchors = session->config.min_anchor_count;
+    schedule->sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED;
+    schedule->diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED;
     schedule->samples_per_anchor = session->config.samples_per_anchor;
     schedule->flags = session->config.flags;
 
@@ -494,6 +522,10 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
         schedule->entries[i].seq = (uint8_t)(1u + i);
         schedule->entries[i].sample_count = session->candidates[selected].sample_count;
     }
+    if (uwb_validate_range_schedule(schedule) != PROTO_OK) {
+        memset(schedule, 0, sizeof(*schedule));
+        return PROTO_ERR_MALFORMED;
+    }
 
     session->schedule = *schedule;
     session->next_sample_index = 0u;
@@ -501,6 +533,40 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
     session->state = UWB_CLICKER_RANGING;
     session->diagnostics.schedules++;
     return PROTO_OK;
+}
+
+int uwb_clicker_build_range_release(struct uwb_clicker_session *session,
+                                    uint8_t reason,
+                                    struct uwb_range_release_frame *release)
+{
+    if (session == NULL || release == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (session->state != UWB_CLICKER_DISCOVERY) {
+        return PROTO_ERR_BUSY;
+    }
+    if (reason != UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS ||
+        (session->config.flags & FLAG_COUNT_AS_CLICK) == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (session->candidate_count == 0u) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (session->candidate_count >= session->config.min_anchor_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(release, 0, sizeof(*release));
+    release->network_id = session->config.network_id;
+    release->clicker_id = session->config.clicker_id;
+    release->click_event_id = session->config.click_event_id;
+    release->attempt_index = session->attempt_index;
+    release->nonce = session->config.nonce;
+    release->discovered_anchor_count = session->candidate_count;
+    release->min_anchor_count = session->config.min_anchor_count;
+    release->reason = reason;
+    release->flags = session->config.flags;
+    return uwb_validate_range_release(release);
 }
 
 int uwb_clicker_next_range_step(struct uwb_clicker_session *session,
@@ -967,11 +1033,11 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
         if (schedule->entries[i].anchor_id != session->config.anchor_id) {
             continue;
         }
-        size_t last_sample_index = 0u;
+        size_t ignored_last_sample_index = 0u;
 
         if (!schedule_last_sample_index_for_anchor(schedule,
                                                    session->config.anchor_id,
-                                                   &last_sample_index)) {
+                                                   &ignored_last_sample_index)) {
             return PROTO_ERR_MALFORMED;
         }
 
@@ -979,8 +1045,7 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
         session->reply_delay_us = schedule->reply_delay_us;
         session->expected_ranging_channel = schedule->ranging_channel;
         session->uwb_wait_deadline_ms = now_ms + schedule->first_poll_delay_ms +
-                                        ((uint32_t)(last_sample_index + 1u) *
-                                         schedule->poll_spacing_ms) +
+                                        schedule->burst_window_ms +
                                         guard_ms;
         session->scheduled = true;
         session->state = UWB_ANCHOR_SCHEDULED;
@@ -992,6 +1057,34 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
     uwb_anchor_epoch_clear(&session->epoch);
     session->state = UWB_ANCHOR_IDLE;
     return PROTO_ERR_NOT_FOUND;
+}
+
+int uwb_anchor_accept_range_release(struct uwb_anchor_session *session,
+                                    const struct uwb_range_release_frame *release)
+{
+    if (session == NULL || release == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (session->state != UWB_ANCHOR_DISCOVERY_REPLIED) {
+        return PROTO_ERR_BUSY;
+    }
+    if (!uwb_anchor_epoch_matches(&session->epoch,
+                                  release->network_id,
+                                  release->clicker_id,
+                                  release->click_event_id,
+                                  release->attempt_index,
+                                  release->nonce) ||
+        release->flags != session->epoch.flags) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (uwb_validate_range_release(release) != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    clear_anchor_schedule(session);
+    uwb_anchor_epoch_clear(&session->epoch);
+    session->state = UWB_ANCHOR_IDLE;
+    return PROTO_OK;
 }
 
 bool uwb_anchor_accepts_range_exchange(const struct uwb_anchor_session *session,

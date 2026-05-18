@@ -111,6 +111,91 @@ static void test_response_final_and_report_round_trip(void)
     assert(decoded_report.rsl_dbm == report.rsl_dbm);
 }
 
+static void test_clicker_diag_round_trip(void)
+{
+    const uint8_t diag_bytes[] = {0xA0u, 0xA1u, 0xA2u};
+    const struct uwb_clicker_diag_frame diag = {
+        .header = header(MSG_UWB_CLICKER_DIAG, FLAG_COUNT_AS_CLICK),
+        .final_tx_ts_32 = 0x11223344u,
+        .status_flags = 0x00000005u,
+        .irq_latency_us = 37u,
+        .resp_quality = 93u,
+        .resp_rsl_dbm = -68,
+        .diag_len = sizeof(diag_bytes),
+        .diag_bytes = {0xA0u, 0xA1u, 0xA2u},
+    };
+    struct uwb_clicker_diag_frame decoded = {0};
+    uint8_t buf[UWB_CLICKER_DIAG_MAX_LEN];
+    size_t written = 0u;
+
+    assert(sizeof(diag_bytes) == diag.diag_len);
+    assert(uwb_encode_clicker_diag(&diag, buf, sizeof(buf), &written) == PROTO_OK);
+    assert(written == UWB_CLICKER_DIAG_FIXED_LEN + diag.diag_len);
+    assert(UWB_CLICKER_DIAG_FIXED_LEN == 57u);
+    assert(buf[0] == UWB_MARKER);
+    assert(buf[1] == UWB_VERSION);
+    assert(buf[2] == MSG_UWB_CLICKER_DIAG);
+
+    assert(uwb_decode_clicker_diag(buf, written, &decoded) == PROTO_OK);
+    assert_same_header(&decoded.header, &diag.header);
+    assert(decoded.final_tx_ts_32 == diag.final_tx_ts_32);
+    assert(decoded.status_flags == diag.status_flags);
+    assert(decoded.irq_latency_us == diag.irq_latency_us);
+    assert(decoded.resp_quality == diag.resp_quality);
+    assert(decoded.resp_rsl_dbm == diag.resp_rsl_dbm);
+    assert(decoded.diag_len == diag.diag_len);
+    assert(memcmp(decoded.diag_bytes, diag_bytes, sizeof(diag_bytes)) == 0);
+}
+
+static void test_rejects_bad_clicker_diag(void)
+{
+    struct uwb_clicker_diag_frame diag = {
+        .header = header(MSG_UWB_CLICKER_DIAG, FLAG_COUNT_AS_CLICK),
+        .final_tx_ts_32 = 0x11223344u,
+        .status_flags = 0x00000001u,
+        .irq_latency_us = 37u,
+        .resp_quality = 93u,
+        .resp_rsl_dbm = -68,
+        .diag_len = 1u,
+        .diag_bytes = {0xA0u},
+    };
+    uint8_t buf[UWB_CLICKER_DIAG_MAX_LEN];
+    size_t written = 0u;
+
+    diag.status_flags = 0u;
+    assert(uwb_encode_clicker_diag(&diag, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    diag.status_flags = 0x00000001u;
+    diag.resp_quality = 101u;
+    assert(uwb_encode_clicker_diag(&diag, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    diag.resp_quality = 93u;
+    diag.diag_len = UWB_CLICKER_DIAG_MAX_BYTES + 1u;
+    assert(uwb_encode_clicker_diag(&diag, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    diag.diag_len = 1u;
+    assert(uwb_encode_clicker_diag(&diag,
+                                   buf,
+                                   UWB_CLICKER_DIAG_FIXED_LEN,
+                                   &written) == PROTO_ERR_NO_SPACE);
+
+    assert(uwb_encode_clicker_diag(&diag, buf, sizeof(buf), &written) == PROTO_OK);
+    buf[UWB_HEADER_LEN + 12u] = 101u;
+    assert(uwb_decode_clicker_diag(buf,
+                                   written,
+                                   &(struct uwb_clicker_diag_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_clicker_diag(&diag, buf, sizeof(buf), &written) == PROTO_OK);
+    assert(uwb_decode_clicker_diag(buf,
+                                   written - 1u,
+                                   &(struct uwb_clicker_diag_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_rejects_invalid_header_and_status(void)
 {
     struct uwb_range_header bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK);
@@ -157,6 +242,9 @@ static void test_rejects_invalid_header_and_status(void)
     bad_header.responder_short_addr++;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     assert(uwb_encode_report(&bad_report, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
+    bad_report.quality = 80u;
+    bad_report.status = RANGE_STS_QUALITY_FAIL;
+    assert(uwb_encode_report(&bad_report, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
 
     assert(uwb_encode_report(&report, buf, sizeof(buf), &written) == PROTO_OK);
     buf[UWB_HEADER_LEN + 4u] = 101u;
@@ -164,8 +252,7 @@ static void test_rejects_invalid_header_and_status(void)
            PROTO_ERR_MALFORMED);
 
     assert(uwb_encode_report(&report, buf, sizeof(buf), &written) == PROTO_OK);
-    proto_put_u16_le(&buf[UWB_HEADER_LEN + 5u],
-                     (uint16_t)(RANGE_TIMING_INVALID + 1u));
+    proto_put_u16_le(&buf[UWB_HEADER_LEN + 5u], (uint16_t)RANGE_STS_QUALITY_FAIL);
     assert(uwb_decode_report(buf, written, &(struct uwb_report_frame){0}) ==
            PROTO_ERR_MALFORMED);
 }
@@ -250,13 +337,13 @@ static struct uwb_wake_claim_frame wake_claim(void)
         .click_event_id = 77u,
         .attempt_index = 2u,
         .priority_id = UINT64_C(0x1111222233334444),
-        .wake_channel = 5u,
-        .ranging_channel = 5u,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
         .wake_train_ends_in_ms = 120u,
         .discovery_starts_in_ms = 150u,
         .claimed_duration_ms = 400u,
         .min_anchor_count = 4u,
-        .max_anchor_count = 8u,
+        .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
         .nonce = UINT64_C(0x8877665544332211),
         .flags = FLAG_COUNT_AS_CLICK,
     };
@@ -288,6 +375,17 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .battery_mv = 3010u,
         .flags = claim.flags,
     };
+    const struct uwb_range_release_frame release = {
+        .network_id = claim.network_id,
+        .clicker_id = claim.clicker_id,
+        .click_event_id = claim.click_event_id,
+        .attempt_index = claim.attempt_index,
+        .nonce = claim.nonce,
+        .discovered_anchor_count = 3u,
+        .min_anchor_count = 4u,
+        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+        .flags = claim.flags,
+    };
     struct uwb_range_schedule_frame schedule = {
         .network_id = claim.network_id,
         .clicker_id = claim.clicker_id,
@@ -299,6 +397,12 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .reply_delay_us = 900u,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = 4u,
+        .min_successful_unique_anchors = 2u,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 2u,
         .flags = claim.flags,
         .entries = {
@@ -318,6 +422,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     struct uwb_wake_claim_frame decoded_claim = {0};
     struct uwb_discover_frame decoded_discover = {0};
     struct uwb_discovery_reply_frame decoded_reply = {0};
+    struct uwb_range_release_frame decoded_release = {0};
     struct uwb_range_schedule_frame decoded_schedule = {0};
     size_t written = 0u;
 
@@ -462,12 +567,34 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_reply.battery_mv == reply.battery_mv);
     assert(decoded_reply.flags == reply.flags);
 
+    assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
+    assert(written == UWB_RANGE_RELEASE_LEN);
+    assert(UWB_RANGE_RELEASE_LEN == 34u);
+    assert(buf[0] == UWB_MARKER);
+    assert(buf[1] == UWB_VERSION);
+    assert(buf[2] == MSG_UWB_RANGE_RELEASE);
+    assert(uwb_decode_range_release(buf, written, &decoded_release) == PROTO_OK);
+    assert(decoded_release.network_id == release.network_id);
+    assert(decoded_release.clicker_id == release.clicker_id);
+    assert(decoded_release.click_event_id == release.click_event_id);
+    assert(decoded_release.attempt_index == release.attempt_index);
+    assert(decoded_release.nonce == release.nonce);
+    assert(decoded_release.discovered_anchor_count == release.discovered_anchor_count);
+    assert(decoded_release.min_anchor_count == release.min_anchor_count);
+    assert(decoded_release.reason == release.reason);
+    assert(decoded_release.flags == release.flags);
+
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_OK);
     assert(written == uwb_range_schedule_encoded_len(schedule.selected_count));
     assert(uwb_decode_range_schedule(buf, written, &decoded_schedule) == PROTO_OK);
     assert(decoded_schedule.network_id == schedule.network_id);
     assert(decoded_schedule.clicker_id == schedule.clicker_id);
     assert(decoded_schedule.selected_count == schedule.selected_count);
+    assert(decoded_schedule.burst_window_ms == schedule.burst_window_ms);
+    assert(decoded_schedule.exchange_stride_us == schedule.exchange_stride_us);
+    assert(decoded_schedule.max_exchanges == schedule.max_exchanges);
+    assert(decoded_schedule.sts_mode == UWB_RANGE_SCHEDULE_STS_DISABLED);
+    assert(decoded_schedule.diagnostics_required == UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
     assert(decoded_schedule.entries[0].anchor_id == schedule.entries[0].anchor_id);
     assert(decoded_schedule.entries[1].seq == schedule.entries[1].seq);
 }
@@ -497,6 +624,17 @@ static void test_control_frames_reject_bad_crc(void)
         .battery_mv = 3010u,
         .flags = claim.flags,
     };
+    const struct uwb_range_release_frame release = {
+        .network_id = claim.network_id,
+        .clicker_id = claim.clicker_id,
+        .click_event_id = claim.click_event_id,
+        .attempt_index = claim.attempt_index,
+        .nonce = claim.nonce,
+        .discovered_anchor_count = 3u,
+        .min_anchor_count = 4u,
+        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+        .flags = claim.flags,
+    };
     const struct uwb_range_schedule_frame schedule = {
         .network_id = claim.network_id,
         .clicker_id = claim.clicker_id,
@@ -508,6 +646,12 @@ static void test_control_frames_reject_bad_crc(void)
         .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = 1u,
+        .min_successful_unique_anchors = 1u,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
         .flags = claim.flags,
         .entries = {
@@ -531,6 +675,13 @@ static void test_control_frames_reject_bad_crc(void)
     assert(uwb_decode_discovery_reply(buf,
                                       written,
                                       &(struct uwb_discovery_reply_frame){0}) ==
+           PROTO_ERR_BAD_CRC);
+
+    assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
+    buf[20] ^= 0x01u;
+    assert(uwb_decode_range_release(buf,
+                                    written,
+                                    &(struct uwb_range_release_frame){0}) ==
            PROTO_ERR_BAD_CRC);
 
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_OK);
@@ -694,6 +845,48 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
            PROTO_ERR_MALFORMED);
 }
 
+static void test_range_release_decode_rejects_valid_crc_malformed_fields(void)
+{
+    const struct uwb_wake_claim_frame claim = wake_claim();
+    const struct uwb_range_release_frame release = {
+        .network_id = claim.network_id,
+        .clicker_id = claim.clicker_id,
+        .click_event_id = claim.click_event_id,
+        .attempt_index = claim.attempt_index,
+        .nonce = claim.nonce,
+        .discovered_anchor_count = 3u,
+        .min_anchor_count = 4u,
+        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+        .flags = claim.flags,
+    };
+    uint8_t buf[UWB_RANGE_RELEASE_LEN];
+    size_t written = 0u;
+
+    assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
+    buf[28] = release.min_anchor_count;
+    refresh_frame_crc(buf, written);
+    assert(uwb_decode_range_release(buf,
+                                    written,
+                                    &(struct uwb_range_release_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
+    buf[30] = 0xffu;
+    refresh_frame_crc(buf, written);
+    assert(uwb_decode_range_release(buf,
+                                    written,
+                                    &(struct uwb_range_release_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
+    buf[31] = 0u;
+    refresh_frame_crc(buf, written);
+    assert(uwb_decode_range_release(buf,
+                                    written,
+                                    &(struct uwb_range_release_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_range_schedule_decode_rejects_valid_crc_malformed_fields(void)
 {
     const struct uwb_wake_claim_frame claim = wake_claim();
@@ -708,6 +901,12 @@ static void test_range_schedule_decode_rejects_valid_crc_malformed_fields(void)
         .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = 1u,
+        .min_successful_unique_anchors = 1u,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
         .flags = claim.flags,
         .entries = {
@@ -747,10 +946,16 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
         .attempt_index = 1u,
         .nonce = 4u,
         .selected_count = 2u,
-        .ranging_channel = 5u,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
         .reply_delay_us = 900u,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = 2u,
+        .min_successful_unique_anchors = 2u,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
         .flags = FLAG_COUNT_AS_CLICK,
         .entries = {
@@ -804,10 +1009,16 @@ static void test_schedule_samples_are_round_robin(void)
         .attempt_index = 1u,
         .nonce = 4u,
         .selected_count = 4u,
-        .ranging_channel = 5u,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
         .reply_delay_us = 900u,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = 8u,
+        .min_successful_unique_anchors = 4u,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 2u,
         .flags = FLAG_COUNT_AS_CLICK,
         .entries = {
@@ -1146,6 +1357,8 @@ int main(void)
 {
     test_poll_round_trip_diagnostic_not_click();
     test_response_final_and_report_round_trip();
+    test_clicker_diag_round_trip();
+    test_rejects_bad_clicker_diag();
     test_rejects_invalid_header_and_status();
     test_decode_rejects_wrong_type();
     test_decode_rejects_mismatched_full_id_short_address();
@@ -1154,6 +1367,7 @@ int main(void)
     test_control_frames_reject_bad_crc();
     test_wake_claim_decode_rejects_valid_crc_malformed_timing();
     test_discovery_decode_rejects_valid_crc_malformed_fields();
+    test_range_release_decode_rejects_valid_crc_malformed_fields();
     test_range_schedule_decode_rejects_valid_crc_malformed_fields();
     test_schedule_rejects_unsafe_ranging_params();
     test_schedule_samples_are_round_robin();

@@ -15,6 +15,7 @@ extern "C" {
 #define ROUTE_NO_SELECTION 0xFFu
 #define ROUTE_MAX_FAILURES 3u
 #define ROUTE_GATEWAY_ACK_TIMEOUT_MS 2000u
+/* Kept for compatibility; route age alone no longer invalidates candidates. */
 #define ROUTE_CANDIDATE_MAX_AGE_MS 30000u
 #define ROUTE_DEDUP_WINDOW_MS 60000u
 
