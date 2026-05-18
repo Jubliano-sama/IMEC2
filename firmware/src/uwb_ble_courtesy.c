@@ -8,10 +8,32 @@ static int validate_courtesy_frame(const struct uwb_ble_courtesy_frame *frame)
     if (frame->network_id == 0u ||
         frame->clicker_id == 0u ||
         frame->click_event_id == 0u ||
-        frame->attempt_index == 0u) {
+        frame->attempt_index == 0u ||
+        frame->defer_duration_units == 0u) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
+}
+
+uint8_t uwb_ble_courtesy_duration_units_from_ms(uint32_t duration_ms)
+{
+    uint32_t units;
+
+    if (duration_ms == 0u) {
+        return 0u;
+    }
+    if (duration_ms >= UWB_BLE_COURTESY_MAX_DURATION_MS) {
+        return UINT8_MAX;
+    }
+
+    units = (duration_ms + UWB_BLE_COURTESY_DURATION_UNIT_MS - 1u) /
+            UWB_BLE_COURTESY_DURATION_UNIT_MS;
+    return (uint8_t)units;
+}
+
+uint32_t uwb_ble_courtesy_duration_ms(uint8_t duration_units)
+{
+    return (uint32_t)duration_units * UWB_BLE_COURTESY_DURATION_UNIT_MS;
 }
 
 int uwb_ble_courtesy_encode(const struct uwb_ble_courtesy_frame *frame,
@@ -40,6 +62,7 @@ int uwb_ble_courtesy_encode(const struct uwb_ble_courtesy_frame *frame,
     proto_put_u32_le(&out[15], frame->click_event_id);
     out[19] = frame->attempt_index;
     proto_put_u64_le(&out[20], frame->priority_id);
+    out[28] = frame->defer_duration_units;
     *written = UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN;
     return PROTO_OK;
 }
@@ -64,5 +87,6 @@ int uwb_ble_courtesy_decode(const uint8_t *data,
     frame->click_event_id = proto_get_u32_le(&data[15]);
     frame->attempt_index = data[19];
     frame->priority_id = proto_get_u64_le(&data[20]);
+    frame->defer_duration_units = data[28];
     return validate_courtesy_frame(frame);
 }

@@ -11,8 +11,11 @@ extern "C" {
 #endif
 
 #define UWB_BLE_COURTESY_COMPANY_ID 0xffffu
-#define UWB_BLE_COURTESY_MARKER_VERSION 0xc1u
-#define UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN 28u
+#define UWB_BLE_COURTESY_MARKER_VERSION 0xc2u
+#define UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN 29u
+#define UWB_BLE_COURTESY_DURATION_UNIT_MS 10u
+#define UWB_BLE_COURTESY_MAX_DURATION_MS \
+    (UINT8_MAX * UWB_BLE_COURTESY_DURATION_UNIT_MS)
 
 struct uwb_ble_courtesy_frame {
     uint32_t network_id;
@@ -20,7 +23,11 @@ struct uwb_ble_courtesy_frame {
     uint32_t click_event_id;
     uint8_t attempt_index;
     uint64_t priority_id;
+    uint8_t defer_duration_units;
 };
+
+uint8_t uwb_ble_courtesy_duration_units_from_ms(uint32_t duration_ms);
+uint32_t uwb_ble_courtesy_duration_ms(uint8_t duration_units);
 
 int uwb_ble_courtesy_encode(const struct uwb_ble_courtesy_frame *frame,
                             uint8_t *out,

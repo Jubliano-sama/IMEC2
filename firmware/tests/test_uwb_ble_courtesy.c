@@ -11,8 +11,22 @@ static struct uwb_ble_courtesy_frame courtesy_frame(void)
         .click_event_id = 42u,
         .attempt_index = 2u,
         .priority_id = UINT64_C(0x1111222233334444),
+        .defer_duration_units = 84u,
     };
     return frame;
+}
+
+static void test_duration_units(void)
+{
+    assert(UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN + 2u <= 31u);
+    assert(UWB_BLE_COURTESY_DURATION_UNIT_MS == 10u);
+    assert(uwb_ble_courtesy_duration_units_from_ms(0u) == 0u);
+    assert(uwb_ble_courtesy_duration_units_from_ms(1u) == 1u);
+    assert(uwb_ble_courtesy_duration_units_from_ms(10u) == 1u);
+    assert(uwb_ble_courtesy_duration_units_from_ms(11u) == 2u);
+    assert(uwb_ble_courtesy_duration_units_from_ms(UWB_BLE_COURTESY_MAX_DURATION_MS + 1u) ==
+           UINT8_MAX);
+    assert(uwb_ble_courtesy_duration_ms(84u) == 840u);
 }
 
 static void test_round_trip(void)
@@ -33,6 +47,8 @@ static void test_round_trip(void)
     assert(decoded.click_event_id == frame.click_event_id);
     assert(decoded.attempt_index == frame.attempt_index);
     assert(decoded.priority_id == frame.priority_id);
+    assert(decoded.defer_duration_units == frame.defer_duration_units);
+    assert(raw[28] == frame.defer_duration_units);
 }
 
 static void test_rejects_malformed_payloads(void)
@@ -46,6 +62,11 @@ static void test_rejects_malformed_payloads(void)
     assert(uwb_ble_courtesy_encode(&frame, raw, 1u, &written) == PROTO_ERR_NO_SPACE);
 
     frame.attempt_index = 0u;
+    assert(uwb_ble_courtesy_encode(&frame, raw, sizeof(raw), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    frame = courtesy_frame();
+    frame.defer_duration_units = 0u;
     assert(uwb_ble_courtesy_encode(&frame, raw, sizeof(raw), &written) ==
            PROTO_ERR_MALFORMED);
 
@@ -91,6 +112,7 @@ static void test_same_attempt_tie_breakers(void)
 
 int main(void)
 {
+    test_duration_units();
     test_round_trip();
     test_rejects_malformed_payloads();
     test_attempt_first_precedence();

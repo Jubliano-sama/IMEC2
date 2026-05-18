@@ -194,8 +194,9 @@ static uint16_t mesh_event_control_seq;
 #define BLE_COURTESY_SCAN_INTERVAL_UNITS 40u
 #define BLE_COURTESY_SCAN_WINDOW_UNITS 32u
 #define BLE_COURTESY_MIN_WINDOW_MS 75u
-#define BLE_COURTESY_DEFER_MS 75u
-#define BLE_COURTESY_MAX_DEFERS_PER_ATTEMPT 2u
+#define BLE_COURTESY_PEER_FINISH_MS \
+    (BLE_COURTESY_MIN_WINDOW_MS + UWB_CLICKER_CLAIMED_DURATION_MS)
+#define BLE_COURTESY_MAX_DEFERS_PER_ATTEMPT 3u
 #define BLE_COURTESY_POLL_SLEEP_MS 5u
 #define CLICK_REPORT_BUILD_GUARD_MS 20u
 #define CLICK_UWB_TIMEOUT_MS 40u
@@ -298,6 +299,10 @@ BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES == 2u,
              "BLE courtesy edge sampling expects one quiet UWB sample at each window edge");
 BUILD_ASSERT((2u * UWB_POLITE_SAMPLE_RX_MS) <= BLE_COURTESY_MIN_WINDOW_MS,
              "BLE courtesy window must fit begin and end UWB politeness samples");
+BUILD_ASSERT(UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN + 2u <= 31u,
+             "BLE courtesy must fit in one legacy advertising data structure");
+BUILD_ASSERT(BLE_COURTESY_PEER_FINISH_MS <= UWB_BLE_COURTESY_MAX_DURATION_MS,
+             "BLE courtesy peer finish duration must fit in the advertised field");
 BUILD_ASSERT(BLE_COURTESY_SCAN_WINDOW_UNITS <= BLE_COURTESY_SCAN_INTERVAL_UNITS,
              "BLE courtesy scan window must fit inside scan interval");
 BUILD_ASSERT(CLICK_UWB_TIMEOUT_MS + UWB_SCHEDULE_GUARD_MS <= UWB_ANCHOR_RANGE_WINDOW_MS,
@@ -5583,7 +5588,8 @@ static bool ble_courtesy_init_attempted;
 static bool ble_courtesy_available;
 static bool ble_courtesy_adv_active;
 static bool ble_courtesy_scan_active;
-static atomic_t ble_courtesy_higher_seen;
+static struct k_spinlock ble_courtesy_lock;
+static uint32_t ble_courtesy_higher_wait_ms;
 static uint8_t ble_courtesy_adv_data[UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN];
 static struct uwb_ble_courtesy_frame ble_courtesy_local;
 
@@ -5598,6 +5604,24 @@ static int clicker_ble_courtesy_set_scan_channel(void)
 #else
     return -ENOTSUP;
 #endif
+}
+
+static void clicker_ble_courtesy_note_higher_peer(uint32_t wait_ms)
+{
+    k_spinlock_key_t key = k_spin_lock(&ble_courtesy_lock);
+
+    if (wait_ms > ble_courtesy_higher_wait_ms) {
+        ble_courtesy_higher_wait_ms = wait_ms;
+    }
+    k_spin_unlock(&ble_courtesy_lock, key);
+}
+
+static void clicker_ble_courtesy_clear_higher_peer(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&ble_courtesy_lock);
+
+    ble_courtesy_higher_wait_ms = 0u;
+    k_spin_unlock(&ble_courtesy_lock, key);
 }
 
 static bool clicker_ble_courtesy_parse_ad(struct bt_data *data, void *user_data)
@@ -5626,12 +5650,15 @@ static bool clicker_ble_courtesy_parse_ad(struct bt_data *data, void *user_data)
                                        ble_courtesy_local.clicker_id,
                                        ble_courtesy_local.click_event_id);
     if (cmp > 0) {
-        atomic_set(&ble_courtesy_higher_seen, 1);
-        LOG_INF("BLE courtesy saw higher-precedence clicker: peer=%llx event=%u attempt=%u priority=%llx",
+        uint32_t wait_ms = uwb_ble_courtesy_duration_ms(peer.defer_duration_units);
+
+        clicker_ble_courtesy_note_higher_peer(wait_ms);
+        LOG_INF("BLE courtesy saw higher-precedence clicker: peer=%llx event=%u attempt=%u priority=%llx wait_ms=%u",
                 (unsigned long long)peer.clicker_id,
                 peer.click_event_id,
                 peer.attempt_index,
-                (unsigned long long)peer.priority_id);
+                (unsigned long long)peer.priority_id,
+                wait_ms);
     }
     return false;
 }
@@ -5722,6 +5749,8 @@ static int clicker_ble_courtesy_start(uint32_t event_seq,
     ble_courtesy_local.click_event_id = event_seq;
     ble_courtesy_local.attempt_index = attempt_index;
     ble_courtesy_local.priority_id = priority_id;
+    ble_courtesy_local.defer_duration_units =
+        uwb_ble_courtesy_duration_units_from_ms(BLE_COURTESY_PEER_FINISH_MS);
     ret = uwb_ble_courtesy_encode(&ble_courtesy_local,
                                   ble_courtesy_adv_data,
                                   sizeof(ble_courtesy_adv_data),
@@ -5730,7 +5759,7 @@ static int clicker_ble_courtesy_start(uint32_t event_seq,
         return -EINVAL;
     }
 
-    atomic_set(&ble_courtesy_higher_seen, 0);
+    clicker_ble_courtesy_clear_higher_peer();
     ble_courtesy_scan_active = true;
     ret = bt_le_scan_start(&scan_param, clicker_ble_courtesy_scan_cb);
     if (ret != 0) {
@@ -5750,9 +5779,13 @@ static int clicker_ble_courtesy_start(uint32_t event_seq,
     return 0;
 }
 
-static bool clicker_ble_courtesy_higher_seen(void)
+static uint32_t clicker_ble_courtesy_higher_wait_ms(void)
 {
-    return atomic_get(&ble_courtesy_higher_seen) != 0;
+    k_spinlock_key_t key = k_spin_lock(&ble_courtesy_lock);
+    uint32_t wait_ms = ble_courtesy_higher_wait_ms;
+
+    k_spin_unlock(&ble_courtesy_lock, key);
+    return wait_ms;
 }
 
 static void clicker_ble_courtesy_stop(void)
@@ -5785,9 +5818,9 @@ static int clicker_ble_courtesy_start(uint32_t event_seq,
     return -ENOTSUP;
 }
 
-static bool clicker_ble_courtesy_higher_seen(void)
+static uint32_t clicker_ble_courtesy_higher_wait_ms(void)
 {
-    return false;
+    return 0u;
 }
 
 static void clicker_ble_courtesy_stop(void)
@@ -5838,16 +5871,17 @@ static uint32_t clicker_apply_retry_delay(struct uwb_clicker_session *session,
     return delay_ms;
 }
 
-static bool clicker_sleep_until_ble_or_timeout(uint32_t sleep_ms, int64_t deadline_ms)
+static uint32_t clicker_sleep_until_ble_or_timeout(uint32_t sleep_ms, int64_t deadline_ms)
 {
     uint32_t remaining_ms = sleep_ms;
 
     while (remaining_ms > 0u && k_uptime_get() < deadline_ms) {
         uint32_t step_ms = MIN(remaining_ms, BLE_COURTESY_POLL_SLEEP_MS);
         int64_t deadline_remaining_ms = deadline_ms - k_uptime_get();
+        uint32_t wait_ms = clicker_ble_courtesy_higher_wait_ms();
 
-        if (clicker_ble_courtesy_higher_seen()) {
-            return true;
+        if (wait_ms > 0u) {
+            return wait_ms;
         }
         if (deadline_remaining_ms <= 0) {
             break;
@@ -5859,7 +5893,7 @@ static bool clicker_sleep_until_ble_or_timeout(uint32_t sleep_ms, int64_t deadli
         k_msleep(step_ms);
         remaining_ms -= step_ms;
     }
-    return clicker_ble_courtesy_higher_seen();
+    return clicker_ble_courtesy_higher_wait_ms();
 }
 
 static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
@@ -5942,7 +5976,8 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                     uint32_t event_seq,
                                     uint64_t priority_id,
                                     bool use_ble_courtesy,
-                                    uint32_t *uwb_restart_wait_ms)
+                                    uint32_t *uwb_restart_wait_ms,
+                                    uint32_t *ble_defer_wait_ms)
 {
     int64_t deadline_ms = k_uptime_get() + MAX_POLITENESS_WAIT_MS;
     uint8_t quiet_samples = 0u;
@@ -5957,6 +5992,9 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
     }
     if (uwb_restart_wait_ms != NULL) {
         *uwb_restart_wait_ms = 0u;
+    }
+    if (ble_defer_wait_ms != NULL) {
+        *ble_defer_wait_ms = 0u;
     }
 
     if (use_ble_courtesy) {
@@ -5991,6 +6029,7 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
 
     if (ble_started) {
         int64_t remaining_ms = deadline_ms - k_uptime_get();
+        uint32_t peer_wait_ms = 0u;
 
         if (remaining_ms > 0) {
             ret = clicker_sample_uwb_gate(session,
@@ -6001,7 +6040,13 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                          &activity_count,
                                          &quiet_samples);
         }
-        if (ret == 0 && clicker_ble_courtesy_higher_seen()) {
+        if (ret == 0) {
+            peer_wait_ms = clicker_ble_courtesy_higher_wait_ms();
+        }
+        if (peer_wait_ms > 0u) {
+            if (ble_defer_wait_ms != NULL) {
+                *ble_defer_wait_ms = peer_wait_ms;
+            }
             ret = -EAGAIN;
         }
         if (ret == 0 && k_uptime_get() < ble_courtesy_until_ms) {
@@ -6009,9 +6054,12 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
             int64_t deadline_remaining_ms = deadline_ms - k_uptime_get();
 
             if (courtesy_remaining_ms > 0 && deadline_remaining_ms > 0 &&
-                clicker_sleep_until_ble_or_timeout((uint32_t)MIN(courtesy_remaining_ms,
-                                                                 deadline_remaining_ms),
-                                                   deadline_ms)) {
+                (peer_wait_ms = clicker_sleep_until_ble_or_timeout(
+                    (uint32_t)MIN(courtesy_remaining_ms, deadline_remaining_ms),
+                    deadline_ms)) > 0u) {
+                if (ble_defer_wait_ms != NULL) {
+                    *ble_defer_wait_ms = peer_wait_ms;
+                }
                 ret = -EAGAIN;
             }
         }
@@ -6069,10 +6117,11 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         clicker_ble_courtesy_stop();
     }
     if (ret == -EAGAIN) {
-        LOG_INF("clicker BLE courtesy deferred attempt=%u event_seq=%u priority=%llx",
+        LOG_INF("clicker BLE courtesy deferred attempt=%u event_seq=%u priority=%llx peer_wait_ms=%u",
                 session->attempt_index,
                 event_seq,
-                (unsigned long long)priority_id);
+                (unsigned long long)priority_id,
+                ble_defer_wait_ms != NULL ? *ble_defer_wait_ms : 0u);
         return ret;
     }
     if (ret == CLICKER_POLITENESS_UWB_RESTART) {
@@ -6104,6 +6153,7 @@ static int clicker_attempt_gate(struct uwb_clicker_session *session,
 
     while (true) {
         uint32_t uwb_restart_wait_ms = 0u;
+        uint32_t ble_defer_wait_ms = 0u;
 
         if (k_uptime_get() + WAKE_ADV_MS >= click_deadline_ms) {
             return -ETIMEDOUT;
@@ -6112,7 +6162,8 @@ static int clicker_attempt_gate(struct uwb_clicker_session *session,
                                        event_seq,
                                        priority_id,
                                        ble_courtesy_allowed,
-                                       &uwb_restart_wait_ms);
+                                       &uwb_restart_wait_ms,
+                                       &ble_defer_wait_ms);
         if (ret == CLICKER_POLITENESS_UWB_RESTART) {
             uint32_t slept_ms = clicker_sleep_bounded(uwb_restart_wait_ms,
                                                       click_deadline_ms,
@@ -6136,7 +6187,16 @@ static int clicker_attempt_gate(struct uwb_clicker_session *session,
             continue;
         }
         defer_count++;
-        (void)clicker_sleep_bounded(BLE_COURTESY_DEFER_MS,
+        if (ble_defer_wait_ms == 0u) {
+            ble_defer_wait_ms = BLE_COURTESY_PEER_FINISH_MS;
+        }
+        LOG_INF("BLE courtesy peer defer: event_seq=%u attempt=%u defer=%u/%u requested_wait_ms=%u",
+                event_seq,
+                session->attempt_index,
+                defer_count,
+                BLE_COURTESY_MAX_DEFERS_PER_ATTEMPT,
+                ble_defer_wait_ms);
+        (void)clicker_sleep_bounded(ble_defer_wait_ms,
                                     click_deadline_ms,
                                     WAKE_ADV_MS);
         if (k_uptime_get() + WAKE_ADV_MS >= click_deadline_ms) {
