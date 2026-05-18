@@ -169,6 +169,35 @@ static void test_channel9_timing_requires_channel5_contact(void)
                                    0u) == PROTO_ERR_MALFORMED);
 }
 
+static void test_channel9_timing_crosses_uptime_domains_as_relative_delay(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_timing parsed = {0};
+    struct mesh_event_params params = event_params();
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    params.first_event_time_ms = 1010u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_append_event_timing_tlvs_at(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &timing,
+                                            1000u) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_MESH_NEXT_EVENT_TIME_MS, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == 10u);
+
+    assert(mesh_event_timing_from_tlvs_at(&parsed, payload, payload_len, 4000u, true) ==
+           PROTO_OK);
+    assert(parsed.next_event_time_ms == 4010u);
+    assert(parsed.event_interval_ms == timing.event_interval_ms);
+    assert(parsed.event_window_ms == timing.event_window_ms);
+}
+
 static void test_channel9_event_planner_reserves_channel5_scan(void)
 {
     struct mesh_event_timing timing = {0};
@@ -199,6 +228,25 @@ static void test_channel9_event_planner_reserves_channel5_scan(void)
     assert(diagnostics.channel5_preemptions == 1u);
 }
 
+static void test_channel9_observed_rx_shifts_late_window_without_channel5(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    mesh_event_note_observed_packet(&timing, 1000u, 1005u);
+    assert(timing.next_event_time_ms == 1100u);
+    assert(timing.event_counter == 1u);
+    assert(timing.missed_event_count == 0u);
+    assert(mesh_event_timing_usable(&timing, 1005u));
+
+    mesh_event_note_observed_packet(&timing, 1100u, 1118u);
+    assert(timing.next_event_time_ms == 1208u);
+    assert(timing.event_counter == 2u);
+    assert(!timing.fallback_required);
+    assert(mesh_event_timing_usable(&timing, 1118u));
+}
+
 static void test_channel5_activity_preempts_channel9_mesh(void)
 {
     struct mesh_event_timing timing = {0};
@@ -225,17 +273,35 @@ static void test_channel5_activity_preempts_channel9_mesh(void)
     assert(diagnostics.late_channel5_returns == 1u);
 }
 
-static void test_channel9_missed_events_fall_back_to_channel5_refresh(void)
+static void test_channel5_active_until_zero_is_idle_across_uptime_wrap(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    const struct mesh_channel5_requirements requirements = {
+        .active_until_ms = 0u,
+        .retune_guard_ms = 5u,
+    };
+
+    params.first_event_time_ms = 0xfffffff0u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_plan_channel9(&timing, &requirements, 0xfffffff0u, &plan) ==
+           PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+}
+
+static void test_channel9_missed_events_stay_channel9_until_supervision_timeout(void)
 {
     struct mesh_event_timing timing = {0};
     struct mesh_event_params params = event_params();
     struct mesh_event_plan plan = {0};
     struct mesh_event_diagnostics diagnostics = {0};
     const struct mesh_channel5_requirements requirements = {
-        .next_required_scan_start_ms = 1200u,
+        .next_required_scan_start_ms = 0u,
         .retune_guard_ms = 5u,
     };
 
+    params.supervision_timeout_ms = 500u;
     assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
     mesh_event_note_success(&timing, 1000u);
     assert(timing.event_counter == 1u);
@@ -250,10 +316,15 @@ static void test_channel9_missed_events_fall_back_to_channel5_refresh(void)
     mesh_event_note_missed(&timing, &diagnostics);
     assert(timing.missed_event_count == 2u);
     assert(diagnostics.ch9_event_misses == 2u);
-    assert(timing.fallback_required);
-    assert(!mesh_event_timing_usable(&timing, 1200u));
+    assert(!timing.fallback_required);
+    assert(mesh_event_timing_usable(&timing, 1200u));
 
     assert(mesh_event_plan_channel9(&timing, &requirements, 1200u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_WAIT);
+    assert(mesh_event_plan_channel9(&timing, &requirements, 1300u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(!mesh_event_timing_usable(&timing, 1501u));
+    assert(mesh_event_plan_channel9(&timing, &requirements, 1501u, &plan) == PROTO_OK);
     assert(plan.action == MESH_EVENT_PLAN_REFRESH_CONTACT_CH5);
 
     mesh_event_note_report_latency(&diagnostics, 42u);
@@ -268,8 +339,11 @@ int main(void)
     test_rejects_invalid_ids();
     test_rejects_zero_sequence_numbers();
     test_channel9_timing_requires_channel5_contact();
+    test_channel9_timing_crosses_uptime_domains_as_relative_delay();
     test_channel9_event_planner_reserves_channel5_scan();
+    test_channel9_observed_rx_shifts_late_window_without_channel5();
     test_channel5_activity_preempts_channel9_mesh();
-    test_channel9_missed_events_fall_back_to_channel5_refresh();
+    test_channel5_active_until_zero_is_idle_across_uptime_wrap();
+    test_channel9_missed_events_stay_channel9_until_supervision_timeout();
     return 0;
 }

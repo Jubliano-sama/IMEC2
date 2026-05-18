@@ -132,6 +132,7 @@ enum dwm3000_phy_mode {
     DWM3000_PHY_NONE = 0,
     DWM3000_PHY_RANGE = 1,
     DWM3000_PHY_WAKE = 2,
+    DWM3000_PHY_MESH_PAYLOAD = 3,
 };
 
 static bool radio_configured;
@@ -886,7 +887,7 @@ static int receive_report(const struct dwm3000_range_request *request,
     result->distance_mm = report.distance_mm;
     result->quality = report.quality;
     result->rsl_dbm = report.rsl_dbm;
-    result->rsl_sampled = report.rsl_dbm != 0;
+    result->rsl_sampled = true;
     result->status = report.status;
     return report.status == RANGE_OK ? 0 : -EIO;
 }
@@ -1162,6 +1163,11 @@ int dwm3000_driver_configure_wake_mode(void)
     return 0;
 }
 
+int dwm3000_driver_configure_range_mode(void)
+{
+    return ensure_phy_mode(DWM3000_PHY_RANGE);
+}
+
 int dwm3000_driver_configure_mesh_payload_mode(void)
 {
     dwt_config_t config = default_config;
@@ -1172,7 +1178,7 @@ int dwm3000_driver_configure_mesh_payload_mode(void)
     if (ret < 0) {
         return ret;
     }
-    ret = apply_radio_config(&config, DWM3000_PHY_RANGE);
+    ret = apply_radio_config(&config, DWM3000_PHY_MESH_PAYLOAD);
     if (ret < 0) {
         return ret;
     }

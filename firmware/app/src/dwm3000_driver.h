@@ -58,6 +58,7 @@ enum dwm3000_rx_failure {
 int dwm3000_driver_probe(uint32_t *dev_id);
 int dwm3000_driver_initialise(bool idle_after_init);
 int dwm3000_driver_configure_default(void);
+int dwm3000_driver_configure_range_mode(void);
 int dwm3000_driver_configure_mesh_payload_mode(void);
 int dwm3000_driver_configure_wake_mode(void);
 int dwm3000_driver_standby(void);

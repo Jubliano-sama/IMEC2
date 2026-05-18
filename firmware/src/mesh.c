@@ -28,6 +28,21 @@ static uint32_t time_max(uint32_t left_ms, uint32_t right_ms)
     return time_reached(left_ms, right_ms) ? left_ms : right_ms;
 }
 
+static uint32_t time_until_deadline(uint32_t now_ms, uint32_t deadline_ms)
+{
+    if (time_reached(now_ms, deadline_ms)) {
+        return 1u;
+    }
+    return deadline_ms - now_ms;
+}
+
+static uint32_t nonzero_deadline_after(uint32_t now_ms, uint32_t delay_ms)
+{
+    uint32_t deadline_ms = now_ms + (delay_ms == 0u ? 1u : delay_ms);
+
+    return deadline_ms == 0u ? 1u : deadline_ms;
+}
+
 static void counter_add(uint32_t *counter, uint32_t delta)
 {
     if (counter == NULL) {
@@ -191,7 +206,8 @@ int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
     if (requirements->click_epoch_active ||
         requirements->discovery_active ||
         requirements->ranging_active ||
-        time_reached(requirements->active_until_ms, start_ms)) {
+        (requirements->active_until_ms != 0u &&
+         time_reached(requirements->active_until_ms, start_ms))) {
         plan->action = MESH_EVENT_PLAN_DEFER_CH5_ACTIVE;
         return PROTO_OK;
     }
@@ -242,6 +258,27 @@ void mesh_event_note_success(struct mesh_event_timing *timing,
     timing->fallback_required = false;
 }
 
+void mesh_event_note_observed_packet(struct mesh_event_timing *timing,
+                                     uint32_t planned_event_start_ms,
+                                     uint32_t observed_packet_ms)
+{
+    uint32_t inferred_event_start_ms;
+    uint16_t half_window_ms;
+
+    if (timing == NULL) {
+        return;
+    }
+
+    inferred_event_start_ms = planned_event_start_ms;
+    half_window_ms = timing->event_window_ms / 2u;
+    if (half_window_ms > 0u &&
+        time_reached(observed_packet_ms, planned_event_start_ms + half_window_ms)) {
+        inferred_event_start_ms = observed_packet_ms - half_window_ms;
+    }
+
+    mesh_event_note_success(timing, inferred_event_start_ms);
+}
+
 void mesh_event_note_missed(struct mesh_event_timing *timing,
                             struct mesh_event_diagnostics *diagnostics)
 {
@@ -254,10 +291,6 @@ void mesh_event_note_missed(struct mesh_event_timing *timing,
     }
     timing->next_event_time_ms += timing->event_interval_ms;
     counter_add(diagnostics == NULL ? NULL : &diagnostics->ch9_event_misses, 1u);
-    if (timing->missed_event_count >= timing->max_missed_events) {
-        timing->timing_fresh = false;
-        timing->fallback_required = true;
-    }
 }
 
 void mesh_event_note_channel_switch(struct mesh_event_diagnostics *diagnostics,
@@ -305,10 +338,11 @@ void mesh_event_note_report_latency(struct mesh_event_diagnostics *diagnostics,
     counter_add(&diagnostics->ch9_report_latency_ms, latency_ms);
 }
 
-int mesh_append_event_timing_tlvs(uint8_t *payload,
-                                  size_t payload_cap,
-                                  size_t *offset,
-                                  const struct mesh_event_timing *timing)
+int mesh_append_event_timing_tlvs_at(uint8_t *payload,
+                                     size_t payload_cap,
+                                     size_t *offset,
+                                     const struct mesh_event_timing *timing,
+                                     uint32_t now_ms)
 {
     int ret;
 
@@ -334,7 +368,7 @@ int mesh_append_event_timing_tlvs(uint8_t *payload,
     }
     ret = tlv_append_u32(payload, payload_cap, offset,
                          TLV_MESH_NEXT_EVENT_TIME_MS,
-                         timing->next_event_time_ms);
+                         time_until_deadline(now_ms, timing->next_event_time_ms));
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -367,15 +401,25 @@ int mesh_append_event_timing_tlvs(uint8_t *payload,
                           timing->supervision_timeout_ms);
 }
 
-int mesh_event_timing_from_tlvs(struct mesh_event_timing *timing,
-                                const uint8_t *payload,
-                                size_t payload_len,
-                                bool channel5_contact_refreshed)
+int mesh_append_event_timing_tlvs(uint8_t *payload,
+                                  size_t payload_cap,
+                                  size_t *offset,
+                                  const struct mesh_event_timing *timing)
+{
+    return mesh_append_event_timing_tlvs_at(payload, payload_cap, offset, timing, 0u);
+}
+
+int mesh_event_timing_from_tlvs_at(struct mesh_event_timing *timing,
+                                   const uint8_t *payload,
+                                   size_t payload_len,
+                                   uint32_t now_ms,
+                                   bool channel5_contact_refreshed)
 {
     struct mesh_event_params params = {0};
     uint8_t mesh_channel = 0u;
     uint16_t clock_skew = 0u;
     uint32_t event_counter = 0u;
+    uint32_t event_delay_ms = 0u;
     int ret;
 
     if (timing == NULL || payload == NULL) {
@@ -406,10 +450,11 @@ int mesh_event_timing_from_tlvs(struct mesh_event_timing *timing,
     ret = find_u32_tlv(payload,
                        payload_len,
                        TLV_MESH_NEXT_EVENT_TIME_MS,
-                       &params.first_event_time_ms);
+                       &event_delay_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
+    params.first_event_time_ms = nonzero_deadline_after(now_ms, event_delay_ms);
     ret = find_u16_tlv(payload,
                        payload_len,
                        TLV_MESH_EVENT_GUARD_MS,
@@ -449,6 +494,18 @@ int mesh_event_timing_from_tlvs(struct mesh_event_timing *timing,
         timing->event_counter = event_counter;
     }
     return PROTO_OK;
+}
+
+int mesh_event_timing_from_tlvs(struct mesh_event_timing *timing,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                bool channel5_contact_refreshed)
+{
+    return mesh_event_timing_from_tlvs_at(timing,
+                                          payload,
+                                          payload_len,
+                                          0u,
+                                          channel5_contact_refreshed);
 }
 
 int mesh_init_event_control(struct proto_packet *packet,

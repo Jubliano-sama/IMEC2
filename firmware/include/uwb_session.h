@@ -189,6 +189,12 @@ uint8_t uwb_clicker_contention_window_slots(uint8_t attempt_index);
 uint32_t uwb_clicker_contention_delay_ms(uint8_t attempt_index,
                                          uint32_t random_value);
 uint32_t uwb_clicker_wake_claim_jitter_us(uint32_t random_value);
+int uwb_clicker_decode_politeness_wait(const struct uwb_clicker_session *session,
+                                        const uint8_t *frame,
+                                        size_t frame_len,
+                                        uint16_t fallback_wait_ms,
+                                        uint16_t *wait_ms,
+                                        uint8_t *frame_type);
 void uwb_clicker_note_politeness_sample(struct uwb_clicker_session *session,
                                         bool activity_detected);
 void uwb_clicker_note_contention_delay(struct uwb_clicker_session *session,

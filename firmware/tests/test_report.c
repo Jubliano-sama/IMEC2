@@ -316,6 +316,67 @@ static void test_rejects_unbounded_diagnostic_bytes(void)
            PROTO_ERR_NO_SPACE);
 }
 
+static void test_full_diagnostic_first_fragment_stays_inside_packet_payload(void)
+{
+    int32_t distance_samples[4u];
+    uint8_t round_indices[4u];
+    uint64_t sequence_start_timestamps_ms[4u];
+    uint8_t clicker_diag[RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET] = {0};
+    const uint8_t anchor_diag[UWB_CIR_SAMPLE_LEN] = {
+        0x80u, 0x81u, 0x82u, 0x83u, 0x84u, 0x85u,
+    };
+    const struct range_report_diagnostics diagnostics = {
+        .status_flags = RANGE_DIAG_CLICKER_PRESENT | RANGE_DIAG_ANCHOR_PRESENT,
+        .burst_id = 0x12345678u,
+        .exchange_stride_us = 7000u,
+        .burst_duration_ms = 200u,
+        .click_latency_ms = 20u,
+        .uwb_awake_time_us = 30000u,
+        .diag_bytes_captured = sizeof(clicker_diag) + sizeof(anchor_diag),
+        .diag_bytes_transmitted = sizeof(clicker_diag) + sizeof(anchor_diag),
+        .report_fragment_count = 32u,
+        .phy_config_id = UWB_CHANNEL_WAKE_CONTACT,
+        .clicker_diag = clicker_diag,
+        .clicker_diag_len = sizeof(clicker_diag),
+        .anchor_diag = anchor_diag,
+        .anchor_diag_len = sizeof(anchor_diag),
+    };
+    struct range_report_fields fields = {
+        .clicker_id = 0x1111222233334444ull,
+        .anchor_id = 0x5555666677778888ull,
+        .event_seq = 123u,
+        .timestamp_ms = 987654u,
+        .distance_mm = 4567,
+        .quality = 95u,
+        .rsl_dbm = -73,
+        .cir_sample = anchor_diag,
+        .range_status = RANGE_OK,
+        .distance_samples_mm = distance_samples,
+        .range_round_indices = round_indices,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
+        .sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES,
+        .distance_sample_count = 3u,
+        .diagnostics = &diagnostics,
+    };
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    for (uint16_t i = 0u; i < 4u; i++) {
+        distance_samples[i] = 4500 + (int32_t)i;
+        clicker_diag[i] = (uint8_t)i;
+    }
+    fill_sample_metadata(round_indices, sequence_start_timestamps_ms, 4u, 0u);
+
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
+           PROTO_OK);
+    assert(payload_len <= PACKET_MAX_PAYLOAD_LEN);
+
+    fields.distance_sample_count = 4u;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
+           PROTO_ERR_NO_SPACE);
+}
+
 static void test_self_test_report_is_diagnostic_not_click(void)
 {
     const struct self_test_report_fields fields = {
@@ -686,6 +747,7 @@ int main(void)
     test_timing_invalid_range_report_is_preserved();
     test_range_report_combines_clicker_and_anchor_diagnostics();
     test_rejects_unbounded_diagnostic_bytes();
+    test_full_diagnostic_first_fragment_stays_inside_packet_payload();
     test_self_test_report_is_diagnostic_not_click();
     test_anchor_heartbeat_report_requires_gateway_ack();
     test_rejects_bad_range_fields();

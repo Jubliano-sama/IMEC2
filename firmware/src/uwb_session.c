@@ -61,6 +61,205 @@ uint32_t uwb_clicker_wake_claim_jitter_us(uint32_t random_value)
     return random_value % (UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US + 1u);
 }
 
+static uint16_t politeness_wait_nonzero(uint32_t wait_ms)
+{
+    if (wait_ms == 0u) {
+        return 1u;
+    }
+    return wait_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)wait_ms;
+}
+
+static bool clicker_peer_frame_relevant(const struct uwb_clicker_session *session,
+                                        uint32_t network_id,
+                                        uint64_t clicker_id)
+{
+    return session != NULL &&
+           network_id == session->config.network_id &&
+           clicker_id != session->config.clicker_id;
+}
+
+static bool clicker_network_frame_relevant(const struct uwb_clicker_session *session,
+                                           uint32_t network_id)
+{
+    return session != NULL &&
+           network_id == session->config.network_id;
+}
+
+static int decode_politeness_range_header(const uint8_t *frame,
+                                          size_t frame_len,
+                                          uint8_t frame_type,
+                                          struct uwb_range_header *header)
+{
+    if (header == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    switch (frame_type) {
+    case MSG_UWB_POLL:
+        return uwb_decode_poll(frame, frame_len, header);
+    case MSG_UWB_RESP: {
+        struct uwb_response_frame response;
+        int ret = uwb_decode_response(frame, frame_len, &response);
+
+        if (ret == PROTO_OK) {
+            *header = response.header;
+        }
+        return ret;
+    }
+    case MSG_UWB_FINAL: {
+        struct uwb_final_frame final;
+        int ret = uwb_decode_final(frame, frame_len, &final);
+
+        if (ret == PROTO_OK) {
+            *header = final.header;
+        }
+        return ret;
+    }
+    case MSG_UWB_REPORT: {
+        struct uwb_report_frame report;
+        int ret = uwb_decode_report(frame, frame_len, &report);
+
+        if (ret == PROTO_OK) {
+            *header = report.header;
+        }
+        return ret;
+    }
+    case MSG_UWB_CLICKER_DIAG: {
+        struct uwb_clicker_diag_frame diag;
+        int ret = uwb_decode_clicker_diag(frame, frame_len, &diag);
+
+        if (ret == PROTO_OK) {
+            *header = diag.header;
+        }
+        return ret;
+    }
+    default:
+        return PROTO_ERR_MALFORMED;
+    }
+}
+
+int uwb_clicker_decode_politeness_wait(const struct uwb_clicker_session *session,
+                                       const uint8_t *frame,
+                                       size_t frame_len,
+                                       uint16_t fallback_wait_ms,
+                                       uint16_t *wait_ms,
+                                       uint8_t *frame_type)
+{
+    uint8_t type;
+    int ret;
+
+    if (wait_ms == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    *wait_ms = 0u;
+    if (frame_type != NULL) {
+        *frame_type = 0u;
+    }
+    if (session == NULL || frame == NULL || fallback_wait_ms == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    if (frame_len < UWB_SYNC_HEADER_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+    if (frame[0] != UWB_MARKER) {
+        return PROTO_ERR_BAD_MAGIC;
+    }
+    if (frame[1] != UWB_VERSION) {
+        return PROTO_ERR_BAD_VERSION;
+    }
+
+    type = frame[2];
+    if (frame_type != NULL) {
+        *frame_type = type;
+    }
+
+    switch (type) {
+    case MSG_UWB_WAKE_CLAIM: {
+        struct uwb_wake_claim_frame claim;
+
+        ret = uwb_decode_wake_claim(frame, frame_len, &claim);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (clicker_peer_frame_relevant(session, claim.network_id, claim.clicker_id)) {
+            *wait_ms = politeness_wait_nonzero(claim.claimed_duration_ms);
+        }
+        return PROTO_OK;
+    }
+    case MSG_UWB_DISCOVER: {
+        struct uwb_discover_frame discover;
+
+        ret = uwb_decode_discover(frame, frame_len, &discover);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (clicker_peer_frame_relevant(session, discover.network_id, discover.clicker_id)) {
+            *wait_ms = politeness_wait_nonzero(fallback_wait_ms);
+        }
+        return PROTO_OK;
+    }
+    case MSG_UWB_DISCOVERY_REPLY: {
+        struct uwb_discovery_reply_frame reply;
+
+        ret = uwb_decode_discovery_reply(frame, frame_len, &reply);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (clicker_peer_frame_relevant(session,
+                                        reply.network_id,
+                                        reply.selected_clicker_id)) {
+            *wait_ms = politeness_wait_nonzero(fallback_wait_ms);
+        }
+        return PROTO_OK;
+    }
+    case MSG_UWB_RANGE_SCHEDULE: {
+        struct uwb_range_schedule_frame schedule;
+
+        ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (clicker_peer_frame_relevant(session, schedule.network_id, schedule.clicker_id)) {
+            *wait_ms = politeness_wait_nonzero((uint32_t)schedule.first_poll_delay_ms +
+                                               schedule.burst_window_ms);
+        }
+        return PROTO_OK;
+    }
+    case MSG_UWB_RANGE_RELEASE: {
+        struct uwb_range_release_frame release;
+
+        ret = uwb_decode_range_release(frame, frame_len, &release);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (clicker_peer_frame_relevant(session, release.network_id, release.clicker_id)) {
+            *wait_ms = 1u;
+        }
+        return PROTO_OK;
+    }
+    case MSG_UWB_POLL:
+    case MSG_UWB_RESP:
+    case MSG_UWB_FINAL:
+    case MSG_UWB_REPORT:
+    case MSG_UWB_CLICKER_DIAG: {
+        struct uwb_range_header header;
+
+        ret = decode_politeness_range_header(frame, frame_len, type, &header);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (clicker_network_frame_relevant(session, header.network_id)) {
+            *wait_ms = politeness_wait_nonzero(fallback_wait_ms);
+        }
+        return PROTO_OK;
+    }
+    case MSG_UWB_MESH:
+        return PROTO_OK;
+    default:
+        return PROTO_ERR_MALFORMED;
+    }
+}
+
 void uwb_clicker_note_politeness_sample(struct uwb_clicker_session *session,
                                         bool activity_detected)
 {

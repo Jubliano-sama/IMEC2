@@ -1145,6 +1145,27 @@ int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
     return PROTO_ERR_BUSY;
 }
 
+uint8_t mesh_relay_expire_channel9_timings(struct mesh_relay *relay,
+                                           uint32_t now_ms)
+{
+    uint8_t expired = 0u;
+
+    if (relay == NULL) {
+        return 0u;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        struct mesh_relay_event_timing_entry *entry = &relay->event_timings[i];
+
+        if (entry->valid && !mesh_event_timing_usable(&entry->timing, now_ms)) {
+            entry->valid = false;
+            expired++;
+        }
+    }
+
+    return expired;
+}
+
 int mesh_relay_build_route_request(struct mesh_relay *relay,
                                    uint64_t target_id,
                                    struct mesh_outbound *out,
@@ -1343,6 +1364,7 @@ int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    (void)mesh_relay_expire_channel9_timings(relay, now_ms);
     ret = mesh_relay_require_channel9_event(relay,
                                             next_hop_id,
                                             requirements,
@@ -1382,6 +1404,25 @@ void mesh_relay_note_channel9_success(struct mesh_relay *relay,
     index = event_timing_index(relay, next_hop_id);
     if (index >= 0) {
         mesh_event_note_success(&relay->event_timings[index].timing, event_start_ms);
+    }
+}
+
+void mesh_relay_note_channel9_rx(struct mesh_relay *relay,
+                                 uint64_t next_hop_id,
+                                 uint32_t planned_event_start_ms,
+                                 uint32_t observed_packet_ms)
+{
+    int index;
+
+    if (relay == NULL || !id_is_unicast(next_hop_id)) {
+        return;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index >= 0) {
+        mesh_event_note_observed_packet(&relay->event_timings[index].timing,
+                                        planned_event_start_ms,
+                                        observed_packet_ms);
     }
 }
 

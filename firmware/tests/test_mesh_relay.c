@@ -1852,6 +1852,54 @@ static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
     assert(!mesh_relay_tx_active(&origin));
 }
 
+static void test_channel9_rx_observation_self_heals_event_timing(void)
+{
+    struct mesh_relay relay;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_plan plan = {0};
+    struct mesh_channel5_requirements requirements = clear_channel5_requirements();
+    struct mesh_event_params params = channel9_params(4000u);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 80u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+
+    mesh_relay_note_channel9_rx(&relay, GATEWAY, 4000u, 4018u);
+    assert(mesh_relay_require_channel9_event(&relay,
+                                             GATEWAY,
+                                             &requirements,
+                                             4108u,
+                                             &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(plan.start_ms == 4108u);
+}
+
+static void test_channel9_timing_expires_idle_connection_state(void)
+{
+    struct mesh_relay relay;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_plan plan = {0};
+    struct mesh_channel5_requirements requirements = clear_channel5_requirements();
+    struct mesh_event_params params = channel9_params(5000u);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 81u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+
+    assert(mesh_relay_expire_channel9_timings(&relay, 5200u) == 0u);
+    assert(mesh_relay_require_channel9_event(&relay,
+                                             GATEWAY,
+                                             &requirements,
+                                             5200u,
+                                             &plan) == PROTO_OK);
+    assert(mesh_relay_expire_channel9_timings(&relay, 5500u) == 1u);
+    assert(mesh_relay_require_channel9_event(&relay,
+                                             GATEWAY,
+                                             &requirements,
+                                             5500u,
+                                             &plan) == PROTO_ERR_STALE);
+}
+
 int main(void)
 {
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
@@ -1886,5 +1934,7 @@ int main(void)
     test_reactive_gateway_discovers_downlink_anchor();
     test_channel9_report_tx_requires_negotiated_event();
     test_channel9_report_delivery_and_gateway_ack_require_events();
+    test_channel9_rx_observation_self_heals_event_timing();
+    test_channel9_timing_expires_idle_connection_state();
     return 0;
 }

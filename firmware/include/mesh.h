@@ -89,6 +89,9 @@ int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
                              struct mesh_event_plan *plan);
 void mesh_event_note_success(struct mesh_event_timing *timing,
                              uint32_t event_start_ms);
+void mesh_event_note_observed_packet(struct mesh_event_timing *timing,
+                                     uint32_t planned_event_start_ms,
+                                     uint32_t observed_packet_ms);
 void mesh_event_note_missed(struct mesh_event_timing *timing,
                             struct mesh_event_diagnostics *diagnostics);
 void mesh_event_note_channel_switch(struct mesh_event_diagnostics *diagnostics,
@@ -102,10 +105,20 @@ int mesh_append_event_timing_tlvs(uint8_t *payload,
                                   size_t payload_cap,
                                   size_t *offset,
                                   const struct mesh_event_timing *timing);
+int mesh_append_event_timing_tlvs_at(uint8_t *payload,
+                                     size_t payload_cap,
+                                     size_t *offset,
+                                     const struct mesh_event_timing *timing,
+                                     uint32_t now_ms);
 int mesh_event_timing_from_tlvs(struct mesh_event_timing *timing,
                                 const uint8_t *payload,
                                 size_t payload_len,
                                 bool channel5_contact_refreshed);
+int mesh_event_timing_from_tlvs_at(struct mesh_event_timing *timing,
+                                   const uint8_t *payload,
+                                   size_t payload_len,
+                                   uint32_t now_ms,
+                                   bool channel5_contact_refreshed);
 int mesh_init_event_control(struct proto_packet *packet,
                             uint8_t msg_type,
                             uint64_t local_id,

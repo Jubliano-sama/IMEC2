@@ -131,6 +131,8 @@ int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
                                       const struct mesh_channel5_requirements *requirements,
                                       uint32_t now_ms,
                                       struct mesh_event_plan *plan);
+uint8_t mesh_relay_expire_channel9_timings(struct mesh_relay *relay,
+                                           uint32_t now_ms);
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms);
 int mesh_relay_build_route_request(struct mesh_relay *relay,
                                    uint64_t target_id,
@@ -159,6 +161,10 @@ int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
 void mesh_relay_note_channel9_success(struct mesh_relay *relay,
                                       uint64_t next_hop_id,
                                       uint32_t event_start_ms);
+void mesh_relay_note_channel9_rx(struct mesh_relay *relay,
+                                 uint64_t next_hop_id,
+                                 uint32_t planned_event_start_ms,
+                                 uint32_t observed_packet_ms);
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);

@@ -196,6 +196,9 @@ static void test_clicker_contention_delay_bounds_and_diagnostics(void)
            UWB_CLICKER_CONTENTION_ATTEMPT3_PLUS_SLOTS);
     assert(uwb_clicker_contention_window_slots(6u) ==
            UWB_CLICKER_CONTENTION_ATTEMPT3_PLUS_SLOTS);
+    assert(UWB_CLICKER_CONTENTION_SLOT_MS == 12u);
+    assert(UWB_CLICKER_CONTENTION_ATTEMPT2_SLOTS >= 32u);
+    assert(UWB_CLICKER_CONTENTION_ATTEMPT3_PLUS_SLOTS >= 64u);
 
     assert(uwb_clicker_contention_delay_ms(1u, 0u) == 0u);
     assert(uwb_clicker_contention_delay_ms(1u, 15u) == 180u);
@@ -230,6 +233,160 @@ static void test_clicker_contention_delay_bounds_and_diagnostics(void)
     assert(session.diagnostics.contention_delay_ms == UINT32_MAX);
     assert(session.diagnostics.retry_delay_ms == UINT32_MAX);
     assert(session.diagnostics.wake_claim_tx_count == UINT32_MAX);
+}
+
+static void test_clicker_politeness_decodes_relevant_uwb_packets(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_clicker_config config = clicker_config();
+    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    size_t frame_len = 0u;
+    uint16_t wait_ms = 0u;
+    uint8_t frame_type = 0u;
+    struct uwb_wake_claim_frame claim = {
+        .network_id = config.network_id,
+        .clicker_id = UINT64_C(0x2222333344445555),
+        .click_event_id = 99u,
+        .attempt_index = 1u,
+        .priority_id = UINT64_C(0x0102030405060708),
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .wake_train_ends_in_ms = 300u,
+        .discovery_starts_in_ms = 300u,
+        .claimed_duration_ms = 612u,
+        .min_anchor_count = 4u,
+        .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+        .nonce = UINT64_C(0x1111222233334444),
+        .flags = FLAG_COUNT_AS_CLICK,
+    };
+    struct uwb_range_schedule_frame schedule = {
+        .network_id = config.network_id,
+        .clicker_id = claim.clicker_id,
+        .click_event_id = claim.click_event_id,
+        .attempt_index = claim.attempt_index,
+        .nonce = claim.nonce,
+        .selected_count = 4u,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
+        .first_poll_delay_ms = 8u,
+        .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .samples_per_anchor = 2u,
+        .flags = FLAG_COUNT_AS_CLICK,
+    };
+    struct uwb_range_header poll = {
+        .type = MSG_UWB_POLL,
+        .seq = 1u,
+        .round_index = 0u,
+        .network_id = config.network_id,
+        .session_id = 1234u,
+        .session_nonce = UINT64_C(0x5555666677778888),
+        .initiator_id = claim.clicker_id,
+        .responder_id = UINT64_C(0xABCDEF0012345678),
+        .flags = FLAG_COUNT_AS_CLICK,
+    };
+    struct proto_packet mesh_packet = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = 0u,
+        .src_id = UINT64_C(0xABCDEF0012345678),
+        .dst_id = config.clicker_id,
+        .session_id = 9001u,
+        .seq = 1u,
+        .ttl = 3u,
+        .payload_len = 0u,
+    };
+
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+
+    assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              &frame_type) == PROTO_OK);
+    assert(frame_type == MSG_UWB_WAKE_CLAIM);
+    assert(wait_ms == claim.claimed_duration_ms);
+
+    claim.network_id++;
+    assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    wait_ms = 123u;
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              NULL) == PROTO_OK);
+    assert(wait_ms == 0u);
+    claim.network_id = config.network_id;
+
+    claim.clicker_id = config.clicker_id;
+    assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              NULL) == PROTO_OK);
+    assert(wait_ms == 0u);
+    claim.clicker_id = UINT64_C(0x2222333344445555);
+
+    assert(uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    frame[frame_len - 1u] ^= 0x01u;
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              NULL) == PROTO_ERR_BAD_CRC);
+
+    for (uint8_t i = 0u; i < schedule.selected_count; i++) {
+        schedule.entries[i].anchor_id = UINT64_C(0xABCDEF0012345600) + i;
+        schedule.entries[i].seq = (uint8_t)(1u + (i * schedule.samples_per_anchor));
+        schedule.entries[i].sample_count = schedule.samples_per_anchor;
+    }
+    set_schedule_burst_defaults(&schedule, 4u);
+    schedule.first_poll_delay_ms = 8u;
+    schedule.burst_window_ms = 240u;
+    assert(uwb_encode_range_schedule(&schedule, frame, sizeof(frame), &frame_len) ==
+           PROTO_OK);
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              &frame_type) == PROTO_OK);
+    assert(frame_type == MSG_UWB_RANGE_SCHEDULE);
+    assert(wait_ms == schedule.first_poll_delay_ms + schedule.burst_window_ms);
+
+    poll.initiator_short_addr = uwb_session_short_addr_from_id(poll.initiator_id);
+    poll.responder_short_addr = uwb_session_short_addr_from_id(poll.responder_id);
+    assert(uwb_encode_poll(&poll, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              &frame_type) == PROTO_OK);
+    assert(frame_type == MSG_UWB_POLL);
+    assert(wait_ms == 250u);
+
+    assert(uwb_mesh_frame_encode(config.network_id,
+                                 mesh_packet.src_id,
+                                 config.clicker_id,
+                                 &mesh_packet,
+                                 NULL,
+                                 frame,
+                                 sizeof(frame),
+                                 &frame_len) == PROTO_OK);
+    wait_ms = 250u;
+    assert(uwb_clicker_decode_politeness_wait(&session,
+                                              frame,
+                                              frame_len,
+                                              250u,
+                                              &wait_ms,
+                                              &frame_type) == PROTO_OK);
+    assert(frame_type == MSG_UWB_MESH);
+    assert(wait_ms == 0u);
 }
 
 static void test_clicker_discovers_50_and_schedules_best_6_only(void)
@@ -2383,6 +2540,7 @@ int main(void)
 {
     test_clicker_builds_wake_claim_and_rejects_bad_timing();
     test_clicker_contention_delay_bounds_and_diagnostics();
+    test_clicker_politeness_decodes_relevant_uwb_packets();
     test_clicker_discovers_50_and_schedules_best_6_only();
     test_clicker_discovers_sparse_50_slots_with_6_present();
     test_clicker_releases_replied_anchors_when_too_few_for_normal_click();
