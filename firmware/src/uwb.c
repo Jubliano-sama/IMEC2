@@ -473,6 +473,10 @@ static int validate_wake_claim(const struct uwb_wake_claim_frame *frame)
         !flags_valid(frame->flags)) {
         return PROTO_ERR_MALFORMED;
     }
+    if ((frame->flags & FLAG_COUNT_AS_CLICK) != 0u &&
+        frame->min_anchor_count != UWB_NORMAL_CLICK_MIN_ANCHORS) {
+        return PROTO_ERR_MALFORMED;
+    }
     return PROTO_OK;
 }
 
@@ -571,6 +575,11 @@ static int validate_range_schedule(const struct uwb_range_schedule_frame *frame)
         (uint32_t)frame->burst_window_ms * 1000u) {
         return PROTO_ERR_MALFORMED;
     }
+    if ((frame->flags & FLAG_COUNT_AS_CLICK) != 0u &&
+        (frame->selected_count < UWB_NORMAL_CLICK_MIN_ANCHORS ||
+         frame->min_successful_unique_anchors < UWB_NORMAL_CLICK_MIN_ANCHORS)) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     for (uint8_t i = 0u; i < frame->selected_count; i++) {
         if (frame->entries[i].anchor_id == 0u ||
@@ -605,6 +614,10 @@ static int validate_range_release(const struct uwb_range_release_frame *frame)
         frame->discovered_anchor_count >= frame->min_anchor_count ||
         frame->reason != UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS ||
         !flags_valid(frame->flags)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((frame->flags & FLAG_COUNT_AS_CLICK) != 0u &&
+        frame->min_anchor_count != UWB_NORMAL_CLICK_MIN_ANCHORS) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;

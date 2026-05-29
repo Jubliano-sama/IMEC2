@@ -28,6 +28,12 @@ static void test_click_report_packet_counts_as_click(void)
         UINT64_C(1234567890223),
     };
     const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {0x01u, 0x02u, 0x03u, 0xF1u, 0xF2u, 0xF3u};
+    const struct range_report_diagnostics diagnostics = {
+        .status_flags = RANGE_DIAG_CLICKER_PRESENT | RANGE_DIAG_ANCHOR_PRESENT,
+        .burst_id = 0x01020304u,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .burst_duration_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
+    };
     const struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
         .anchor_id = 0x5555666677778888ull,
@@ -43,8 +49,9 @@ static void test_click_report_packet_counts_as_click(void)
         .range_round_indices = round_indices,
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = 3u,
+        .diagnostics = &diagnostics,
     };
-    uint8_t payload[220];
+    uint8_t payload[256];
     size_t payload_len = 0u;
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
@@ -108,6 +115,10 @@ static void test_click_report_packet_counts_as_click(void)
     assert(proto_get_u64_le(&value[0]) == sequence_start_timestamps_ms[0]);
     assert(proto_get_u64_le(&value[8]) == sequence_start_timestamps_ms[1]);
     assert(proto_get_u64_le(&value[16]) == sequence_start_timestamps_ms[2]);
+
+    assert(tlv_find(payload, payload_len, TLV_BURST_ID, &value, &value_len) == PROTO_OK);
+    assert(value_len == 4u);
+    assert(proto_get_u32_le(value) == diagnostics.burst_id);
 }
 
 static void test_diagnostic_range_packet_is_not_click(void)

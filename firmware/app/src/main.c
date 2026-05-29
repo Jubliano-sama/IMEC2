@@ -163,7 +163,6 @@ static uint16_t mesh_event_control_seq;
 #define UWB_SCHEDULE_GUARD_MS 10u
 #define UWB_WAKE_CHANNEL UWB_CHANNEL_WAKE_CONTACT
 #define UWB_RANGING_CHANNEL UWB_CHANNEL_WAKE_CONTACT
-#define UWB_RANGE_REPLY_DELAY_US UWB_DS_TWR_REPLY_DELAY_US
 #define UWB_RANGE_FIRST_POLL_DELAY_MS 5u
 #define UWB_SAMPLES_PER_ANCHOR 2u
 #define UWB_DISCOVERY_WINDOW_MS \
@@ -180,7 +179,6 @@ static uint16_t mesh_event_control_seq;
 #define UWB_ANCHOR_SLOT 0xffu
 #endif
 #define MAX_WAKE_ATTEMPTS 6u
-#define MIN_UNIQUE_RANGED_ANCHORS 4u
 #define UWB_ANCHOR_RANGE_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define UWB_POLITE_SAMPLE_RX_MS 2u
 #define UWB_POLITE_SAMPLE_PERIOD_MS 25u
@@ -3343,6 +3341,7 @@ static void mesh_preempt_for_click_event(void);
 static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
+                                      uint32_t burst_id,
                                       const struct dwm3000_range_result *range_result,
                                       const int32_t *distance_samples_mm,
                                       const uint8_t *range_round_indices,
@@ -3358,6 +3357,11 @@ static uint16_t delay_ms_to_u16(int64_t delay_ms)
         return UINT16_MAX;
     }
     return (uint16_t)delay_ms;
+}
+
+static uint32_t uwb_schedule_burst_id(uint32_t event_seq, uint8_t attempt_index)
+{
+    return ((event_seq & 0x00ffffffu) << 8) | attempt_index;
 }
 
 static int64_t scheduled_range_sample_target_us(int64_t schedule_start_ms,
@@ -3566,6 +3570,8 @@ static void build_uwb_schedule_report_if_relevant(const struct uwb_anchor_sessio
 
     ret = build_range_report_samples(session->epoch.clicker_id,
                                      session->epoch.click_event_id,
+                                     uwb_schedule_burst_id(session->epoch.click_event_id,
+                                                           session->epoch.attempt_index),
                                      &report->result,
                                      report->distance_samples_mm,
                                      report->range_round_indices,
@@ -5333,6 +5339,7 @@ static int mesh_start_uwb_rx(const char *reason)
 
 static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
+                                      uint32_t burst_id,
                                       const struct dwm3000_range_result *range_result,
                                       const int32_t *distance_samples_mm,
                                       const uint8_t *range_round_indices,
@@ -5459,7 +5466,7 @@ build_payload:
             if (range_result->clicker_diag_dropped) {
                 diagnostics.status_flags |= RANGE_DIAG_CAPTURE_FAILED;
             }
-            diagnostics.burst_id = event_seq;
+            diagnostics.burst_id = burst_id;
             diagnostics.exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
             diagnostics.burst_duration_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
             diagnostics.uwb_awake_time_us = anchor_uwb_session.diagnostics.awake_time_us;
@@ -6504,7 +6511,7 @@ static int clicker_collect_uwb_attempt(struct uwb_clicker_session *session,
     }
 
     ret = uwb_clicker_build_range_schedule(session,
-                                           UWB_RANGE_REPLY_DELAY_US,
+                                           UWB_RANGE_REPLY_DELAY_UUS,
                                            UWB_RANGE_FIRST_POLL_DELAY_MS,
                                            UWB_ANCHOR_RANGE_WINDOW_MS,
                                            schedule);
@@ -6714,7 +6721,7 @@ static int run_normal_click(void)
         .clicker_id = DEVICE_ID,
         .click_event_id = event_seq,
         .nonce = clicker_nonce(event_seq),
-        .min_anchor_count = MIN_UNIQUE_RANGED_ANCHORS,
+        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .max_anchor_count = MAX_SCHEDULED_ANCHORS,
         .max_attempts = MAX_WAKE_ATTEMPTS,
         .samples_per_anchor = UWB_SAMPLES_PER_ANCHOR,
@@ -6725,7 +6732,7 @@ static int run_normal_click(void)
     int last_ret = -ETIMEDOUT;
     int ret;
 
-    BUILD_ASSERT(MIN_UNIQUE_RANGED_ANCHORS <= MAX_SUCCESSFUL_ANCHORS,
+    BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS <= MAX_SUCCESSFUL_ANCHORS,
                  "successful anchor result storage must cover the success threshold");
 
     ret = uwb_clicker_session_start(&session, &config);
@@ -6737,7 +6744,7 @@ static int run_normal_click(void)
             event_seq,
             WAKE_ADV_MS,
             MAX_WAKE_ATTEMPTS,
-            MIN_UNIQUE_RANGED_ANCHORS,
+            UWB_NORMAL_CLICK_MIN_ANCHORS,
             UWB_SAMPLES_PER_ANCHOR);
 
     click_deadline_ms = k_uptime_get() + CLICK_REPORT_DEADLINE_MS;
@@ -6777,7 +6784,7 @@ static int run_normal_click(void)
                     session.attempt_index,
                     schedule.selected_count,
                     session.successful_unique_count,
-                    MIN_UNIQUE_RANGED_ANCHORS);
+                    UWB_NORMAL_CLICK_MIN_ANCHORS);
 
             ret = range_uwb_scheduled_anchors(&session,
                                               &schedule,
@@ -6821,7 +6828,7 @@ static int run_normal_click(void)
                     session.attempt_index,
                     session.diagnostics.retries,
                     session.successful_unique_count,
-                    MIN_UNIQUE_RANGED_ANCHORS,
+                    UWB_NORMAL_CLICK_MIN_ANCHORS,
                     session.diagnostics.ds_twr_successes,
                     session.diagnostics.ds_twr_failures,
                     session.diagnostics.timing_rejections);
@@ -6835,7 +6842,7 @@ static int run_normal_click(void)
             total_candidate_count,
             attempted_count,
             session.successful_unique_count,
-            MIN_UNIQUE_RANGED_ANCHORS,
+            UWB_NORMAL_CLICK_MIN_ANCHORS,
             session.diagnostics.retries,
             session.diagnostics.sample_order_count,
             session.diagnostics.ds_twr_successes,
@@ -7175,7 +7182,7 @@ int main(void)
             MAX_SCHEDULED_ANCHORS,
             WAKE_ADV_MS,
             MAX_WAKE_ATTEMPTS,
-            MIN_UNIQUE_RANGED_ANCHORS,
+            UWB_NORMAL_CLICK_MIN_ANCHORS,
             anchor_uwb_scan_interval_ms,
             ANCHOR_UWB_SCAN_RX_MS,
             UWB_MESH_ANCHOR_RX_INTERVAL_MS,

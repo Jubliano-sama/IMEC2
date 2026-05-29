@@ -342,7 +342,7 @@ static struct uwb_wake_claim_frame wake_claim(void)
         .wake_train_ends_in_ms = 120u,
         .discovery_starts_in_ms = 150u,
         .claimed_duration_ms = 400u,
-        .min_anchor_count = 4u,
+        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
         .nonce = UINT64_C(0x8877665544332211),
         .flags = FLAG_COUNT_AS_CLICK,
@@ -360,7 +360,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .attempt_index = claim.attempt_index,
         .nonce = claim.nonce,
         .discovery_slot_count = UWB_DISCOVERY_SLOT_COUNT,
-        .flags = claim.flags,
+        .flags = FLAG_DIAGNOSTIC,
     };
     const struct uwb_discovery_reply_frame reply = {
         .network_id = claim.network_id,
@@ -381,8 +381,8 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .click_event_id = claim.click_event_id,
         .attempt_index = claim.attempt_index,
         .nonce = claim.nonce,
-        .discovered_anchor_count = 3u,
-        .min_anchor_count = 4u,
+        .discovered_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u,
+        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
         .flags = claim.flags,
     };
@@ -392,15 +392,15 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .click_event_id = claim.click_event_id,
         .attempt_index = claim.attempt_index,
         .nonce = claim.nonce,
-        .selected_count = 2u,
+        .selected_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .ranging_channel = claim.ranging_channel,
         .reply_delay_us = 900u,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
         .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
         .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
-        .max_exchanges = 4u,
-        .min_successful_unique_anchors = 2u,
+        .max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS * 2u,
+        .min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
         .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 2u,
@@ -414,6 +414,11 @@ static void test_wake_discovery_and_schedule_round_trip(void)
             {
                 .anchor_id = UINT64_C(0xAA00000000000002),
                 .seq = 20u,
+                .sample_count = 2u,
+            },
+            {
+                .anchor_id = UINT64_C(0xAA00000000000003),
+                .seq = 30u,
                 .sample_count = 2u,
             },
         },
@@ -597,6 +602,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_schedule.diagnostics_required == UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
     assert(decoded_schedule.entries[0].anchor_id == schedule.entries[0].anchor_id);
     assert(decoded_schedule.entries[1].seq == schedule.entries[1].seq);
+    assert(decoded_schedule.entries[2].anchor_id == schedule.entries[2].anchor_id);
 }
 
 static void test_control_frames_reject_bad_crc(void)
@@ -630,8 +636,8 @@ static void test_control_frames_reject_bad_crc(void)
         .click_event_id = claim.click_event_id,
         .attempt_index = claim.attempt_index,
         .nonce = claim.nonce,
-        .discovered_anchor_count = 3u,
-        .min_anchor_count = 4u,
+        .discovered_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u,
+        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
         .flags = claim.flags,
     };
@@ -653,7 +659,7 @@ static void test_control_frames_reject_bad_crc(void)
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
         .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
-        .flags = claim.flags,
+        .flags = FLAG_DIAGNOSTIC,
         .entries = {
             {
                 .anchor_id = UINT64_C(0xAA00000000000001),
@@ -776,7 +782,7 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
         .attempt_index = claim.attempt_index,
         .nonce = claim.nonce,
         .discovery_slot_count = UWB_DISCOVERY_SLOT_COUNT,
-        .flags = claim.flags,
+        .flags = FLAG_DIAGNOSTIC,
     };
     const struct uwb_discovery_reply_frame reply = {
         .network_id = claim.network_id,
@@ -789,7 +795,7 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
         .status = UWB_DISCOVERY_REPLY_PRESENT,
         .rx_quality = 88u,
         .battery_mv = 3010u,
-        .flags = claim.flags,
+        .flags = FLAG_DIAGNOSTIC,
     };
     uint8_t buf[UWB_DISCOVERY_REPLY_LEN];
     size_t written = 0u;
@@ -854,10 +860,10 @@ static void test_range_release_decode_rejects_valid_crc_malformed_fields(void)
         .click_event_id = claim.click_event_id,
         .attempt_index = claim.attempt_index,
         .nonce = claim.nonce,
-        .discovered_anchor_count = 3u,
-        .min_anchor_count = 4u,
+        .discovered_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u,
+        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
-        .flags = claim.flags,
+        .flags = FLAG_DIAGNOSTIC,
     };
     uint8_t buf[UWB_RANGE_RELEASE_LEN];
     size_t written = 0u;
@@ -908,7 +914,7 @@ static void test_range_schedule_decode_rejects_valid_crc_malformed_fields(void)
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
         .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
-        .flags = claim.flags,
+        .flags = FLAG_DIAGNOSTIC,
         .entries = {
             {
                 .anchor_id = UINT64_C(0xAA00000000000001),
@@ -945,15 +951,15 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
         .click_event_id = 3u,
         .attempt_index = 1u,
         .nonce = 4u,
-        .selected_count = 2u,
+        .selected_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
         .reply_delay_us = 900u,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
         .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
         .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
-        .max_exchanges = 2u,
-        .min_successful_unique_anchors = 2u,
+        .max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
         .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
@@ -967,6 +973,11 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
             {
                 .anchor_id = 10u,
                 .seq = 2u,
+                .sample_count = 1u,
+            },
+            {
+                .anchor_id = 12u,
+                .seq = 3u,
                 .sample_count = 1u,
             },
         },
@@ -992,12 +1003,60 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
     schedule.samples_per_anchor = 2u;
     schedule.entries[0].sample_count = 1u;
     schedule.entries[1].sample_count = 2u;
+    schedule.entries[2].sample_count = 2u;
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     schedule.samples_per_anchor = 2u;
     schedule.entries[0].sample_count = 2u;
     schedule.entries[1].sample_count = 2u;
+    schedule.entries[2].sample_count = 2u;
+    schedule.max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS * 2u;
     schedule.entries[1].seq = 255u;
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
+}
+
+static void test_normal_click_schedule_requires_three_selected_anchors(void)
+{
+    struct uwb_range_schedule_frame schedule = {
+        .network_id = 1u,
+        .clicker_id = 2u,
+        .click_event_id = 3u,
+        .attempt_index = 1u,
+        .nonce = 4u,
+        .selected_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .reply_delay_us = UWB_RANGE_REPLY_DELAY_UUS,
+        .first_poll_delay_ms = 3u,
+        .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
+        .samples_per_anchor = 1u,
+        .flags = FLAG_COUNT_AS_CLICK,
+        .entries = {
+            {.anchor_id = 10u, .seq = 1u, .sample_count = 1u},
+            {.anchor_id = 11u, .seq = 2u, .sample_count = 1u},
+            {.anchor_id = 12u, .seq = 3u, .sample_count = 1u},
+        },
+    };
+
+    assert(uwb_validate_range_schedule(&schedule) == PROTO_OK);
+
+    schedule.selected_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u;
+    schedule.max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u;
+    schedule.min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u;
+    assert(uwb_validate_range_schedule(&schedule) == PROTO_ERR_MALFORMED);
+
+    schedule.selected_count = UWB_NORMAL_CLICK_MIN_ANCHORS;
+    schedule.max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS;
+    schedule.min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u;
+    assert(uwb_validate_range_schedule(&schedule) == PROTO_ERR_MALFORMED);
+
+    schedule.selected_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS + 1u;
+    schedule.min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS;
+    assert(uwb_validate_range_schedule(&schedule) == PROTO_ERR_MALFORMED);
 }
 
 static void test_schedule_samples_are_round_robin(void)
@@ -1016,7 +1075,7 @@ static void test_schedule_samples_are_round_robin(void)
         .burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
         .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
         .max_exchanges = 8u,
-        .min_successful_unique_anchors = 4u,
+        .min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS,
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
         .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 2u,
@@ -1169,6 +1228,22 @@ static void test_anchor_epoch_rejects_same_event_wrong_session_identity(void)
     assert(epoch.attempt_index == first.attempt_index);
     assert(epoch.priority_id == first.priority_id);
     assert(epoch.flags == first.flags);
+}
+
+static void test_claim_precedence_compare_uses_canonical_tuple(void)
+{
+    assert(uwb_claim_precedence_compare(2u, 100u, 50u, 10u,
+                                        1u, 1u, 1u, 1u) > 0);
+    assert(uwb_claim_precedence_compare(1u, 1u, 1u, 1u,
+                                        2u, 100u, 50u, 10u) < 0);
+    assert(uwb_claim_precedence_compare(1u, 10u, 50u, 10u,
+                                        1u, 11u, 1u, 1u) > 0);
+    assert(uwb_claim_precedence_compare(1u, 10u, 40u, 10u,
+                                        1u, 10u, 50u, 1u) > 0);
+    assert(uwb_claim_precedence_compare(1u, 10u, 50u, 10u,
+                                        1u, 10u, 50u, 11u) > 0);
+    assert(uwb_claim_precedence_compare(1u, 10u, 50u, 10u,
+                                        1u, 10u, 50u, 10u) == 0);
 }
 
 static void test_uwb_mesh_frame_round_trip_and_filters(void)
@@ -1370,10 +1445,12 @@ int main(void)
     test_range_release_decode_rejects_valid_crc_malformed_fields();
     test_range_schedule_decode_rejects_valid_crc_malformed_fields();
     test_schedule_rejects_unsafe_ranging_params();
+    test_normal_click_schedule_requires_three_selected_anchors();
     test_schedule_samples_are_round_robin();
     test_anchor_epoch_arbitrates_and_locks();
     test_anchor_epoch_refreshes_repeated_same_attempt_claim();
     test_anchor_epoch_rejects_same_event_wrong_session_identity();
+    test_claim_precedence_compare_uses_canonical_tuple();
     test_uwb_mesh_frame_round_trip_and_filters();
     return 0;
 }

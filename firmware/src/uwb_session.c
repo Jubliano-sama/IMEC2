@@ -366,6 +366,10 @@ static int validate_clicker_config(const struct uwb_clicker_config *config)
         !flags_valid(config->flags)) {
         return PROTO_ERR_MALFORMED;
     }
+    if ((config->flags & FLAG_COUNT_AS_CLICK) != 0u &&
+        config->min_anchor_count != UWB_NORMAL_CLICK_MIN_ANCHORS) {
+        return PROTO_ERR_MALFORMED;
+    }
     return PROTO_OK;
 }
 
@@ -496,8 +500,10 @@ static bool claim_is_newer_attempt_for_current_event(const struct uwb_anchor_ses
 static void clear_attempt_discovery(struct uwb_clicker_session *session)
 {
     memset(session->candidates, 0, sizeof(session->candidates));
+    memset(session->successful_anchor_ids, 0, sizeof(session->successful_anchor_ids));
     memset(&session->schedule, 0, sizeof(session->schedule));
     session->candidate_count = 0u;
+    session->successful_unique_count = 0u;
     session->next_sample_index = 0u;
     session->range_step_active = false;
 }

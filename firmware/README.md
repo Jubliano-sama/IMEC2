@@ -43,7 +43,7 @@ Active route/report mesh TX/RX and scheduled ranging add separate awake-time win
 
 ## Hardware Bring-Up Smoke Checklist
 
-Use this checklist on the board with the DWM3000 IRQ wired to `P0.02`. The minimum bench topology is one gateway, one anchor, and one clicker; full normal-click acceptance still needs four reachable anchors because the clicker requires four unique successful ranges.
+Use this checklist on the board with the DWM3000 IRQ wired to `P0.02`. The minimum bench topology is one gateway, one anchor, and one clicker; full normal-click acceptance needs three reachable anchors because the server-side solver accepts three anchor distances and the clicker requires three unique successful ranges.
 
 1. Confirm `firmware/app/app.overlay` contains `irq-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>`.
 2. Build all three roles and verify devicetree accepts the real IRQ GPIO:
@@ -61,9 +61,9 @@ Use this checklist on the board with the DWM3000 IRQ wired to `P0.02`. The minim
 4. Capture serial logs or gateway output showing the DWM3000 DEV_ID probe, wake/reset path, IRQ-backed TX/RX completion, and return to retained sleep after each active window.
 5. Run the clicker self-test gesture. Pass evidence is a diagnostic wake/discovery attempt, a scheduled dud range attempt, and a host-visible self-test result.
 6. Run a one-anchor ranging smoke. Pass evidence is a CRC-valid `WAKE_CLAIM`, anchor discovery reply, accepted `RANGE_SCHEDULE`, one selected-clicker DS-TWR exchange, and a gateway-bound UWB mesh report or explicit gateway ACK path.
-7. Run a full normal click with four anchors when available. Pass evidence is four unique successful DS-TWR results, no success counted from discovery-only anchors, queued reports sent through UWB mesh, and COBS-framed gateway output.
+7. Run a full normal click with three or more anchors when available. Pass evidence is three unique successful DS-TWR results from one burst identity, no success counted from discovery-only anchors, queued reports sent through UWB mesh, and COBS-framed gateway output.
 8. Measure the clicker wake train on the real firmware and verify the maximum no-preamble gap between repeated long-preamble `WAKE_CLAIM` frames stays within the protocol target.
-9. Measure DS-TWR IRQ timing on the real board: DWM3000 IRQ assertion, firmware RX-good handler entry, and the last point before delayed TX programming. Use that evidence to sweep the fixed equal `DS_TWR_REPLY_DLY_UUS` downward from 900 uus and choose the smallest value with zero delayed-TX misses plus margin at 850 kbps.
+9. Measure DS-TWR IRQ timing on the real board: DWM3000 IRQ assertion, firmware RX-good handler entry, and the last point before delayed TX programming. Use that evidence to sweep the fixed equal `UWB_RANGE_REPLY_DELAY_UUS` downward from 900 DWM/DW3000 delayed-TX units and choose the smallest value with zero delayed-TX misses plus margin at 850 kbps.
 10. During anchor idle, record wake-scan diagnostics: scans attempted, preambles detected, SFD timeouts, CRC failures, valid claims, false-wake cooldowns, and measured `awake_us` split across startup, PLL, RX, scheduled ranging, and mesh RX/TX where available.
 11. Accept the power budget only after measuring both the compile-time periodic idle estimate and the real combined scan plus mesh duty cycle. The periodic scan plus mesh-RX baseline should remain near the intended 1% DWM3000 awake-time target; active mesh traffic and scheduled ranging are empirical tuning results for the final IRQ pin, scan cadence, and mesh cadence.
 
@@ -75,9 +75,9 @@ Record the acceptance evidence in this form before closing hardware validation:
 | DWM3000 bring-up | DEV_ID, wake/reset, IRQ-backed TX/RX completion, and retained sleep return shown in logs | Pending |
 | Self-test | Long-press plus short-press gesture emits diagnostic wake/discovery, scheduled dud range, and host-visible self-test result | Pending |
 | One-anchor smoke | CRC-valid `WAKE_CLAIM`, discovery reply, accepted `RANGE_SCHEDULE`, one selected-clicker DS-TWR, and gateway-bound UWB mesh report or ACK | Pending |
-| Four-anchor click | Four unique completed DS-TWR ranges, no discovery-only success count, queued reports over UWB mesh, and COBS gateway output | Pending |
+| Three-anchor click | Three unique completed DS-TWR ranges from one burst identity, no discovery-only success count, queued reports over UWB mesh, and COBS gateway output | Pending |
 | Wake train | Measured maximum no-preamble gap between repeated long-preamble `WAKE_CLAIM` frames stays within the protocol target | Pending |
-| DS-TWR reply-delay calibration | IRQ-to-handler-to-delayed-TX timing captured; fixed equal reply delay swept downward from 900 uus and selected with zero delayed-TX misses plus margin at 850 kbps | Pending |
+| DS-TWR reply-delay calibration | IRQ-to-handler-to-delayed-TX timing captured; fixed equal reply delay swept downward from 900 DWM/DW3000 delayed-TX units and selected with zero delayed-TX misses plus margin at 850 kbps | Pending |
 | Idle diagnostics | Scan, preamble, SFD timeout, CRC failure, claim, false-wake cooldown, mesh packet, and `awake_us` counters captured during idle | Pending |
 | Power budget | Measured scan plus periodic mesh RX duty remains near the intended 1% DWM3000 awake-time target on final hardware | Pending |
 
@@ -90,7 +90,7 @@ Implemented:
 - Zephyr DWM3000 port layer for SPI, reset, wake, DEV_ID validation, and SDK-compatible SPI/sleep/tick/reset/IRQ hooks. The IRQ GPIO handler only signals waiters and defers any registered SDK callback to workqueue context so the callback may safely use SPI.
 - Qorvo DWM3000 decadriver source build integration with a DEV_ID probe through `dwt_readdevid()`.
 - IRQ-driven DWM3000 STS-SDC DS-TWR initiator/responder path using native UWB frames, retained sleep/restore between windows, long-preamble wake/discovery mode, fixed equal reply-delay validation with `RANGE_TIMING_INVALID` rejection, and responder windows that ignore unrelated pre-POLL frames without restarting or extending the scheduled slot.
-- UWB-gated multi-anchor click path: clicker uses sampled UWB politeness, clicker-only BLE courtesy collision hints on channel 37, randomized contention/retry backoff, sub-millisecond wake-claim jitter, sends `WAKE_CLAIM`, transitions into the wake state, enters discovery by sending `DISCOVER`, accepts `DISCOVERY_REPLY` frames only during that discovery phase, transmits a `RANGE_SCHEDULE`, ranges scheduled anchors sequentially, and requires four unique successful anchors.
+- UWB-gated multi-anchor click path: clicker uses sampled UWB politeness, clicker-only BLE courtesy collision hints on channel 37, randomized contention/retry backoff, sub-millisecond wake-claim jitter, sends `WAKE_CLAIM`, transitions into the wake state, enters discovery by sending `DISCOVER`, accepts `DISCOVERY_REPLY` frames only during that discovery phase, transmits a `RANGE_SCHEDULE`, ranges scheduled anchors sequentially, and requires three unique successful anchors from one burst identity.
 - Clicker self-test gesture, DWM3000 wake/reset/DEV_ID probe, diagnostic UWB wake/discovery/scheduled dud range, and best-effort direct UWB mesh `SELF_TEST_REPORT` emission to the gateway.
 - Anchor UWB scan gate: anchors run low-duty long-preamble UWB wake scans, treat no-preamble timeouts as idle scans, classify DWM3000 SFD/frame/CRC wake failures for diagnostics, admit only CRC-valid local claims that pass network/channel/epoch checks, arbitrate competing clickers, wake with a guard before the advertised discovery instant, answer in static discovery slots, accept the selected range schedule only after the discovery-reply phase, sleep until scheduled polls, continue listening through unrelated pre-POLL noise inside the same scheduled slot, and return the DWM3000 to retained sleep afterward.
 - Mesh relay core with reactive route discovery, gateway ACKs, retry handling, duplicate suppression, UWB mesh frame encode/decode, UWB outbound transport, and periodic UWB mesh RX windows for anchors and the gateway. The legacy BLE mesh frame path and legacy `ROUTE_ADV`/`ROUTE_STATUS` beacon path are removed from the app and native core.

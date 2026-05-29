@@ -41,16 +41,17 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
  *   poll=41 B, response=49 B, final=53 B, report=49 B.
  * The initiator receives an 8 B longer response before scheduling the final
  * than the responder receives before scheduling the response. At 850 kbps that
- * path delta is ceil(8 B * 8 bits * 1e6 / 850e3) = 76 us. The shared 900 uus
- * delay intentionally lets the shorter poll path wait, keeping both reply
- * times equal. Optional RX diagnostics must stay out of the RX-to-delayed-TX
- * critical path; delayed TX misses mean this common value must be raised.
+ * path delta is ceil(8 B * 8 bits * 1e6 / 850e3) = 76 us. The shared
+ * UWB_RANGE_REPLY_DELAY_UUS DWM/DW3000 delayed-TX delay intentionally lets the
+ * shorter poll path wait, keeping both reply times equal. Optional RX
+ * diagnostics must stay out of the RX-to-delayed-TX critical path; delayed TX
+ * misses mean this common value must be raised.
  */
 #define UWB_PHY_DATA_RATE_BPS 850000u
 #define DS_TWR_RX_PATH_DELTA_BYTES (UWB_RESP_LEN - UWB_POLL_LEN)
 #define DS_TWR_RX_PATH_DELTA_US (((DS_TWR_RX_PATH_DELTA_BYTES * 8u * 1000000u) + \
                                   UWB_PHY_DATA_RATE_BPS - 1u) / UWB_PHY_DATA_RATE_BPS)
-#define DS_TWR_REPLY_DLY_UUS 900u
+#define DS_TWR_REPLY_DLY_UUS UWB_RANGE_REPLY_DELAY_UUS
 #define RESP_RX_TO_FINAL_TX_DLY_UUS DS_TWR_REPLY_DLY_UUS
 #define RESP_RX_TIMEOUT_UUS 2000u
 #define RESP_RX_TIMEOUT_MS 8u
@@ -85,7 +86,7 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
 
 BUILD_ASSERT(DS_TWR_RX_PATH_DELTA_US == 76u,
              "Update the DS-TWR equal-reply timing calculation when UWB frame sizes change");
-BUILD_ASSERT(DS_TWR_REPLY_DLY_UUS == UWB_DS_TWR_REPLY_DELAY_US,
+BUILD_ASSERT(DS_TWR_REPLY_DLY_UUS == UWB_RANGE_REPLY_DELAY_UUS,
              "UWB schedule validation must match the fixed DWM3000 DS-TWR reply delay");
 BUILD_ASSERT(DWM3000_FIRST_PATH_NTM_LOW <= IP_CONFIG_LO_IP_NTM_BIT_MASK,
              "DWM3000 first-path threshold must fit in IP_CONFIG_LO.IP_NTM");
