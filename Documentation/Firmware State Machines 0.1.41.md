@@ -58,7 +58,7 @@ Previous version: [[Firmware State Machines 0.1.40]]
 
 Older changes are in [[Firmware State Machines 0.1.39]].
 
-This document shows how the firmware moves between states. For system rationale, see [[UWB+BLE Architecture 0.5.50]]. For packet layouts and field names, see [[UWB+BLE Protocols and Strategies 0.2.47]].
+This document shows how the firmware moves between states. For system rationale, see [[UWB+BLE Architecture 0.5.51]]. For packet layouts and field names, see [[UWB+BLE Protocols and Strategies 0.2.47]].
 
 ## Runtime Hierarchy
 

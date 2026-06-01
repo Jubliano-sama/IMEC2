@@ -7,7 +7,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-LOG_MODULE_REGISTER(dwm3000_sdk_port, LOG_LEVEL_INF);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+#define DWM3000_SDK_PORT_LOG_LEVEL LOG_LEVEL_DBG
+#else
+#define DWM3000_SDK_PORT_LOG_LEVEL LOG_LEVEL_INF
+#endif
+
+LOG_MODULE_REGISTER(dwm3000_sdk_port, DWM3000_SDK_PORT_LOG_LEVEL);
 
 typedef void (*port_deca_isr_t)(void);
 
@@ -166,12 +172,5 @@ void spi_peripheral_init(void)
 
 void port_set_dwic_isr(port_deca_isr_t deca_isr)
 {
-    int ret;
-
     dwm3000_isr = deca_isr;
-
-    ret = dwm3000_port_set_irq_callback(deca_isr);
-    if (ret < 0) {
-        LOG_ERR("DWM3000 IRQ callback setup failed: %d", ret);
-    }
 }

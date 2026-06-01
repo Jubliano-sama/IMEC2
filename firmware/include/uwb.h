@@ -105,7 +105,7 @@ struct uwb_clicker_diag_frame {
     struct uwb_range_header header;
     uint32_t final_tx_ts_32;
     uint32_t status_flags;
-    uint32_t irq_latency_us;
+    uint32_t status_detect_latency_us;
     uint8_t resp_quality;
     int8_t resp_rsl_dbm;
     uint8_t diag_len;

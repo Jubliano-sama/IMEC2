@@ -390,7 +390,7 @@ int uwb_encode_clicker_diag(const struct uwb_clicker_diag_frame *frame,
 
     proto_put_u32_le(&out[UWB_HEADER_LEN], frame->final_tx_ts_32);
     proto_put_u32_le(&out[UWB_HEADER_LEN + 4u], frame->status_flags);
-    proto_put_u32_le(&out[UWB_HEADER_LEN + 8u], frame->irq_latency_us);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 8u], frame->status_detect_latency_us);
     out[UWB_HEADER_LEN + 12u] = frame->resp_quality;
     out[UWB_HEADER_LEN + 13u] = (uint8_t)frame->resp_rsl_dbm;
     out[UWB_HEADER_LEN + 14u] = frame->diag_len;
@@ -429,7 +429,7 @@ int uwb_decode_clicker_diag(const uint8_t *data,
     }
     frame->final_tx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN]);
     frame->status_flags = proto_get_u32_le(&data[UWB_HEADER_LEN + 4u]);
-    frame->irq_latency_us = proto_get_u32_le(&data[UWB_HEADER_LEN + 8u]);
+    frame->status_detect_latency_us = proto_get_u32_le(&data[UWB_HEADER_LEN + 8u]);
     frame->resp_quality = data[UWB_HEADER_LEN + 12u];
     frame->resp_rsl_dbm = (int8_t)data[UWB_HEADER_LEN + 13u];
     diag_len = data[UWB_HEADER_LEN + 14u];

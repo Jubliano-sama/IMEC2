@@ -1,5 +1,6 @@
 #include "dwm3000_driver.h"
 
+#include "debug_log.h"
 #include "dwm3000_port.h"
 #include "uwb.h"
 #include "uwb_session.h"
@@ -10,14 +11,35 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+#define DWM3000_DRIVER_LOG_LEVEL LOG_LEVEL_DBG
+#else
+#define DWM3000_DRIVER_LOG_LEVEL LOG_LEVEL_INF
+#endif
+
+LOG_MODULE_REGISTER(dwm3000_driver, DWM3000_DRIVER_LOG_LEVEL);
+
+#define ROLE_CLICKER 1
+#define ROLE_ANCHOR 2
+#define ROLE_GATEWAY 3
+
+#ifndef DEVICE_ROLE
+#define DEVICE_ROLE ROLE_CLICKER
+#endif
+
+#ifndef DEVICE_ID
+#define DEVICE_ID 0x1111222233334444ull
+#endif
 
 #define DWM3000_TX_ANT_DLY 16385u
 #define DWM3000_RX_ANT_DLY 16385u
@@ -74,15 +96,8 @@ LOG_MODULE_REGISTER(dwm3000_driver, LOG_LEVEL_INF);
 #define DEFAULT_RESPONDER_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define DWM3000_SLEEP_MODE DWT_CONFIG
 #define DWM3000_SLEEP_WAKE_FLAGS (DWT_PRES_SLEEP | DWT_WAKE_WUP | DWT_SLP_EN)
-#define DWM3000_IRQ_EVENT_MASK (SYS_ENABLE_LO_TXFRS_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXFCG_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXFTO_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXPTO_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXPHE_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXFCE_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXFSL_ENABLE_BIT_MASK | \
-                                SYS_ENABLE_LO_RXSTO_ENABLE_BIT_MASK)
 #define DWM3000_FIRST_PATH_NTM_LOW 12u
+#define DWM3000_STATUS_POLL_INTERVAL_US 50u
 
 BUILD_ASSERT(DS_TWR_RX_PATH_DELTA_US == 76u,
              "Update the DS-TWR equal-reply timing calculation when UWB frame sizes change");
@@ -90,6 +105,8 @@ BUILD_ASSERT(DS_TWR_REPLY_DLY_UUS == UWB_RANGE_REPLY_DELAY_UUS,
              "UWB schedule validation must match the fixed DWM3000 DS-TWR reply delay");
 BUILD_ASSERT(DWM3000_FIRST_PATH_NTM_LOW <= IP_CONFIG_LO_IP_NTM_BIT_MASK,
              "DWM3000 first-path threshold must fit in IP_CONFIG_LO.IP_NTM");
+BUILD_ASSERT(DWM3000_STATUS_POLL_INTERVAL_US <= DS_TWR_RX_PATH_DELTA_US,
+             "DWM3000 status polling must remain inside the equal-reply DS-TWR timing margin");
 
 static dwt_config_t default_config = {
     5,
@@ -139,8 +156,66 @@ enum dwm3000_phy_mode {
 static bool radio_configured;
 static bool radio_awake;
 static enum dwm3000_phy_mode active_phy_mode;
+static struct dwm3000_driver_stats driver_stats;
 
 static void clear_all_events(void);
+
+static const char *dwm3000_debug_role_name(void)
+{
+    switch (DEVICE_ROLE) {
+    case ROLE_CLICKER:
+#if defined(CONFIG_IMEC_HIGH_DEBUG) && defined(CONFIG_IMEC_ROLE_TAG)
+        if (IS_ENABLED(CONFIG_IMEC_ROLE_TAG)) {
+            return "tag";
+        }
+#endif
+        return "clicker";
+    case ROLE_ANCHOR:
+        return "anchor";
+    case ROLE_GATEWAY:
+        return "gateway";
+    default:
+        return "unknown";
+    }
+}
+
+static void dwm3000_debug_event(bool warning, const char *event, const char *fmt, ...)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    char prefix[96];
+    char message[160];
+    va_list args;
+    int ret;
+
+    ret = debug_log_format_prefix(prefix,
+                                  sizeof(prefix),
+                                  k_uptime_get_32(),
+                                  dwm3000_debug_role_name(),
+                                  DEVICE_ID,
+                                  CONFIG_IMEC_BENCH_STAGE,
+                                  event);
+    if (ret < 0) {
+        return;
+    }
+
+    va_start(args, fmt);
+    ret = vsnprintk(message, sizeof(message), fmt, args);
+    va_end(args);
+    if (ret < 0) {
+        return;
+    }
+
+    if (warning) {
+        LOG_WRN("%s %s", prefix, message);
+    } else {
+        LOG_DBG("%s %s", prefix, message);
+    }
+#else
+    ARG_UNUSED(warning);
+    ARG_UNUSED(event);
+    ARG_UNUSED(fmt);
+#endif
+}
 
 static void configure_first_path_sensitivity(void)
 {
@@ -242,7 +317,7 @@ static int apply_radio_config(const dwt_config_t *config,
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
     dwt_settxantennadelay(DWM3000_TX_ANT_DLY);
     dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
-    dwt_setinterrupt(DWM3000_IRQ_EVENT_MASK, 0u, DWT_ENABLE_INT_ONLY);
+    dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
 
     radio_configured = true;
@@ -274,7 +349,7 @@ static int wake_configured_radio(void)
 
     dwt_restoreconfig();
     configure_first_path_sensitivity();
-    dwt_setinterrupt(DWM3000_IRQ_EVENT_MASK, 0u, DWT_ENABLE_INT_ONLY);
+    dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
     radio_awake = true;
     return 0;
@@ -322,23 +397,42 @@ static void clear_status(uint32_t mask)
 static void clear_all_events(void)
 {
     clear_status(0xffffffffu);
-    dwm3000_port_irq_reset();
 }
 
 static int wait_status(uint32_t mask, uint32_t timeout_ms, uint32_t *status)
 {
     int64_t deadline = k_uptime_get() + timeout_ms;
     uint32_t read_status;
+    uint32_t start_cycles = k_cycle_get_32();
+    uint32_t poll_loops = 0u;
     int64_t now_ms;
-    uint32_t wait_ms;
-    int ret;
 
+    dwm3000_debug_event(false,
+                        "UWB_SYS_STATUS_POLL_START",
+                        "mask=0x%08x timeout_ms=%u",
+                        mask,
+                        timeout_ms);
     do {
         read_status = dwt_read32bitreg(SYS_STATUS_ID);
+        poll_loops++;
         if ((read_status & mask) != 0u) {
+            uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
+                (uint32_t)(k_cycle_get_32() - start_cycles));
+
+            driver_stats.sys_status_poll_loops += poll_loops;
+            if (elapsed_us > driver_stats.sys_status_poll_max_duration_us) {
+                driver_stats.sys_status_poll_max_duration_us = elapsed_us;
+            }
             if (status != NULL) {
                 *status = read_status;
             }
+            dwm3000_debug_event(false,
+                                "UWB_SYS_STATUS_POLL_DONE",
+                                "mask=0x%08x status=0x%08x loops=%u duration_us=%u",
+                                mask,
+                                read_status,
+                                poll_loops,
+                                elapsed_us);
             return 0;
         }
 
@@ -346,15 +440,29 @@ static int wait_status(uint32_t mask, uint32_t timeout_ms, uint32_t *status)
         if (now_ms >= deadline) {
             break;
         }
-        wait_ms = (uint32_t)(deadline - now_ms);
-        ret = dwm3000_port_wait_for_irq(wait_ms == 0u ? 1u : wait_ms);
-        if (ret < 0 && ret != -ETIMEDOUT) {
-            return ret;
-        }
+        k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US);
     } while (k_uptime_get() <= deadline);
 
     if (status != NULL) {
         *status = dwt_read32bitreg(SYS_STATUS_ID);
+    }
+    driver_stats.sys_status_poll_loops += poll_loops;
+    driver_stats.sys_status_poll_timeouts++;
+    {
+        uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
+            (uint32_t)(k_cycle_get_32() - start_cycles));
+
+        if (elapsed_us > driver_stats.sys_status_poll_max_duration_us) {
+            driver_stats.sys_status_poll_max_duration_us = elapsed_us;
+        }
+        dwm3000_debug_event(true,
+                            "UWB_SYS_STATUS_POLL_TIMEOUT",
+                            "mask=0x%08x status=0x%08x loops=%u duration_us=%u timeout_ms=%u",
+                            mask,
+                            status == NULL ? 0u : *status,
+                            poll_loops,
+                            elapsed_us,
+                            timeout_ms);
     }
     return -ETIMEDOUT;
 }
@@ -366,10 +474,22 @@ static int wait_tx_complete(uint32_t timeout_ms)
 
     ret = wait_status(SYS_STATUS_TXFRS_BIT_MASK, timeout_ms, &status);
     if (ret < 0) {
+        driver_stats.tx_failures++;
+        dwm3000_debug_event(true,
+                            "UWB_TX_DONE",
+                            "status=timeout ret=%d sys_status=0x%08x timeout_ms=%u",
+                            ret,
+                            status,
+                            timeout_ms);
         return ret;
     }
 
     clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    driver_stats.tx_dones++;
+    dwm3000_debug_event(false,
+                        "UWB_TX_DONE",
+                        "status=ok sys_status=0x%08x",
+                        status);
     return 0;
 }
 
@@ -733,12 +853,33 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
 {
     int ret;
 
+    driver_stats.tx_starts++;
+    dwm3000_debug_event(false,
+                        "UWB_TX_START",
+                        "frame_len=%u tx_mode=0x%02x",
+                        (unsigned int)frame_len,
+                        tx_mode);
     ret = write_tx_frame(frame, frame_len);
     if (ret < 0) {
+        driver_stats.tx_failures++;
+        dwm3000_debug_event(true,
+                            "UWB_TX_DONE",
+                            "status=write-fail ret=%d frame_len=%u",
+                            ret,
+                            (unsigned int)frame_len);
         return ret;
     }
 
-    return dwt_starttx(tx_mode) == DWT_SUCCESS ? 0 : -EIO;
+    if (dwt_starttx(tx_mode) != DWT_SUCCESS) {
+        driver_stats.tx_failures++;
+        dwm3000_debug_event(true,
+                            "UWB_TX_DONE",
+                            "status=start-fail frame_len=%u tx_mode=0x%02x",
+                            (unsigned int)frame_len,
+                            tx_mode);
+        return -EIO;
+    }
+    return 0;
 }
 
 static int receive_frame(uint32_t timeout_ms, uint32_t *status,
@@ -749,16 +890,40 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
 {
     int ret;
 
+    driver_stats.rx_starts++;
+    dwm3000_debug_event(false,
+                        "UWB_RX_START",
+                        "timeout_ms=%u buffer_len=%u",
+                        timeout_ms,
+                        (unsigned int)buffer_len);
     ret = wait_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR,
                       timeout_ms, status);
     if (ret < 0) {
+        driver_stats.rx_timeouts++;
         dwt_forcetrxoff();
+        dwm3000_debug_event(true,
+                            "UWB_RX_TIMEOUT",
+                            "ret=%d timeout_ms=%u sys_status=0x%08x",
+                            ret,
+                            timeout_ms,
+                            status == NULL ? 0u : *status);
         return ret;
     }
 
     if ((*status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
+        if ((*status & (SYS_STATUS_RXFCE_BIT_MASK |
+                        SYS_STATUS_RXPHE_BIT_MASK |
+                        SYS_STATUS_RXFSL_BIT_MASK)) != 0u) {
+            driver_stats.rx_crc_failures++;
+        } else {
+            driver_stats.rx_failures++;
+        }
         clear_status(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
         dwt_forcetrxoff();
+        dwm3000_debug_event(true,
+                            "UWB_RX_DONE",
+                            "status=error sys_status=0x%08x",
+                            *status);
         return -EIO;
     }
 
@@ -775,10 +940,21 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     *frame_len = read_rx_frame(buffer, buffer_len);
     clear_status(SYS_STATUS_RXFCG_BIT_MASK);
     if (*frame_len == 0u) {
+        driver_stats.rx_failures++;
         dwt_forcetrxoff();
+        dwm3000_debug_event(true,
+                            "UWB_RX_DONE",
+                            "status=empty-frame sys_status=0x%08x",
+                            *status);
         return -EMSGSIZE;
     }
 
+    driver_stats.rx_dones++;
+    dwm3000_debug_event(false,
+                        "UWB_RX_DONE",
+                        "status=ok sys_status=0x%08x frame_len=%u",
+                        *status,
+                        (unsigned int)*frame_len);
     return 0;
 }
 
@@ -931,7 +1107,7 @@ static void store_clicker_diag_result(struct dwm3000_range_result *result,
 
     proto_put_u32_le(&result->clicker_diag[0], diag->final_tx_ts_32);
     proto_put_u32_le(&result->clicker_diag[4], diag->status_flags);
-    proto_put_u32_le(&result->clicker_diag[8], diag->irq_latency_us);
+    proto_put_u32_le(&result->clicker_diag[8], diag->status_detect_latency_us);
     result->clicker_diag[12] = diag->resp_quality;
     result->clicker_diag[13] = (uint8_t)diag->resp_rsl_dbm;
     result->clicker_diag[14] = raw_len;
@@ -940,7 +1116,7 @@ static void store_clicker_diag_result(struct dwm3000_range_result *result,
     }
     result->clicker_diag_len = 15u + copy_len;
     result->clicker_diag_status_flags = diag->status_flags;
-    result->clicker_diag_irq_latency_us = diag->irq_latency_us;
+    result->clicker_diag_status_detect_latency_us = diag->status_detect_latency_us;
     result->clicker_diag_received = true;
     result->clicker_diag_truncated = copy_len != raw_len;
 }
@@ -979,7 +1155,7 @@ static int send_clicker_diag(const struct dwm3000_range_request *request,
     if (resp_rsl_sampled) {
         diag.status_flags |= UWB_CLICKER_DIAG_STATUS_RESP_RSL_PRESENT;
     }
-    diag.irq_latency_us = 0u;
+    diag.status_detect_latency_us = 0u;
     diag.resp_quality = resp_quality;
     diag.resp_rsl_dbm = resp_rsl_dbm;
     diag.diag_len = CLICKER_DIAG_COMPACT_BYTES_LEN;
@@ -1146,7 +1322,7 @@ int dwm3000_driver_configure_default(void)
     if (ret < 0) {
         return ret;
     }
-    LOG_INF("DWM3000 configured for channel 5 1024-symbol no-STS DS-TWR at 850 kbps, %u Hz SPI; waiting on IRQ",
+    LOG_INF("DWM3000 configured for channel 5 1024-symbol no-STS DS-TWR at 850 kbps, %u Hz SPI; polling SYS_STATUS",
             (unsigned int)dwm3000_port_current_spi_hz());
     return 0;
 }
@@ -1795,4 +1971,16 @@ int dwm3000_driver_listen_activity(uint32_t timeout_ms, bool *activity_detected)
 
     *activity_detected = (status & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR)) != 0u;
     return 0;
+}
+
+void dwm3000_driver_stats_reset(void)
+{
+    memset(&driver_stats, 0, sizeof(driver_stats));
+}
+
+void dwm3000_driver_stats_get(struct dwm3000_driver_stats *stats)
+{
+    if (stats != NULL) {
+        *stats = driver_stats;
+    }
 }

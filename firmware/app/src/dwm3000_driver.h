@@ -36,7 +36,7 @@ struct dwm3000_range_result {
     uint8_t clicker_diag[UWB_CLICKER_DIAG_MAX_BYTES];
     uint8_t clicker_diag_len;
     uint32_t clicker_diag_status_flags;
-    uint32_t clicker_diag_irq_latency_us;
+    uint32_t clicker_diag_status_detect_latency_us;
     bool rsl_sampled;
     bool cir_sampled;
     bool clicker_diag_received;
@@ -53,6 +53,20 @@ enum dwm3000_rx_failure {
     DWM3000_RX_FAILURE_FRAME_TIMEOUT = 3,
     DWM3000_RX_FAILURE_CRC_OR_PHY = 4,
     DWM3000_RX_FAILURE_BAD_FRAME = 5,
+};
+
+struct dwm3000_driver_stats {
+    uint32_t sys_status_poll_loops;
+    uint32_t sys_status_poll_timeouts;
+    uint32_t sys_status_poll_max_duration_us;
+    uint32_t rx_starts;
+    uint32_t rx_dones;
+    uint32_t rx_timeouts;
+    uint32_t rx_crc_failures;
+    uint32_t rx_failures;
+    uint32_t tx_starts;
+    uint32_t tx_dones;
+    uint32_t tx_failures;
 };
 
 int dwm3000_driver_probe(uint32_t *dev_id);
@@ -85,5 +99,7 @@ int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,
                                            uint32_t timeout_ms,
                                            struct dwm3000_range_result *result);
 int dwm3000_driver_listen_activity(uint32_t timeout_ms, bool *activity_detected);
+void dwm3000_driver_stats_reset(void);
+void dwm3000_driver_stats_get(struct dwm3000_driver_stats *stats);
 
 #endif

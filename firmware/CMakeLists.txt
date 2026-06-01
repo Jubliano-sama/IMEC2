@@ -7,6 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
+    src/debug_log.c
     src/protocol.c
     src/gateway_command.c
     src/uwb.c
@@ -76,3 +77,7 @@ add_test(NAME report COMMAND test_report)
 add_executable(test_survey tests/test_survey.c)
 target_link_libraries(test_survey PRIVATE core)
 add_test(NAME survey COMMAND test_survey)
+
+add_executable(test_debug_log tests/test_debug_log.c)
+target_link_libraries(test_debug_log PRIVATE core)
+add_test(NAME debug_log COMMAND test_debug_log)

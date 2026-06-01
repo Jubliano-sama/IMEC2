@@ -57,7 +57,7 @@ Current firmware uses a conservative measured-on-hardware baseline until final b
 | --- | ---: | --- |
 | `ANCHOR_SCAN_INTERVAL_MS` | 400 ms | Keeps the idle wake-scan baseline under the approximate 1% DWM3000 awake-time target after including the larger startup allowance. |
 | `ANCHOR_DWM_STARTUP_US` | 2500 us | Conservative sleep-to-usable allowance until DWM3000 wake timing is measured on the final board. |
-| `ANCHOR_PREAMBLE_DETECT_US` | 1000 us | Gives the first IRQ-driven implementation more wake margin; can be reduced after wake reliability measurements. |
+| `ANCHOR_PREAMBLE_DETECT_US` | 1000 us | Gives the first status-polled implementation more wake margin; can be reduced after wake reliability measurements. |
 | `WAKE_TRAIN_MS` | 430 ms | Covers one full 400 ms anchor scan period plus startup/RX margin. |
 | `UWB_POLITE_SAMPLE_RX_MS` | 2 ms | UWB listen duration for each clicker politeness sample. |
 | `UWB_POLITE_SAMPLE_PERIOD_MS` | 25 ms | Period between sampled politeness listens while waiting for quiet. |
@@ -218,7 +218,7 @@ The channel-9 penalty is therefore approximately 25% in the idle-scan calculatio
 
 The table above is a planning-only DWM3000 idle-scan comparison. It is useful for channel and aperture tradeoffs, but it is not the current firmware acceptance budget because the implemented firmware deliberately uses a larger 2.5 ms startup allowance, 1.0 ms RX aperture, periodic UWB mesh receive windows, scheduled discovery/schedule windows, and report TX windows.
 
-The current theoretical radio budget is maintained in `Documentation/UWB+BLE Architecture 0.5.34.md`. Under the normalized 1000 selected-anchor-events/day workload, the current UWB-gated anchor budget is:
+The current theoretical radio budget is maintained in `Documentation/UWB+BLE Architecture 0.5.51.md`. Under the normalized 1000 selected-anchor-events/day workload, the current UWB-gated anchor budget is:
 
 ```text
 UWB wake scan baseline        10.91 mAh/day
@@ -355,7 +355,7 @@ This comes from the 600 µs window minus the approximately 65 µs minimum 2-PAC 
 max_no_preamble_gap < 300-400 µs
 ```
 
-At 32 MHz SPI, the raw SPI time for a small wake packet is not the limiting factor. Firmware latency, driver overhead, interrupts, logging, and RTOS scheduling are the real risks. The clicker should preload the wake frame and retransmit it with the smallest possible host gap.
+At 32 MHz SPI, the raw SPI time for a small wake packet is not the limiting factor. Firmware latency, driver overhead, status polling cadence, logging, and RTOS scheduling are the real risks. The clicker should preload the wake frame and retransmit it with the smallest possible host gap.
 
 ### 3. Anchor Discovery Phase
 
@@ -615,7 +615,7 @@ periodic anchor mesh RX estimate ≈ 0.8 ms/s
 combined periodic idle estimate ≈ 9.9 ms/s
 ```
 
-Active UWB mesh TX/RX, discovery, scheduled ranging, and the BLE courtesy simulation are included as calculated terms in the theoretical Architecture 0.5.34 workload.
+Active UWB mesh TX/RX, discovery, scheduled ranging, and the BLE courtesy simulation are included as calculated terms in the theoretical Architecture 0.5.51 workload.
 
 1. Increase `ANCHOR_SCAN_INTERVAL_MS`.
 
@@ -679,7 +679,7 @@ This means UWB wake-up can be opportunistic and collision-recovered, while UWB r
 
 - Do not rely on preamble detect as proof of a clicker. Only CRC-valid `WAKE_CLAIM` frames can start an anchor epoch.
 
-- Measure `max_no_preamble_gap` on the clicker with real firmware, real SPI driver, real interrupts, and logging disabled. Do not infer it only from 32 MHz SPI bandwidth.
+- Measure `max_no_preamble_gap` on the clicker with real firmware, the real SPI driver, the status-polling path, and logging disabled. Do not infer it only from 32 MHz SPI bandwidth.
 
 - Preload the wake frame and retransmit it with minimal host intervention. If a nonce or countdown must change, rewrite only the necessary bytes.
 
@@ -707,7 +707,7 @@ This means UWB wake-up can be opportunistic and collision-recovered, while UWB r
 
 - The 1% target should be met by the chosen scan interval, detect aperture, wake channel, and expected click rate. Do not rely on a hard firmware budget as the main power-control mechanism.
 
-- The DWM3000 IRQ pin is required by firmware. There is no bounded SPI polling runtime mode; the board overlay maps `irq-gpios` to `P0.02`.
+- The DWM3000 IRQ pin is not directly available to the MCU. Firmware must not require `irq-gpios`; TX/RX completion is detected through bounded `SYS_STATUS` polling over SPI.
 
 - Include periodic UWB mesh RX and UWB mesh TX in anchor awake-time measurements. The wake-scan baseline alone is not the complete anchor power budget.
 

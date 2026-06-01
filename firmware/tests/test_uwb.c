@@ -118,7 +118,7 @@ static void test_clicker_diag_round_trip(void)
         .header = header(MSG_UWB_CLICKER_DIAG, FLAG_COUNT_AS_CLICK),
         .final_tx_ts_32 = 0x11223344u,
         .status_flags = 0x00000005u,
-        .irq_latency_us = 37u,
+        .status_detect_latency_us = 37u,
         .resp_quality = 93u,
         .resp_rsl_dbm = -68,
         .diag_len = sizeof(diag_bytes),
@@ -140,7 +140,7 @@ static void test_clicker_diag_round_trip(void)
     assert_same_header(&decoded.header, &diag.header);
     assert(decoded.final_tx_ts_32 == diag.final_tx_ts_32);
     assert(decoded.status_flags == diag.status_flags);
-    assert(decoded.irq_latency_us == diag.irq_latency_us);
+    assert(decoded.status_detect_latency_us == diag.status_detect_latency_us);
     assert(decoded.resp_quality == diag.resp_quality);
     assert(decoded.resp_rsl_dbm == diag.resp_rsl_dbm);
     assert(decoded.diag_len == diag.diag_len);
@@ -153,7 +153,7 @@ static void test_rejects_bad_clicker_diag(void)
         .header = header(MSG_UWB_CLICKER_DIAG, FLAG_COUNT_AS_CLICK),
         .final_tx_ts_32 = 0x11223344u,
         .status_flags = 0x00000001u,
-        .irq_latency_us = 37u,
+        .status_detect_latency_us = 37u,
         .resp_quality = 93u,
         .resp_rsl_dbm = -68,
         .diag_len = 1u,

@@ -9,7 +9,13 @@
 
 #include <errno.h>
 
-LOG_MODULE_REGISTER(dwm3000_port, LOG_LEVEL_INF);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+#define DWM3000_PORT_LOG_LEVEL LOG_LEVEL_DBG
+#else
+#define DWM3000_PORT_LOG_LEVEL LOG_LEVEL_INF
+#endif
+
+LOG_MODULE_REGISTER(dwm3000_port, DWM3000_PORT_LOG_LEVEL);
 
 #define DWM3000_NODE DT_ALIAS(dwm3000)
 
@@ -39,50 +45,16 @@ BUILD_ASSERT(DWM3000_FAST_SPI_HZ <= DWM3000_BUS_MAX_HZ,
              "DWM3000 fast SPI exceeds the selected SPI controller limit");
 BUILD_ASSERT(DWM3000_SLOW_SPI_HZ < DWM3000_FAST_SPI_HZ,
              "DWM3000 slow SPI must be slower than runtime SPI");
-BUILD_ASSERT(DT_NODE_HAS_PROP(DWM3000_NODE, irq_gpios),
-             "DWM3000 node requires irq-gpios; populate the final board IRQ pin");
-
 static const struct spi_dt_spec dwm_spi =
     SPI_DT_SPEC_GET(DWM3000_NODE, SPI_WORD_SET(8) | SPI_TRANSFER_MSB, 0);
 static const struct gpio_dt_spec dwm_reset =
     GPIO_DT_SPEC_GET(DWM3000_NODE, reset_gpios);
 static const struct gpio_dt_spec dwm_wakeup =
     GPIO_DT_SPEC_GET(DWM3000_NODE, wakeup_gpios);
-static const struct gpio_dt_spec dwm_irq =
-    GPIO_DT_SPEC_GET(DWM3000_NODE, irq_gpios);
-static struct gpio_callback dwm_irq_cb;
-K_SEM_DEFINE(dwm_irq_sem, 0, 1);
-static void dwm3000_irq_work_handler(struct k_work *work);
-K_WORK_DEFINE(dwm_irq_work, dwm3000_irq_work_handler);
 
 static struct spi_config dwm_spi_cfg;
-static dwm3000_port_irq_callback_t irq_callback;
 static uint32_t current_spi_hz;
-static bool irq_ready;
 static bool port_ready;
-
-static void dwm3000_irq_work_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-
-    if (irq_callback != NULL) {
-        irq_callback();
-    }
-}
-
-static void dwm3000_irq_handler(const struct device *dev,
-                                struct gpio_callback *cb,
-                                uint32_t pins)
-{
-    ARG_UNUSED(dev);
-    ARG_UNUSED(cb);
-    ARG_UNUSED(pins);
-
-    k_sem_give(&dwm_irq_sem);
-    if (irq_callback != NULL) {
-        (void)k_work_submit(&dwm_irq_work);
-    }
-}
 
 static uint32_t u32_from_le(const uint8_t data[4])
 {
@@ -99,38 +71,6 @@ static int ensure_ready(void)
     }
 
     return dwm3000_port_init();
-}
-
-static int configure_irq(void)
-{
-    int ret;
-
-    if (irq_ready) {
-        return 0;
-    }
-    if (!gpio_is_ready_dt(&dwm_irq)) {
-        return -ENODEV;
-    }
-
-    ret = gpio_pin_configure_dt(&dwm_irq, GPIO_INPUT);
-    if (ret < 0) {
-        return ret;
-    }
-
-    gpio_init_callback(&dwm_irq_cb, dwm3000_irq_handler, BIT(dwm_irq.pin));
-    ret = gpio_add_callback(dwm_irq.port, &dwm_irq_cb);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = gpio_pin_interrupt_configure_dt(&dwm_irq, GPIO_INT_EDGE_RISING);
-    if (ret < 0) {
-        return ret;
-    }
-
-    irq_ready = true;
-    k_sem_reset(&dwm_irq_sem);
-    return 0;
 }
 
 int dwm3000_port_set_slow_spi(void)
@@ -175,16 +115,10 @@ int dwm3000_port_init(void)
         return ret;
     }
 
-    ret = configure_irq();
-    if (ret < 0) {
-        LOG_ERR("DWM3000 IRQ GPIO setup failed (%d)", ret);
-        return ret;
-    }
-
     (void)dwm3000_port_set_slow_spi();
     port_ready = true;
 
-    LOG_INF("DWM3000 port ready on %s: slow=%u Hz fast=%u Hz IRQ ready",
+    LOG_INF("DWM3000 port ready on %s: slow=%u Hz fast=%u Hz status polling",
             dwm_spi.bus->name,
             (unsigned int)DWM3000_SLOW_SPI_HZ,
             (unsigned int)DWM3000_FAST_SPI_HZ);
@@ -249,41 +183,6 @@ int dwm3000_port_wakeup(void)
     }
 
     k_msleep(DWM3000_WAKE_SETTLE_MS);
-    return 0;
-}
-
-void dwm3000_port_irq_reset(void)
-{
-    if (irq_ready) {
-        k_sem_reset(&dwm_irq_sem);
-    }
-}
-
-int dwm3000_port_wait_for_irq(uint32_t timeout_ms)
-{
-    int ret;
-
-    if (!irq_ready) {
-        return -ENODEV;
-    }
-
-    ret = k_sem_take(&dwm_irq_sem, K_MSEC(timeout_ms));
-    return ret == 0 ? 0 : -ETIMEDOUT;
-}
-
-int dwm3000_port_set_irq_callback(dwm3000_port_irq_callback_t callback)
-{
-    int ret;
-
-    ret = ensure_ready();
-    if (ret < 0) {
-        return ret;
-    }
-    if (!irq_ready) {
-        return -ENODEV;
-    }
-
-    irq_callback = callback;
     return 0;
 }
 

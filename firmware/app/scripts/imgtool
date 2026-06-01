@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Run the workspace MCUboot imgtool.py from PATH-based sysbuild lookups."""
+
+from pathlib import Path
+import runpy
+import sys
+
+
+imgtool_py = Path(__file__).resolve().parents[3] / "bootloader" / "mcuboot" / "scripts" / "imgtool.py"
+sys.argv[0] = str(imgtool_py)
+runpy.run_path(str(imgtool_py), run_name="__main__")

@@ -1,5 +1,6 @@
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
+#include "debug_log.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -28,7 +29,11 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/random/random.h>
+#if defined(CONFIG_RETENTION_BOOT_MODE)
+#include <zephyr/retention/bootmode.h>
+#endif
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 #if defined(CONFIG_USB_DEVICE_STACK)
@@ -36,6 +41,7 @@
 #endif
 
 #include <errno.h>
+#include <stdarg.h>
 #include <string.h>
 
 LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
@@ -58,6 +64,28 @@ LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
 
 #ifndef NETWORK_ID
 #define NETWORK_ID 0x494D4543u
+#endif
+
+#ifndef IMEC_BUILD_PRESET_NAME
+#define IMEC_BUILD_PRESET_NAME ""
+#endif
+
+#ifndef IMEC_GIT_VERSION
+#define IMEC_GIT_VERSION "unknown"
+#endif
+
+#ifndef IMEC_BUILD_TIMESTAMP
+#define IMEC_BUILD_TIMESTAMP "unknown"
+#endif
+
+#ifndef IMEC_BOARD_TARGET
+#define IMEC_BOARD_TARGET "unknown"
+#endif
+
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+#define IMEC_STAGE CONFIG_IMEC_BENCH_STAGE
+#else
+#define IMEC_STAGE (-1)
 #endif
 
 #define CLICK_BUTTON_NODE DT_ALIAS(click_button)
@@ -117,6 +145,10 @@ static struct k_work_delayable report_tx_work;
 static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
 static struct k_work_delayable gateway_serial_rx_work;
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+static struct k_work_delayable high_debug_serial_work;
+static struct k_work_delayable high_debug_counter_work;
+#endif
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_work_delayable gateway_time_sync_work;
 static struct k_spinlock anchor_uwb_lock;
@@ -128,6 +160,49 @@ static struct mesh_relay mesh_runtime;
 static struct mesh_event_diagnostics mesh_event_stats;
 static struct uwb_anchor_session anchor_uwb_session;
 static uint16_t mesh_event_control_seq;
+
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+struct high_debug_counters {
+    uint32_t boot_count;
+    uint32_t dwm_dev_id_successes;
+    uint32_t dwm_dev_id_failures;
+    uint32_t wake_claim_tx;
+    uint32_t wake_claim_rx;
+    uint32_t wake_claim_accepted;
+    uint32_t wake_claim_rejected;
+    uint32_t discovery_tx;
+    uint32_t discovery_rx;
+    uint32_t discovery_reply_tx;
+    uint32_t discovery_reply_rx;
+    uint32_t schedules_tx;
+    uint32_t schedules_rx;
+    uint32_t schedules_accepted;
+    uint32_t schedules_rejected;
+    uint32_t ds_twr_attempts;
+    uint32_t ds_twr_successes;
+    uint32_t ds_twr_failures;
+    uint32_t ds_twr_timing_rejects;
+    uint32_t mesh_tx;
+    uint32_t mesh_rx;
+    uint32_t mesh_ack;
+    uint32_t mesh_retry;
+    uint32_t mesh_drop;
+    uint32_t gateway_packets_emitted;
+    uint32_t usb_connects;
+    uint32_t usb_disconnects;
+    uint32_t usb_resets;
+    uint32_t bootloader_entry_requests;
+    uint32_t command_rx;
+    uint32_t command_result_tx;
+};
+
+static struct high_debug_counters high_debug_counters;
+static char high_debug_command_buf[80];
+static size_t high_debug_command_len;
+#define HIGH_DEBUG_COUNTER_INC(field) do { high_debug_counters.field++; } while (0)
+#else
+#define HIGH_DEBUG_COUNTER_INC(field) do { } while (0)
+#endif
 
 #define MAX_SCHEDULED_ANCHORS UWB_RANGE_SCHEDULE_MAX_ANCHORS
 #define MAX_SUCCESSFUL_ANCHORS 16u
@@ -313,6 +388,15 @@ BUILD_ASSERT(TIME_SYNC_WORST_CASE_DRIFT_PPM > 0u,
              "time sync drift calculation must have a nonzero ppm bound");
 BUILD_ASSERT(GATEWAY_TIME_SYNC_DEFAULT_INTERVAL_MS <= GATEWAY_TIME_SYNC_MAX_INTERVAL_MS,
              "gateway time sync interval must keep drift under the configured limit");
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+BUILD_ASSERT(!(IS_ENABLED(CONFIG_IMEC_ROLE_TAG) || IS_ENABLED(CONFIG_IMEC_ROLE_CLICKER)) ||
+             DEVICE_ROLE == ROLE_CLICKER,
+             "tag/clicker high-debug role config must match DEVICE_ROLE");
+BUILD_ASSERT(!IS_ENABLED(CONFIG_IMEC_ROLE_ANCHOR) || DEVICE_ROLE == ROLE_ANCHOR,
+             "anchor high-debug role config must match DEVICE_ROLE");
+BUILD_ASSERT(!IS_ENABLED(CONFIG_IMEC_ROLE_GATEWAY) || DEVICE_ROLE == ROLE_GATEWAY,
+             "gateway high-debug role config must match DEVICE_ROLE");
+#endif
 #define REPORT_TX_RETRY_DELAY_MS 1000u
 #define UWB_MESH_TX_TIMEOUT_MS 20u
 
@@ -420,6 +504,252 @@ static const char *role_name(void)
         return "unknown";
     }
 }
+
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+static const char *debug_role_name(void)
+{
+#if defined(CONFIG_IMEC_ROLE_TAG)
+    if (IS_ENABLED(CONFIG_IMEC_ROLE_TAG)) {
+        return "tag";
+    }
+#endif
+    return role_name();
+}
+#endif
+
+static void high_debug_log_event(const char *event, const char *fmt, ...)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    char prefix[96];
+    char message[192];
+    va_list args;
+    int ret;
+
+    if (event == NULL) {
+        event = "UNKNOWN";
+    }
+    ret = debug_log_format_prefix(prefix,
+                                  sizeof(prefix),
+                                  k_uptime_get_32(),
+                                  debug_role_name(),
+                                  DEVICE_ID,
+                                  CONFIG_IMEC_BENCH_STAGE,
+                                  event);
+    if (ret < 0) {
+        LOG_WRN("high-debug prefix format failed for event=%s", event);
+        return;
+    }
+
+    if (fmt == NULL || fmt[0] == '\0') {
+        LOG_INF("%s", prefix);
+        return;
+    }
+
+    va_start(args, fmt);
+    ret = vsnprintk(message, sizeof(message), fmt, args);
+    va_end(args);
+    if (ret < 0) {
+        LOG_WRN("%s message_format_failed", prefix);
+        return;
+    }
+    LOG_INF("%s %s", prefix, message);
+#else
+    ARG_UNUSED(event);
+    ARG_UNUSED(fmt);
+#endif
+}
+
+static const char *command_status_name(enum command_status status)
+{
+    switch (status) {
+    case COMMAND_OK:
+        return "ok";
+    case COMMAND_UNSUPPORTED_COMMAND:
+        return "unsupported";
+    case COMMAND_MALFORMED_PAYLOAD:
+        return "malformed-payload";
+    case COMMAND_BUSY:
+        return "busy";
+    case COMMAND_DENIED:
+        return "denied";
+    case COMMAND_TIMEOUT:
+        return "timeout";
+    case COMMAND_RADIO_ERROR:
+        return "radio-error";
+    case COMMAND_INVALID_STATE:
+        return "invalid-state";
+    case COMMAND_INTERNAL_ERROR:
+        return "internal-error";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *claim_decision_name(enum uwb_anchor_claim_decision decision)
+{
+    switch (decision) {
+    case UWB_ANCHOR_CLAIM_ACCEPTED:
+        return "accepted";
+    case UWB_ANCHOR_CLAIM_REJECTED_STALE:
+        return "rejected-stale";
+    case UWB_ANCHOR_CLAIM_REJECTED_BUSY:
+        return "rejected-busy";
+    case UWB_ANCHOR_CLAIM_REPLACED_BY_PRIORITY:
+        return "replaced-by-priority";
+    case UWB_ANCHOR_CLAIM_REJECTED_LOST_ARBITRATION:
+        return "rejected-lost-arbitration";
+    case UWB_ANCHOR_CLAIM_REJECTED_MALFORMED:
+        return "rejected-malformed";
+    default:
+        return "unknown";
+    }
+}
+
+static bool high_debug_gateway_binary_cdc_active(void)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG) && defined(CONFIG_IMEC_GATEWAY_BINARY_CDC)
+    return DEVICE_ROLE == ROLE_GATEWAY && IS_ENABLED(CONFIG_IMEC_GATEWAY_BINARY_CDC);
+#else
+    return false;
+#endif
+}
+
+static bool gateway_binary_cdc_enabled(void)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        return IS_ENABLED(CONFIG_IMEC_GATEWAY_BINARY_CDC);
+    }
+#endif
+    return true;
+}
+
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+static bool high_debug_cdc_command_enabled(void)
+{
+    return !high_debug_gateway_binary_cdc_active();
+}
+
+static void high_debug_dump_counters(const char *event)
+{
+    struct dwm3000_driver_stats radio_stats = {0};
+
+    dwm3000_driver_stats_get(&radio_stats);
+    high_debug_log_event(event == NULL ? "COUNTERS" : event,
+                         "boot=%u dev_id_ok=%u dev_id_fail=%u "
+                         "sys_poll_loops=%u sys_poll_max_us=%u sys_poll_timeouts=%u "
+                         "rx_start=%u rx_done=%u rx_timeout=%u rx_crc=%u rx_fail=%u "
+                         "tx_start=%u tx_done=%u tx_fail=%u "
+                         "wake_tx=%u wake_rx=%u wake_accept=%u wake_reject=%u "
+                         "discover_tx=%u discover_rx=%u discovery_reply_tx=%u discovery_reply_rx=%u "
+                         "schedule_tx=%u schedule_rx=%u schedule_accept=%u schedule_reject=%u "
+                         "ds_attempt=%u ds_ok=%u ds_fail=%u ds_timing_reject=%u "
+                         "mesh_tx=%u mesh_rx=%u mesh_ack=%u mesh_retry=%u mesh_drop=%u "
+                         "gateway_packets=%u usb_connect=%u usb_disconnect=%u usb_reset=%u bootloader_req=%u command_rx=%u command_result_tx=%u",
+                         high_debug_counters.boot_count,
+                         high_debug_counters.dwm_dev_id_successes,
+                         high_debug_counters.dwm_dev_id_failures,
+                         radio_stats.sys_status_poll_loops,
+                         radio_stats.sys_status_poll_max_duration_us,
+                         radio_stats.sys_status_poll_timeouts,
+                         radio_stats.rx_starts,
+                         radio_stats.rx_dones,
+                         radio_stats.rx_timeouts,
+                         radio_stats.rx_crc_failures,
+                         radio_stats.rx_failures,
+                         radio_stats.tx_starts,
+                         radio_stats.tx_dones,
+                         radio_stats.tx_failures,
+                         high_debug_counters.wake_claim_tx,
+                         high_debug_counters.wake_claim_rx,
+                         high_debug_counters.wake_claim_accepted,
+                         high_debug_counters.wake_claim_rejected,
+                         high_debug_counters.discovery_tx,
+                         high_debug_counters.discovery_rx,
+                         high_debug_counters.discovery_reply_tx,
+                         high_debug_counters.discovery_reply_rx,
+                         high_debug_counters.schedules_tx,
+                         high_debug_counters.schedules_rx,
+                         high_debug_counters.schedules_accepted,
+                         high_debug_counters.schedules_rejected,
+                         high_debug_counters.ds_twr_attempts,
+                         high_debug_counters.ds_twr_successes,
+                         high_debug_counters.ds_twr_failures,
+                         high_debug_counters.ds_twr_timing_rejects,
+                         high_debug_counters.mesh_tx,
+                         high_debug_counters.mesh_rx,
+                         high_debug_counters.mesh_ack,
+                         high_debug_counters.mesh_retry,
+                         high_debug_counters.mesh_drop,
+                         high_debug_counters.gateway_packets_emitted,
+                         high_debug_counters.usb_connects,
+                         high_debug_counters.usb_disconnects,
+                         high_debug_counters.usb_resets,
+                         high_debug_counters.bootloader_entry_requests,
+                         high_debug_counters.command_rx,
+                         high_debug_counters.command_result_tx);
+}
+
+static void high_debug_boot_banner(void)
+{
+    high_debug_log_event("BOOT_START",
+                         "preset=%s git=%s build_time=%s role=%s stage=%d board=%s",
+                         IMEC_BUILD_PRESET_NAME[0] == '\0' ? "manual-highdebug" :
+                         IMEC_BUILD_PRESET_NAME,
+                         IMEC_GIT_VERSION,
+                         IMEC_BUILD_TIMESTAMP,
+                         debug_role_name(),
+                         CONFIG_IMEC_BENCH_STAGE,
+                         IMEC_BOARD_TARGET);
+    high_debug_log_event("BOOT_CONFIG",
+                         "device_id=0x%016llx gateway_id=0x%016llx network_id=0x%08x "
+                         "uwb_channel=%u mesh_payload_channel=%u spi_hz=%u sys_status_polling=1 "
+                         "usb_bootloader=%u usb_cdc_logs=%u rtt_logs=%u gateway_binary_cdc=%u",
+                         (unsigned long long)DEVICE_ID,
+                         (unsigned long long)GATEWAY_ID,
+                         NETWORK_ID,
+                         UWB_CHANNEL_WAKE_CONTACT,
+                         UWB_CHANNEL_MESH_PAYLOAD,
+                         (unsigned int)dwm3000_port_current_spi_hz(),
+                         IS_ENABLED(CONFIG_IMEC_USB_BOOTLOADER) ? 1u : 0u,
+                         IS_ENABLED(CONFIG_IMEC_USB_CDC_LOGS) ? 1u : 0u,
+                         IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
+                         high_debug_gateway_binary_cdc_active() ? 1u : 0u);
+}
+
+static int high_debug_request_bootloader(void)
+{
+    HIGH_DEBUG_COUNTER_INC(bootloader_entry_requests);
+#if defined(CONFIG_RETENTION_BOOT_MODE)
+    int ret = bootmode_set(BOOT_MODE_TYPE_BOOTLOADER);
+
+    if (ret < 0) {
+        high_debug_log_event("BOOTLOADER_READY",
+                             "request=failed ret=%d method=retention-boot-mode",
+                             ret);
+        return ret;
+    }
+    high_debug_log_event("BOOTLOADER_READY",
+                         "request=armed method=retention-boot-mode reboot=now");
+    k_msleep(50);
+    sys_reboot(SYS_REBOOT_COLD);
+    return 0;
+#else
+    high_debug_log_event("BOOTLOADER_READY",
+                         "request=manual-only reason=retention_boot_mode_not_enabled");
+    return -ENOTSUP;
+#endif
+}
+
+static void high_debug_counter_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    high_debug_dump_counters("HEARTBEAT_TX");
+    (void)k_work_reschedule(&high_debug_counter_work,
+                             K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS));
+}
+#endif
 
 static const char *range_status_name(enum range_status status)
 {
@@ -596,6 +926,9 @@ static int debug_serial_init(void)
     if (ret < 0 && ret != -EALREADY) {
         return ret;
     }
+    if (ret == 0) {
+        HIGH_DEBUG_COUNTER_INC(usb_connects);
+    }
 #endif
     return 0;
 }
@@ -624,6 +957,9 @@ static int gateway_emit_serial_packet(const struct proto_packet *packet,
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return 0;
+    }
+    if (!gateway_binary_cdc_enabled()) {
+        return -ENOTSUP;
     }
     if (packet == NULL || (payload == NULL && payload_len != 0u) ||
         payload_len > UINT8_MAX) {
@@ -658,6 +994,16 @@ static int gateway_emit_serial_packet(const struct proto_packet *packet,
             frame_packet.seq,
             (unsigned int)payload_len,
             (unsigned int)frame_len);
+    HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
+    high_debug_log_event("USB_GATEWAY_PACKET_TX",
+                         "msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u frame_len=%u binary_cdc=%u",
+                         frame_packet.msg_type,
+                         (unsigned long long)frame_packet.src_id,
+                         (unsigned long long)frame_packet.dst_id,
+                         frame_packet.seq,
+                         (unsigned int)payload_len,
+                         (unsigned int)frame_len,
+                         high_debug_gateway_binary_cdc_active() ? 1u : 0u);
     return 0;
 #else
     ARG_UNUSED(packet);
@@ -964,7 +1310,17 @@ static int anchor_send_command_result(const struct proto_packet *command,
     }
     outbound.payload_len = (uint8_t)payload_len;
 
-    return mesh_start_tracked_tx(&outbound, "command-result");
+    ret = mesh_start_tracked_tx(&outbound, "command-result");
+    if (ret == 0) {
+        HIGH_DEBUG_COUNTER_INC(command_result_tx);
+    }
+    high_debug_log_event("COMMAND_RESULT_TX",
+                         "transport=uwb_mesh command=0x%04x status=%s reason=%u ret=%d",
+                         (unsigned int)command_id,
+                         command_status_name(status),
+                         reason,
+                         ret);
+    return ret;
 }
 
 static bool uptime_deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
@@ -1666,6 +2022,13 @@ static void gateway_emit_serial_command_result(const struct proto_packet *comman
     if (ret < 0) {
         LOG_WRN("gateway USB command failure result not emitted: %d", ret);
     }
+    HIGH_DEBUG_COUNTER_INC(command_result_tx);
+    high_debug_log_event("COMMAND_RESULT_TX",
+                         "transport=gateway_cobs command=0x%04x status=%s reason=%u ret=%d",
+                         (unsigned int)command_id,
+                         command_status_name(status),
+                         reason,
+                         ret);
 }
 
 static bool gateway_pending_command_matches(const struct proto_packet *command)
@@ -2735,6 +3098,14 @@ static void gateway_handle_serial_frame(const uint8_t *frame, size_t frame_len)
         LOG_WRN("gateway USB COBS frame decode failed: %d", ret);
         return;
     }
+    HIGH_DEBUG_COUNTER_INC(command_rx);
+    high_debug_log_event("COMMAND_RX",
+                         "transport=gateway_cobs msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
+                         packet.msg_type,
+                         (unsigned long long)packet.src_id,
+                         (unsigned long long)packet.dst_id,
+                         packet.seq,
+                         (unsigned int)payload_len);
 
     ret = gateway_route_serial_packet(&packet, payload, payload_len);
     if (ret < 0) {
@@ -2750,6 +3121,9 @@ static void gateway_serial_rx_work_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+    if (!gateway_binary_cdc_enabled()) {
         return;
     }
 
@@ -3668,6 +4042,12 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
 
         ret = uwb_range_schedule_sample_at(schedule, sample_index, &anchor_id, &seq);
         if (ret != PROTO_OK || anchor_id != DEVICE_ID) {
+            high_debug_log_event("DS_TWR_POLL_RX",
+                                 "sample=%u/%u expected_anchor=0x%016llx local_anchor=0x%016llx result=wrong-target",
+                                 (unsigned int)(sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 (unsigned long long)anchor_id,
+                                 (unsigned long long)DEVICE_ID);
             continue;
         }
 
@@ -3723,6 +4103,17 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                 (unsigned int)total_samples,
                 round_index,
                 seq);
+        high_debug_log_event("DS_TWR_POLL_RX",
+                             "listen=1 clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u",
+                             (unsigned long long)schedule->clicker_id,
+                             schedule->click_event_id,
+                             schedule->attempt_index,
+                             uwb_schedule_burst_id(schedule->click_event_id,
+                                                   schedule->attempt_index),
+                             (unsigned int)(sample_index + 1u),
+                             (unsigned int)total_samples,
+                             round_index,
+                             seq);
         while (k_uptime_get() < listen_deadline_ms) {
             int64_t remaining_ms = listen_deadline_ms - k_uptime_get();
 
@@ -3733,6 +4124,18 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                                                          &range_result);
             if (ret == -EAGAIN) {
                 if (range_result.status == RANGE_WRONG_TARGET) {
+                    high_debug_log_event("DS_TWR_POLL_RX",
+                                         "result=wrong-target expected_clicker=0x%016llx observed_clicker=0x%016llx expected_anchor=0x%016llx observed_anchor=0x%016llx event_seq=%u observed_event_seq=%u expected_round=%u observed_round=%u expected_seq=%u observed_seq=%u",
+                                         (unsigned long long)schedule->clicker_id,
+                                         (unsigned long long)range_result.initiator_id,
+                                         (unsigned long long)DEVICE_ID,
+                                         (unsigned long long)range_result.responder_id,
+                                         schedule->click_event_id,
+                                         range_result.session_id,
+                                         round_index,
+                                         range_result.round_index,
+                                         seq,
+                                         range_result.seq);
                     LOG_DBG("anchor ignored nonmatching UWB POLL: expected_clicker=0x%016llx observed_clicker=0x%016llx expected_anchor=0x%016llx observed_anchor=0x%016llx event_seq=%u observed_event_seq=%u expected_round=%u observed_round=%u expected_seq=%u observed_seq=%u",
                             (unsigned long long)schedule->clicker_id,
                             (unsigned long long)range_result.initiator_id,
@@ -3762,6 +4165,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             if (range_result.status == RANGE_OK || !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_RX_TIMEOUT;
             }
+            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, range_result.status);
             LOG_WRN("anchor scheduled UWB sample did not start: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u ret=%d",
                     (unsigned long long)schedule->clicker_id,
@@ -3771,7 +4175,21 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     round_index,
                     seq,
                     ret);
+            high_debug_log_event("RANGE_FAIL",
+                                 "clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s exchange_started=0",
+                                 (unsigned long long)schedule->clicker_id,
+                                 schedule->click_event_id,
+                                 schedule->attempt_index,
+                                 uwb_schedule_burst_id(schedule->click_event_id,
+                                                       schedule->attempt_index),
+                                 (unsigned int)(sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 round_index,
+                                 seq,
+                                 ret,
+                                 range_status_name(range_result.status));
         } else if (ret == 0 && range_result.status == RANGE_OK) {
+            HIGH_DEBUG_COUNTER_INC(ds_twr_successes);
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, RANGE_OK);
             anchor_range_window_record(&window_report, &range_result);
             LOG_INF("anchor scheduled UWB sample complete: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u count=%u",
@@ -3784,9 +4202,27 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     range_result.distance_mm,
                     range_result.quality,
                     window_report.sample_count);
+            high_debug_log_event("RANGE_OK",
+                                 "clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u anchor=0x%016llx distance_mm=%d quality=%u",
+                                 (unsigned long long)range_result.initiator_id,
+                                 range_result.session_id,
+                                 schedule->attempt_index,
+                                 uwb_schedule_burst_id(schedule->click_event_id,
+                                                       schedule->attempt_index),
+                                 (unsigned int)(sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 round_index,
+                                 range_result.seq,
+                                 (unsigned long long)range_result.responder_id,
+                                 range_result.distance_mm,
+                                 range_result.quality);
         } else {
             if (range_result.status == RANGE_OK || !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_INTERNAL_ERROR;
+            }
+            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
+            if (range_result.status == RANGE_TIMING_INVALID) {
+                HIGH_DEBUG_COUNTER_INC(ds_twr_timing_rejects);
             }
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, range_result.status);
             if (range_result.initiator_id != 0u && range_result.responder_id != 0u) {
@@ -3802,6 +4238,21 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     ret,
                     range_status_name(range_result.status),
                     range_result.status);
+            high_debug_log_event(range_result.status == RANGE_TIMING_INVALID ?
+                                 "RANGE_TIMING_REJECT" : "RANGE_FAIL",
+                                 "clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s status=%u",
+                                 (unsigned long long)schedule->clicker_id,
+                                 schedule->click_event_id,
+                                 schedule->attempt_index,
+                                 uwb_schedule_burst_id(schedule->click_event_id,
+                                                       schedule->attempt_index),
+                                 (unsigned int)(sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 round_index,
+                                 seq,
+                                 ret,
+                                 range_status_name(range_result.status),
+                                 range_result.status);
         }
     }
 
@@ -3836,11 +4287,28 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
     selected_claim = *first_claim;
     selected_rx_ms = first_rx_ms;
+    HIGH_DEBUG_COUNTER_INC(wake_claim_rx);
+    high_debug_log_event("WAKE_CLAIM_RX",
+                         "clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx nonce=0x%016llx quality=%u",
+                         (unsigned long long)first_claim->clicker_id,
+                         first_claim->click_event_id,
+                         first_claim->attempt_index,
+                         (unsigned long long)first_claim->priority_id,
+                         (unsigned long long)first_claim->nonce,
+                         first_quality);
     ret = uwb_anchor_accept_wake_claim(&anchor_uwb_session,
                                        first_claim,
                                        (uint32_t)first_rx_ms,
                                        &decision);
     if (ret != PROTO_OK) {
+        HIGH_DEBUG_COUNTER_INC(wake_claim_rejected);
+        high_debug_log_event("WAKE_CLAIM_REJECT",
+                             "clicker=0x%016llx event_seq=%u attempt=%u reason=%s ret=%d",
+                             (unsigned long long)first_claim->clicker_id,
+                             first_claim->click_event_id,
+                             first_claim->attempt_index,
+                             claim_decision_name(decision),
+                             ret);
         LOG_DBG("anchor rejected UWB WAKE_CLAIM: clicker=0x%016llx ret=%d decision=%u",
                 (unsigned long long)first_claim->clicker_id,
                 ret,
@@ -3848,6 +4316,14 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         return false;
     }
     selected_decision = decision;
+    HIGH_DEBUG_COUNTER_INC(wake_claim_accepted);
+    high_debug_log_event("WAKE_CLAIM_ACCEPT",
+                         "clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx reason=%s",
+                         (unsigned long long)first_claim->clicker_id,
+                         first_claim->click_event_id,
+                         first_claim->attempt_index,
+                         (unsigned long long)first_claim->priority_id,
+                         claim_decision_name(decision));
     LOG_DBG("anchor UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u",
             (unsigned long long)first_claim->clicker_id,
             first_claim->click_event_id,
@@ -3892,6 +4368,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                                            &claim,
                                            k_uptime_get_32(),
                                            &decision);
+        HIGH_DEBUG_COUNTER_INC(wake_claim_rx);
         LOG_DBG("anchor UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u",
                 (unsigned long long)claim.clicker_id,
                 claim.click_event_id,
@@ -3902,10 +4379,27 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         if (ret == PROTO_OK &&
             (decision == UWB_ANCHOR_CLAIM_ACCEPTED ||
              decision == UWB_ANCHOR_CLAIM_REPLACED_BY_PRIORITY)) {
+            HIGH_DEBUG_COUNTER_INC(wake_claim_accepted);
             selected_claim = claim;
             selected_rx_ms = k_uptime_get();
             selected_quality = quality;
             selected_decision = decision;
+            high_debug_log_event("WAKE_CLAIM_ACCEPT",
+                                 "clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx reason=%s",
+                                 (unsigned long long)claim.clicker_id,
+                                 claim.click_event_id,
+                                 claim.attempt_index,
+                                 (unsigned long long)claim.priority_id,
+                                 claim_decision_name(decision));
+        } else {
+            HIGH_DEBUG_COUNTER_INC(wake_claim_rejected);
+            high_debug_log_event("WAKE_CLAIM_REJECT",
+                                 "clicker=0x%016llx event_seq=%u attempt=%u reason=%s ret=%d",
+                                 (unsigned long long)claim.clicker_id,
+                                 claim.click_event_id,
+                                 claim.attempt_index,
+                                 claim_decision_name(decision),
+                                 ret);
         }
     }
 
@@ -3953,6 +4447,15 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                     (unsigned int)frame_len);
             return true;
         }
+        HIGH_DEBUG_COUNTER_INC(discovery_rx);
+        high_debug_log_event("DISCOVER_RX",
+                             "clicker=0x%016llx event_seq=%u attempt=%u network_id=0x%08x channel=%u quality=%u",
+                             (unsigned long long)discover.clicker_id,
+                             discover.click_event_id,
+                             discover.attempt_index,
+                             discover.network_id,
+                             UWB_WAKE_CHANNEL,
+                             selected_quality);
 
         ret = uwb_anchor_build_discovery_reply(&anchor_uwb_session,
                                                &discover,
@@ -3977,6 +4480,13 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             LOG_WRN("anchor UWB DISCOVERY_REPLY TX failed: %d", ret);
             return true;
         }
+        HIGH_DEBUG_COUNTER_INC(discovery_reply_tx);
+        high_debug_log_event("DISCOVERY_REPLY_TX",
+                             "clicker=0x%016llx event_seq=%u slot=%u quality=%u",
+                             (unsigned long long)reply.selected_clicker_id,
+                             reply.click_event_id,
+                             reply.anchor_slot,
+                             reply.rx_quality);
         LOG_INF("anchor UWB DISCOVERY_REPLY sent: clicker=0x%016llx slot=%u quality=%u",
                 (unsigned long long)reply.selected_clicker_id,
                 reply.anchor_slot,
@@ -4023,24 +4533,51 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
         if (ret != PROTO_OK) {
+            HIGH_DEBUG_COUNTER_INC(schedules_rejected);
             LOG_WRN("anchor UWB RANGE_SCHEDULE decode failed: %d", ret);
             return true;
         }
+        HIGH_DEBUG_COUNTER_INC(schedules_rx);
+        high_debug_log_event("RANGE_SCHEDULE_RX",
+                             "clicker=0x%016llx event_seq=%u attempt=%u selected=%u reply_delay_uus=%u nonce=0x%016llx",
+                             (unsigned long long)schedule.clicker_id,
+                             schedule.click_event_id,
+                             schedule.attempt_index,
+                             schedule.selected_count,
+                             schedule.reply_delay_us,
+                             (unsigned long long)schedule.nonce);
 
         ret = uwb_anchor_accept_range_schedule(&anchor_uwb_session,
                                                &schedule,
                                                (uint32_t)schedule_rx_ms,
                                                UWB_SCHEDULE_GUARD_MS);
         if (ret == PROTO_ERR_NOT_FOUND) {
+            HIGH_DEBUG_COUNTER_INC(schedules_rejected);
             LOG_INF("anchor not selected in UWB RANGE_SCHEDULE: clicker=0x%016llx event_seq=%u",
                     (unsigned long long)schedule.clicker_id,
                     schedule.click_event_id);
             return true;
         }
         if (ret != PROTO_OK) {
+            HIGH_DEBUG_COUNTER_INC(schedules_rejected);
+            high_debug_log_event("RANGE_SCHEDULE_REJECT",
+                                 "clicker=0x%016llx event_seq=%u attempt=%u reason=proto_%d",
+                                 (unsigned long long)schedule.clicker_id,
+                                 schedule.click_event_id,
+                                 schedule.attempt_index,
+                                 ret);
             LOG_WRN("anchor rejected UWB RANGE_SCHEDULE: %d", ret);
             return true;
         }
+        HIGH_DEBUG_COUNTER_INC(schedules_accepted);
+        high_debug_log_event("RANGE_SCHEDULE_ACCEPT",
+                             "clicker=0x%016llx event_seq=%u attempt=%u selected=%u burst_id=%u",
+                             (unsigned long long)schedule.clicker_id,
+                             schedule.click_event_id,
+                             schedule.attempt_index,
+                             schedule.selected_count,
+                             uwb_schedule_burst_id(schedule.click_event_id,
+                                                   schedule.attempt_index));
 
         if (retained_sleep_us != NULL) {
             *retained_sleep_us = u32_saturating_add(
@@ -4086,6 +4623,10 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     }
     anchor_set_uwb_busy(true);
     uwb_window_start_ms = k_uptime_get();
+    high_debug_log_event("UWB_RX_START",
+                         "mode=anchor_wake_scan interval_ms=%u rx_window_ms=%u",
+                         anchor_uwb_scan_interval_ms,
+                         ANCHOR_UWB_SCAN_RX_MS);
 
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
@@ -4108,6 +4649,11 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         struct uwb_wake_claim_frame claim;
         int decode_ret;
 
+        high_debug_log_event("UWB_RX_DONE",
+                             "mode=anchor_wake_scan frame_len=%u quality=%u rx_failure=%s",
+                             (unsigned int)frame_len,
+                             quality,
+                             rx_failure_name(rx_failure));
         decode_ret = uwb_decode_wake_claim(frame, frame_len, &claim);
         if (decode_ret == PROTO_OK) {
             if (anchor_handle_uwb_claim(&claim,
@@ -4156,6 +4702,12 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                 anchor_uwb_session.diagnostics.frame_timeouts,
                 anchor_uwb_session.diagnostics.crc_failures);
     }
+    if (ret == -ETIMEDOUT) {
+        high_debug_log_event("UWB_RX_TIMEOUT",
+                             "mode=anchor_wake_scan rx_failure=%s preamble=%u",
+                             rx_failure_name(rx_failure),
+                             preamble_detected ? 1u : 0u);
+    }
 
 scan_complete:
     (void)dwm3000_driver_standby();
@@ -4190,6 +4742,10 @@ scan_complete:
             anchor_uwb_session.diagnostics.scan_rx_time_us,
             anchor_uwb_session.diagnostics.awake_time_us,
             anchor_uwb_session.diagnostics.false_wake_cooldowns);
+    high_debug_log_event("UWB_SLEEP",
+                         "mode=anchor_wake_scan next_delay_ms=%u retained_sleep_us=%u",
+                         next_scan_delay_ms,
+                         retained_sleep_us);
     (void)k_work_reschedule(&anchor_uwb_scan_work, K_MSEC(next_scan_delay_ms));
 }
 
@@ -4200,7 +4756,7 @@ static int anchor_start_uwb_scan(void)
     }
 
     (void)k_work_reschedule(&anchor_uwb_scan_work, K_NO_WAIT);
-    LOG_INF("anchor low-duty UWB wake scan scheduled: interval_ms=%u rx_window_ms=%u IRQ ready slot=%u",
+    LOG_INF("anchor low-duty UWB wake scan scheduled: interval_ms=%u rx_window_ms=%u status-poll slot=%u",
             anchor_uwb_scan_interval_ms,
             ANCHOR_UWB_SCAN_RX_MS,
             local_uwb_anchor_slot());
@@ -4413,6 +4969,7 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
     radio_guard_uwb_stop();
     mesh_restart_role_scan();
     if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("mesh UWB TX failed for %s: msg=0x%02x next=0x%016llx len=%u ret=%d",
                 reason,
                 out->packet.msg_type,
@@ -4422,6 +4979,28 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
         return ret;
     }
 
+    HIGH_DEBUG_COUNTER_INC(mesh_tx);
+    if (out->packet.msg_type == MSG_GATEWAY_ACK) {
+        HIGH_DEBUG_COUNTER_INC(mesh_ack);
+        high_debug_log_event("GATEWAY_ACK_TX",
+                             "dst=0x%016llx next=0x%016llx seq=%u channel=%u",
+                             (unsigned long long)out->packet.dst_id,
+                             (unsigned long long)out->next_hop_id,
+                             out->packet.seq,
+                             out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
+                             UWB_CHANNEL_MESH_PAYLOAD : UWB_CHANNEL_WAKE_CONTACT);
+    }
+    high_debug_log_event("MESH_TX",
+                         "reason=%s msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u channel=%u frame_len=%u",
+                         reason,
+                         out->packet.msg_type,
+                         (unsigned long long)out->packet.src_id,
+                         (unsigned long long)out->packet.dst_id,
+                         (unsigned long long)out->next_hop_id,
+                         out->packet.seq,
+                         out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
+                         UWB_CHANNEL_MESH_PAYLOAD : UWB_CHANNEL_WAKE_CONTACT,
+                         (unsigned int)frame_len);
     LOG_INF("mesh UWB TX %s: msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u ttl=%u channel=%u frame_len=%u",
             reason,
             out->packet.msg_type,
@@ -4892,10 +5471,17 @@ static int queue_anchor_report(const struct mesh_outbound *outbound)
 
     ret = k_msgq_put(&report_tx_msgq, outbound, K_NO_WAIT);
     if (ret != 0) {
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("anchor report queue full; gateway-bound report dropped");
         return -ENOSPC;
     }
 
+    high_debug_log_event("ANCHOR_REPORT_QUEUE",
+                         "msg=0x%02x dst=0x%016llx seq=%u queue_depth=%u",
+                         outbound->packet.msg_type,
+                         (unsigned long long)outbound->packet.dst_id,
+                         outbound->packet.seq,
+                         k_msgq_num_used_get(&report_tx_msgq));
     LOG_INF("anchor queued gateway-bound report: msg=0x%02x queue_depth=%u",
             outbound->packet.msg_type,
             k_msgq_num_used_get(&report_tx_msgq));
@@ -4998,6 +5584,7 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
             }
         }
         if (ret == PROTO_OK && mesh_send_outbound(&retransmit, "retransmit") == 0) {
+            HIGH_DEBUG_COUNTER_INC(mesh_retry);
             mesh_relay_note_tx_sent(&mesh_runtime, &retransmit, k_uptime_get_32());
             if (channel9_replanned) {
                 mesh_relay_note_channel9_success(&mesh_runtime,
@@ -5021,6 +5608,7 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         mesh_try_route_waiting_tx();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
+        HIGH_DEBUG_COUNTER_INC(mesh_ack);
         LOG_INF("mesh pending TX gateway acknowledged");
         mesh_schedule_tx_timeout();
     }
@@ -5208,6 +5796,7 @@ static bool mesh_queue_from_frame(const uint8_t *frame,
 
     ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
     if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("mesh UWB RX queue full; dropped msg=0x%02x src=0x%016llx dst=0x%016llx",
                 pending.packet.msg_type,
                 (unsigned long long)pending.packet.src_id,
@@ -5218,6 +5807,26 @@ static bool mesh_queue_from_frame(const uint8_t *frame,
     if (DEVICE_ROLE == ROLE_ANCHOR) {
         uwb_anchor_note_mesh_packet(&anchor_uwb_session);
     }
+    HIGH_DEBUG_COUNTER_INC(mesh_rx);
+    if (pending.packet.msg_type == MSG_GATEWAY_ACK) {
+        HIGH_DEBUG_COUNTER_INC(mesh_ack);
+        high_debug_log_event("GATEWAY_ACK_RX",
+                             "src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u",
+                             (unsigned long long)pending.packet.src_id,
+                             (unsigned long long)pending.packet.dst_id,
+                             (unsigned long long)pending.previous_hop_id,
+                             pending.packet.seq,
+                             pending.link_quality);
+    }
+    high_debug_log_event("MESH_RX",
+                         "msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u queue_depth=%u",
+                         pending.packet.msg_type,
+                         (unsigned long long)pending.packet.src_id,
+                         (unsigned long long)pending.packet.dst_id,
+                         (unsigned long long)pending.previous_hop_id,
+                         pending.packet.seq,
+                         pending.link_quality,
+                         k_msgq_num_used_get(&mesh_rx_msgq));
     LOG_INF("mesh UWB RX queued: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx quality=%u queue_depth=%u role=%s",
             pending.packet.msg_type,
             (unsigned long long)pending.packet.src_id,
@@ -6271,6 +6880,13 @@ static int clicker_send_wake_claim_train(struct uwb_clicker_session *session,
             break;
         }
         sent_count++;
+        HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
+        high_debug_log_event("WAKE_CLAIM_TX",
+                             "event_seq=%u attempt=%u remaining_ms=%u sent=%u",
+                             session->config.click_event_id,
+                             session->attempt_index,
+                             remaining_u16,
+                             sent_count);
         uwb_clicker_note_wake_claim_tx(session, 1u);
 
         if (k_uptime_get() < close_ms) {
@@ -6335,6 +6951,12 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     if (ret < 0) {
         goto out;
     }
+    HIGH_DEBUG_COUNTER_INC(discovery_tx);
+    high_debug_log_event("DISCOVER_TX",
+                         "event_seq=%u attempt=%u window_ms=%u",
+                         session->config.click_event_id,
+                         session->attempt_index,
+                         reply_window_ms);
 
     deadline_ms = k_uptime_get() + reply_window_ms;
     while (k_uptime_get() < deadline_ms) {
@@ -6370,6 +6992,13 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
         decoded_replies++;
         ret = uwb_clicker_note_discovery_reply(session, &reply);
         if (ret == PROTO_OK) {
+            HIGH_DEBUG_COUNTER_INC(discovery_reply_rx);
+            high_debug_log_event("DISCOVERY_REPLY_RX",
+                                 "anchor=0x%016llx slot=%u quality=%u candidates=%u",
+                                 (unsigned long long)reply.anchor_id,
+                                 reply.anchor_slot,
+                                 reply.rx_quality,
+                                 session->candidate_count);
             LOG_INF("clicker UWB discovery reply: anchor=0x%016llx slot=%u quality=%u status=%u candidates=%u",
                     (unsigned long long)reply.anchor_id,
                     reply.anchor_slot,
@@ -6378,6 +7007,13 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
                     session->candidate_count);
         } else {
             rejected_replies++;
+            high_debug_log_event("DISCOVERY_REPLY_RX",
+                                 "anchor=0x%016llx rejected_reason=proto_%d selected_clicker=0x%016llx event_seq=%u attempt=%u",
+                                 (unsigned long long)reply.anchor_id,
+                                 ret,
+                                 (unsigned long long)reply.selected_clicker_id,
+                                 reply.click_event_id,
+                                 reply.attempt_index);
             LOG_DBG("clicker rejected UWB discovery reply: ret=%d anchor=0x%016llx selected_clicker=0x%016llx event_seq=%u attempt=%u status=%u quality=%u",
                     ret,
                     (unsigned long long)reply.anchor_id,
@@ -6431,6 +7067,17 @@ static int clicker_send_range_schedule(const struct uwb_range_schedule_frame *sc
         LOG_WRN("clicker UWB RANGE_SCHEDULE TX failed: ret=%d", ret);
         return ret;
     }
+    HIGH_DEBUG_COUNTER_INC(schedules_tx);
+    high_debug_log_event("RANGE_SCHEDULE_TX",
+                         "clicker=0x%016llx event_seq=%u attempt=%u selected=%u samples_per_anchor=%u reply_delay_uus=%u BENCH_ONLY=%u",
+                         (unsigned long long)schedule->clicker_id,
+                         schedule->click_event_id,
+                         schedule->attempt_index,
+                         schedule->selected_count,
+                         schedule->samples_per_anchor,
+                         schedule->reply_delay_us,
+                         (IMEC_STAGE == 1 &&
+                          IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) ? 1u : 0u);
     LOG_INF("clicker UWB RANGE_SCHEDULE TX complete: selected=%u samples_per_anchor=%u",
             schedule->selected_count,
             schedule->samples_per_anchor);
@@ -6621,6 +7268,19 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                 step.round_index,
                 step.seq,
                 range_request.timeout_ms);
+        HIGH_DEBUG_COUNTER_INC(ds_twr_attempts);
+        high_debug_log_event("DS_TWR_POLL_TX",
+                             "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u timeout_ms=%u",
+                             (unsigned long long)step.anchor_id,
+                             session->config.click_event_id,
+                             session->attempt_index,
+                             uwb_schedule_burst_id(session->config.click_event_id,
+                                                   session->attempt_index),
+                             (unsigned int)(step.sample_index + 1u),
+                             (unsigned int)total_samples,
+                             step.round_index,
+                             step.seq,
+                             range_request.timeout_ms);
         ret = dwm3000_driver_range_initiator(&range_request, &range_result);
         (void)dwm3000_driver_standby();
         radio_guard_uwb_stop();
@@ -6631,6 +7291,7 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
             if (status == RANGE_OK || !range_status_valid(status)) {
                 status = RANGE_RX_TIMEOUT;
             }
+            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             (void)uwb_clicker_record_range_result(session, &step, status);
             (void)uwb_clicker_abort_attempt(session);
             LOG_WRN("scheduled click DS-TWR did not start: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
@@ -6643,6 +7304,19 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                     ret,
                     range_status_name(range_result.status),
                     range_result.status);
+            high_debug_log_event("RANGE_FAIL",
+                                 "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s exchange_started=0",
+                                 (unsigned long long)step.anchor_id,
+                                 session->config.click_event_id,
+                                 session->attempt_index,
+                                 uwb_schedule_burst_id(session->config.click_event_id,
+                                                       session->attempt_index),
+                                 (unsigned int)(step.sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 step.round_index,
+                                 step.seq,
+                                 ret,
+                                 range_status_name(status));
             last_ret = ret < 0 ? ret : -EIO;
             break;
         }
@@ -6653,6 +7327,7 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
         if (ret == 0 && range_result.status == RANGE_OK) {
             int record_ret;
 
+            HIGH_DEBUG_COUNTER_INC(ds_twr_successes);
             record_ret = uwb_clicker_record_range_result(session, &step, RANGE_OK);
             if (record_ret != PROTO_OK) {
                 LOG_ERR("scheduled click DS-TWR state update failed: anchor=0x%016llx seq=%u ret=%d",
@@ -6670,6 +7345,21 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                     range_result.seq,
                     range_result.distance_mm,
                     range_result.quality);
+            high_debug_log_event("RANGE_OK",
+                                 "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u rsl_dbm=%d rsl_present=%u",
+                                 (unsigned long long)range_result.responder_id,
+                                 range_result.session_id,
+                                 session->attempt_index,
+                                 uwb_schedule_burst_id(session->config.click_event_id,
+                                                       session->attempt_index),
+                                 (unsigned int)(step.sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 step.round_index,
+                                 range_result.seq,
+                                 range_result.distance_mm,
+                                 range_result.quality,
+                                 range_result.rsl_dbm,
+                                 range_result.rsl_sampled ? 1u : 0u);
             last_ret = 0;
         } else {
             enum range_status status = range_result.status;
@@ -6677,6 +7367,10 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
 
             if (status == RANGE_OK || !range_status_valid(status)) {
                 status = RANGE_INTERNAL_ERROR;
+            }
+            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
+            if (status == RANGE_TIMING_INVALID) {
+                HIGH_DEBUG_COUNTER_INC(ds_twr_timing_rejects);
             }
             record_ret = uwb_clicker_record_range_result(session, &step, status);
             if (record_ret != PROTO_OK) {
@@ -6698,6 +7392,21 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                     ret,
                     range_status_name(status),
                     status);
+            high_debug_log_event(status == RANGE_TIMING_INVALID ?
+                                 "RANGE_TIMING_REJECT" : "RANGE_FAIL",
+                                 "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s status=%u",
+                                 (unsigned long long)step.anchor_id,
+                                 session->config.click_event_id,
+                                 session->attempt_index,
+                                 uwb_schedule_burst_id(session->config.click_event_id,
+                                                       session->attempt_index),
+                                 (unsigned int)(step.sample_index + 1u),
+                                 (unsigned int)total_samples,
+                                 step.round_index,
+                                 step.seq,
+                                 ret,
+                                 range_status_name(status),
+                                 status);
             last_ret = ret < 0 ? ret : -EIO;
         }
 
@@ -6708,6 +7417,10 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
 
     return session->state == UWB_CLICKER_SUCCEEDED ? 0 : last_ret;
 }
+
+static uint8_t clicker_debug_min_anchor_count(void);
+static uint8_t clicker_debug_max_anchor_count(void);
+static uint8_t clicker_debug_samples_per_anchor(void);
 
 static int run_normal_click(void)
 {
@@ -6721,10 +7434,10 @@ static int run_normal_click(void)
         .clicker_id = DEVICE_ID,
         .click_event_id = event_seq,
         .nonce = clicker_nonce(event_seq),
-        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
-        .max_anchor_count = MAX_SCHEDULED_ANCHORS,
+        .min_anchor_count = clicker_debug_min_anchor_count(),
+        .max_anchor_count = clicker_debug_max_anchor_count(),
         .max_attempts = MAX_WAKE_ATTEMPTS,
-        .samples_per_anchor = UWB_SAMPLES_PER_ANCHOR,
+        .samples_per_anchor = clicker_debug_samples_per_anchor(),
         .wake_channel = UWB_WAKE_CHANNEL,
         .ranging_channel = UWB_RANGING_CHANNEL,
         .flags = FLAG_COUNT_AS_CLICK,
@@ -6744,8 +7457,16 @@ static int run_normal_click(void)
             event_seq,
             WAKE_ADV_MS,
             MAX_WAKE_ATTEMPTS,
-            UWB_NORMAL_CLICK_MIN_ANCHORS,
-            UWB_SAMPLES_PER_ANCHOR);
+            config.min_anchor_count,
+            config.samples_per_anchor);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
+        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
+        high_debug_log_event("BENCH_ONLY",
+                             "stage=1 one_anchor_schedule=enabled production_min_unique_anchors=%u",
+                             UWB_NORMAL_CLICK_MIN_ANCHORS);
+    }
+#endif
 
     click_deadline_ms = k_uptime_get() + CLICK_REPORT_DEADLINE_MS;
 
@@ -6784,7 +7505,7 @@ static int run_normal_click(void)
                     session.attempt_index,
                     schedule.selected_count,
                     session.successful_unique_count,
-                    UWB_NORMAL_CLICK_MIN_ANCHORS);
+                    session.config.min_anchor_count);
 
             ret = range_uwb_scheduled_anchors(&session,
                                               &schedule,
@@ -6828,7 +7549,7 @@ static int run_normal_click(void)
                     session.attempt_index,
                     session.diagnostics.retries,
                     session.successful_unique_count,
-                    UWB_NORMAL_CLICK_MIN_ANCHORS,
+                    session.config.min_anchor_count,
                     session.diagnostics.ds_twr_successes,
                     session.diagnostics.ds_twr_failures,
                     session.diagnostics.timing_rejections);
@@ -6842,7 +7563,7 @@ static int run_normal_click(void)
             total_candidate_count,
             attempted_count,
             session.successful_unique_count,
-            UWB_NORMAL_CLICK_MIN_ANCHORS,
+            session.config.min_anchor_count,
             session.diagnostics.retries,
             session.diagnostics.sample_order_count,
             session.diagnostics.ds_twr_successes,
@@ -6909,6 +7630,39 @@ static int run_uwb_diagnostic_click(uint32_t event_seq)
         return 0;
     }
     return ret < 0 ? ret : -EIO;
+}
+
+static uint8_t clicker_debug_min_anchor_count(void)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
+        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
+        return 1u;
+    }
+#endif
+    return UWB_NORMAL_CLICK_MIN_ANCHORS;
+}
+
+static uint8_t clicker_debug_max_anchor_count(void)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
+        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
+        return 1u;
+    }
+#endif
+    return MAX_SCHEDULED_ANCHORS;
+}
+
+static uint8_t clicker_debug_samples_per_anchor(void)
+{
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
+        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
+        return 1u;
+    }
+#endif
+    return UWB_SAMPLES_PER_ANCHOR;
 }
 
 static int clicker_emit_self_test_report(uint32_t event_seq, enum self_test_failure failure)
@@ -7026,6 +7780,292 @@ static enum self_test_failure run_self_test(uint32_t event_seq)
     return SELF_TEST_FAILURE_UWB;
 }
 
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+static int high_debug_probe_dwm3000(void)
+{
+    uint32_t dev_id = 0u;
+    int ret;
+
+    high_debug_log_event("DWM_RESET_ASSERT", "action=probe_start");
+    ret = dwm3000_port_init();
+    if (ret < 0) {
+        high_debug_log_event("DWM_DEV_ID_FAIL", "phase=port_init ret=%d", ret);
+        HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
+        return ret;
+    }
+
+    ret = dwm3000_port_wakeup();
+    if (ret < 0) {
+        high_debug_log_event("DWM_DEV_ID_FAIL", "phase=wakeup ret=%d", ret);
+        HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
+        return ret;
+    }
+    high_debug_log_event("UWB_WAKE", "source=probe");
+
+    ret = dwm3000_port_hw_reset();
+    high_debug_log_event("DWM_RESET_RELEASE", "ret=%d", ret);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
+        return ret;
+    }
+
+    high_debug_log_event("DWM_DEV_ID_READ", "spi_hz=%u",
+                         (unsigned int)dwm3000_port_current_spi_hz());
+    ret = dwm3000_driver_probe(&dev_id);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
+        high_debug_log_event("DWM_DEV_ID_FAIL", "ret=%d dev_id=0x%08x", ret, dev_id);
+        return ret;
+    }
+
+    HIGH_DEBUG_COUNTER_INC(dwm_dev_id_successes);
+    high_debug_log_event("DWM_DEV_ID_OK", "dev_id=0x%08x", dev_id);
+    ret = dwm3000_port_set_fast_spi();
+    high_debug_log_event("DWM_SPI_SPEED_SET", "ret=%d spi_hz=%u",
+                         ret,
+                         (unsigned int)dwm3000_port_current_spi_hz());
+    return ret;
+}
+
+static int high_debug_stage0_hardware_self_test(void)
+{
+    int ret;
+
+    ret = high_debug_probe_dwm3000();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = dwm3000_driver_standby();
+    high_debug_log_event("UWB_SLEEP", "phase=stage0_self_test ret=%d", ret);
+    if (ret < 0) {
+        return ret;
+    }
+
+    k_msleep(10);
+    ret = dwm3000_driver_configure_default();
+    high_debug_log_event("UWB_WAKE", "phase=stage0_self_test ret=%d spi_hz=%u",
+                         ret,
+                         (unsigned int)dwm3000_port_current_spi_hz());
+    (void)dwm3000_driver_standby();
+    high_debug_log_event("UWB_SLEEP", "phase=stage0_self_test_complete");
+    return ret;
+}
+
+static int high_debug_send_wake_claim_once(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_wake_claim_frame claim;
+    uint32_t event_seq = next_click_event_seq();
+    struct uwb_clicker_config config = {
+        .network_id = NETWORK_ID,
+        .clicker_id = DEVICE_ID,
+        .click_event_id = event_seq,
+        .nonce = clicker_nonce(event_seq),
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .max_attempts = 1u,
+        .samples_per_anchor = 1u,
+        .wake_channel = UWB_WAKE_CHANNEL,
+        .ranging_channel = UWB_RANGING_CHANNEL,
+        .flags = FLAG_DIAGNOSTIC,
+    };
+    uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    size_t frame_len = 0u;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_CLICKER) {
+        return -EINVAL;
+    }
+
+    ret = uwb_clicker_session_start(&session, &config);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    ret = uwb_clicker_build_wake_claim(&session,
+                                       clicker_priority_id(config.click_event_id, 1u),
+                                       0u,
+                                       0u,
+                                       UWB_POST_WAKE_CLAIMED_DURATION_MS,
+                                       &claim);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    ret = uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    ret = radio_guard_uwb_start("high-debug WAKE_CLAIM once");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret == 0) {
+        high_debug_log_event("WAKE_CLAIM_TX",
+                             "mode=single event_seq=%u attempt=1 nonce=0x%016llx",
+                             config.click_event_id,
+                             (unsigned long long)config.nonce);
+        ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
+    }
+    (void)dwm3000_driver_standby();
+    radio_guard_uwb_stop();
+    if (ret == 0) {
+        HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
+    }
+    return ret;
+}
+
+static int high_debug_send_wake_train_command(void)
+{
+    struct uwb_clicker_session session;
+    uint32_t event_seq = next_click_event_seq();
+    struct uwb_clicker_config config = {
+        .network_id = NETWORK_ID,
+        .clicker_id = DEVICE_ID,
+        .click_event_id = event_seq,
+        .nonce = clicker_nonce(event_seq),
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .max_attempts = 1u,
+        .samples_per_anchor = 1u,
+        .wake_channel = UWB_WAKE_CHANNEL,
+        .ranging_channel = UWB_RANGING_CHANNEL,
+        .flags = FLAG_DIAGNOSTIC,
+    };
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_CLICKER) {
+        return -EINVAL;
+    }
+    ret = uwb_clicker_session_start(&session, &config);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    high_debug_log_event("WAKE_CLAIM_TX",
+                         "mode=train event_seq=%u attempt=1 nonce=0x%016llx",
+                         config.click_event_id,
+                         (unsigned long long)config.nonce);
+    return clicker_send_wake_claim_train(&session,
+                                         clicker_priority_id(config.click_event_id, 1u));
+}
+
+static int high_debug_handle_command(const char *command)
+{
+    int ret = -EINVAL;
+
+    if (command == NULL || command[0] == '\0') {
+        return 0;
+    }
+
+    HIGH_DEBUG_COUNTER_INC(command_rx);
+    high_debug_log_event("COMMAND_RX", "command=%s", command);
+
+    if (strcmp(command, "status") == 0) {
+        high_debug_boot_banner();
+        high_debug_dump_counters("COUNTERS");
+        ret = 0;
+    } else if (strcmp(command, "dump_counters") == 0) {
+        high_debug_dump_counters("COUNTERS");
+        ret = 0;
+    } else if (strcmp(command, "uwb_probe") == 0) {
+        ret = high_debug_probe_dwm3000();
+        (void)dwm3000_driver_standby();
+    } else if (strcmp(command, "uwb_sleep") == 0) {
+        ret = dwm3000_driver_standby();
+        high_debug_log_event("UWB_SLEEP", "command=uwb_sleep ret=%d", ret);
+    } else if (strcmp(command, "uwb_wake") == 0) {
+        ret = dwm3000_driver_configure_default();
+        high_debug_log_event("UWB_WAKE", "command=uwb_wake ret=%d", ret);
+    } else if (strcmp(command, "send_wake_claim_once") == 0) {
+        ret = high_debug_send_wake_claim_once();
+    } else if (strcmp(command, "send_wake_train") == 0) {
+        ret = high_debug_send_wake_train_command();
+    } else if (strcmp(command, "reboot") == 0) {
+        high_debug_log_event("COMMAND_RESULT_TX", "command=reboot status=ok reboot=now");
+        k_msleep(50);
+        sys_reboot(SYS_REBOOT_COLD);
+        ret = 0;
+    } else if (strcmp(command, "bootloader") == 0) {
+        ret = high_debug_request_bootloader();
+    } else {
+        high_debug_log_event("COMMAND_RESULT_TX",
+                             "command=%s status=unsupported reason=unknown_command",
+                             command);
+        HIGH_DEBUG_COUNTER_INC(command_result_tx);
+        return -EINVAL;
+    }
+
+    high_debug_log_event("COMMAND_RESULT_TX",
+                         "command=%s status=%s ret=%d",
+                         command,
+                         ret == 0 ? "ok" : "failed",
+                         ret);
+    HIGH_DEBUG_COUNTER_INC(command_result_tx);
+    return ret;
+}
+
+static void high_debug_serial_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (!high_debug_cdc_command_enabled()) {
+        return;
+    }
+#if HAS_SERIAL_CONSOLE
+    if (device_is_ready(serial_console) && debug_serial_dtr_ready()) {
+        unsigned char byte;
+
+        while (uart_poll_in(serial_console, &byte) == 0) {
+            if (byte == '\r' || byte == '\n') {
+                if (high_debug_command_len > 0u) {
+                    high_debug_command_buf[high_debug_command_len] = '\0';
+                    (void)high_debug_handle_command(high_debug_command_buf);
+                    high_debug_command_len = 0u;
+                }
+                continue;
+            }
+            if (byte == '\b' || byte == 0x7fu) {
+                if (high_debug_command_len > 0u) {
+                    high_debug_command_len--;
+                }
+                continue;
+            }
+            if (high_debug_command_len + 1u < sizeof(high_debug_command_buf)) {
+                high_debug_command_buf[high_debug_command_len++] = (char)byte;
+            } else {
+                high_debug_command_len = 0u;
+                high_debug_log_event("COMMAND_RESULT_TX",
+                                     "status=failed reason=line_too_long");
+            }
+        }
+    }
+#endif
+    (void)k_work_reschedule(&high_debug_serial_work,
+                            K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COMMAND_POLL_MS));
+}
+
+static int high_debug_stage0_simulated_click(void)
+{
+    uint32_t event_seq = next_click_event_seq();
+    int ret = 0;
+
+    high_debug_log_event("COMMAND_RX",
+                         "source=button action=simulated_click event_seq=%u",
+                         event_seq);
+    status_leds_set(false, true, true);
+    k_msleep(80);
+    status_leds_set(false, false, false);
+    high_debug_log_event("RANGE_OK",
+                         "BENCH_ONLY simulated=1 event_seq=%u anchor_required=0",
+                         event_seq);
+    if (IS_ENABLED(CONFIG_IMEC_STAGE0_SEND_WAKE_CLAIM_ON_CLICK)) {
+        ret = high_debug_send_wake_train_command();
+    }
+    return ret;
+}
+#endif
+
 static void handle_button_action(enum button_action action)
 {
     struct status_inputs status = {0};
@@ -7035,6 +8075,15 @@ static void handle_button_action(enum button_action action)
 
     switch (action) {
     case BUTTON_ACTION_NORMAL_CLICK:
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+        if (DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0) {
+            ret = high_debug_stage0_simulated_click();
+            status.click_accepted = ret == 0;
+            status.click_failure = ret == 0 ? 0 : CLICK_FAILURE_INSUFFICIENT_RANGES;
+            status_apply(&status);
+            break;
+        }
+#endif
         ret = run_normal_click();
         status.click_accepted = ret == 0;
         if (ret != 0) {
@@ -7064,12 +8113,23 @@ static void handle_button_action(enum button_action action)
         status.self_test_running = true;
         status_apply(&status);
         self_test_event_seq = next_click_event_seq();
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+        if (DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0) {
+            ret = high_debug_stage0_hardware_self_test();
+            failure = ret == 0 ? SELF_TEST_FAILURE_NONE : SELF_TEST_FAILURE_DWM3000;
+        } else
+#endif
         failure = run_self_test(self_test_event_seq);
         status.self_test_running = false;
         status.failure = failure;
         status.self_test_passed = failure == SELF_TEST_FAILURE_NONE;
         status_apply(&status);
-        (void)clicker_emit_self_test_report(self_test_event_seq, failure);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+        if (!(DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0))
+#endif
+        {
+            (void)clicker_emit_self_test_report(self_test_event_seq, failure);
+        }
         break;
     case BUTTON_ACTION_SELF_TEST_CANCELLED:
         status_apply(&status);
@@ -7166,6 +8226,29 @@ int main(void)
         printk("USB serial debug active; firmware booting\n");
     }
 
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    HIGH_DEBUG_COUNTER_INC(boot_count);
+    high_debug_boot_banner();
+    high_debug_log_event("USB_READY",
+                         "cdc_logs=%u rtt_logs=%u gateway_binary_cdc=%u command_parser=%u",
+                         IS_ENABLED(CONFIG_IMEC_USB_CDC_LOGS) ? 1u : 0u,
+                         IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
+                         high_debug_gateway_binary_cdc_active() ? 1u : 0u,
+                         high_debug_cdc_command_enabled() ? 1u : 0u);
+    high_debug_log_event("BOOTLOADER_READY",
+                         "configured=%u entry_command=%u recovery=jlink",
+                         IS_ENABLED(CONFIG_IMEC_USB_BOOTLOADER) ? 1u : 0u,
+                         IS_ENABLED(CONFIG_RETENTION_BOOT_MODE) ? 1u : 0u);
+    k_work_init_delayable(&high_debug_counter_work, high_debug_counter_work_handler);
+    k_work_init_delayable(&high_debug_serial_work, high_debug_serial_work_handler);
+    (void)k_work_schedule(&high_debug_counter_work,
+                          K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS));
+    if (high_debug_cdc_command_enabled()) {
+        (void)k_work_schedule(&high_debug_serial_work,
+                              K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COMMAND_POLL_MS));
+    }
+#endif
+
     button_fsm_init(&button_fsm);
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
     k_work_init_delayable(&mesh_uwb_rx_work, mesh_uwb_rx_work_handler);
@@ -7198,10 +8281,19 @@ int main(void)
 
     ret = dwm3000_port_init();
     if (ret < 0) {
-        LOG_WRN("DWM3000 IRQ/reset/wake setup failed: %d", ret);
+        LOG_WRN("DWM3000 reset/wake setup failed: %d", ret);
     } else {
-        LOG_INF("DWM3000 wake pin parked inactive; IRQ ready; radio init waits for UWB wake windows");
+        LOG_INF("DWM3000 wake pin parked inactive; SYS_STATUS polling ready; radio init waits for UWB wake windows");
     }
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    if (ret == 0) {
+        ret = high_debug_probe_dwm3000();
+        if (ret < 0) {
+            LOG_WRN("high-debug DWM3000 boot probe failed: %d", ret);
+        }
+        (void)dwm3000_driver_standby();
+    }
+#endif
 
     if (DEVICE_ROLE == ROLE_CLICKER) {
         ret = click_button_init();
@@ -7257,10 +8349,13 @@ int main(void)
         if (ret < 0) {
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
         }
-        (void)k_work_schedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
+        if (gateway_binary_cdc_enabled()) {
+            (void)k_work_schedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
+        }
         (void)k_work_schedule(&gateway_time_sync_work,
                               K_MSEC(GATEWAY_TIME_SYNC_INITIAL_DELAY_MS));
-        LOG_INF("gateway reactive mesh root active; USB COBS packet input/output active");
+        LOG_INF("gateway reactive mesh root active; USB COBS packet input/output %s",
+                gateway_binary_cdc_enabled() ? "active" : "disabled");
     }
 
     return 0;

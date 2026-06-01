@@ -24,8 +24,3 @@ properties:
     type: phandle-array
     required: true
     description: DWM3000 wakeup pin.
-
-  irq-gpios:
-    type: phandle-array
-    required: true
-    description: DWM3000 IRQ pin. Required by the firmware; populate the board overlay when the final pin assignment is known.

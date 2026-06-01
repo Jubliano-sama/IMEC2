@@ -6,7 +6,7 @@ Version: 0.2.47
 
 Previous version: [[UWB+BLE Protocols and Strategies 0.2.46]]
 
-This document defines the v1 wire protocol: binary packet formats, message types, TLVs, and forwarding rules. System architecture, timing budgets, power estimates, and state machine flows are in [[UWB+BLE Architecture 0.5.50]]. Runtime behavior and decision flows are in [[Firmware State Machines 0.1.41]].
+This document defines the v1 wire protocol: binary packet formats, message types, TLVs, and forwarding rules. System architecture, timing budgets, power estimates, and state machine flows are in [[UWB+BLE Architecture 0.5.51]]. Runtime behavior and decision flows are in [[Firmware State Machines 0.1.41]].
 
 ## Changelog
 
@@ -303,7 +303,7 @@ Message IDs `0x01` and `0x02` belonged to a historical discovery advertising des
 
 ## BLE Courtesy Advertisement
 
-This section defines the courtesy payload. The system reason for courtesy BLE and the timing tradeoff are in [[UWB+BLE Architecture 0.5.50]].
+This section defines the courtesy payload. The system reason for courtesy BLE and the timing tradeoff are in [[UWB+BLE Architecture 0.5.51]].
 
 The advertisement is legacy non-connectable manufacturer data on primary advertising channel 37 only. Channel 38 and 39 are disabled on transmit, and the passive scan is also limited to channel 37. If the controller cannot enforce that scan channel, the firmware disables BLE courtesy for that attempt and relies on UWB politeness plus retry-side contention.
 
@@ -368,7 +368,7 @@ UWB DS-TWR frames use a 42-byte identity-bound header before the radio FCS:
 | Initiator ID | 64 bits | Full clicker or anchor ID that started this exchange. |
 | Responder ID | 64 bits | Full selected anchor ID expected to respond. |
 
-Frame sizes before the radio FCS: poll 42 B, response 50 B, final 54 B, report 50 B. Full IDs, short addresses, `network_id`, event/session ID, nonce, nonzero sequence, clicker-transmitted round index, and flags must all match the selected clicker/event/anchor identity. For the DS-TWR timing rationale, equal reply-delay validation, and timing rejection policy, see [[UWB+BLE Architecture 0.5.50]].
+Frame sizes before the radio FCS: poll 42 B, response 50 B, final 54 B, report 50 B. Full IDs, short addresses, `network_id`, event/session ID, nonce, nonzero sequence, clicker-transmitted round index, and flags must all match the selected clicker/event/anchor identity. For the DS-TWR timing rationale, equal reply-delay validation, and timing rejection policy, see [[UWB+BLE Architecture 0.5.51]].
 
 Each POLL must use the selected anchor's full responder ID and matching short address from the schedule. Broadcast POLL is not valid for normal clicks, diagnostics, or survey ranging.
 
@@ -376,7 +376,7 @@ Each POLL must use the selected anchor's full responder ID and matching short ad
 
 ## Mesh Protocol
 
-The mesh is reactive. Nodes discover a path when a real packet needs one, then send shared packets inside UWB mesh frames while the route remains valid. Route age alone does not prove a path stale; replacement, explicit clear, or delivery failure does. For the full route state, cost formula, retry behavior, and click-priority details, see [[UWB+BLE Architecture 0.5.50]].
+The mesh is reactive. Nodes discover a path when a real packet needs one, then send shared packets inside UWB mesh frames while the route remains valid. Route age alone does not prove a path stale; replacement, explicit clear, or delivery failure does. For the full route state, cost formula, retry behavior, and click-priority details, see [[UWB+BLE Architecture 0.5.51]].
 
 ### Mesh Packet Shapes
 
@@ -400,12 +400,12 @@ The mesh is reactive. Nodes discover a path when a real packet needs one, then s
 3. **Busy relay**: if a new packet would require forwarding or an immediate local response while the node already has a tracked gateway-bound transmission in flight, drop it and do not cache the duplicate.
 4. **Local delivery**: if `dst_id` is this node, handle locally. Gateways emit `GATEWAY_ACK` for gateway-bound packets that requested it. Anchors receiving a directed command emit `COMMAND_RESULT`. Broadcast `CMD_SYNC_TIME` is handled locally without command results.
 5. **TTL zero**: if `dst_id` is not local and `ttl` is zero, drop and record a route failure.
-6. **Route selection**: select among currently valid candidates. Do not expire a route by age alone. Routes use `effective_cost = hop_count * 100 + (100 - quality)`. Ties are broken by higher quality, fewer hops, newer observation time, then lower next-hop ID. See [[UWB+BLE Architecture 0.5.50]] for the full cost derivation and quality mapping.
+6. **Route selection**: select among currently valid candidates. Do not expire a route by age alone. Routes use `effective_cost = hop_count * 100 + (100 - quality)`. Ties are broken by higher quality, fewer hops, newer observation time, then lower next-hop ID. See [[UWB+BLE Architecture 0.5.51]] for the full cost derivation and quality mapping.
 7. **Forward** the same packet with `ttl - 1`. Relays never rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload. Broadcast forwarding is limited to survey reachability requests and `CMD_SYNC_TIME` broadcasts.
 8. **Gateway ACK**: for gateway-bound packets with `GATEWAY_ACK_REQUIRED`, keep the original sender's packet pending until the gateway ACK arrives or 2 s expires. Missing gateway ACKs retry the selected route up to three failures before rediscovery.
 9. **Command serialization**: the gateway tracks one outstanding command at a time. A second command is rejected with `COMMAND_BUSY`. A matching `COMMAND_RESULT` clears the wait; no result within 12 s emits `COMMAND_TIMEOUT` over USB.
 10. **Channel selection**: route discovery, route refresh, unknown-contact recovery, and mesh event control start on channel 5. Payload data, gateway ACKs, command results, heartbeats, and reports use channel 9 only when the selected next hop has fresh accepted event timing.
-11. **Click priority**: an accepted local `WAKE_CLAIM` preempts active mesh forwarding and clears pending mesh RX work. CRC-valid claims that fail network, channel, flag, freshness, or arbitration checks are ignored for preemption. Already-built local click reports are requeued for later delivery. See [[UWB+BLE Architecture 0.5.50]] for the full click-priority mechanism.
+11. **Click priority**: an accepted local `WAKE_CLAIM` preempts active mesh forwarding and clears pending mesh RX work. CRC-valid claims that fail network, channel, flag, freshness, or arbitration checks are ignored for preemption. Already-built local click reports are requeued for later delivery. See [[UWB+BLE Architecture 0.5.51]] for the full click-priority mechanism.
 
 ### Route Formation Rules
 
@@ -427,7 +427,7 @@ The gateway keeps a flat `target_id → next_hop_id` directory, not a full topol
 
 The gateway initiates periodic time sync by broadcasting `MSG_COMMAND` with `COMMAND_ID=CMD_SYNC_TIME` and 64-bit `TIMESTAMP_MS`. Anchors accept both directed and broadcast sync commands, but broadcast sync does not return `COMMAND_RESULT`. Relays flood only this command class and survey reachability requests among broadcast traffic.
 
-The sync interval calculation and the reason for gateway-initiated sync are in [[UWB+BLE Architecture 0.5.50]].
+The sync interval calculation and the reason for gateway-initiated sync are in [[UWB+BLE Architecture 0.5.51]].
 
 For `CMD_GET_STATUS`, the response includes `DEVICE_ROLE`, `UPTIME_MS`, `TIMESTAMP_MS`, `TIME_SYNC_AGE_MS`, `STATUS_BITS`, `GATEWAY_ID`, and either route fields (`NEXT_HOP_ID`, `ROUTE_EPOCH`, `HOP_COUNT`, `QUALITY`, `RETRY_COUNT`) or `REASON=7` (`NOT_FOUND`) when no upstream route is selected. `MSG_ANCHOR_HEARTBEAT` uses the same role, uptime, time-sync, `STATUS_BITS`, and route telemetry shape.
 
@@ -458,7 +458,7 @@ Local or broadcast duplicates are not delivered twice.
 
 ## Self-Test and Diagnostic Flags
 
-Self-test traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. Normal click traffic sets `COUNT_AS_CLICK` and clears `DIAGNOSTIC`. The firmware rejects packets where both flags are set. This prevents self-test dud events from appearing as real clicks in the server event stream. For the full self-test sequence, LED patterns, and click failure codes, see [[UWB+BLE Architecture 0.5.50]].
+Self-test traffic sets `DIAGNOSTIC` and clears `COUNT_AS_CLICK`. Normal click traffic sets `COUNT_AS_CLICK` and clears `DIAGNOSTIC`. The firmware rejects packets where both flags are set. This prevents self-test dud events from appearing as real clicks in the server event stream. For the full self-test sequence, LED patterns, and click failure codes, see [[UWB+BLE Architecture 0.5.51]].
 
 ## Anchor Self-Distance Survey
 

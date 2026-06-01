@@ -1,0 +1,98 @@
+mainmenu "IMEC UWB firmware"
+
+source "Kconfig.zephyr"
+
+menu "IMEC high-debug bring-up"
+
+config IMEC_HIGH_DEBUG
+    bool "Enable high-debug staged bring-up firmware"
+    help
+      Enables bench-oriented logging, counters, command parser, and stage
+      behavior. Production role defaults are unchanged when this is disabled.
+
+config IMEC_BENCH_STAGE
+    int "High-debug bench stage"
+    range 0 3
+    default 0
+    depends on IMEC_HIGH_DEBUG
+    help
+      Hardware bring-up stage: 0 is tag-only, 1 is one tag plus one anchor,
+      2 is one tag plus multiple anchors, and 3 adds the gateway.
+
+config IMEC_ROLE_TAG
+    bool "Build as tag alias"
+    depends on IMEC_HIGH_DEBUG
+    help
+      Bench alias for the existing clicker role.
+
+config IMEC_ROLE_CLICKER
+    bool "Build as clicker"
+    depends on IMEC_HIGH_DEBUG
+    help
+      Existing clicker role. The tag alias maps to this same role.
+
+config IMEC_ROLE_ANCHOR
+    bool "Build as anchor"
+    depends on IMEC_HIGH_DEBUG
+
+config IMEC_ROLE_GATEWAY
+    bool "Build as gateway"
+    depends on IMEC_HIGH_DEBUG
+
+config IMEC_USB_BOOTLOADER
+    bool "Build for MCUboot USB-C serial recovery"
+    depends on IMEC_HIGH_DEBUG
+    help
+      Build the application as an MCUboot child image and enable the app-side
+      bootloader entry command when retention boot mode is available.
+
+config IMEC_USB_CDC_LOGS
+    bool "Use USB CDC for high-debug human logs"
+    depends on IMEC_HIGH_DEBUG
+    default y
+    help
+      Human-readable logs use the selected USB CDC console. Disable this when
+      the USB CDC endpoint must be reserved for binary gateway COBS packets.
+
+config IMEC_RTT_LOGS
+    bool "Use RTT for high-debug human logs"
+    depends on IMEC_HIGH_DEBUG
+    help
+      Route human-readable logs to RTT. Used by default for high-debug gateway
+      builds so USB CDC can stay dedicated to binary gateway packets.
+
+config IMEC_GATEWAY_BINARY_CDC
+    bool "Reserve USB CDC for gateway binary COBS packets"
+    depends on IMEC_HIGH_DEBUG
+    help
+      The gateway serial frame endpoint remains binary-only. Human-readable
+      debug logs must use RTT or another endpoint.
+
+config IMEC_STAGE0_SEND_WAKE_CLAIM_ON_CLICK
+    bool "Send one WAKE_CLAIM train on Stage 0 short press"
+    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 0
+    help
+      Stage 0 normally stays tag-only. Enable this only when intentional RF
+      wake-claim transmission is wanted without requiring an anchor.
+
+config IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE
+    bool "Allow one-anchor Stage 1 bench ranging"
+    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1
+    help
+      Bench-only diagnostic path that lets a Stage 1 clicker schedule and range
+      one anchor. Production normal-click acceptance remains three unique
+      RANGE_OK anchors.
+
+config IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS
+    int "High-debug counter dump period in milliseconds"
+    depends on IMEC_HIGH_DEBUG
+    default 30000
+    range 1000 3600000
+
+config IMEC_HIGH_DEBUG_COMMAND_POLL_MS
+    int "High-debug CDC command poll period in milliseconds"
+    depends on IMEC_HIGH_DEBUG
+    default 20
+    range 5 1000
+
+endmenu
