@@ -1874,6 +1874,85 @@ static void test_channel9_rx_observation_self_heals_event_timing(void)
     assert(plan.start_ms == 4108u);
 }
 
+static void test_channel9_sender_skips_channel5_preempted_event_without_refresh(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 82u, 90u);
+    struct proto_packet report;
+    struct mesh_outbound tx;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_plan plan = {0};
+    struct mesh_channel5_requirements requirements = clear_channel5_requirements();
+    struct mesh_event_params params = channel9_params(6000u);
+    uint8_t payload[1] = {0x79u};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 82u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+    assert(report_init_click_packet(&report,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    720u,
+                                    1u,
+                                    sizeof(payload)) == PROTO_OK);
+
+    requirements.next_required_scan_start_ms = 6003u;
+    requirements.retune_guard_ms = 5u;
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        6000u,
+                                        &plan,
+                                        &tx) == PROTO_ERR_BUSY);
+    assert(plan.action == MESH_EVENT_PLAN_SKIP_CH5_SCAN_GUARD);
+    assert(relay.event_timings[0].timing.missed_event_count == 1u);
+    assert(relay.event_timings[0].timing.next_event_time_ms == 6100u);
+
+    requirements = clear_channel5_requirements();
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        6050u,
+                                        &plan,
+                                        &tx) == PROTO_ERR_BUSY);
+    assert(plan.action == MESH_EVENT_PLAN_WAIT);
+    assert(plan.start_ms == 6100u);
+    assert(relay.event_timings[0].timing.missed_event_count == 1u);
+
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &report,
+                                        payload,
+                                        sizeof(payload),
+                                        &requirements,
+                                        6100u,
+                                        &plan,
+                                        &tx) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(tx.radio_channel == MESH_EVENT_CHANNEL);
+}
+
+static void test_channel9_receiver_miss_advances_timing_and_diagnostics(void)
+{
+    struct mesh_relay relay;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_diagnostics diagnostics = {0};
+    struct mesh_event_params params = channel9_params(7000u);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 83u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, ANCHOR_A, &timing) == PROTO_OK);
+
+    mesh_relay_note_channel9_missed(&relay, ANCHOR_A, &diagnostics);
+    assert(relay.event_timings[0].timing.missed_event_count == 1u);
+    assert(relay.event_timings[0].timing.next_event_time_ms == 7100u);
+    assert(diagnostics.ch9_event_misses == 1u);
+}
+
 static void test_channel9_timing_expires_idle_connection_state(void)
 {
     struct mesh_relay relay;
@@ -1935,6 +2014,8 @@ int main(void)
     test_channel9_report_tx_requires_negotiated_event();
     test_channel9_report_delivery_and_gateway_ack_require_events();
     test_channel9_rx_observation_self_heals_event_timing();
+    test_channel9_sender_skips_channel5_preempted_event_without_refresh();
+    test_channel9_receiver_miss_advances_timing_and_diagnostics();
     test_channel9_timing_expires_idle_connection_state();
     return 0;
 }

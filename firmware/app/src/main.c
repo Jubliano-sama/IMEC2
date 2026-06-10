@@ -242,6 +242,7 @@ static size_t high_debug_command_len;
 #define UWB_SAMPLES_PER_ANCHOR 2u
 #define UWB_DISCOVERY_WINDOW_MS \
     (((UWB_DISCOVERY_SLOT_COUNT * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
+#define UWB_CLICKER_MAX_SAMPLES_PER_ANCHOR UWB_RANGING_REQUESTS_MAX_PER_ANCHOR
 #define UWB_SCHEDULED_RANGE_SPAN_MS \
     (UWB_RANGE_FIRST_POLL_DELAY_MS + UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS + \
      UWB_SCHEDULE_GUARD_MS)
@@ -5924,8 +5925,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         LOG_WRN("mesh UWB RX failed: ret=%d role=%s", ret, role_name());
     } else if (channel9_event && channel9_timing_index < MESH_RELAY_EVENT_TIMINGS &&
                mesh_runtime.event_timings[channel9_timing_index].valid) {
-        mesh_event_note_missed(&mesh_runtime.event_timings[channel9_timing_index].timing,
-                               &mesh_event_stats);
+        mesh_relay_note_channel9_missed(&mesh_runtime,
+                                        channel9_peer_id,
+                                        &mesh_event_stats);
     }
 
     mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
@@ -7662,7 +7664,7 @@ static uint8_t clicker_debug_samples_per_anchor(void)
         return 1u;
     }
 #endif
-    return UWB_SAMPLES_PER_ANCHOR;
+    return UWB_CLICKER_MAX_SAMPLES_PER_ANCHOR;
 }
 
 static int clicker_emit_self_test_report(uint32_t event_seq, enum self_test_failure failure)

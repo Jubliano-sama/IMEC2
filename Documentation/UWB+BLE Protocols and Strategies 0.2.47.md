@@ -6,7 +6,7 @@ Version: 0.2.47
 
 Previous version: [[UWB+BLE Protocols and Strategies 0.2.46]]
 
-This document defines the v1 wire protocol: binary packet formats, message types, TLVs, and forwarding rules. System architecture, timing budgets, power estimates, and state machine flows are in [[UWB+BLE Architecture 0.5.51]]. Runtime behavior and decision flows are in [[Firmware State Machines 0.1.41]].
+This document defines the v1 wire protocol: binary packet formats, message types, TLVs, and forwarding rules. System architecture, timing budgets, power estimates, and state machine flows are in [[UWB+BLE Architecture 0.5.51]]. Runtime behavior and decision flows are in [[Firmware State Machines 0.1.43]].
 
 ## Changelog
 
@@ -417,7 +417,7 @@ The mesh is reactive. Nodes discover a path when a real packet needs one, then s
 6. The requester proposes or refreshes bounded channel-9 event timing for the selected next hop.
 7. After timing is accepted, the requester sends the data packet inside a UWB mesh frame during a negotiated channel-9 event. Each receiver adjusts its local next-event timing from the observed channel-9 packet arrival, so normal drift can heal without channel 5. Missed windows keep advancing on channel 9 until supervision expires; then the timing entry closes, the route can remain valid, and payload delivery refreshes channel-5 contact before using channel 9 again.
 
-The operational route flow is shown in [[Firmware State Machines 0.1.41]].
+The operational route flow is shown in [[Firmware State Machines 0.1.43]].
 
 ### Downlink Directory
 
@@ -466,6 +466,6 @@ The gateway starts survey setup by asking anchors for reachability. Anchors repo
 
 Pair measurements report `SURVEY_ID`, `INITIATOR_ID`, `RESPONDER_ID`, `SAMPLE_INDEX`, `SAMPLE_COUNT`, `TIMESTAMP_MS`, `TIME_SYNC_AGE_MS`, `DISTANCE_MM`, `QUALITY`, and `RANGE_STATUS`. The timestamp marks when that individual DS-TWR ranging sequence started on the gateway timebase. The firmware only measures and reports; solving anchor positions from this distance network is off-site software.
 
-Survey pair runs are long-running local work, not system command work. Anchors must continue to process mesh receive and commands while samples are being taken. `CMD_SURVEY_ABORT` must be accepted and must stop the active pair at the next sample boundary or bounded responder-listen check. The runtime handling is shown in [[Firmware State Machines 0.1.41]].
+Survey pair runs are long-running local work, not system command work. Anchors must continue to process mesh receive and commands while samples are being taken. `CMD_SURVEY_ABORT` must be accepted and must stop the active pair at the next sample boundary or bounded responder-listen check. The runtime handling is shown in [[Firmware State Machines 0.1.43]].
 
 Each survey DS-TWR sample uses `FLAG_DIAGNOSTIC`, the survey ID as the DS-TWR session ID, and a session nonce derived from `(survey_id, initiator_id, responder_id, sample_index)`. This keeps the full DS-TWR identity unique across the survey even though the compact 8-bit DS-TWR sequence value wraps in surveys longer than 255 samples.

@@ -165,6 +165,9 @@ void mesh_relay_note_channel9_rx(struct mesh_relay *relay,
                                  uint64_t next_hop_id,
                                  uint32_t planned_event_start_ms,
                                  uint32_t observed_packet_ms);
+void mesh_relay_note_channel9_missed(struct mesh_relay *relay,
+                                     uint64_t next_hop_id,
+                                     struct mesh_event_diagnostics *diagnostics);
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);

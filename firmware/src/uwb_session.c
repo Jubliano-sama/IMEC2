@@ -416,55 +416,16 @@ static bool range_status_valid(enum range_status status)
            status != RANGE_STS_QUALITY_FAIL;
 }
 
-static uint16_t burst_window_for_exchange_count(uint8_t exchange_count)
+static uint8_t exchange_capacity_for_burst_window(uint16_t burst_window_ms)
 {
-    uint32_t required_ms;
+    uint32_t capacity;
 
-    required_ms = ((uint32_t)exchange_count *
-                   UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US +
-                   999u) / 1000u;
-    if (required_ms < UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS) {
-        required_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS;
+    capacity = ((uint32_t)burst_window_ms * 1000u) /
+               UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    if (capacity > UINT8_MAX) {
+        capacity = UINT8_MAX;
     }
-    if (required_ms > UINT16_MAX) {
-        return UINT16_MAX;
-    }
-    return (uint16_t)required_ms;
-}
-
-static int schedule_entry_index(const struct uwb_range_schedule_frame *schedule, uint64_t anchor_id)
-{
-    for (uint8_t i = 0u; i < schedule->selected_count; i++) {
-        if (schedule->entries[i].anchor_id == anchor_id) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-static bool schedule_last_sample_index_for_anchor(const struct uwb_range_schedule_frame *schedule,
-                                                  uint64_t anchor_id,
-                                                  size_t *last_sample_index)
-{
-    size_t sample_index = 0u;
-    bool found = false;
-
-    if (schedule == NULL || last_sample_index == NULL) {
-        return false;
-    }
-
-    for (uint8_t round = 0u; round < schedule->samples_per_anchor; round++) {
-        for (uint8_t i = 0u; i < schedule->selected_count; i++) {
-            if (round < schedule->entries[i].sample_count) {
-                if (schedule->entries[i].anchor_id == anchor_id) {
-                    *last_sample_index = sample_index;
-                    found = true;
-                }
-                sample_index++;
-            }
-        }
-    }
-    return found;
+    return (uint8_t)capacity;
 }
 
 static void clear_anchor_schedule(struct uwb_anchor_session *session)
@@ -674,6 +635,7 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
 {
     bool used[UWB_SESSION_DISCOVERY_CAPACITY] = {0};
     uint8_t selected_count;
+    uint8_t max_exchanges;
 
     if (session == NULL || schedule == NULL) {
         return PROTO_ERR_ARG;
@@ -696,6 +658,11 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
         selected_count < session->config.min_anchor_count) {
         return PROTO_ERR_NOT_FOUND;
     }
+    max_exchanges = exchange_capacity_for_burst_window(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS);
+    if (max_exchanges < selected_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
     memset(schedule, 0, sizeof(*schedule));
     schedule->network_id = session->config.network_id;
     schedule->clicker_id = session->config.clicker_id;
@@ -708,8 +675,8 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
     schedule->first_poll_delay_ms = first_poll_delay_ms;
     schedule->poll_spacing_ms = poll_spacing_ms;
     schedule->exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
-    schedule->max_exchanges = (uint8_t)(selected_count * session->config.samples_per_anchor);
-    schedule->burst_window_ms = burst_window_for_exchange_count(schedule->max_exchanges);
+    schedule->max_exchanges = max_exchanges;
+    schedule->burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
     schedule->min_successful_unique_anchors = session->config.min_anchor_count;
     schedule->sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED;
     schedule->diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED;
@@ -725,7 +692,7 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
         used[selected] = true;
         schedule->entries[i].anchor_id = session->candidates[selected].anchor_id;
         schedule->entries[i].seq = (uint8_t)(1u + i);
-        schedule->entries[i].sample_count = session->candidates[selected].sample_count;
+        schedule->entries[i].sample_count = session->config.samples_per_anchor;
     }
     if (uwb_validate_range_schedule(schedule) != PROTO_OK) {
         memset(schedule, 0, sizeof(*schedule));
@@ -794,7 +761,7 @@ int uwb_clicker_next_range_step(struct uwb_clicker_session *session,
         uint64_t anchor_id = 0u;
         uint8_t seq = 0u;
         int index;
-        int schedule_index;
+        uint8_t schedule_index;
         int ret;
 
         ret = uwb_range_schedule_sample_at(&session->schedule,
@@ -808,10 +775,8 @@ int uwb_clicker_next_range_step(struct uwb_clicker_session *session,
         if (index < 0) {
             return PROTO_ERR_MALFORMED;
         }
-        schedule_index = schedule_entry_index(&session->schedule, anchor_id);
-        if (schedule_index < 0) {
-            return PROTO_ERR_MALFORMED;
-        }
+        schedule_index = (uint8_t)(session->next_sample_index %
+                                   session->schedule.selected_count);
 
         if (session->candidates[index].failure_count >=
             UWB_SESSION_MAX_FAILED_RANGING_PER_ANCHOR) {
@@ -848,7 +813,7 @@ int uwb_clicker_record_range_result(struct uwb_clicker_session *session,
     struct uwb_anchor_candidate *candidate;
     uint64_t expected_anchor_id = 0u;
     uint8_t expected_seq = 0u;
-    int schedule_index;
+    uint8_t schedule_index;
     int ret;
 
     if (session == NULL || step == NULL) {
@@ -871,9 +836,9 @@ int uwb_clicker_record_range_result(struct uwb_clicker_session *session,
     if (ret != PROTO_OK) {
         return ret;
     }
-    schedule_index = schedule_entry_index(&session->schedule, expected_anchor_id);
-    if (schedule_index < 0 ||
-        expected_anchor_id != step->anchor_id ||
+    schedule_index = (uint8_t)(session->next_sample_index %
+                               session->schedule.selected_count);
+    if (expected_anchor_id != step->anchor_id ||
         expected_seq != step->seq ||
         step->round_index !=
         (uint8_t)(expected_seq - session->schedule.entries[schedule_index].seq)) {
@@ -1237,13 +1202,6 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
     for (uint8_t i = 0u; i < schedule->selected_count; i++) {
         if (schedule->entries[i].anchor_id != session->config.anchor_id) {
             continue;
-        }
-        size_t ignored_last_sample_index = 0u;
-
-        if (!schedule_last_sample_index_for_anchor(schedule,
-                                                   session->config.anchor_id,
-                                                   &ignored_last_sample_index)) {
-            return PROTO_ERR_MALFORMED;
         }
 
         session->schedule_entry = schedule->entries[i];

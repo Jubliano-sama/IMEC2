@@ -1068,6 +1068,12 @@ static int free_event_timing_index(const struct mesh_relay *relay)
     return -1;
 }
 
+static bool channel9_plan_misses_event(enum mesh_event_plan_action action)
+{
+    return action == MESH_EVENT_PLAN_DEFER_CH5_ACTIVE ||
+           action == MESH_EVENT_PLAN_SKIP_CH5_SCAN_GUARD;
+}
+
 int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
                                    uint64_t next_hop_id,
                                    const struct mesh_event_timing *timing)
@@ -1371,6 +1377,9 @@ int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
                                             now_ms,
                                             plan);
     if (ret != PROTO_OK) {
+        if (ret == PROTO_ERR_BUSY && channel9_plan_misses_event(plan->action)) {
+            mesh_relay_note_channel9_missed(relay, next_hop_id, NULL);
+        }
         return ret;
     }
 
@@ -1423,6 +1432,22 @@ void mesh_relay_note_channel9_rx(struct mesh_relay *relay,
         mesh_event_note_observed_packet(&relay->event_timings[index].timing,
                                         planned_event_start_ms,
                                         observed_packet_ms);
+    }
+}
+
+void mesh_relay_note_channel9_missed(struct mesh_relay *relay,
+                                     uint64_t next_hop_id,
+                                     struct mesh_event_diagnostics *diagnostics)
+{
+    int index;
+
+    if (relay == NULL || !id_is_unicast(next_hop_id)) {
+        return;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index >= 0) {
+        mesh_event_note_missed(&relay->event_timings[index].timing, diagnostics);
     }
 }
 

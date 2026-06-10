@@ -591,7 +591,7 @@ static int validate_range_schedule(const struct uwb_range_schedule_frame *frame)
         }
         total_samples += frame->entries[i].sample_count;
     }
-    if (total_samples == 0u || total_samples > frame->max_exchanges) {
+    if (total_samples == 0u || frame->max_exchanges < frame->selected_count) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -1033,16 +1033,14 @@ int uwb_decode_range_release(const uint8_t *data,
 
 size_t uwb_range_schedule_total_samples(const struct uwb_range_schedule_frame *frame)
 {
-    size_t total = 0u;
+    size_t total;
 
     if (validate_range_schedule(frame) != PROTO_OK) {
         return 0u;
     }
 
-    for (uint8_t i = 0u; i < frame->selected_count; i++) {
-        total += frame->entries[i].sample_count;
-    }
-    return total;
+    total = (size_t)frame->selected_count * frame->samples_per_anchor;
+    return total < frame->max_exchanges ? total : frame->max_exchanges;
 }
 
 int uwb_range_schedule_sample_at(const struct uwb_range_schedule_frame *frame,
@@ -1050,7 +1048,10 @@ int uwb_range_schedule_sample_at(const struct uwb_range_schedule_frame *frame,
                                  uint64_t *anchor_id,
                                  uint8_t *seq)
 {
-    size_t seen = 0u;
+    const struct uwb_range_schedule_entry *entry;
+    size_t total_samples;
+    size_t entry_index;
+    size_t round;
 
     if (anchor_id == NULL || seq == NULL) {
         return PROTO_ERR_ARG;
@@ -1058,22 +1059,24 @@ int uwb_range_schedule_sample_at(const struct uwb_range_schedule_frame *frame,
     if (validate_range_schedule(frame) != PROTO_OK) {
         return PROTO_ERR_MALFORMED;
     }
-
-    for (uint8_t round = 0u; round < frame->samples_per_anchor; round++) {
-        for (uint8_t i = 0u; i < frame->selected_count; i++) {
-            if (round >= frame->entries[i].sample_count) {
-                continue;
-            }
-            if (seen == sample_index) {
-                *anchor_id = frame->entries[i].anchor_id;
-                *seq = (uint8_t)(frame->entries[i].seq + round);
-                return PROTO_OK;
-            }
-            seen++;
-        }
+    total_samples = (size_t)frame->selected_count * frame->samples_per_anchor;
+    if (total_samples > frame->max_exchanges) {
+        total_samples = frame->max_exchanges;
+    }
+    if (sample_index >= total_samples) {
+        return PROTO_ERR_NOT_FOUND;
     }
 
-    return PROTO_ERR_NOT_FOUND;
+    entry_index = sample_index % frame->selected_count;
+    round = sample_index / frame->selected_count;
+    entry = &frame->entries[entry_index];
+    if (round >= entry->sample_count) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    *anchor_id = entry->anchor_id;
+    *seq = (uint8_t)(entry->seq + round);
+    return PROTO_OK;
 }
 
 int uwb_claim_precedence_compare(uint8_t left_attempt_index,

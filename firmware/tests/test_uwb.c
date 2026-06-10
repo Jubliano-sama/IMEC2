@@ -1103,6 +1103,50 @@ static void test_schedule_samples_are_round_robin(void)
            PROTO_ERR_NOT_FOUND);
 }
 
+static void test_schedule_samples_stop_at_exchange_capacity(void)
+{
+    const struct uwb_range_schedule_frame schedule = {
+        .network_id = 1u,
+        .clicker_id = 2u,
+        .click_event_id = 3u,
+        .attempt_index = 1u,
+        .nonce = 4u,
+        .selected_count = 4u,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .reply_delay_us = 900u,
+        .first_poll_delay_ms = 3u,
+        .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+        .burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .max_exchanges = 5u,
+        .min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
+        .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
+        .samples_per_anchor = 2u,
+        .flags = FLAG_COUNT_AS_CLICK,
+        .entries = {
+            {.anchor_id = 1u, .seq = 10u, .sample_count = 2u},
+            {.anchor_id = 2u, .seq = 20u, .sample_count = 2u},
+            {.anchor_id = 3u, .seq = 30u, .sample_count = 2u},
+            {.anchor_id = 4u, .seq = 40u, .sample_count = 2u},
+        },
+    };
+    const uint64_t expected_anchors[] = {1u, 2u, 3u, 4u, 1u};
+    const uint8_t expected_seq[] = {10u, 20u, 30u, 40u, 11u};
+
+    assert(uwb_range_schedule_total_samples(&schedule) == 5u);
+    for (size_t i = 0u; i < 5u; i++) {
+        uint64_t anchor_id = 0u;
+        uint8_t seq = 0u;
+
+        assert(uwb_range_schedule_sample_at(&schedule, i, &anchor_id, &seq) == PROTO_OK);
+        assert(anchor_id == expected_anchors[i]);
+        assert(seq == expected_seq[i]);
+    }
+    assert(uwb_range_schedule_sample_at(&schedule, 5u, &(uint64_t){0}, &(uint8_t){0}) ==
+           PROTO_ERR_NOT_FOUND);
+}
+
 static void test_anchor_epoch_arbitrates_and_locks(void)
 {
     struct uwb_anchor_epoch epoch = {0};
@@ -1447,6 +1491,7 @@ int main(void)
     test_schedule_rejects_unsafe_ranging_params();
     test_normal_click_schedule_requires_three_selected_anchors();
     test_schedule_samples_are_round_robin();
+    test_schedule_samples_stop_at_exchange_capacity();
     test_anchor_epoch_arbitrates_and_locks();
     test_anchor_epoch_refreshes_repeated_same_attempt_claim();
     test_anchor_epoch_rejects_same_event_wrong_session_identity();
