@@ -218,7 +218,7 @@ The channel-9 penalty is therefore approximately 25% in the idle-scan calculatio
 
 The table above is a planning-only DWM3000 idle-scan comparison. It is useful for channel and aperture tradeoffs, but it is not the current firmware acceptance budget because the implemented firmware deliberately uses a larger 2.5 ms startup allowance, 1.0 ms RX aperture, periodic UWB mesh receive windows, scheduled discovery/schedule windows, and report TX windows.
 
-The current theoretical radio budget is maintained in `Documentation/UWB+BLE Architecture 0.5.51.md`. Under the normalized 1000 selected-anchor-events/day workload, the current UWB-gated anchor budget is:
+The current theoretical radio budget is maintained in `Documentation/UWB+BLE Architecture 0.5.52.md`. Under the normalized 1000 selected-anchor-events/day workload, the current UWB-gated anchor budget is:
 
 ```text
 UWB wake scan baseline        10.91 mAh/day
@@ -481,7 +481,7 @@ This may add one retry, but it prevents corrupted mixed-clicker DS-TWR.
 
 For two clickers pressed at the same instant, the probability that both choose the same first-attempt contention slot is `1/16`. If that attempt still collides and both retry, the next slot match probability is `1/32`, then `1/64` for later attempts. Repeated `WAKE_CLAIM` frames also use only 0-400 us jitter, which is enough to decorrelate exact transmit timing without intentionally adding millisecond-scale no-preamble holes to the wake train.
 
-A 300,000-trial Monte Carlo estimate for the BLE courtesy phase used the implemented single-channel timing: 20 ms scan in every 25 ms period, 20.0-20.625 ms advertising interval, uniform 0-10 ms controller advertising delay, random initial advertising and scan phases, and 1 ms channel-37 advertising events.
+A 300,000-trial Monte Carlo estimate for the BLE courtesy phase used the implemented single-channel intervals: 20 ms scan in every 25 ms period, 20.0-20.625 ms advertising interval, uniform 0-10 ms controller advertising delay, random initial advertising and scan phases, and 1 ms channel-37 advertising events. That table is a first-order estimate: it does not explicitly subtract a clicker's own advertising TX events from that clicker's passive scan RX windows. Because the BLE radio is single-event, local channel-37 TX should be modeled as scan-RX blackout before treating the result as a proven interception probability.
 
 | Courtesy window | Lower hears higher | At least one direction hears | Mutual detection |
 | ---: | ---: | ---: | ---: |
@@ -501,7 +501,7 @@ A 300,000-trial Monte Carlo estimate for the BLE courtesy phase used the impleme
 | 150 ms | 99.8% | 100.0% | 99.6% |
 | 200 ms | 100.0% | 100.0% | 99.9% |
 
-The implemented value is 75 ms for now because the lower-precedence clicker hears the higher-precedence clicker about 96.7% of the time, while longer windows have diminishing returns. A BLE miss is safe because the UWB contention and retry rules still apply.
+The implemented value is 75 ms for now because the first-order model shows the curve flattening near that point. The exact single-radio probability is lower than the 96.7% table value by local TX blackout and controller scheduling effects, so it should be calibrated with a stricter model or hardware traces. A BLE miss is safe because the UWB contention and retry rules still apply.
 
 ### 4. Discovery Reply
 At the discovery phase, the selected anchor replies in its assigned discovery slot.

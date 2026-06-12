@@ -67,7 +67,7 @@ Previous version: [[Firmware State Machines 0.1.42]]
 
 Older changes are in [[Firmware State Machines 0.1.39]].
 
-This document shows how the firmware moves between states. For system rationale, see [[UWB+BLE Architecture 0.5.51]]. For packet layouts and field names, see [[UWB+BLE Protocols and Strategies 0.2.47]].
+This document shows how the firmware moves between states. For system rationale, see [[UWB+BLE Architecture 0.5.52]]. For packet layouts and field names, see [[UWB+BLE Protocols and Strategies 0.2.48]].
 
 ## Runtime Hierarchy
 
@@ -589,7 +589,7 @@ flowchart TD
 
 ## Shared UWB Ranging Flow
 
-These diagrams show the firmware flow for one UWB distance exchange. Frame names are used only as plain labels for the four radio messages; exact fields and validation rules are in [[UWB+BLE Protocols and Strategies 0.2.47]].
+These diagrams show the firmware flow for one UWB distance exchange. Frame names are used only as plain labels for the four radio messages; exact fields and validation rules are in [[UWB+BLE Protocols and Strategies 0.2.48]].
 
 ### Range Initiator
 
