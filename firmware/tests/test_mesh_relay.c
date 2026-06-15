@@ -339,13 +339,13 @@ static void test_legacy_route_beacons_are_dropped(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
 }
 
-static void test_survey_reach_broadcast_delivers_and_floods(void)
+static void test_survey_discovery_broadcast_delivers_and_floods(void)
 {
     struct mesh_relay relay;
     struct mesh_relay_result result;
     const uint8_t payload[] = {0x15u, 0x04u, 0x78u, 0x56u, 0x34u, 0x12u};
     struct proto_packet packet = {
-        .msg_type = MSG_SURVEY_REACH_REQ,
+        .msg_type = MSG_SURVEY_DISCOVERY_START,
         .flags = FLAG_DIAGNOSTIC,
         .src_id = GATEWAY,
         .dst_id = MESH_BROADCAST_ID,
@@ -370,7 +370,7 @@ static void test_survey_reach_broadcast_delivers_and_floods(void)
     assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(result.forward.next_hop_id == MESH_BROADCAST_ID);
-    assert(result.forward.packet.msg_type == MSG_SURVEY_REACH_REQ);
+    assert(result.forward.packet.msg_type == MSG_SURVEY_DISCOVERY_START);
     assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
     assert(result.forward.packet.ttl == 2u);
     assert(result.forward.payload_len == sizeof(payload));
@@ -390,11 +390,11 @@ static void test_survey_reach_broadcast_delivers_and_floods(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
-static void test_time_sync_broadcast_delivers_and_floods(void)
+static void test_broadcast_command_delivers_without_flooding(void)
 {
     struct mesh_relay relay;
     struct mesh_relay_result result;
-    uint8_t payload[24];
+    uint8_t payload[8];
     size_t payload_len = 0u;
     struct proto_packet packet = {
         .msg_type = MSG_COMMAND,
@@ -408,12 +408,7 @@ static void test_time_sync_broadcast_delivers_and_floods(void)
     assert(mesh_append_command_id(payload,
                                   sizeof(payload),
                                   &payload_len,
-                                  CMD_SYNC_TIME) == PROTO_OK);
-    assert(tlv_append_u64(payload,
-                          sizeof(payload),
-                          &payload_len,
-                          TLV_TIMESTAMP_MS,
-                          1234567890123ull) == PROTO_OK);
+                                  CMD_PING) == PROTO_OK);
     packet.payload_len = (uint8_t)payload_len;
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
@@ -428,16 +423,10 @@ static void test_time_sync_broadcast_delivers_and_floods(void)
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
-    assert(result.forward.next_hop_id == MESH_BROADCAST_ID);
-    assert(result.forward.packet.msg_type == MSG_COMMAND);
-    assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
-    assert(result.forward.packet.ttl == 2u);
-    assert(result.forward.payload_len == payload_len);
-    assert(memcmp(result.forward.payload, payload, payload_len) == 0);
+    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
-static void test_busy_survey_reach_broadcast_still_delivers_local(void)
+static void test_busy_survey_discovery_broadcast_still_forwards(void)
 {
     struct mesh_relay relay;
     struct mesh_relay_result result;
@@ -447,7 +436,7 @@ static void test_busy_survey_reach_broadcast_still_delivers_local(void)
     struct proto_packet report;
     struct mesh_outbound tx;
     struct proto_packet packet = {
-        .msg_type = MSG_SURVEY_REACH_REQ,
+        .msg_type = MSG_SURVEY_DISCOVERY_START,
         .flags = FLAG_DIAGNOSTIC,
         .src_id = GATEWAY,
         .dst_id = MESH_BROADCAST_ID,
@@ -481,10 +470,12 @@ static void test_busy_survey_reach_broadcast_still_delivers_local(void)
                                 80u,
                                 3110u,
                                 &result) == PROTO_OK);
-    assert(result.status == PROTO_ERR_BUSY);
+    assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
-    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(result.forward.next_hop_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.ttl == 2u);
 }
 
 static void test_downlink_routes_survive_age_until_delivery_failure(void)
@@ -891,22 +882,28 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     route.last_seen_ms = 7000u;
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
     assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 90u, 9u, sizeof(payload)) == PROTO_OK);
+    report.message_age_ms = 123u;
 
     uint32_t now_ms = 7000u;
 
     assert(mesh_relay_start_tx(&relay, &report, payload, sizeof(payload), now_ms, &tx) == PROTO_OK);
+    assert(tx.packet.message_age_ms == 123u);
     mesh_relay_note_tx_sent(&relay, &tx, now_ms);
 
     now_ms += ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u;
     assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
     assert(result.retransmit.next_hop_id == GATEWAY);
+    assert(result.retransmit.packet.message_age_ms ==
+           123u + ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u);
     assert(mesh_relay_tx_active(&relay));
     mesh_relay_note_tx_sent(&relay, &result.retransmit, now_ms);
 
     now_ms += ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u;
     assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    assert(result.retransmit.packet.message_age_ms ==
+           123u + ((ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u) * 2u));
     assert(mesh_relay_tx_active(&relay));
     mesh_relay_note_tx_sent(&relay, &result.retransmit, now_ms);
 
@@ -1986,9 +1983,9 @@ int main(void)
     test_status_tlvs_report_selected_route();
     test_status_tlvs_report_missing_route_reason();
     test_legacy_route_beacons_are_dropped();
-    test_survey_reach_broadcast_delivers_and_floods();
-    test_time_sync_broadcast_delivers_and_floods();
-    test_busy_survey_reach_broadcast_still_delivers_local();
+    test_survey_discovery_broadcast_delivers_and_floods();
+    test_broadcast_command_delivers_without_flooding();
+    test_busy_survey_discovery_broadcast_still_forwards();
     test_downlink_routes_survive_age_until_delivery_failure();
     test_downlink_route_selection_uses_weighted_quality();
     test_start_tx_accepts_aged_upstream_route_until_failures();

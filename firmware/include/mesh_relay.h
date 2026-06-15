@@ -49,6 +49,8 @@ struct mesh_outbound {
     uint8_t payload_len;
     uint8_t radio_channel;
     uint64_t next_hop_id;
+    uint32_t queued_at_ms;
+    uint32_t earliest_tx_ms;
 };
 
 struct mesh_downlink_entry {
@@ -86,6 +88,7 @@ struct mesh_pending_tx {
     uint8_t radio_channel;
     uint64_t next_hop_id;
     uint32_t gateway_ack_deadline_ms;
+    uint32_t queued_at_ms;
 };
 
 struct mesh_relay {

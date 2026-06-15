@@ -88,6 +88,8 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_SURVEY_REACH_REPORT:
     case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_PAIR_RESULT:
+    case MSG_SURVEY_DISCOVERY_START:
+    case MSG_SURVEY_DISCOVERY_REPORT:
     case MSG_ERROR:
         return true;
     default:
@@ -126,6 +128,7 @@ int proto_packet_encode(const struct proto_packet *packet,
     proto_put_u16_le(&out[24], packet->seq);
     out[26] = packet->ttl;
     out[27] = packet->payload_len;
+    proto_put_u32_le(&out[28], packet->message_age_ms);
 
     if (packet->payload_len > 0u) {
         memcpy(&out[PACKET_HEADER_LEN], payload, packet->payload_len);
@@ -180,6 +183,7 @@ int proto_packet_decode(const uint8_t *data,
     packet->seq = proto_get_u16_le(&data[24]);
     packet->ttl = data[26];
     packet->payload_len = declared_payload_len;
+    packet->message_age_ms = proto_get_u32_le(&data[28]);
     *payload = &data[PACKET_HEADER_LEN];
     *payload_len = declared_payload_len;
 

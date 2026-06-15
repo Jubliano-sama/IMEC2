@@ -247,12 +247,6 @@ int report_append_range_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_u32(payload, payload_cap, offset,
-                         TLV_TIME_SYNC_AGE_MS,
-                         fields->time_sync_age_ms);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
     ret = tlv_append_i32(payload, payload_cap, offset, TLV_DISTANCE_MM, fields->distance_mm);
     if (ret != PROTO_OK) {
         return ret;
@@ -346,15 +340,9 @@ int report_append_anchor_heartbeat_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_u64(payload, payload_cap, offset,
-                         TLV_TIMESTAMP_MS,
-                         fields->timestamp_ms);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    return tlv_append_u32(payload, payload_cap, offset,
-                          TLV_TIME_SYNC_AGE_MS,
-                          fields->time_sync_age_ms);
+    return tlv_append_u64(payload, payload_cap, offset,
+                          TLV_TIMESTAMP_MS,
+                          fields->timestamp_ms);
 }
 
 int report_init_range_packet(struct proto_packet *packet,

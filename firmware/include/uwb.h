@@ -31,6 +31,7 @@ extern "C" {
 #define UWB_WAKE_CLAIM_LEN 49u
 #define UWB_DISCOVER_LEN 32u
 #define UWB_DISCOVERY_REPLY_LEN 44u
+#define UWB_SURVEY_DISCOVERY_PROBE_LEN 24u
 #define UWB_DISCOVERY_SLOT_COUNT 50u
 #define UWB_RANGE_RELEASE_LEN 34u
 #define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
@@ -150,6 +151,15 @@ struct uwb_discovery_reply_frame {
     uint8_t status;
     uint8_t rx_quality;
     uint16_t battery_mv;
+    uint8_t flags;
+};
+
+struct uwb_survey_discovery_probe_frame {
+    uint32_t network_id;
+    uint32_t survey_id;
+    uint64_t anchor_id;
+    uint8_t anchor_slot;
+    uint8_t slot_count;
     uint8_t flags;
 };
 
@@ -274,6 +284,13 @@ int uwb_encode_discovery_reply(const struct uwb_discovery_reply_frame *frame,
 int uwb_decode_discovery_reply(const uint8_t *data,
                                size_t len,
                                struct uwb_discovery_reply_frame *frame);
+int uwb_encode_survey_discovery_probe(const struct uwb_survey_discovery_probe_frame *frame,
+                                      uint8_t *out,
+                                      size_t out_cap,
+                                      size_t *written);
+int uwb_decode_survey_discovery_probe(const uint8_t *data,
+                                      size_t len,
+                                      struct uwb_survey_discovery_probe_frame *frame);
 int uwb_encode_range_schedule(const struct uwb_range_schedule_frame *frame,
                               uint8_t *out,
                               size_t out_cap,

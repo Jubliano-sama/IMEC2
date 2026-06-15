@@ -33,6 +33,7 @@ static void test_tlv_and_packet_round_trip(void)
         .seq = 17u,
         .ttl = 4u,
         .payload_len = (uint8_t)payload_len,
+        .message_age_ms = 123456u,
     };
 
     assert(proto_packet_encode(&packet, payload, packet_buf, sizeof(packet_buf), &packet_len) == PROTO_OK);
@@ -47,6 +48,7 @@ static void test_tlv_and_packet_round_trip(void)
     assert(decoded.session_id == packet.session_id);
     assert(decoded.seq == packet.seq);
     assert(decoded.ttl == packet.ttl);
+    assert(decoded.message_age_ms == packet.message_age_ms);
     assert(decoded_payload_len == payload_len);
 
     assert(tlv_find(decoded_payload, decoded_payload_len, TLV_EVENT_SEQ, &value, &value_len) == PROTO_OK);

@@ -183,36 +183,6 @@ static void test_extract_duration_uses_optional_tlv(void)
                                                &duration_ms) == PROTO_ERR_MALFORMED);
 }
 
-static void test_extract_timestamp_requires_u64_tlv(void)
-{
-    uint8_t payload[24];
-    size_t payload_len = 0u;
-    uint64_t timestamp_ms = 0u;
-
-    assert(mesh_append_command_id(payload,
-                                  sizeof(payload),
-                                  &payload_len,
-                                  CMD_SYNC_TIME) == PROTO_OK);
-    assert(gateway_command_extract_timestamp_ms(payload,
-                                                payload_len,
-                                                &timestamp_ms) == PROTO_ERR_NOT_FOUND);
-
-    assert(tlv_append_u64(payload,
-                          sizeof(payload),
-                          &payload_len,
-                          TLV_TIMESTAMP_MS,
-                          1234567890123ull) == PROTO_OK);
-    assert(gateway_command_extract_timestamp_ms(payload,
-                                                payload_len,
-                                                &timestamp_ms) == PROTO_OK);
-    assert(timestamp_ms == 1234567890123ull);
-
-    payload[payload_len - 9u] = 7u;
-    assert(gateway_command_extract_timestamp_ms(payload,
-                                                payload_len,
-                                                &timestamp_ms) == PROTO_ERR_MALFORMED);
-}
-
 static void test_extract_role_requires_valid_device_role_tlv(void)
 {
     uint8_t payload[16];
@@ -467,7 +437,6 @@ int main(void)
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
     test_extract_duration_uses_optional_tlv();
-    test_extract_timestamp_requires_u64_tlv();
     test_extract_role_requires_valid_device_role_tlv();
     test_build_failure_result_is_host_visible();
     test_pending_command_completes_on_matching_result();

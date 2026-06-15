@@ -31,9 +31,6 @@ int gateway_command_extract_duration_ms(const uint8_t *payload,
                                         size_t payload_len,
                                         uint32_t default_duration_ms,
                                         uint32_t *duration_ms);
-int gateway_command_extract_timestamp_ms(const uint8_t *payload,
-                                         size_t payload_len,
-                                         uint64_t *timestamp_ms);
 int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      const uint8_t *payload,
                                      size_t payload_len,

@@ -198,6 +198,168 @@ static void test_reach_request_parser_rejects_malformed_tlvs(void)
                                              &duration_ms) == PROTO_ERR_MALFORMED);
 }
 
+static void test_discovery_start_tlvs_round_trip_timing_config(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = 0xABCDEF01u,
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 50u,
+    };
+    uint8_t payload[48];
+    size_t payload_len = 0u;
+    struct survey_discovery_config decoded = {0};
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+
+    assert(survey_discovery_config_validate(&config) == PROTO_OK);
+    assert(survey_discovery_duration_ms(&config) == 2000u);
+    assert(survey_append_discovery_start_tlvs(payload,
+                                              sizeof(payload),
+                                              &payload_len,
+                                              &config) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_SURVEY_ID, &tlv_value, &tlv_len) == PROTO_OK);
+    assert(tlv_len == 4u);
+    assert(proto_get_u32_le(tlv_value) == config.survey_id);
+    assert(tlv_find(payload,
+                    payload_len,
+                    TLV_DISCOVERY_START_DELAY_MS,
+                    &tlv_value,
+                    &tlv_len) == PROTO_OK);
+    assert(tlv_len == 4u);
+    assert(proto_get_u32_le(tlv_value) == config.start_delay_ms);
+    assert(tlv_find(payload, payload_len, TLV_DISCOVERY_SLOT_MS, &tlv_value, &tlv_len) == PROTO_OK);
+    assert(tlv_len == 2u);
+    assert(proto_get_u16_le(tlv_value) == config.slot_ms);
+    assert(tlv_find(payload,
+                    payload_len,
+                    TLV_DISCOVERY_SLOT_COUNT,
+                    &tlv_value,
+                    &tlv_len) == PROTO_OK);
+    assert(tlv_len == 1u);
+    assert(tlv_value[0] == config.slot_count);
+    assert(tlv_find(payload, payload_len, TLV_DURATION_MS, &tlv_value, &tlv_len) == PROTO_OK);
+    assert(tlv_len == 4u);
+    assert(proto_get_u32_le(tlv_value) == 2000u);
+
+    assert(survey_extract_discovery_start_tlvs(payload,
+                                               payload_len,
+                                               &decoded) == PROTO_OK);
+    assert(decoded.survey_id == config.survey_id);
+    assert(decoded.start_delay_ms == config.start_delay_ms);
+    assert(decoded.slot_ms == config.slot_ms);
+    assert(decoded.slot_count == config.slot_count);
+}
+
+static void test_discovery_timing_uses_packet_age(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = 0xABCDEF01u,
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 50u,
+    };
+    struct survey_discovery_timing timing = {0};
+
+    assert(survey_discovery_timing_from_age(&config, 500u, &timing) == PROTO_OK);
+    assert(timing.pending);
+    assert(!timing.active);
+    assert(!timing.expired);
+    assert(timing.wait_ms == 1500u);
+    assert(timing.elapsed_ms == 0u);
+    assert(timing.duration_ms == 2000u);
+
+    assert(survey_discovery_timing_from_age(&config, 2123u, &timing) == PROTO_OK);
+    assert(!timing.pending);
+    assert(timing.active);
+    assert(!timing.expired);
+    assert(timing.wait_ms == 0u);
+    assert(timing.elapsed_ms == 123u);
+
+    assert(survey_discovery_timing_from_age(&config, 4000u, &timing) == PROTO_OK);
+    assert(!timing.pending);
+    assert(!timing.active);
+    assert(timing.expired);
+    assert(timing.elapsed_ms == 2000u);
+}
+
+static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = 0xABCDEF01u,
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+    };
+    uint32_t delay_ms = 0u;
+
+    assert(survey_discovery_report_delay_ms(&config, 0u, 2270u, &delay_ms) == PROTO_OK);
+    assert(delay_ms == 240u);
+    assert(survey_discovery_report_delay_ms(&config, 3u, 2270u, &delay_ms) == PROTO_OK);
+    assert(delay_ms == 240u + (3u * 2270u));
+    assert(survey_discovery_report_delay_ms(&config, 6u, 2270u, &delay_ms) ==
+           PROTO_ERR_MALFORMED);
+    assert(survey_discovery_report_delay_ms(&config, 0u, 0u, &delay_ms) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_discovery_report_delay_rejects_overflow(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = 0xABCDEF01u,
+        .start_delay_ms = 2000u,
+        .slot_ms = 1000u,
+        .slot_count = 50u,
+    };
+    uint32_t delay_ms = 0u;
+
+    assert(survey_discovery_report_delay_ms(&config,
+                                            49u,
+                                            UINT32_MAX,
+                                            &delay_ms) == PROTO_ERR_NO_SPACE);
+}
+
+static void test_discovery_packets_use_diagnostic_ids(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = 0xABCDEF01u,
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 50u,
+    };
+    struct proto_packet packet = {0};
+
+    assert(survey_init_discovery_start_packet(&packet,
+                                              0x9999888877776666ull,
+                                              &config,
+                                              44u,
+                                              20u) == PROTO_OK);
+    assert(packet.msg_type == MSG_SURVEY_DISCOVERY_START);
+    assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
+    assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u);
+    assert(packet.src_id == 0x9999888877776666ull);
+    assert(packet.dst_id == 0u);
+    assert(packet.session_id == config.survey_id);
+    assert(packet.seq == 44u);
+    assert(packet.ttl == SURVEY_DEFAULT_TTL);
+    assert(packet.payload_len == 20u);
+
+    assert(survey_init_discovery_report_packet(&packet,
+                                               0x1111222233334444ull,
+                                               0x9999888877776666ull,
+                                               config.survey_id,
+                                               45u,
+                                               24u) == PROTO_OK);
+    assert(packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT);
+    assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
+    assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
+    assert(packet.src_id == 0x1111222233334444ull);
+    assert(packet.dst_id == 0x9999888877776666ull);
+    assert(packet.session_id == config.survey_id);
+    assert(packet.seq == 45u);
+    assert(packet.payload_len == 24u);
+}
+
 static void test_reach_report_tlvs_include_peer_entries(void)
 {
     const struct survey_reachability_entry entries[] = {
@@ -982,6 +1144,11 @@ int main(void)
     test_sample_tlvs_include_required_fields();
     test_reach_request_tlvs_include_survey_and_duration();
     test_reach_request_parser_rejects_malformed_tlvs();
+    test_discovery_start_tlvs_round_trip_timing_config();
+    test_discovery_timing_uses_packet_age();
+    test_discovery_report_delay_uses_deterministic_anchor_slot();
+    test_discovery_report_delay_rejects_overflow();
+    test_discovery_packets_use_diagnostic_ids();
     test_reach_report_tlvs_include_peer_entries();
     test_reach_report_tlv_parser_round_trips_entries();
     test_reach_report_tlv_parser_accepts_empty_peer_list();

@@ -27,6 +27,14 @@ static void result_reset(struct mesh_relay_result *result)
     result->status = PROTO_OK;
 }
 
+static uint32_t packet_age_add(uint32_t age_ms, uint32_t elapsed_ms)
+{
+    if (UINT32_MAX - age_ms < elapsed_ms) {
+        return UINT32_MAX;
+    }
+    return age_ms + elapsed_ms;
+}
+
 static int append_route_discovery_tlvs(uint8_t *payload,
                                        size_t payload_cap,
                                        size_t *offset,
@@ -327,15 +335,19 @@ static int requested_seq_from_ack(const uint8_t *payload, size_t payload_len, ui
 }
 
 static void outbound_from_pending(const struct mesh_pending_tx *pending,
+                                  uint32_t now_ms,
                                   struct mesh_outbound *out)
 {
     out->packet = pending->packet;
+    out->packet.message_age_ms = packet_age_add(pending->packet.message_age_ms,
+                                                now_ms - pending->queued_at_ms);
     if (pending->payload_len > 0u) {
         memcpy(out->payload, pending->payload, pending->payload_len);
     }
     out->payload_len = pending->payload_len;
     out->radio_channel = pending->radio_channel;
     out->next_hop_id = pending->next_hop_id;
+    out->queued_at_ms = now_ms;
 }
 
 static void pending_set_deadlines(struct mesh_pending_tx *pending, uint32_t now_ms)
@@ -494,38 +506,23 @@ static bool packet_requires_channel9_payload_event(const struct proto_packet *pa
     case MSG_SURVEY_REACH_REPORT:
     case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_PAIR_RESULT:
+    case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
     default:
         return false;
     }
 }
 
-static bool broadcast_time_sync_command(const struct proto_packet *packet,
-                                        const uint8_t *payload,
-                                        size_t payload_len)
-{
-    const uint8_t *value = NULL;
-    uint8_t value_len = 0u;
-
-    if (packet == NULL ||
-        packet->msg_type != MSG_COMMAND ||
-        payload == NULL ||
-        tlv_find(payload, payload_len, TLV_COMMAND_ID, &value, &value_len) != PROTO_OK ||
-        value_len != sizeof(uint16_t)) {
-        return false;
-    }
-
-    return proto_get_u16_le(value) == CMD_SYNC_TIME;
-}
-
 static bool broadcast_packet_needs_forward(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len)
 {
+    (void)payload;
+    (void)payload_len;
+
     return packet->dst_id == MESH_BROADCAST_ID &&
            packet->ttl > 0u &&
-           (packet->msg_type == MSG_SURVEY_REACH_REQ ||
-            broadcast_time_sync_command(packet, payload, payload_len));
+           packet->msg_type == MSG_SURVEY_DISCOVERY_START;
 }
 
 static int build_broadcast_forward(const struct proto_packet *packet,
@@ -1342,8 +1339,9 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
     relay->pending.payload_len = (uint8_t)payload_len;
     relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     relay->pending.next_hop_id = next_hop_id;
+    relay->pending.queued_at_ms = now_ms;
     pending_set_deadlines(&relay->pending, now_ms);
-    outbound_from_pending(&relay->pending, out);
+    outbound_from_pending(&relay->pending, now_ms, out);
     return PROTO_OK;
 }
 
@@ -1518,7 +1516,9 @@ int mesh_relay_tick(struct mesh_relay *relay,
         relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
         relay->pending.next_hop_id = next_hop_id;
         pending_set_deadlines(&relay->pending, now_ms);
-        outbound_from_pending(&relay->pending, &result->retransmit);
+        outbound_from_pending(&relay->pending, now_ms, &result->retransmit);
+        relay->pending.packet.message_age_ms = result->retransmit.packet.message_age_ms;
+        relay->pending.queued_at_ms = now_ms;
         result->actions |= MESH_RELAY_ACTION_RETRANSMIT;
     }
 
@@ -1651,13 +1651,9 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     if (packet->dst_id == MESH_BROADCAST_ID) {
         duplicate_store(relay, packet, now_ms);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
-        if (!mesh_relay_tx_active(relay)) {
-            ret = build_broadcast_forward(packet, payload, payload_len, &result->forward);
-            if (ret == PROTO_OK) {
-                result->actions |= MESH_RELAY_ACTION_FORWARD;
-            }
-        } else if (broadcast_packet_needs_forward(packet, payload, payload_len)) {
-            result->status = PROTO_ERR_BUSY;
+        ret = build_broadcast_forward(packet, payload, payload_len, &result->forward);
+        if (ret == PROTO_OK) {
+            result->actions |= MESH_RELAY_ACTION_FORWARD;
         }
         return PROTO_OK;
     }

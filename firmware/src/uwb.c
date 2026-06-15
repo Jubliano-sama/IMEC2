@@ -149,7 +149,8 @@ bool uwb_frame_type_valid(uint8_t type)
            type == MSG_UWB_RESP ||
            type == MSG_UWB_FINAL ||
            type == MSG_UWB_REPORT ||
-           type == MSG_UWB_CLICKER_DIAG;
+           type == MSG_UWB_CLICKER_DIAG ||
+           type == MSG_UWB_SURVEY_DISCOVERY_PROBE;
 }
 
 int uwb_header_validate(const struct uwb_range_header *header, uint8_t expected_type)
@@ -530,6 +531,23 @@ static int validate_discovery_reply(const struct uwb_discovery_reply_frame *fram
     return PROTO_OK;
 }
 
+static int validate_survey_discovery_probe(const struct uwb_survey_discovery_probe_frame *frame)
+{
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (frame->network_id == 0u ||
+        frame->survey_id == 0u ||
+        frame->anchor_id == 0u ||
+        frame->slot_count == 0u ||
+        frame->slot_count > UWB_DISCOVERY_SLOT_COUNT ||
+        frame->anchor_slot >= frame->slot_count ||
+        !flags_valid(frame->flags)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
 static bool schedule_entry_duplicate(const struct uwb_range_schedule_frame *frame,
                                      uint8_t index)
 {
@@ -837,6 +855,68 @@ int uwb_decode_discovery_reply(const uint8_t *data,
     frame->battery_mv = proto_get_u16_le(&data[39]);
     frame->flags = data[41];
     return validate_discovery_reply(frame);
+}
+
+int uwb_encode_survey_discovery_probe(const struct uwb_survey_discovery_probe_frame *frame,
+                                      uint8_t *out,
+                                      size_t out_cap,
+                                      size_t *written)
+{
+    int ret;
+
+    if (out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (out_cap < UWB_SURVEY_DISCOVERY_PROBE_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    ret = validate_survey_discovery_probe(frame);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    put_sync_prefix(out, MSG_UWB_SURVEY_DISCOVERY_PROBE);
+    proto_put_u32_le(&out[3], frame->network_id);
+    proto_put_u32_le(&out[7], frame->survey_id);
+    proto_put_u64_le(&out[11], frame->anchor_id);
+    out[19] = frame->anchor_slot;
+    out[20] = frame->slot_count;
+    out[21] = frame->flags;
+    append_crc(out, UWB_SURVEY_DISCOVERY_PROBE_LEN - UWB_FRAME_CRC_LEN);
+    *written = UWB_SURVEY_DISCOVERY_PROBE_LEN;
+    return PROTO_OK;
+}
+
+int uwb_decode_survey_discovery_probe(const uint8_t *data,
+                                      size_t len,
+                                      struct uwb_survey_discovery_probe_frame *frame)
+{
+    int ret;
+
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = validate_sync_prefix(data,
+                               len,
+                               UWB_SURVEY_DISCOVERY_PROBE_LEN,
+                               MSG_UWB_SURVEY_DISCOVERY_PROBE);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = verify_crc(data, len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    frame->network_id = proto_get_u32_le(&data[3]);
+    frame->survey_id = proto_get_u32_le(&data[7]);
+    frame->anchor_id = proto_get_u64_le(&data[11]);
+    frame->anchor_slot = data[19];
+    frame->slot_count = data[20];
+    frame->flags = data[21];
+    return validate_survey_discovery_probe(frame);
 }
 
 size_t uwb_range_schedule_encoded_len(uint8_t selected_count)

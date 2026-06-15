@@ -1,6 +1,6 @@
 # High-Debug Hardware Bring-Up Firmware
 
-Date: 2026-06-01
+Date: 2026-06-15
 
 This document describes the staged high-debug firmware suite for real DWM3000 plus ANNA-B402/nRF52833 hardware. Hardware validation is pending until real bench logs are captured.
 
@@ -29,6 +29,11 @@ The UWB protocol policy is unchanged:
 - Normal click ranging still requires at least three eligible anchor replies.
 - Up to six anchors may be scheduled in a normal-click burst.
 - Three unique `RANGE_OK` anchors from the same click event and burst accept the click.
+- Every shared mesh packet carries a saturated millisecond packet-age field. Relays and report queues add elapsed time before retransmit or send.
+- Gateway time-sync broadcast is retired; Stage 3 timing checks should use packet age and local event uptime, not `CMD_SYNC_TIME` or `TIME_SYNC_AGE_MS`.
+- Gateway survey setup uses `SURVEY_DISCOVERY_START`, UWB `SURVEY_DISCOVERY_PROBE`, and `SURVEY_DISCOVERY_REPORT`.
+- Survey discovery uses deterministic anchor slots and currently uses the same 850 kbps, 1024-symbol channel-5 long-preamble mode, which is the lowest data rate exposed by the local DW3000 SDK.
+- Survey discovery reports are also paced by deterministic per-anchor mesh report slots, so the gateway receives a report train instead of a simultaneous report flood.
 
 High-debug log lines use this stable prefix:
 
@@ -304,15 +309,21 @@ Build outputs:
 - `anchor_stage3_highdebug`
 - `gateway_stage3_highdebug`
 
-Purpose: verify report delivery, UWB mesh, gateway ACKs, USB gateway output, and command/debug path.
+Purpose: verify report delivery, UWB mesh, gateway ACKs, USB gateway output, command/debug path, and gateway-driven survey discovery.
 
 Behavior:
 
 - Tag keeps the Stage 2 click/range behavior and logs clicker/tag ID, click event, attempt, burst ID, anchor ID, sample index, and round.
 - Anchor queues reports after ranging, drains them through UWB mesh, waits for gateway ACK before considering a report delivered, and gives active click service priority over mesh traffic.
+- Anchor report logs include mesh packet age at transmit time. Age should increase through queueing, relay, and retry delay, and must not require gateway time sync.
 - Gateway boots as gateway, receives mesh reports, emits binary COBS packets on CDC, logs human-readable diagnostics over RTT, and routes commands.
 - Gateway logs boot/config, route requests/replies, mesh RX/TX, gateway ACK TX, report decode, USB packet output, command RX, command routing, and command result/timeout.
 - Gateway command hooks cover ping anchor, get anchor status, trigger LED pattern, start/stop heartbeat, dump route table, clear route, and dump counters through the existing command path.
+- Gateway survey reachability command now broadcasts `SURVEY_DISCOVERY_START` instead of relying on route-state reachability.
+- Anchors use packet age from the discovery start packet to compute the remaining start delay, then preempt ordinary mesh/report work for the survey discovery epoch.
+- Each anchor transmits one `SURVEY_DISCOVERY_PROBE` in its deterministic slot and listens during peer slots.
+- Each anchor queues one `SURVEY_DISCOVERY_REPORT` after the discovery epoch, but the report is held until that anchor's deterministic mesh report slot opens.
+- Gateway records discovery reports, builds the measured reachability graph, and starts the existing pair prepare/start orchestration after the report train and grace window.
 
 Expected snippets:
 
@@ -325,6 +336,13 @@ Expected snippets:
 [00002120][gateway][0x3333333333333333][3][USB_GATEWAY_PACKET_TX] msg=0x...
 [00003000][gateway][0x3333333333333333][3][COMMAND_RX] command=...
 [00003050][anchor][0x2222000000000001][3][COMMAND_RESULT_TX] status=ok
+[00004000][gateway][0x3333333333333333][3][MESH_TX] reason=survey-discovery-start msg=0x54 age_ms=...
+[00004050][anchor][0x2222000000000001][3][SURVEY_DISCOVERY_PROBE_TX] survey=... slot=1 slot_ms=40
+[00004090][anchor][0x2222000000000002][3][SURVEY_DISCOVERY_PROBE_RX] survey=... peer=0x2222000000000001 slot=1 quality=...
+[00004300][anchor][0x2222000000000002][3][ANCHOR_REPORT_QUEUE] msg=0x55 earliest_tx_ms=...
+[00007000][anchor][0x2222000000000002][3][MESH_TX] reason=queued-click-report msg=0x55 age_ms=...
+[00007100][gateway][0x3333333333333333][3][MESH_RX] msg=survey_discovery_report anchor=0x...
+[00007200][gateway][0x3333333333333333][3][COMMAND_RX] command=survey_pair_prepare ...
 ```
 
 ## Failure Triage
@@ -341,6 +359,10 @@ Expected snippets:
 | Wrong anchor responds | Identity/schedule validation | Compare click event, nonce, anchor ID, schedule order, round, and sample index |
 | Gateway CDC unreadable | Binary CDC expected | Use RTT for human logs; CDC carries COBS packets in `gateway_stage3_highdebug` |
 | Gateway report never delivered | Mesh or ACK | Check route request/reply, mesh retry/drop, gateway ACK TX/RX, duplicate handling, and active-click preemption logs |
+| Survey discovery does not start together | Packet age or start-delay handling | Check `SURVEY_DISCOVERY_START` mesh TX/RX `age_ms`, anchor computed wait, and whether late packets are joining the current slot or expiring |
+| Survey probes collide | Slot assignment | Confirm each anchor image has a unique `IMEC_ANCHOR_SLOT` inside the configured discovery slot count |
+| Survey report flood | Deterministic report-slot gate | Check `ANCHOR_REPORT_QUEUE earliest_tx_ms`, report queue hold time, and that `MSG_SURVEY_DISCOVERY_REPORT` TX times follow anchor-slot order |
+| Survey graph missing expected links | Discovery PHY or receive window | Check channel 5, 850 kbps long-preamble mode, slot timing, probe TX/RX logs, RSL/quality, and whether the peer is in range during the assigned slot |
 
 ## Local Verification
 
@@ -379,4 +401,5 @@ Hardware validation is pending. Run the bench in this order:
 2. J-Link flash `tag_stage1_highdebug` and `anchor_stage1_highdebug`. Verify anchor low-duty scan, valid `WAKE_CLAIM_ACCEPT`, discovery reply, one-anchor `BENCH_ONLY` schedule, DS-TWR, and one `RANGE_OK`.
 3. Build and flash at least three `anchor_stage2_highdebug` images with distinct `IMEC_DEVICE_ID` and `IMEC_ANCHOR_SLOT` values. Flash `tag_stage2_highdebug`. Verify three discovery replies, schedule table, same continuous responder burst, three unique `RANGE_OK`, and correct release/retry behavior with fewer than three anchors.
 4. Flash `gateway_stage3_highdebug`, keep gateway human logs on RTT, and keep CDC for COBS binary packets. Verify anchor report queueing, mesh route, gateway ACK, USB packet output, and a gateway command returning `COMMAND_RESULT`.
-5. Capture logs from all boards and only then mark hardware validation complete for the stage that passed.
+5. Run a Stage 3 survey reachability command. Verify `SURVEY_DISCOVERY_START` age propagation, deterministic probe slots, deterministic discovery-report mesh slots, gateway discovery-report recording, reachability graph planning, and the first pair prepare/start sequence.
+6. Capture logs from all boards and only then mark hardware validation complete for the stage that passed.

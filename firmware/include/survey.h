@@ -18,6 +18,10 @@ extern "C" {
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 8u
 #define SURVEY_GATEWAY_MAX_PAIRS 128u
+#define SURVEY_DISCOVERY_MAX_SLOT_COUNT 50u
+#define SURVEY_DISCOVERY_MIN_SLOT_MS 10u
+#define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
+#define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
 
 struct survey_reachability_entry {
     uint64_t peer_id;
@@ -44,6 +48,22 @@ struct survey_reachability_report {
     uint64_t anchor_id;
     const struct survey_reachability_entry *entries;
     size_t entry_count;
+};
+
+struct survey_discovery_config {
+    uint32_t survey_id;
+    uint32_t start_delay_ms;
+    uint16_t slot_ms;
+    uint8_t slot_count;
+};
+
+struct survey_discovery_timing {
+    uint32_t wait_ms;
+    uint32_t elapsed_ms;
+    uint32_t duration_ms;
+    bool pending;
+    bool active;
+    bool expired;
 };
 
 struct survey_gateway_report_slot {
@@ -93,6 +113,15 @@ int survey_pair_validate(const struct survey_pair *pair);
 int survey_sample_validate(const struct survey_sample *sample);
 uint64_t survey_sample_nonce(const struct survey_pair *pair, uint16_t sample_index);
 int survey_reachability_entry_validate(const struct survey_reachability_entry *entry);
+int survey_discovery_config_validate(const struct survey_discovery_config *config);
+uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *config);
+int survey_discovery_timing_from_age(const struct survey_discovery_config *config,
+                                     uint32_t message_age_ms,
+                                     struct survey_discovery_timing *timing);
+int survey_discovery_report_delay_ms(const struct survey_discovery_config *config,
+                                     uint8_t anchor_slot,
+                                     uint32_t report_slot_ms,
+                                     uint32_t *delay_ms);
 int survey_gateway_begin(struct survey_gateway_context *context,
                          uint32_t survey_id,
                          uint16_t sample_count);
@@ -131,6 +160,9 @@ int survey_extract_reach_report_tlvs(const uint8_t *payload,
                                      struct survey_reachability_entry *entries,
                                      size_t entry_cap,
                                      size_t *entry_count);
+int survey_extract_discovery_start_tlvs(const uint8_t *payload,
+                                        size_t payload_len,
+                                        struct survey_discovery_config *config);
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair);
@@ -146,6 +178,10 @@ int survey_append_reach_request_tlvs(uint8_t *payload,
                                           size_t *offset,
                                           uint32_t survey_id,
                                           uint32_t duration_ms);
+int survey_append_discovery_start_tlvs(uint8_t *payload,
+                                       size_t payload_cap,
+                                       size_t *offset,
+                                       const struct survey_discovery_config *config);
 int survey_append_reachability_entry_tlv(uint8_t *payload,
                                               size_t payload_cap,
                                               size_t *offset,
@@ -187,6 +223,17 @@ int survey_init_reach_report_packet(struct proto_packet *packet,
                                          uint32_t survey_id,
                                          uint16_t seq,
                                          uint8_t payload_len);
+int survey_init_discovery_start_packet(struct proto_packet *packet,
+                                       uint64_t gateway_id,
+                                       const struct survey_discovery_config *config,
+                                       uint16_t seq,
+                                       uint8_t payload_len);
+int survey_init_discovery_report_packet(struct proto_packet *packet,
+                                        uint64_t anchor_id,
+                                        uint64_t gateway_id,
+                                        uint32_t survey_id,
+                                        uint16_t seq,
+                                        uint8_t payload_len);
 int survey_init_pair_prepare_packet(struct proto_packet *packet,
                                     const struct survey_pair *pair,
                                     uint64_t gateway_id,

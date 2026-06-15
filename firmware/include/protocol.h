@@ -11,7 +11,7 @@ extern "C" {
 
 #define PROTO_MAGIC 0xC1u
 #define PROTO_VERSION 0x01u
-#define PACKET_HEADER_LEN 28u
+#define PACKET_HEADER_LEN 32u
 #define PACKET_CRC_LEN 2u
 #define PACKET_MAX_PAYLOAD_LEN 255u
 #define PACKET_MAX_LEN (PACKET_HEADER_LEN + PACKET_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
@@ -46,6 +46,7 @@ enum msg_type {
     MSG_UWB_FINAL = 0x12,
     MSG_UWB_REPORT = 0x13,
     MSG_UWB_CLICKER_DIAG = 0x14,
+    MSG_UWB_SURVEY_DISCOVERY_PROBE = 0x15,
 
     MSG_CLICK_REPORT = 0x20,
     MSG_SELF_TEST_REPORT = 0x21,
@@ -68,6 +69,8 @@ enum msg_type {
     MSG_SURVEY_REACH_REPORT = 0x51,
     MSG_SURVEY_PAIR_PREPARE = 0x52,
     MSG_SURVEY_PAIR_RESULT = 0x53,
+    MSG_SURVEY_DISCOVERY_START = 0x54,
+    MSG_SURVEY_DISCOVERY_REPORT = 0x55,
 
     MSG_ERROR = 0x7F,
 };
@@ -119,7 +122,7 @@ enum tlv_type {
     TLV_UWB_RSL_DBM = 0x24,
     TLV_DISTANCE_SAMPLES_MM = 0x25,
     TLV_UWB_CIR_SAMPLE = 0x26,
-    TLV_TIME_SYNC_AGE_MS = 0x27,
+    /* 0x27 retired: gateway time-sync age. */
     TLV_RANGE_ROUND_INDICES = 0x28,
     TLV_SEQUENCE_START_TIMESTAMPS_MS = 0x29,
     TLV_MESH_CHANNEL = 0x2A,
@@ -154,6 +157,9 @@ enum tlv_type {
     TLV_MESH_CH9_EVENT_MISSES = 0x47,
     TLV_MESH_CHANNEL5_PREEMPTIONS = 0x48,
     TLV_MESH_CH9_REPORT_LATENCY_MS = 0x49,
+    TLV_DISCOVERY_START_DELAY_MS = 0x4A,
+    TLV_DISCOVERY_SLOT_MS = 0x4B,
+    TLV_DISCOVERY_SLOT_COUNT = 0x4C,
 };
 
 enum status_bit {
@@ -163,8 +169,6 @@ enum status_bit {
     STATUS_BIT_UWB_DS_TWR_FAILURE = 1u << 3,
     STATUS_BIT_UWB_TIMING_REJECTION = 1u << 4,
     STATUS_BIT_UWB_MESH_RX = 1u << 5,
-    STATUS_BIT_TIME_SYNCED = 1u << 6,
-    STATUS_BIT_TIME_SYNC_STALE = 1u << 7,
 };
 
 enum device_role {
@@ -184,7 +188,7 @@ enum command_id {
     CMD_SET_SCAN_DUTY = 0x0008,
     CMD_START_HEARTBEAT = 0x0009,
     CMD_STOP_HEARTBEAT = 0x000A,
-    CMD_SYNC_TIME = 0x000B,
+    /* 0x000B retired: gateway time sync. */
     CMD_SURVEY_REACHABILITY = 0x0100,
     CMD_SURVEY_PREPARE_PAIR = 0x0101,
     CMD_SURVEY_START_PAIR = 0x0102,
@@ -225,6 +229,7 @@ struct proto_packet {
     uint16_t seq;
     uint8_t ttl;
     uint8_t payload_len;
+    uint32_t message_age_ms;
 };
 
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);

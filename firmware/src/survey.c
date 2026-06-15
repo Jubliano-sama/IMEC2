@@ -88,6 +88,99 @@ int survey_reachability_entry_validate(const struct survey_reachability_entry *e
     return PROTO_OK;
 }
 
+int survey_discovery_config_validate(const struct survey_discovery_config *config)
+{
+    if (config == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (config->survey_id == 0u ||
+        config->start_delay_ms == 0u ||
+        config->start_delay_ms > SURVEY_DISCOVERY_MAX_START_DELAY_MS ||
+        config->slot_ms < SURVEY_DISCOVERY_MIN_SLOT_MS ||
+        config->slot_ms > SURVEY_DISCOVERY_MAX_SLOT_MS ||
+        config->slot_count == 0u ||
+        config->slot_count > SURVEY_DISCOVERY_MAX_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
+uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *config)
+{
+    if (survey_discovery_config_validate(config) != PROTO_OK) {
+        return 0u;
+    }
+    return (uint32_t)config->slot_ms * (uint32_t)config->slot_count;
+}
+
+int survey_discovery_timing_from_age(const struct survey_discovery_config *config,
+                                     uint32_t message_age_ms,
+                                     struct survey_discovery_timing *timing)
+{
+    uint32_t duration_ms;
+    uint32_t end_age_ms;
+
+    if (timing == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (survey_discovery_config_validate(config) != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(timing, 0, sizeof(*timing));
+    duration_ms = survey_discovery_duration_ms(config);
+    timing->duration_ms = duration_ms;
+
+    if (message_age_ms < config->start_delay_ms) {
+        timing->pending = true;
+        timing->wait_ms = config->start_delay_ms - message_age_ms;
+        return PROTO_OK;
+    }
+
+    if (UINT32_MAX - config->start_delay_ms < duration_ms) {
+        end_age_ms = UINT32_MAX;
+    } else {
+        end_age_ms = config->start_delay_ms + duration_ms;
+    }
+    if (message_age_ms >= end_age_ms) {
+        timing->expired = true;
+        timing->elapsed_ms = duration_ms;
+        return PROTO_OK;
+    }
+
+    timing->active = true;
+    timing->elapsed_ms = message_age_ms - config->start_delay_ms;
+    return PROTO_OK;
+}
+
+int survey_discovery_report_delay_ms(const struct survey_discovery_config *config,
+                                     uint8_t anchor_slot,
+                                     uint32_t report_slot_ms,
+                                     uint32_t *delay_ms)
+{
+    uint32_t discovery_duration_ms;
+    uint64_t delay;
+
+    if (delay_ms == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (survey_discovery_config_validate(config) != PROTO_OK ||
+        report_slot_ms == 0u ||
+        anchor_slot >= config->slot_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    discovery_duration_ms = survey_discovery_duration_ms(config);
+    delay = (uint64_t)discovery_duration_ms +
+            ((uint64_t)anchor_slot * report_slot_ms);
+    if (delay > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    *delay_ms = (uint32_t)delay;
+    return PROTO_OK;
+}
+
 static int survey_find_u16_tlv(const uint8_t *payload,
                                size_t payload_len,
                                uint8_t type,
@@ -616,6 +709,61 @@ int survey_extract_reach_report_tlvs(const uint8_t *payload,
     return PROTO_OK;
 }
 
+int survey_extract_discovery_start_tlvs(const uint8_t *payload,
+                                        size_t payload_len,
+                                        struct survey_discovery_config *config)
+{
+    const uint8_t *slot_count_value = NULL;
+    uint8_t slot_count_len = 0u;
+    uint32_t duration_ms = 0u;
+    int ret;
+
+    if (payload == NULL || config == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(config, 0, sizeof(*config));
+    ret = survey_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, &config->survey_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_find_u32_tlv(payload,
+                              payload_len,
+                              TLV_DISCOVERY_START_DELAY_MS,
+                              &config->start_delay_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_find_u16_tlv(payload,
+                              payload_len,
+                              TLV_DISCOVERY_SLOT_MS,
+                              &config->slot_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_find(payload,
+                   payload_len,
+                   TLV_DISCOVERY_SLOT_COUNT,
+                   &slot_count_value,
+                   &slot_count_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (slot_count_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    config->slot_count = slot_count_value[0];
+    ret = survey_find_u32_tlv(payload, payload_len, TLV_DURATION_MS, &duration_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (survey_discovery_config_validate(config) != PROTO_OK ||
+        duration_ms != survey_discovery_duration_ms(config)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair)
@@ -752,6 +900,51 @@ int survey_append_reach_request_tlvs(uint8_t *payload,
     }
 
     ret = tlv_append_u32(payload, payload_cap, offset, TLV_SURVEY_ID, survey_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload, payload_cap, offset, TLV_DURATION_MS, duration_ms);
+}
+
+int survey_append_discovery_start_tlvs(uint8_t *payload,
+                                       size_t payload_cap,
+                                       size_t *offset,
+                                       const struct survey_discovery_config *config)
+{
+    uint32_t duration_ms;
+    int ret;
+
+    ret = survey_discovery_config_validate(config);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    duration_ms = survey_discovery_duration_ms(config);
+
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_SURVEY_ID, config->survey_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         offset,
+                         TLV_DISCOVERY_START_DELAY_MS,
+                         config->start_delay_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload,
+                         payload_cap,
+                         offset,
+                         TLV_DISCOVERY_SLOT_MS,
+                         config->slot_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_DISCOVERY_SLOT_COUNT,
+                        config->slot_count);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -961,6 +1154,58 @@ int survey_init_reach_report_packet(struct proto_packet *packet,
     }
 
     packet->msg_type = MSG_SURVEY_REACH_REPORT;
+    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet->src_id = anchor_id;
+    packet->dst_id = gateway_id;
+    packet->session_id = survey_id;
+    packet->seq = seq;
+    packet->ttl = SURVEY_DEFAULT_TTL;
+    packet->payload_len = payload_len;
+    return PROTO_OK;
+}
+
+int survey_init_discovery_start_packet(struct proto_packet *packet,
+                                       uint64_t gateway_id,
+                                       const struct survey_discovery_config *config,
+                                       uint16_t seq,
+                                       uint8_t payload_len)
+{
+    int ret;
+
+    if (packet == NULL || gateway_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_discovery_config_validate(config);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    packet->msg_type = MSG_SURVEY_DISCOVERY_START;
+    packet->flags = FLAG_DIAGNOSTIC;
+    packet->src_id = gateway_id;
+    packet->dst_id = 0u;
+    packet->session_id = config->survey_id;
+    packet->seq = seq;
+    packet->ttl = SURVEY_DEFAULT_TTL;
+    packet->payload_len = payload_len;
+    return PROTO_OK;
+}
+
+int survey_init_discovery_report_packet(struct proto_packet *packet,
+                                        uint64_t anchor_id,
+                                        uint64_t gateway_id,
+                                        uint32_t survey_id,
+                                        uint16_t seq,
+                                        uint8_t payload_len)
+{
+    if (packet == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!ids_are_valid(anchor_id, gateway_id) || survey_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    packet->msg_type = MSG_SURVEY_DISCOVERY_REPORT;
     packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
     packet->src_id = anchor_id;
     packet->dst_id = gateway_id;
