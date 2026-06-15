@@ -238,20 +238,17 @@ static size_t high_debug_command_len;
 #define UWB_RANGING_CHANNEL UWB_CHANNEL_WAKE_CONTACT
 #define UWB_RANGE_FIRST_POLL_DELAY_MS 5u
 #define UWB_SAMPLES_PER_ANCHOR 2u
-#define UWB_DISCOVERY_WINDOW_MS \
-    (((UWB_DISCOVERY_SLOT_COUNT * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
+#define UWB_MAX_DISCOVERY_WINDOW_MS \
+    (((MAX_SCHEDULED_ANCHORS * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
 #define UWB_CLICKER_MAX_SAMPLES_PER_ANCHOR UWB_RANGING_REQUESTS_MAX_PER_ANCHOR
 #define UWB_SCHEDULED_RANGE_SPAN_MS \
     (UWB_RANGE_FIRST_POLL_DELAY_MS + UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS + \
      UWB_SCHEDULE_GUARD_MS)
 #define UWB_POST_WAKE_CLAIMED_DURATION_MS \
-    (UWB_DISCOVERY_WINDOW_MS + UWB_RANGE_SCHEDULE_RX_MS + \
+    (UWB_MAX_DISCOVERY_WINDOW_MS + UWB_RANGE_SCHEDULE_RX_MS + \
      UWB_SCHEDULED_RANGE_SPAN_MS)
 #define UWB_CLICKER_CLAIMED_DURATION_MS \
     (WAKE_ADV_MS + UWB_POST_WAKE_CLAIMED_DURATION_MS)
-#ifndef UWB_ANCHOR_SLOT
-#define UWB_ANCHOR_SLOT 0xffu
-#endif
 #define MAX_WAKE_ATTEMPTS 6u
 #define UWB_ANCHOR_RANGE_WINDOW_MS UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS
 #define UWB_POLITE_SAMPLE_RX_MS 2u
@@ -332,6 +329,7 @@ static size_t high_debug_command_len;
 #define SURVEY_PAIR_SAMPLE_GAP_MS 10u
 #define SURVEY_DISCOVERY_START_DELAY_MS 2000u
 #define SURVEY_DISCOVERY_SLOT_MS 40u
+#define SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT MAX_SCHEDULED_ANCHORS
 #define SURVEY_DISCOVERY_RX_GUARD_MS 8u
 #define SURVEY_DISCOVERY_TX_TIMEOUT_MS 20u
 #define SURVEY_RESULT_MESH_SLOT_MS \
@@ -388,6 +386,12 @@ BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >=
              "survey discovery slots must fit guard time and one probe transmission");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,
              "survey discovery slot helper must cover the UWB slot count");
+BUILD_ASSERT(MAX_SCHEDULED_ANCHORS > 0u &&
+             MAX_SCHEDULED_ANCHORS <= UWB_DISCOVERY_SLOT_COUNT,
+             "scheduled anchor count must fit UWB discovery slot field");
+BUILD_ASSERT(SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT > 0u &&
+             SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,
+             "default survey discovery slots must fit survey TLV limits");
 BUILD_ASSERT(SURVEY_RESULT_MESH_SLOT_MS > ROUTE_GATEWAY_ACK_TIMEOUT_MS,
              "survey result mesh slots must leave room for one tracked TX ACK wait");
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
@@ -1682,6 +1686,7 @@ static int anchor_set_route_from_command(const uint8_t *payload,
         }
         return ret == PROTO_ERR_NO_SPACE ? -ENOSPC : -EINVAL;
     }
+    mesh_relay_note_route_discovery_ready(&mesh_runtime, GATEWAY_ID);
 
     LOG_INF("anchor route command applied: next=0x%016llx epoch=%u hop_count=%u quality=%u",
             (unsigned long long)candidate.next_hop_id,
@@ -1699,8 +1704,21 @@ malformed:
 
 static void anchor_clear_route_from_command(void)
 {
-    route_table_init(&mesh_runtime.upstream, mesh_runtime.upstream.current_epoch + 1u);
+    mesh_relay_invalidate_routes(&mesh_runtime);
     LOG_INF("anchor route command cleared upstream route state");
+}
+
+static void anchor_force_rediscovery_from_command(void)
+{
+    int ret;
+
+    mesh_relay_invalidate_routes(&mesh_runtime);
+    ret = mesh_request_route(GATEWAY_ID, "forced-rediscovery");
+    if (ret < 0 && ret != -EAGAIN) {
+        LOG_WRN("anchor forced rediscovery request failed: ret=%d", ret);
+    } else {
+        LOG_INF("anchor forced rediscovery requested");
+    }
 }
 
 static int anchor_set_scan_duty_from_command(const uint8_t *payload,
@@ -2113,6 +2131,7 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
     enum command_status status = COMMAND_OK;
     enum device_role requested_role = ROLE_ANCHOR;
     bool reboot_after_result = false;
+    bool force_rediscovery_after_result = false;
     bool broadcast_command = false;
     uint8_t reason = 0u;
     int ret;
@@ -2167,6 +2186,8 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
         }
     } else if (command_id == CMD_CLEAR_ROUTE) {
         anchor_clear_route_from_command();
+    } else if (command_id == CMD_FORCE_REDISCOVERY) {
+        force_rediscovery_after_result = true;
     } else if (command_id == CMD_SET_SCAN_DUTY) {
         ret = anchor_set_scan_duty_from_command(payload, payload_len, &reason);
         if (ret < 0) {
@@ -2203,6 +2224,9 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
                 (unsigned int)command_id,
                 status,
                 ret);
+        if (force_rediscovery_after_result && status == COMMAND_OK) {
+            anchor_force_rediscovery_from_command();
+        }
         return;
     }
 
@@ -2210,6 +2234,9 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
             (unsigned int)command_id,
             status,
             reason);
+    if (force_rediscovery_after_result && status == COMMAND_OK) {
+        anchor_force_rediscovery_from_command();
+    }
     if (reboot_after_result && status == COMMAND_OK) {
         anchor_schedule_reboot_after_command_result();
     }
@@ -2252,7 +2279,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         .survey_id = 0u,
         .start_delay_ms = SURVEY_DISCOVERY_START_DELAY_MS,
         .slot_ms = SURVEY_DISCOVERY_SLOT_MS,
-        .slot_count = UWB_DISCOVERY_SLOT_COUNT,
+        .slot_count = SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT,
     };
     struct survey_discovery_config config = discovery_config;
     struct mesh_outbound outbound = {0};
@@ -2293,6 +2320,17 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     ret = gateway_extract_survey_sample_count(host_payload,
                                               host_payload_len,
                                               &sample_count);
+    if (ret != PROTO_OK) {
+        gateway_emit_serial_command_result(host_packet,
+                                           CMD_SURVEY_REACHABILITY,
+                                           COMMAND_MALFORMED_PAYLOAD,
+                                           (uint8_t)(-ret));
+        return mesh_errno_from_proto(ret);
+    }
+    ret = survey_extract_discovery_slot_count_tlv(host_payload,
+                                                  host_payload_len,
+                                                  SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT,
+                                                  &config.slot_count);
     if (ret != PROTO_OK) {
         gateway_emit_serial_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
@@ -3087,26 +3125,25 @@ static uint16_t local_uwb_short_addr(void)
     return short_addr == 0u ? 1u : short_addr;
 }
 
-static uint8_t local_uwb_anchor_slot(void)
+static uint32_t discovery_window_ms_for_slots(uint8_t slot_count)
 {
-    if (UWB_ANCHOR_SLOT < UWB_DISCOVERY_SLOT_COUNT) {
-        return (uint8_t)UWB_ANCHOR_SLOT;
-    }
-
-    return (uint8_t)(DEVICE_ID % UWB_DISCOVERY_SLOT_COUNT);
-}
-
-static uint8_t local_survey_discovery_slot(uint8_t slot_count)
-{
-    uint8_t configured_slot = local_uwb_anchor_slot();
+    uint32_t slot_window_us;
 
     if (slot_count == 0u) {
         return 0u;
     }
-    if (configured_slot < slot_count) {
-        return configured_slot;
+    slot_window_us = (uint32_t)slot_count * UWB_DISCOVERY_SLOT_US;
+    return (slot_window_us + 999u) / 1000u;
+}
+
+static uint8_t local_survey_discovery_slot(uint8_t slot_count)
+{
+    uint8_t anchor_slot = 0u;
+
+    if (uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, &anchor_slot) != PROTO_OK) {
+        return 0u;
     }
-    return (uint8_t)(DEVICE_ID % slot_count);
+    return anchor_slot;
 }
 
 static uint64_t mix64(uint64_t value)
@@ -4608,7 +4645,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             return true;
         }
 
-        sleep_precise_us((uint32_t)local_uwb_anchor_slot() * UWB_DISCOVERY_SLOT_US);
+        sleep_precise_us((uint32_t)reply.anchor_slot * UWB_DISCOVERY_SLOT_US);
         ret = uwb_encode_discovery_reply(&reply, frame, sizeof(frame), &frame_len);
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY encode failed: %d", ret);
@@ -4899,10 +4936,10 @@ static int anchor_start_uwb_scan(void)
     }
 
     (void)k_work_reschedule(&anchor_uwb_scan_work, K_NO_WAIT);
-    LOG_INF("anchor low-duty UWB wake scan scheduled: interval_ms=%u rx_window_ms=%u status-poll slot=%u",
+    LOG_INF("anchor low-duty UWB wake scan scheduled: interval_ms=%u rx_window_ms=%u hash_slots=%u",
             anchor_uwb_scan_interval_ms,
             ANCHOR_UWB_SCAN_RX_MS,
-            local_uwb_anchor_slot());
+            UWB_DISCOVERY_SLOT_COUNT);
     return 0;
 }
 
@@ -4951,7 +4988,9 @@ static void mesh_schedule_tx_timeout(void)
         return;
     }
 
-    deadline = mesh_runtime.pending.gateway_ack_deadline_ms;
+    deadline = mesh_runtime.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF ?
+               mesh_runtime.pending.retry_after_ms :
+               mesh_runtime.pending.gateway_ack_deadline_ms;
     delay_ms = uptime_ms_until_deadline(now, deadline);
     (void)k_work_reschedule(&mesh_tx_timeout_work, K_MSEC(delay_ms));
 }
@@ -5171,22 +5210,41 @@ static int mesh_send_outbound(const struct mesh_outbound *out, const char *reaso
 static int mesh_request_route(uint64_t target_id, const char *reason)
 {
     struct mesh_outbound route_req;
+    uint32_t now_ms = k_uptime_get_32();
     int ret;
 
     if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
         return -EINVAL;
     }
 
-    ret = mesh_relay_build_route_request(&mesh_runtime,
-                                         target_id,
-                                         &route_req,
-                                         k_uptime_get_32());
+    ret = mesh_relay_prepare_route_request(&mesh_runtime,
+                                           target_id,
+                                           now_ms,
+                                           sys_rand32_get(),
+                                           &route_req);
     if (ret != PROTO_OK) {
+        if (ret == PROTO_ERR_BUSY) {
+            LOG_INF("mesh route discovery backoff active: target=0x%016llx attempts=%u next_ms=%u reason=%s",
+                    (unsigned long long)target_id,
+                    mesh_runtime.route_discovery.attempts,
+                    mesh_runtime.route_discovery.next_request_ms,
+                    reason);
+            return -EAGAIN;
+        }
+        if (ret == PROTO_ERR_STALE) {
+            LOG_WRN("mesh route discovery exhausted: target=0x%016llx attempts=%u reason=%s",
+                    (unsigned long long)target_id,
+                    mesh_runtime.route_discovery.attempts,
+                    reason);
+            return -ETIMEDOUT;
+        }
         return mesh_errno_from_proto(ret);
     }
 
-    LOG_INF("mesh route discovery request: target=0x%016llx reason=%s",
+    LOG_INF("mesh route discovery request: target=0x%016llx attempt=%u next_ms=%u reason=%s",
             (unsigned long long)target_id,
+            mesh_runtime.route_discovery.attempts,
+            mesh_runtime.route_discovery.next_request_ms,
             reason);
     return mesh_send_outbound(&route_req, "route-request");
 }
@@ -5480,7 +5538,12 @@ static void mesh_try_route_waiting_tx(void)
     if (ret == 0) {
         mesh_route_waiting_tx_valid = false;
     } else if (ret == -EHOSTUNREACH) {
-        (void)mesh_request_route(pending.packet.dst_id, "route-waiting-packet");
+        ret = mesh_request_route(pending.packet.dst_id, "route-waiting-packet");
+        if (ret == -ETIMEDOUT) {
+            mesh_route_waiting_tx_valid = false;
+        }
+    } else if (ret == -ETIMEDOUT) {
+        mesh_route_waiting_tx_valid = false;
     }
 }
 
@@ -5529,11 +5592,16 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
             return -EBUSY;
         }
         if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
+            int route_ret;
+
             LOG_WRN("mesh channel-9 timing unavailable for %s; refreshing channel-5 contact: ret=%d",
                     reason,
                     ret);
             mesh_store_route_waiting_tx(&aged_out);
-            (void)mesh_request_route(aged_out.packet.dst_id, reason);
+            route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
+            if (route_ret == -ETIMEDOUT) {
+                return route_ret;
+            }
             return -EHOSTUNREACH;
         }
         LOG_WRN("mesh channel-9 TX rejected for %s: ret=%d", reason, ret);
@@ -5549,8 +5617,13 @@ static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *re
     if (ret != PROTO_OK) {
         LOG_WRN("mesh could not start tracked TX for %s: %d", reason, ret);
         if (ret == PROTO_ERR_NOT_FOUND) {
+            int route_ret;
+
             mesh_store_route_waiting_tx(&aged_out);
-            (void)mesh_request_route(aged_out.packet.dst_id, reason);
+            route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
+            if (route_ret == -ETIMEDOUT) {
+                return route_ret;
+            }
         }
         return mesh_errno_from_proto(ret);
     }
@@ -5559,9 +5632,14 @@ send_prepared:
     if (ret < 0) {
         mesh_relay_cancel_tx(&mesh_runtime);
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
+            int route_ret;
+
             mesh_relay_note_delivery_failure(&mesh_runtime, tx.packet.dst_id);
             mesh_store_route_waiting_tx(&tx);
-            (void)mesh_request_route(tx.packet.dst_id, reason);
+            route_ret = mesh_request_route(tx.packet.dst_id, reason);
+            if (route_ret == -ETIMEDOUT) {
+                return route_ret;
+            }
         }
         return ret;
     }
@@ -5689,6 +5767,8 @@ static int queue_anchor_report(const struct mesh_outbound *outbound)
 
 static void mesh_handle_result_actions(const struct mesh_relay_result *result)
 {
+    bool forward_sent = false;
+
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
         struct mesh_outbound gateway_ack = result->gateway_ack;
         struct mesh_channel5_requirements requirements;
@@ -5730,10 +5810,18 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
         }
     }
     if (result->actions & MESH_RELAY_ACTION_FORWARD) {
+        int ret;
+
         if (result->forward.packet.dst_id == MESH_BROADCAST_ID) {
-            (void)mesh_send_outbound(&result->forward, "broadcast-forward");
+            ret = mesh_send_outbound(&result->forward, "broadcast-forward");
         } else {
-            (void)mesh_start_tracked_tx(&result->forward, "forward");
+            ret = mesh_start_tracked_tx(&result->forward, "forward");
+        }
+        forward_sent = ret == 0;
+    }
+    if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) && forward_sent) {
+        if (mesh_send_outbound(&result->hop_ack, "hop-ack") == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime, &result->hop_ack, k_uptime_get_32());
         }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
@@ -5806,6 +5894,10 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result)
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
         HIGH_DEBUG_COUNTER_INC(mesh_ack);
         LOG_INF("mesh pending TX gateway acknowledged");
+        mesh_schedule_tx_timeout();
+    }
+    if (result->actions & MESH_RELAY_ACTION_TX_HOP_PROGRESS) {
+        LOG_INF("mesh pending TX hop progress acknowledged");
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) {
@@ -5935,15 +6027,26 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         pending_route_waiting = mesh_tx_can_wait_for_route(&pending_waiting);
     }
 
-    if (mesh_relay_tick(&mesh_runtime, k_uptime_get_32(), &result) != PROTO_OK) {
+    if (mesh_relay_tick_with_random(&mesh_runtime,
+                                    k_uptime_get_32(),
+                                    sys_rand32_get(),
+                                    &result) != PROTO_OK) {
         return;
     }
     mesh_handle_result_actions(&result);
+    if (mesh_relay_tx_active(&mesh_runtime)) {
+        mesh_schedule_tx_timeout();
+    }
 
     if (pending_route_waiting &&
         (result.actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
+        int route_ret;
+
         mesh_store_route_waiting_tx(&pending_waiting);
-        (void)mesh_request_route(pending_waiting.packet.dst_id, "pending-tx-timeout");
+        route_ret = mesh_request_route(pending_waiting.packet.dst_id, "pending-tx-timeout");
+        if (route_ret == -ETIMEDOUT) {
+            mesh_route_waiting_tx_valid = false;
+        }
     }
 
     if (pending_anchor_report &&
@@ -7117,7 +7220,7 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     uint8_t frame[UWB_DISCOVERY_REPLY_LEN];
     size_t frame_len = 0u;
     int64_t deadline_ms;
-    uint32_t reply_window_ms = UWB_DISCOVERY_WINDOW_MS + UWB_DISCOVERY_RX_GUARD_MS;
+    uint32_t reply_window_ms;
     uint16_t rx_frames = 0u;
     uint16_t decoded_replies = 0u;
     uint16_t malformed_frames = 0u;
@@ -7129,6 +7232,8 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     if (ret != PROTO_OK) {
         return -EINVAL;
     }
+    reply_window_ms = discovery_window_ms_for_slots(discover.discovery_slot_count) +
+                      UWB_DISCOVERY_RX_GUARD_MS;
     ret = uwb_encode_discover(&discover, frame, sizeof(frame), &frame_len);
     if (ret != PROTO_OK) {
         return -EINVAL;
@@ -8499,7 +8604,6 @@ int main(void)
         const struct uwb_anchor_config anchor_config = {
             .network_id = NETWORK_ID,
             .anchor_id = DEVICE_ID,
-            .anchor_slot = local_uwb_anchor_slot(),
             .wake_channel = UWB_WAKE_CHANNEL,
             .ranging_channel = UWB_RANGING_CHANNEL,
         };

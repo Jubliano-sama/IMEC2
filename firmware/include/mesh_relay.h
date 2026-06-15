@@ -18,6 +18,9 @@ extern "C" {
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
+#define MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS 5u
+#define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 250u
+#define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 4000u
 
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,
@@ -36,11 +39,14 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_SEND_ROUTE_REQ = 1u << 11,
     MESH_RELAY_ACTION_SEND_ROUTE_REPLY = 1u << 12,
     MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY = 1u << 13,
+    MESH_RELAY_ACTION_SEND_HOP_ACK = 1u << 14,
+    MESH_RELAY_ACTION_TX_HOP_PROGRESS = 1u << 15,
 };
 
 enum mesh_relay_tx_state {
     MESH_RELAY_TX_IDLE = 0,
     MESH_RELAY_TX_WAIT_GATEWAY_ACK = 1,
+    MESH_RELAY_TX_WAIT_RETRY_BACKOFF = 2,
 };
 
 struct mesh_outbound {
@@ -88,7 +94,15 @@ struct mesh_pending_tx {
     uint8_t radio_channel;
     uint64_t next_hop_id;
     uint32_t gateway_ack_deadline_ms;
+    uint32_t retry_after_ms;
     uint32_t queued_at_ms;
+};
+
+struct mesh_route_discovery_state {
+    uint64_t target_id;
+    uint8_t attempts;
+    uint32_t next_request_ms;
+    bool active;
 };
 
 struct mesh_relay {
@@ -100,6 +114,7 @@ struct mesh_relay {
     struct mesh_duplicate_entry duplicates[MESH_RELAY_DUP_CACHE_SIZE];
     struct mesh_relay_event_timing_entry event_timings[MESH_RELAY_EVENT_TIMINGS];
     struct mesh_pending_tx pending;
+    struct mesh_route_discovery_state route_discovery;
     uint8_t duplicate_next;
     uint16_t next_seq;
 };
@@ -112,6 +127,7 @@ struct mesh_relay_result {
     struct mesh_outbound route_request;
     struct mesh_outbound route_reply;
     struct mesh_outbound retransmit;
+    struct mesh_outbound hop_ack;
 };
 
 void mesh_relay_init(struct mesh_relay *relay,
@@ -129,6 +145,7 @@ int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
                                    const struct mesh_event_timing *timing);
 void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
                                       uint64_t next_hop_id);
+void mesh_relay_invalidate_routes(struct mesh_relay *relay);
 int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
                                       uint64_t next_hop_id,
                                       const struct mesh_channel5_requirements *requirements,
@@ -141,6 +158,17 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
                                    uint64_t target_id,
                                    struct mesh_outbound *out,
                                    uint32_t now_ms);
+int mesh_relay_prepare_route_request(struct mesh_relay *relay,
+                                     uint64_t target_id,
+                                     uint32_t now_ms,
+                                     uint32_t random_value,
+                                     struct mesh_outbound *out);
+void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
+                                           uint64_t target_id);
+void mesh_relay_reset_route_discovery(struct mesh_relay *relay);
+uint32_t mesh_relay_retry_backoff_ms(uint8_t failure_count, uint32_t random_value);
+uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
+                                               uint32_t random_value);
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   uint8_t *payload,
                                   size_t payload_cap,
@@ -179,6 +207,10 @@ void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
 int mesh_relay_tick(struct mesh_relay *relay,
                     uint32_t now_ms,
                     struct mesh_relay_result *result);
+int mesh_relay_tick_with_random(struct mesh_relay *relay,
+                                uint32_t now_ms,
+                                uint32_t random_value,
+                                struct mesh_relay_result *result);
 int mesh_relay_handle_rx(struct mesh_relay *relay,
                          const struct proto_packet *packet,
                          const uint8_t *payload,

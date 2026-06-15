@@ -764,6 +764,49 @@ int survey_extract_discovery_start_tlvs(const uint8_t *payload,
     return PROTO_OK;
 }
 
+int survey_extract_discovery_slot_count_tlv(const uint8_t *payload,
+                                            size_t payload_len,
+                                            uint8_t default_slot_count,
+                                            uint8_t *slot_count)
+{
+    const uint8_t *slot_count_value = NULL;
+    uint8_t slot_count_len = 0u;
+    uint8_t value = default_slot_count;
+    int ret;
+
+    if (payload == NULL || slot_count == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (default_slot_count == 0u ||
+        default_slot_count > SURVEY_DISCOVERY_MAX_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = tlv_find(payload,
+                   payload_len,
+                   TLV_DISCOVERY_SLOT_COUNT,
+                   &slot_count_value,
+                   &slot_count_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *slot_count = value;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (slot_count_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    value = slot_count_value[0];
+    if (value == 0u || value > SURVEY_DISCOVERY_MAX_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *slot_count = value;
+    return PROTO_OK;
+}
+
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair)

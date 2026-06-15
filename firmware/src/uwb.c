@@ -28,6 +28,30 @@ static uint16_t short_addr_from_id(uint64_t device_id)
     return short_addr == 0u ? 1u : short_addr;
 }
 
+static uint64_t discovery_slot_hash(uint64_t anchor_id)
+{
+    uint64_t hash = anchor_id ^ (anchor_id >> 32);
+
+    return hash == 0u ? 1u : hash;
+}
+
+int uwb_discovery_slot_for_anchor(uint64_t anchor_id,
+                                  uint8_t slot_count,
+                                  uint8_t *anchor_slot)
+{
+    if (anchor_slot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (anchor_id == 0u ||
+        slot_count == 0u ||
+        slot_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *anchor_slot = (uint8_t)(discovery_slot_hash(anchor_id) % slot_count);
+    return PROTO_OK;
+}
+
 static int validate_sync_prefix(const uint8_t *data,
                                 size_t len,
                                 size_t expected_len,

@@ -380,7 +380,6 @@ static int validate_anchor_config(const struct uwb_anchor_config *config)
     }
     if (config->network_id == 0u ||
         config->anchor_id == 0u ||
-        config->anchor_slot >= UWB_DISCOVERY_SLOT_COUNT ||
         config->wake_channel != UWB_CHANNEL_WAKE_CONTACT ||
         config->ranging_channel != UWB_CHANNEL_WAKE_CONTACT) {
         return PROTO_ERR_MALFORMED;
@@ -544,7 +543,7 @@ int uwb_clicker_build_discover(struct uwb_clicker_session *session,
     discover->click_event_id = session->config.click_event_id;
     discover->attempt_index = session->attempt_index;
     discover->nonce = session->config.nonce;
-    discover->discovery_slot_count = UWB_DISCOVERY_SLOT_COUNT;
+    discover->discovery_slot_count = session->config.max_anchor_count;
     discover->flags = session->config.flags;
     session->state = UWB_CLICKER_DISCOVERY;
     return PROTO_OK;
@@ -1134,6 +1133,9 @@ int uwb_anchor_build_discovery_reply(struct uwb_anchor_session *session,
                                      uint16_t battery_mv,
                                      struct uwb_discovery_reply_frame *reply)
 {
+    uint8_t anchor_slot = 0u;
+    int ret;
+
     if (session == NULL || discover == NULL || reply == NULL) {
         return PROTO_ERR_ARG;
     }
@@ -1149,11 +1151,16 @@ int uwb_anchor_build_discovery_reply(struct uwb_anchor_session *session,
                                   discover->nonce) ||
         discover->discovery_slot_count == 0u ||
         discover->discovery_slot_count > UWB_DISCOVERY_SLOT_COUNT ||
-        session->config.anchor_slot >= discover->discovery_slot_count ||
         rx_quality > 100u ||
         !flags_valid(discover->flags) ||
         discover->flags != session->epoch.flags) {
         return PROTO_ERR_MALFORMED;
+    }
+    ret = uwb_discovery_slot_for_anchor(session->config.anchor_id,
+                                        discover->discovery_slot_count,
+                                        &anchor_slot);
+    if (ret != PROTO_OK) {
+        return ret;
     }
 
     reply->network_id = discover->network_id;
@@ -1162,7 +1169,7 @@ int uwb_anchor_build_discovery_reply(struct uwb_anchor_session *session,
     reply->click_event_id = discover->click_event_id;
     reply->attempt_index = discover->attempt_index;
     reply->nonce = discover->nonce;
-    reply->anchor_slot = session->config.anchor_slot;
+    reply->anchor_slot = anchor_slot;
     reply->status = UWB_DISCOVERY_REPLY_PRESENT;
     reply->rx_quality = rx_quality;
     reply->battery_mv = battery_mv;

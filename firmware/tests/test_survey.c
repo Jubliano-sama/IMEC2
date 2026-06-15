@@ -251,6 +251,54 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     assert(decoded.slot_count == config.slot_count);
 }
 
+static void test_discovery_slot_count_tlv_defaults_and_overrides(void)
+{
+    uint8_t payload[16];
+    size_t payload_len = 0u;
+    uint8_t slot_count = 0u;
+
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SURVEY_ID,
+                          0xABCDEF01u) == PROTO_OK);
+    assert(survey_extract_discovery_slot_count_tlv(payload,
+                                                   payload_len,
+                                                   6u,
+                                                   &slot_count) == PROTO_OK);
+    assert(slot_count == 6u);
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_DISCOVERY_SLOT_COUNT,
+                         4u) == PROTO_OK);
+    assert(survey_extract_discovery_slot_count_tlv(payload,
+                                                   payload_len,
+                                                   6u,
+                                                   &slot_count) == PROTO_OK);
+    assert(slot_count == 4u);
+
+    payload[payload_len - 1u] = 0u;
+    assert(survey_extract_discovery_slot_count_tlv(payload,
+                                                   payload_len,
+                                                   6u,
+                                                   &slot_count) == PROTO_ERR_MALFORMED);
+    payload[payload_len - 1u] = SURVEY_DISCOVERY_MAX_SLOT_COUNT + 1u;
+    assert(survey_extract_discovery_slot_count_tlv(payload,
+                                                   payload_len,
+                                                   6u,
+                                                   &slot_count) == PROTO_ERR_MALFORMED);
+    assert(survey_extract_discovery_slot_count_tlv(payload,
+                                                   payload_len - 1u,
+                                                   6u,
+                                                   &slot_count) == PROTO_ERR_MALFORMED);
+    assert(survey_extract_discovery_slot_count_tlv(payload,
+                                                   payload_len,
+                                                   0u,
+                                                   &slot_count) == PROTO_ERR_MALFORMED);
+}
+
 static void test_discovery_timing_uses_packet_age(void)
 {
     const struct survey_discovery_config config = {
@@ -1145,6 +1193,7 @@ int main(void)
     test_reach_request_tlvs_include_survey_and_duration();
     test_reach_request_parser_rejects_malformed_tlvs();
     test_discovery_start_tlvs_round_trip_timing_config();
+    test_discovery_slot_count_tlv_defaults_and_overrides();
     test_discovery_timing_uses_packet_age();
     test_discovery_report_delay_uses_deterministic_anchor_slot();
     test_discovery_report_delay_rejects_overflow();

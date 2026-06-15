@@ -35,6 +35,37 @@ static uint32_t packet_age_add(uint32_t age_ms, uint32_t elapsed_ms)
     return age_ms + elapsed_ms;
 }
 
+static uint32_t jittered_delay_ms(uint32_t base_ms, uint32_t random_value)
+{
+    return base_ms + (random_value % (base_ms + 1u));
+}
+
+uint32_t mesh_relay_retry_backoff_ms(uint8_t failure_count, uint32_t random_value)
+{
+    return jittered_delay_ms(route_retry_backoff_ms(failure_count), random_value);
+}
+
+uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
+                                               uint32_t random_value)
+{
+    uint32_t backoff_ms = MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS;
+
+    if (attempt_count > 1u) {
+        for (uint8_t i = 1u; i < attempt_count; i++) {
+            if (backoff_ms >= MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS / 2u) {
+                backoff_ms = MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS;
+                break;
+            }
+            backoff_ms *= 2u;
+        }
+    }
+    if (backoff_ms > MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS) {
+        backoff_ms = MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS;
+    }
+
+    return jittered_delay_ms(backoff_ms, random_value);
+}
+
 static int append_route_discovery_tlvs(uint8_t *payload,
                                        size_t payload_cap,
                                        size_t *offset,
@@ -350,6 +381,13 @@ static void outbound_from_pending(const struct mesh_pending_tx *pending,
     out->queued_at_ms = now_ms;
 }
 
+static void pending_refresh_age(struct mesh_pending_tx *pending, uint32_t now_ms)
+{
+    pending->packet.message_age_ms = packet_age_add(pending->packet.message_age_ms,
+                                                    now_ms - pending->queued_at_ms);
+    pending->queued_at_ms = now_ms;
+}
+
 static void pending_set_deadlines(struct mesh_pending_tx *pending, uint32_t now_ms)
 {
     pending->gateway_ack_deadline_ms = now_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS;
@@ -424,6 +462,42 @@ static int build_gateway_ack(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+static int build_hop_ack(struct mesh_relay *relay,
+                         const struct proto_packet *packet,
+                         uint64_t previous_hop_id,
+                         struct mesh_outbound *out)
+{
+    size_t payload_len = 0u;
+    int ret;
+
+    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        packet->src_id == relay->local_id ||
+        packet->dst_id == relay->local_id ||
+        packet->dst_id == MESH_BROADCAST_ID) {
+        return PROTO_ERR_STALE;
+    }
+
+    ret = mesh_append_requested_seq(out->payload, sizeof(out->payload), &payload_len, packet->seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_MESH_HOP_ACK;
+    out->packet.flags = 0u;
+    out->packet.src_id = relay->local_id;
+    out->packet.dst_id = packet->src_id;
+    out->packet.session_id = packet->session_id;
+    out->packet.seq = relay_next_seq(relay);
+    out->packet.ttl = MESH_GATEWAY_ACK_TTL;
+    out->packet.payload_len = (uint8_t)payload_len;
+    out->payload_len = (uint8_t)payload_len;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->next_hop_id = previous_hop_id;
+    return PROTO_OK;
+}
+
 static int handle_local_ack(struct mesh_relay *relay,
                             const struct proto_packet *packet,
                             const uint8_t *payload,
@@ -434,7 +508,8 @@ static int handle_local_ack(struct mesh_relay *relay,
     uint16_t requested_seq = 0u;
     int ret;
 
-    if (packet->dst_id != relay->local_id || packet->msg_type != MSG_GATEWAY_ACK) {
+    if (packet->dst_id != relay->local_id ||
+        (packet->msg_type != MSG_GATEWAY_ACK && packet->msg_type != MSG_MESH_HOP_ACK)) {
         return PROTO_OK;
     }
 
@@ -447,11 +522,21 @@ static int handle_local_ack(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
-    if (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
+    if (packet->msg_type == MSG_GATEWAY_ACK &&
+        (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+         relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
         packet->src_id == relay->gateway_id) {
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+        mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
         relay->pending.state = MESH_RELAY_TX_IDLE;
         route_record_success_at(&relay->upstream, now_ms);
+    } else if (packet->msg_type == MSG_MESH_HOP_ACK &&
+               (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+                relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF)) {
+        pending_set_deadlines(&relay->pending, now_ms);
+        relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
+        route_refresh_selected_at(&relay->upstream, now_ms);
+        result->actions |= MESH_RELAY_ACTION_TX_HOP_PROGRESS;
     }
 
     return PROTO_OK;
@@ -576,6 +661,19 @@ static int add_gateway_ack_action(struct mesh_relay *relay,
         result->status = ret;
     }
     return ret;
+}
+
+static void add_hop_ack_action(struct mesh_relay *relay,
+                               const struct proto_packet *packet,
+                               uint64_t previous_hop_id,
+                               struct mesh_relay_result *result)
+{
+    int ret;
+
+    ret = build_hop_ack(relay, packet, previous_hop_id, &result->hop_ack);
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_SEND_HOP_ACK;
+    }
 }
 
 static int upsert_reactive_route(struct mesh_relay *relay,
@@ -948,6 +1046,9 @@ static int handle_route_reply(struct mesh_relay *relay,
     if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
         return ret;
     }
+    if (ret == PROTO_OK) {
+        mesh_relay_note_route_discovery_ready(relay, target_id);
+    }
 
     if (packet->dst_id == relay->local_id) {
         result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY;
@@ -1112,6 +1213,43 @@ void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
     }
 }
 
+void mesh_relay_reset_route_discovery(struct mesh_relay *relay)
+{
+    if (relay != NULL) {
+        memset(&relay->route_discovery, 0, sizeof(relay->route_discovery));
+    }
+}
+
+void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
+                                           uint64_t target_id)
+{
+    if (relay == NULL || !id_is_unicast(target_id)) {
+        return;
+    }
+    if (relay->route_discovery.active &&
+        relay->route_discovery.target_id == target_id) {
+        mesh_relay_reset_route_discovery(relay);
+    }
+}
+
+void mesh_relay_invalidate_routes(struct mesh_relay *relay)
+{
+    uint32_t next_epoch;
+
+    if (relay == NULL) {
+        return;
+    }
+
+    next_epoch = relay->upstream.current_epoch + 1u;
+    if (next_epoch == 0u) {
+        next_epoch = 1u;
+    }
+    route_table_init(&relay->upstream, next_epoch);
+    memset(relay->downlinks, 0, sizeof(relay->downlinks));
+    memset(relay->event_timings, 0, sizeof(relay->event_timings));
+    mesh_relay_reset_route_discovery(relay);
+}
+
 int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
                                       uint64_t next_hop_id,
                                       const struct mesh_channel5_requirements *requirements,
@@ -1217,6 +1355,48 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
     out->packet.payload_len = (uint8_t)payload_len;
     out->payload_len = (uint8_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
+    return PROTO_OK;
+}
+
+int mesh_relay_prepare_route_request(struct mesh_relay *relay,
+                                     uint64_t target_id,
+                                     uint32_t now_ms,
+                                     uint32_t random_value,
+                                     struct mesh_outbound *out)
+{
+    uint32_t delay_ms;
+    int ret;
+
+    if (relay == NULL || out == NULL ||
+        !id_is_unicast(target_id) ||
+        target_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    if (!relay->route_discovery.active ||
+        relay->route_discovery.target_id != target_id) {
+        memset(&relay->route_discovery, 0, sizeof(relay->route_discovery));
+        relay->route_discovery.active = true;
+        relay->route_discovery.target_id = target_id;
+    }
+
+    if (relay->route_discovery.attempts >= MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS) {
+        return PROTO_ERR_STALE;
+    }
+    if (relay->route_discovery.attempts > 0u &&
+        !deadline_reached(now_ms, relay->route_discovery.next_request_ms)) {
+        return PROTO_ERR_BUSY;
+    }
+
+    ret = mesh_relay_build_route_request(relay, target_id, out, now_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    relay->route_discovery.attempts++;
+    delay_ms = mesh_relay_route_discovery_backoff_ms(relay->route_discovery.attempts,
+                                                     random_value);
+    relay->route_discovery.next_request_ms = now_ms + delay_ms;
     return PROTO_OK;
 }
 
@@ -1486,12 +1666,16 @@ void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
     }
 }
 
-int mesh_relay_tick(struct mesh_relay *relay,
-                    uint32_t now_ms,
-                    struct mesh_relay_result *result)
+int mesh_relay_tick_with_random(struct mesh_relay *relay,
+                                uint32_t now_ms,
+                                uint32_t random_value,
+                                struct mesh_relay_result *result)
 {
     enum route_delivery_action action;
+    const struct route_candidate *selected;
+    uint8_t failure_count;
     uint64_t next_hop_id = 0u;
+    uint32_t delay_ms;
 
     if (relay == NULL || result == NULL) {
         return PROTO_ERR_ARG;
@@ -1503,8 +1687,22 @@ int mesh_relay_tick(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
+    if (relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        if (!deadline_reached(now_ms, relay->pending.retry_after_ms)) {
+            return PROTO_OK;
+        }
+        outbound_from_pending(&relay->pending, now_ms, &result->retransmit);
+        relay->pending.packet.message_age_ms = result->retransmit.packet.message_age_ms;
+        relay->pending.queued_at_ms = now_ms;
+        relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
+        pending_set_deadlines(&relay->pending, now_ms);
+        result->actions |= MESH_RELAY_ACTION_RETRANSMIT;
+        return PROTO_OK;
+    }
+
     if (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
         deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
+        pending_refresh_age(&relay->pending, now_ms);
         action = route_record_failure(&relay->upstream, ROUTE_FAILURE_GATEWAY_ACK);
         if (action == ROUTE_DELIVERY_DISCOVER ||
             mesh_relay_select_next_hop(relay, relay->pending.packet.dst_id, &next_hop_id) != PROTO_OK) {
@@ -1513,16 +1711,24 @@ int mesh_relay_tick(struct mesh_relay *relay,
             result->status = PROTO_ERR_NOT_FOUND;
             return PROTO_OK;
         }
-        relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
+        selected = route_selected(&relay->upstream);
+        failure_count = action == ROUTE_DELIVERY_TRY_ALTERNATE || selected == NULL ?
+                        ROUTE_MAX_FAILURES :
+                        selected->failure_count;
+        delay_ms = mesh_relay_retry_backoff_ms(failure_count, random_value);
+        relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
         relay->pending.next_hop_id = next_hop_id;
-        pending_set_deadlines(&relay->pending, now_ms);
-        outbound_from_pending(&relay->pending, now_ms, &result->retransmit);
-        relay->pending.packet.message_age_ms = result->retransmit.packet.message_age_ms;
-        relay->pending.queued_at_ms = now_ms;
-        result->actions |= MESH_RELAY_ACTION_RETRANSMIT;
+        relay->pending.retry_after_ms = now_ms + delay_ms;
     }
 
     return PROTO_OK;
+}
+
+int mesh_relay_tick(struct mesh_relay *relay,
+                    uint32_t now_ms,
+                    struct mesh_relay_result *result)
+{
+    return mesh_relay_tick_with_random(relay, now_ms, 0u, result);
 }
 
 int mesh_relay_handle_rx(struct mesh_relay *relay,
@@ -1552,7 +1758,8 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     result_reset(result);
     (void)mesh_relay_expire_routes(relay, now_ms);
 
-    if (packet->msg_type == MSG_GATEWAY_ACK && packet->dst_id == relay->local_id) {
+    if ((packet->msg_type == MSG_GATEWAY_ACK || packet->msg_type == MSG_MESH_HOP_ACK) &&
+        packet->dst_id == relay->local_id) {
         (void)handle_local_ack(relay, packet, payload, payload_len, now_ms, result);
         return PROTO_OK;
     }
@@ -1580,6 +1787,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         ret = build_forward(relay, packet, payload, payload_len, &result->forward);
         if (ret == PROTO_OK) {
             result->actions |= MESH_RELAY_ACTION_FORWARD;
+            add_hop_ack_action(relay, packet, previous_hop_id, result);
             result->status = PROTO_ERR_STALE;
             return PROTO_OK;
         }
@@ -1662,6 +1870,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     if (ret == PROTO_OK) {
         duplicate_store(relay, packet, now_ms);
         result->actions |= MESH_RELAY_ACTION_FORWARD;
+        add_hop_ack_action(relay, packet, previous_hop_id, result);
         return PROTO_OK;
     }
 

@@ -24,10 +24,11 @@ static struct uwb_clicker_config clicker_config(void)
 
 static struct uwb_anchor_config anchor_config(uint64_t anchor_id, uint8_t slot)
 {
+    (void)slot;
+
     const struct uwb_anchor_config config = {
         .network_id = 0x494D4543u,
         .anchor_id = anchor_id,
-        .anchor_slot = slot,
         .wake_channel = 5u,
         .ranging_channel = 5u,
     };
@@ -53,6 +54,14 @@ static struct uwb_discovery_reply_frame reply_for(const struct uwb_clicker_sessi
         .flags = session->config.flags,
     };
     return reply;
+}
+
+static uint8_t expected_discovery_slot(uint64_t anchor_id, uint8_t slot_count)
+{
+    uint8_t slot = 0u;
+
+    assert(uwb_discovery_slot_for_anchor(anchor_id, slot_count, &slot) == PROTO_OK);
+    return slot;
 }
 
 static void clicker_begin_discovery(struct uwb_clicker_session *session)
@@ -123,6 +132,7 @@ static void test_clicker_builds_wake_claim_and_rejects_bad_timing(void)
     struct uwb_clicker_session session;
     struct uwb_clicker_config config = clicker_config();
     struct uwb_wake_claim_frame claim = {0};
+    struct uwb_discover_frame discover = {0};
 
     assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
     assert(uwb_clicker_build_wake_claim(&session,
@@ -171,6 +181,8 @@ static void test_clicker_builds_wake_claim_and_rejects_bad_timing(void)
                                         430u,
                                         1365u,
                                         &claim) == PROTO_ERR_ARG);
+    assert(uwb_clicker_build_discover(&session, &discover) == PROTO_OK);
+    assert(discover.discovery_slot_count == config.max_anchor_count);
 
     session.state = UWB_CLICKER_RANGING;
     assert(uwb_clicker_build_wake_claim(&session,
@@ -1177,7 +1189,6 @@ static void test_four_anchor_click_uses_shared_200_ms_burst_window(void)
                                        &(struct uwb_anchor_config){
                                            .network_id = clicker_cfg.network_id,
                                            .anchor_id = anchor_ids[i],
-                                           .anchor_slot = i,
                                            .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
                                            .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
                                        }) == PROTO_OK);
@@ -1948,6 +1959,8 @@ static void test_anchor_schedule_validation_and_presence_only_discovery(void)
     assert(uwb_anchor_build_discovery_reply(&anchor, &discover, 77u, 3010u, &reply) ==
            PROTO_OK);
     assert(reply.status == UWB_DISCOVERY_REPLY_PRESENT);
+    assert(reply.anchor_slot == expected_discovery_slot(config.anchor_id,
+                                                        discover.discovery_slot_count));
     assert(anchor.diagnostics.ds_twr_successes == 0u);
 
     schedule.network_id = claim.network_id;

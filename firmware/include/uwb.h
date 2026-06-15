@@ -307,6 +307,9 @@ int uwb_decode_range_release(const uint8_t *data,
                              size_t len,
                              struct uwb_range_release_frame *frame);
 int uwb_validate_range_release(const struct uwb_range_release_frame *frame);
+int uwb_discovery_slot_for_anchor(uint64_t anchor_id,
+                                  uint8_t slot_count,
+                                  uint8_t *anchor_slot);
 size_t uwb_range_schedule_encoded_len(uint8_t selected_count);
 size_t uwb_range_schedule_total_samples(const struct uwb_range_schedule_frame *frame);
 int uwb_range_schedule_sample_at(const struct uwb_range_schedule_frame *frame,

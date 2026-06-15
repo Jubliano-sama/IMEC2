@@ -53,6 +53,7 @@ enum msg_type {
     MSG_ANCHOR_HEARTBEAT = 0x22,
 
     MSG_MESH_DATA = 0x30,
+    MSG_MESH_HOP_ACK = 0x31,
     MSG_GATEWAY_ACK = 0x32,
     /* 0x33 and 0x34 are reserved; legacy route beacons must not be emitted. */
     MSG_ROUTE_REQ = 0x35,
@@ -189,6 +190,7 @@ enum command_id {
     CMD_START_HEARTBEAT = 0x0009,
     CMD_STOP_HEARTBEAT = 0x000A,
     /* 0x000B retired: gateway time sync. */
+    CMD_FORCE_REDISCOVERY = 0x000C,
     CMD_SURVEY_REACHABILITY = 0x0100,
     CMD_SURVEY_PREPARE_PAIR = 0x0101,
     CMD_SURVEY_START_PAIR = 0x0102,

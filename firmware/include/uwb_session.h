@@ -128,7 +128,6 @@ struct uwb_range_step {
 struct uwb_anchor_config {
     uint32_t network_id;
     uint64_t anchor_id;
-    uint8_t anchor_slot;
     uint8_t wake_channel;
     uint8_t ranging_channel;
 };

@@ -163,6 +163,10 @@ int survey_extract_reach_report_tlvs(const uint8_t *payload,
 int survey_extract_discovery_start_tlvs(const uint8_t *payload,
                                         size_t payload_len,
                                         struct survey_discovery_config *config);
+int survey_extract_discovery_slot_count_tlv(const uint8_t *payload,
+                                            size_t payload_len,
+                                            uint8_t default_slot_count,
+                                            uint8_t *slot_count);
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair);

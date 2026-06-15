@@ -32,8 +32,8 @@ The UWB protocol policy is unchanged:
 - Every shared mesh packet carries a saturated millisecond packet-age field. Relays and report queues add elapsed time before retransmit or send.
 - Gateway time-sync broadcast is retired; Stage 3 timing checks should use packet age and local event uptime, not `CMD_SYNC_TIME` or `TIME_SYNC_AGE_MS`.
 - Gateway survey setup uses `SURVEY_DISCOVERY_START`, UWB `SURVEY_DISCOVERY_PROBE`, and `SURVEY_DISCOVERY_REPORT`.
-- Survey discovery uses deterministic anchor slots and currently uses the same 850 kbps, 1024-symbol channel-5 long-preamble mode, which is the lowest data rate exposed by the local DW3000 SDK.
-- Survey discovery reports are also paced by deterministic per-anchor mesh report slots, so the gateway receives a report train instead of a simultaneous report flood.
+- Survey discovery uses hash-derived anchor slots from the gateway-provided slot count and currently uses the same 850 kbps, 1024-symbol channel-5 long-preamble mode, which is the lowest data rate exposed by the local DW3000 SDK.
+- Survey discovery reports are also paced by hash-derived per-anchor mesh report slots, so the gateway receives a report train instead of a simultaneous report flood.
 
 High-debug log lines use this stable prefix:
 
@@ -116,12 +116,12 @@ Production role build check:
 
 ## Anchor ID Builds
 
-Build anchors with unique device IDs and slots using CMake cache overrides. Keep the same source tree:
+Build anchors with unique device IDs using CMake cache overrides. Discovery slots are no longer build inputs; anchors derive their slot from the device ID hash and the gateway/clicker-provided slot count. Keep the same source tree:
 
 ```sh
-env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a1 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000001ull -DIMEC_ANCHOR_SLOT=1 -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
-env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a2 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000002ull -DIMEC_ANCHOR_SLOT=2 -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
-env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a3 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000003ull -DIMEC_ANCHOR_SLOT=3 -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a1 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000001ull -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a2 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000002ull -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a3 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000003ull -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
 ```
 
 Use the same pattern for Stage 3 anchors by replacing `anchor_stage2_highdebug` with `anchor_stage3_highdebug`.
@@ -321,8 +321,8 @@ Behavior:
 - Gateway command hooks cover ping anchor, get anchor status, trigger LED pattern, start/stop heartbeat, dump route table, clear route, and dump counters through the existing command path.
 - Gateway survey reachability command now broadcasts `SURVEY_DISCOVERY_START` instead of relying on route-state reachability.
 - Anchors use packet age from the discovery start packet to compute the remaining start delay, then preempt ordinary mesh/report work for the survey discovery epoch.
-- Each anchor transmits one `SURVEY_DISCOVERY_PROBE` in its deterministic slot and listens during peer slots.
-- Each anchor queues one `SURVEY_DISCOVERY_REPORT` after the discovery epoch, but the report is held until that anchor's deterministic mesh report slot opens.
+- Each anchor transmits one `SURVEY_DISCOVERY_PROBE` in its hash-derived slot and listens during peer slots.
+- Each anchor queues one `SURVEY_DISCOVERY_REPORT` after the discovery epoch, but the report is held until that anchor's hash-derived mesh report slot opens.
 - Gateway records discovery reports, builds the measured reachability graph, and starts the existing pair prepare/start orchestration after the report train and grace window.
 
 Expected snippets:
@@ -360,8 +360,8 @@ Expected snippets:
 | Gateway CDC unreadable | Binary CDC expected | Use RTT for human logs; CDC carries COBS packets in `gateway_stage3_highdebug` |
 | Gateway report never delivered | Mesh or ACK | Check route request/reply, mesh retry/drop, gateway ACK TX/RX, duplicate handling, and active-click preemption logs |
 | Survey discovery does not start together | Packet age or start-delay handling | Check `SURVEY_DISCOVERY_START` mesh TX/RX `age_ms`, anchor computed wait, and whether late packets are joining the current slot or expiring |
-| Survey probes collide | Slot assignment | Confirm each anchor image has a unique `IMEC_ANCHOR_SLOT` inside the configured discovery slot count |
-| Survey report flood | Deterministic report-slot gate | Check `ANCHOR_REPORT_QUEUE earliest_tx_ms`, report queue hold time, and that `MSG_SURVEY_DISCOVERY_REPORT` TX times follow anchor-slot order |
+| Survey probes collide | Slot count or ID hash collision | Check `DISCOVERY_SLOT_COUNT`, device IDs, and whether two anchors hash to the same slot for that count |
+| Survey report flood | Hash-derived report-slot gate | Check `ANCHOR_REPORT_QUEUE earliest_tx_ms`, report queue hold time, and that `MSG_SURVEY_DISCOVERY_REPORT` TX times follow hash-slot order |
 | Survey graph missing expected links | Discovery PHY or receive window | Check channel 5, 850 kbps long-preamble mode, slot timing, probe TX/RX logs, RSL/quality, and whether the peer is in range during the assigned slot |
 
 ## Local Verification
@@ -399,7 +399,7 @@ Hardware validation is pending. Run the bench in this order:
 
 1. J-Link flash `tag_stage0_highdebug` to one tag. Verify USB enumeration, boot banner, DWM3000 DEV_ID, button simulated click, self-test sleep/wake, `dump_counters`, and `bootloader`.
 2. J-Link flash `tag_stage1_highdebug` and `anchor_stage1_highdebug`. Verify anchor low-duty scan, valid `WAKE_CLAIM_ACCEPT`, discovery reply, one-anchor `BENCH_ONLY` schedule, DS-TWR, and one `RANGE_OK`.
-3. Build and flash at least three `anchor_stage2_highdebug` images with distinct `IMEC_DEVICE_ID` and `IMEC_ANCHOR_SLOT` values. Flash `tag_stage2_highdebug`. Verify three discovery replies, schedule table, same continuous responder burst, three unique `RANGE_OK`, and correct release/retry behavior with fewer than three anchors.
+3. Build and flash at least three `anchor_stage2_highdebug` images with distinct `IMEC_DEVICE_ID` values. Flash `tag_stage2_highdebug`. Verify three discovery replies, schedule table, same continuous responder burst, three unique `RANGE_OK`, and correct release/retry behavior with fewer than three anchors.
 4. Flash `gateway_stage3_highdebug`, keep gateway human logs on RTT, and keep CDC for COBS binary packets. Verify anchor report queueing, mesh route, gateway ACK, USB packet output, and a gateway command returning `COMMAND_RESULT`.
-5. Run a Stage 3 survey reachability command. Verify `SURVEY_DISCOVERY_START` age propagation, deterministic probe slots, deterministic discovery-report mesh slots, gateway discovery-report recording, reachability graph planning, and the first pair prepare/start sequence.
+5. Run a Stage 3 survey reachability command. Verify `SURVEY_DISCOVERY_START` age propagation, hash-derived probe slots, hash-derived discovery-report mesh slots, gateway discovery-report recording, reachability graph planning, and the first pair prepare/start sequence.
 6. Capture logs from all boards and only then mark hardware validation complete for the stage that passed.

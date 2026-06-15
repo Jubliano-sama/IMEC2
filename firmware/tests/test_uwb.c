@@ -624,6 +624,52 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_schedule.entries[2].anchor_id == schedule.entries[2].anchor_id);
 }
 
+static void test_discovery_slot_hash_is_bounded_and_deterministic(void)
+{
+    uint8_t first_slot = 0u;
+    uint8_t second_slot = 0u;
+    uint8_t other_slot = 0u;
+    bool used_slots[6] = {0};
+
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000001),
+                                         6u,
+                                         &first_slot) == PROTO_OK);
+    assert(first_slot < 6u);
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000001),
+                                         6u,
+                                         &second_slot) == PROTO_OK);
+    assert(second_slot == first_slot);
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000002),
+                                         6u,
+                                         &other_slot) == PROTO_OK);
+    assert(other_slot < 6u);
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000001),
+                                         1u,
+                                         &first_slot) == PROTO_OK);
+    assert(first_slot == 0u);
+    assert(uwb_discovery_slot_for_anchor(0u, 6u, &first_slot) == PROTO_ERR_MALFORMED);
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000001),
+                                         0u,
+                                         &first_slot) == PROTO_ERR_MALFORMED);
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000001),
+                                         UWB_DISCOVERY_SLOT_COUNT + 1u,
+                                         &first_slot) == PROTO_ERR_MALFORMED);
+    assert(uwb_discovery_slot_for_anchor(UINT64_C(0xAA00000000000001),
+                                         6u,
+                                         NULL) == PROTO_ERR_ARG);
+
+    for (uint8_t i = 0u; i < 6u; i++) {
+        uint8_t slot = 0u;
+
+        assert(uwb_discovery_slot_for_anchor(UINT64_C(0x2222000000000001) + i,
+                                             6u,
+                                             &slot) == PROTO_OK);
+        assert(slot < 6u);
+        assert(!used_slots[slot]);
+        used_slots[slot] = true;
+    }
+}
+
 static void test_control_frames_reject_bad_crc(void)
 {
     const struct uwb_wake_claim_frame claim = wake_claim();
@@ -1528,6 +1574,7 @@ int main(void)
     test_decode_rejects_mismatched_full_id_short_address();
     test_decode_rejects_malformed_range_header_fields();
     test_wake_discovery_and_schedule_round_trip();
+    test_discovery_slot_hash_is_bounded_and_deterministic();
     test_control_frames_reject_bad_crc();
     test_wake_claim_decode_rejects_valid_crc_malformed_timing();
     test_discovery_decode_rejects_valid_crc_malformed_fields();
