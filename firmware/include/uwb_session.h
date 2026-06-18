@@ -206,9 +206,9 @@ void uwb_clicker_note_wake_claim_tx(struct uwb_clicker_session *session,
 int uwb_anchor_session_init(struct uwb_anchor_session *session,
                             const struct uwb_anchor_config *config);
 void uwb_anchor_note_idle_scan(struct uwb_anchor_session *session,
-                               uint16_t startup_us,
-                               uint16_t pll_us,
-                               uint16_t rx_us,
+                               uint32_t startup_us,
+                               uint32_t pll_us,
+                               uint32_t rx_us,
                                bool preamble_detected);
 void uwb_anchor_note_awake_time(struct uwb_anchor_session *session,
                                 uint32_t awake_us);

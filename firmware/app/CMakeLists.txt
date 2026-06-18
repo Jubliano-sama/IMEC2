@@ -19,6 +19,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     ""
     tag_stage0_highdebug
     tag_stage1_highdebug
+    tag_stage1_wake_spam
     anchor_stage1_highdebug
     tag_stage2_highdebug
     anchor_stage2_highdebug
@@ -47,6 +48,11 @@ if(IMEC_BUILD_PRESET)
         set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_BENCH_STAGE 1)
         set(IMEC_PRESET_ROLE_CONF "role-tag.conf")
+    elseif(IMEC_BUILD_PRESET STREQUAL "tag_stage1_wake_spam")
+        set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_BENCH_STAGE 1)
+        set(IMEC_PRESET_ROLE_CONF "role-tag.conf")
+        set(IMEC_PRESET_EXTRA_CONF "tag-wake-spam.conf")
     elseif(IMEC_BUILD_PRESET STREQUAL "anchor_stage1_highdebug")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_BENCH_STAGE 1)
@@ -100,6 +106,9 @@ if(IMEC_HIGH_DEBUG)
         list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/role-anchor.conf")
     elseif(FIRMWARE_ROLE STREQUAL "gateway")
         list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/role-gateway.conf")
+    endif()
+    if(IMEC_PRESET_EXTRA_CONF)
+        list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/${IMEC_PRESET_EXTRA_CONF}")
     endif()
     if(FIRMWARE_ROLE STREQUAL "gateway")
         list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/gateway-rtt.conf")

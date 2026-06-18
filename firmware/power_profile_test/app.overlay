@@ -1,0 +1,232 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+/ {
+    aliases {
+        /delete-property/ led0;
+        /delete-property/ led1;
+        /delete-property/ led2;
+        /delete-property/ led3;
+        /delete-property/ pwm-led0;
+        /delete-property/ sw0;
+        /delete-property/ sw1;
+        /delete-property/ sw2;
+        /delete-property/ sw3;
+        /delete-property/ bootloader-led0;
+        /delete-property/ mcuboot-button0;
+        /delete-property/ mcuboot-led0;
+
+        click-button = &click_button;
+        status0-red = &status0_red;
+        status0-green = &status0_green;
+        status0-blue = &status0_blue;
+        status1-red = &status1_red;
+        status1-green = &status1_green;
+        status1-blue = &status1_blue;
+        dwm3000 = &dwm3000;
+        dwm3000-reset = &dwm3000_reset;
+        dwm3000-wakeup = &dwm3000_wakeup;
+        battery-adc-enable = &battery_adc_enable;
+    };
+
+    gpio_keys {
+        compatible = "gpio-keys";
+
+        click_button: click_button {
+            gpios = <&gpio0 26 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+            label = "Clicker wake button";
+        };
+    };
+
+    status_leds {
+        compatible = "gpio-leds";
+
+        status0_red: status0_red {
+            gpios = <&gpio0 20 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 0 red";
+        };
+
+        status0_green: status0_green {
+            gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 0 green";
+        };
+
+        status0_blue: status0_blue {
+            gpios = <&gpio0 17 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 0 blue";
+        };
+
+        status1_red: status1_red {
+            gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 1 red";
+        };
+
+        status1_green: status1_green {
+            gpios = <&gpio1 1 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 1 green";
+        };
+
+        status1_blue: status1_blue {
+            gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 1 blue";
+        };
+    };
+
+    dwm3000_control {
+        compatible = "gpio-leds";
+
+        dwm3000_reset: dwm3000_reset {
+            gpios = <&gpio0 31 GPIO_ACTIVE_LOW>;
+            label = "DWM3000 reset";
+        };
+
+        dwm3000_wakeup: dwm3000_wakeup {
+            gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
+            label = "DWM3000 wakeup";
+        };
+    };
+
+    battery_control {
+        compatible = "gpio-leds";
+
+        battery_adc_enable: battery_adc_enable {
+            gpios = <&gpio0 7 GPIO_ACTIVE_LOW>;
+            label = "Battery ADC divider enable";
+        };
+    };
+};
+
+&uart0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&i2c0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&i2c1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&uart1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&pwm0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&ieee802154 {
+    status = "disabled";
+};
+
+&zephyr_udc0 {
+    status = "disabled";
+};
+
+&adc {
+    status = "disabled";
+};
+
+&led0 {
+    status = "disabled";
+};
+
+&led1 {
+    status = "disabled";
+};
+
+&led2 {
+    status = "disabled";
+};
+
+&led3 {
+    status = "disabled";
+};
+
+&pwm_led0 {
+    status = "disabled";
+};
+
+&button0 {
+    status = "disabled";
+};
+
+&button1 {
+    status = "disabled";
+};
+
+&button2 {
+    status = "disabled";
+};
+
+&button3 {
+    status = "disabled";
+};
+
+&pinctrl {
+    spi3_default: spi3_default {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 11)>,
+                    <NRF_PSEL(SPIM_MISO, 0, 12)>,
+                    <NRF_PSEL(SPIM_MOSI, 1, 0)>;
+        };
+    };
+
+    spi3_sleep: spi3_sleep {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 11)>,
+                    <NRF_PSEL(SPIM_MISO, 0, 12)>,
+                    <NRF_PSEL(SPIM_MOSI, 1, 0)>;
+            low-power-enable;
+        };
+    };
+};
+
+&spi3 {
+    compatible = "nordic,nrf-spim";
+    status = "okay";
+    pinctrl-0 = <&spi3_default>;
+    pinctrl-1 = <&spi3_sleep>;
+    pinctrl-names = "default", "sleep";
+    cs-gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+
+    dwm3000: dwm3000@0 {
+        compatible = "qorvo,dwm3000";
+        reg = <0>;
+        spi-max-frequency = <32000000>;
+        slow-spi-frequency = <2000000>;
+        fast-spi-frequency = <32000000>;
+        reset-gpios = <&gpio0 31 GPIO_ACTIVE_LOW>;
+        wakeup-gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
+    };
+};

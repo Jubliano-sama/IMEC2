@@ -1,6 +1,6 @@
 # High-Debug Hardware Bring-Up Firmware
 
-Date: 2026-06-15
+Date: 2026-06-18
 
 This document describes the staged high-debug firmware suite for real DWM3000 plus ANNA-B402/nRF52833 hardware. Hardware validation is pending until real bench logs are captured.
 
@@ -24,15 +24,16 @@ The UWB protocol policy is unchanged:
 
 - Channel 5 is used for wake, discovery, route contact, and ranging.
 - Channel 9 is reserved for negotiated payload/mesh events after contact timing exists.
-- PHY remains 850 kbps, 1024-symbol preamble, PAC8, STS disabled.
-- `UWB_RANGE_REPLY_DELAY_UUS` remains fixed at 900.
+- PHY is 850 kbps, 4096-symbol preamble, PAC32, 4073-symbol SFD timeout, STS disabled, with maximum configured DWM3000 TX power.
+- The current long-range main firmware selects `UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS = 8000`, with a 30 ms scheduled exchange stride. `UWB_RANGE_REPLY_DELAY_SHORT_RANGE_UUS = 2750` is a provisional lower-delay candidate. Both values still need recalibration on the final firmware timing path.
 - Normal click ranging still requires at least three eligible anchor replies.
-- Up to six anchors may be scheduled in a normal-click burst.
+- Up to four anchors may be scheduled in a normal-click burst.
+- The normal-click responder burst is one continuous 400 ms channel-5 window.
 - Three unique `RANGE_OK` anchors from the same click event and burst accept the click.
 - Every shared mesh packet carries a saturated millisecond packet-age field. Relays and report queues add elapsed time before retransmit or send.
 - Gateway time-sync broadcast is retired; Stage 3 timing checks should use packet age and local event uptime, not `CMD_SYNC_TIME` or `TIME_SYNC_AGE_MS`.
 - Gateway survey setup uses `SURVEY_DISCOVERY_START`, UWB `SURVEY_DISCOVERY_PROBE`, and `SURVEY_DISCOVERY_REPORT`.
-- Survey discovery uses hash-derived anchor slots from the gateway-provided slot count and currently uses the same 850 kbps, 1024-symbol channel-5 long-preamble mode, which is the lowest data rate exposed by the local DW3000 SDK.
+- Survey discovery uses hash-derived anchor slots from the gateway-provided slot count and currently uses the same 850 kbps, 4096-symbol channel-5 long-preamble mode, which is the lowest data rate exposed by the local DW3000 SDK.
 - Survey discovery reports are also paced by hash-derived per-anchor mesh report slots, so the gateway receives a report train instead of a simultaneous report flood.
 
 High-debug log lines use this stable prefix:
@@ -53,6 +54,8 @@ All presets are built from one source tree. Build output directories are named a
 build/<preset>/app/zephyr/zephyr.signed.bin
 build/<preset>/app/zephyr/zephyr.signed.hex
 ```
+
+The built-in default IDs are role-specific for bench safety: tag/clicker images use `0x1111111111111111`, the single-anchor Stage 1 image uses the anchor-role default `0x2222222222222222`, and the gateway image uses `GATEWAY_ID`. Multi-anchor Stage 2/3 builds still require explicit unique `-DIMEC_DEVICE_ID=...` values per physical anchor.
 
 | Preset | Role | Stage | Purpose |
 | --- | --- | --- | --- |
@@ -256,6 +259,7 @@ Behavior:
 - The one-anchor path is logged as `BENCH_ONLY`; it does not change production normal-click acceptance.
 - Tag short press sends the wake train, discovery, accepts one discovery reply in bench mode, sends one schedule, runs DS-TWR, and logs distance/status/quality.
 - Identity, nonce, event, anchor ID, reply-delay, and schedule validation remain active.
+- Stage 1 debug LEDs are intentionally verbose and do not optimize for current: status LED 0 shows phase (`blue=idle/listen`, `cyan=wake claim`, `yellow=discovery`, `magenta=schedule`, `white=DS-TWR`), while status LED 1 shows outcome (`blue=active`, `green=success`, `amber=timeout/no packet`, `red=reject/error`).
 
 Expected snippets:
 
@@ -281,8 +285,8 @@ Purpose: verify the production-style discovery threshold and serialized schedule
 Behavior:
 
 - Tag requires at least three eligible discovery replies before normal-click burst ranging starts.
-- Tag schedules up to six anchors.
-- Scheduled anchors remain in the same continuous responder burst window.
+- Tag schedules up to four anchors.
+- Scheduled anchors remain in the same continuous 400 ms responder burst window.
 - DS-TWR remains addressed and serialized, not parallel.
 - Anchor logs discovery slot ID, anchor ID, reply decision, schedule received/rejected, poll matched/wrong-target/ignored, range status, and report queued.
 - Tag prints discovery, schedule, and range tables in machine-greppable logs.
@@ -363,6 +367,18 @@ Expected snippets:
 | Survey probes collide | Slot count or ID hash collision | Check `DISCOVERY_SLOT_COUNT`, device IDs, and whether two anchors hash to the same slot for that count |
 | Survey report flood | Hash-derived report-slot gate | Check `ANCHOR_REPORT_QUEUE earliest_tx_ms`, report queue hold time, and that `MSG_SURVEY_DISCOVERY_REPORT` TX times follow hash-slot order |
 | Survey graph missing expected links | Discovery PHY or receive window | Check channel 5, 850 kbps long-preamble mode, slot timing, probe TX/RX logs, RSL/quality, and whether the peer is in range during the assigned slot |
+
+## Bring-Up Lessons Mainlined
+
+- The RP2040 Stamp stays an official Raspberry Pi Debugprobe. Do not reflash it while debugging nRF52833 firmware.
+- RTT monitoring through pyOCD needs a TTY-backed session. A non-TTY attach can find the RTT control block and still fail before useful logs are visible.
+- The DWM3000 wake path is not a cold reinitialize path. Wake the chip, wait for the ready state, restore common state, restore TX/RX state, then resume RX/TX. Reapplying the full PHY setup after every retained sleep wake is a workaround, not the intended path.
+- Treat SPI speed transitions and retained sleep configuration as first-class suspects when the radio works once after reset and then fails after sleep. Wake and sleep setup must run on the slow SPI path; normal transfers may return to fast SPI afterward.
+- Normal anchor idle uses DWM3000 DEEPSLEEP, a 396 ms scan interval, and a 1 ms receive window so the full scan period fits inside the 400 ms wake train while staying near the 1% DWM3000 awake-time target.
+- Stage 0.9 wake-scan proof is: the anchor detects repeated long-preamble wake claims, decodes CRC-valid `WAKE_CLAIM` frames, and logs `WAKE_CLAIM_ACCEPT`. Discovery or DS-TWR can be deliberately absent in wake-spam builds and should not be confused with a wake-scan failure.
+- USB data lines on the first board revision are not part of firmware validation. Use SWD/Debugprobe and RTT/CDC paths that do not rely on the board USB D+/D- pair.
+- Clicker sleep current depends on firmware pin state as well as hardware rails: park LEDs, DWM/SPI control pins, and the battery ADC divider-disable MOSFET before system-off. The battery ADC enable path must not be allowed to leak in sleep.
+- LED debug should not be used as proof of protocol success by itself. Pair LED codes with RTT counters for scans, preambles, claims, schedule acceptance, delayed-TX misses, and range status.
 
 ## Local Verification
 

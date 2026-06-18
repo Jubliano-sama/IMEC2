@@ -7,9 +7,25 @@
     chosen {
         zephyr,console = &usb_cdc_console;
         zephyr,shell-uart = &usb_cdc_console;
+        zephyr,uart-mcumgr = &usb_cdc_console;
+        zephyr,bt-mon-uart = &usb_cdc_console;
+        zephyr,bt-c2h-uart = &usb_cdc_console;
     };
 
     aliases {
+        /delete-property/ led0;
+        /delete-property/ led1;
+        /delete-property/ led2;
+        /delete-property/ led3;
+        /delete-property/ pwm-led0;
+        /delete-property/ sw0;
+        /delete-property/ sw1;
+        /delete-property/ sw2;
+        /delete-property/ sw3;
+        /delete-property/ bootloader-led0;
+        /delete-property/ mcuboot-button0;
+        /delete-property/ mcuboot-led0;
+
         click-button = &click_button;
         status0-red = &status0_red;
         status0-green = &status0_green;
@@ -110,6 +126,95 @@
     usb_cdc_console: usb_cdc_console {
         compatible = "zephyr,cdc-acm-uart";
     };
+};
+
+&uart0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&i2c0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&i2c1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&uart1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&pwm0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&ieee802154 {
+    status = "disabled";
+};
+
+&led0 {
+    status = "disabled";
+};
+
+&led1 {
+    status = "disabled";
+};
+
+&led2 {
+    status = "disabled";
+};
+
+&led3 {
+    status = "disabled";
+};
+
+&pwm_led0 {
+    status = "disabled";
+};
+
+&button0 {
+    status = "disabled";
+};
+
+&button1 {
+    status = "disabled";
+};
+
+&button2 {
+    status = "disabled";
+};
+
+&button3 {
+    status = "disabled";
 };
 
 &adc {

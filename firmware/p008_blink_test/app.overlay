@@ -1,0 +1,53 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+    aliases {
+        status0-red = &status0_red;
+        status0-green = &status0_green;
+        status0-blue = &status0_blue;
+        status1-red = &status1_red;
+        status1-green = &status1_green;
+        status1-blue = &status1_blue;
+    };
+
+    status_leds {
+        compatible = "gpio-leds";
+
+        status0_red: status0_red {
+            gpios = <&gpio0 20 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 0 red";
+        };
+
+        status0_green: status0_green {
+            gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 0 green";
+        };
+
+        status0_blue: status0_blue {
+            gpios = <&gpio0 17 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 0 blue";
+        };
+
+        status1_red: status1_red {
+            gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 1 red";
+        };
+
+        status1_green: status1_green {
+            gpios = <&gpio1 1 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 1 green";
+        };
+
+        status1_blue: status1_blue {
+            gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
+            label = "Status LED 1 blue";
+        };
+    };
+};
+
+&uart0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};

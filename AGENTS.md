@@ -54,6 +54,8 @@ Do not edit imported dependency trees unless the task explicitly targets them. P
 
 For timing, radio state, routing, queues, packet capacity, or success/failure accounting, add a worst-case test or build-time guard before relying on the path. Keep hardware assumptions aligned across code, docs, and this file.
 
+For difficult DWM3000 bring-up failures, explicitly audit SPI speed transitions and sleep/wake configuration retention before assuming the protocol or RF path is at fault. Both fast/slow SPI ordering and retained sleep configuration have caused hard-to-find behavior where a path works once after reset but fails after sleep or wake.
+
 When modifying versioned documentation in `Documentation/`, increment only the patch component unless the user requests a larger version change. For example, the next edit to `Documentation/UWB+BLE Architecture 0.4.md` becomes `Documentation/UWB+BLE Architecture 0.4.1.md`; do not change `0.4` to `0.5` unless explicitly requested. Cross-reference-only edits do not need a version bump or changelog entry; update the existing document in place unless the content itself changes. Every documentation version bump must also add a short dated changelog entry inside the modified file. This rule applies to all versioned docs:
 
 - `UWB+BLE Architecture X.Y.Z.md`

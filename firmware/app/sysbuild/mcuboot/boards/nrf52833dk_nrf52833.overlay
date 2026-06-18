@@ -1,7 +1,27 @@
 / {
     chosen {
+        zephyr,code-partition = &boot_partition;
         zephyr,boot-mode = &boot_mode0;
+        zephyr,console = &mcuboot_cdc_acm;
+        zephyr,shell-uart = &mcuboot_cdc_acm;
         zephyr,uart-mcumgr = &mcuboot_cdc_acm;
+        zephyr,bt-mon-uart = &mcuboot_cdc_acm;
+        zephyr,bt-c2h-uart = &mcuboot_cdc_acm;
+    };
+
+    aliases {
+        /delete-property/ led0;
+        /delete-property/ led1;
+        /delete-property/ led2;
+        /delete-property/ led3;
+        /delete-property/ pwm-led0;
+        /delete-property/ sw0;
+        /delete-property/ sw1;
+        /delete-property/ sw2;
+        /delete-property/ sw3;
+        /delete-property/ bootloader-led0;
+        /delete-property/ mcuboot-button0;
+        /delete-property/ mcuboot-led0;
     };
 };
 
@@ -21,6 +41,103 @@
     mcuboot_cdc_acm: mcuboot_cdc_acm {
         compatible = "zephyr,cdc-acm-uart";
     };
+};
+
+&uart0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&i2c0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&i2c1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&uart1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi1 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&spi3 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+    /delete-property/ cs-gpios;
+};
+
+&pwm0 {
+    status = "disabled";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
+};
+
+&ieee802154 {
+    status = "disabled";
+};
+
+&led0 {
+    status = "disabled";
+};
+
+&led1 {
+    status = "disabled";
+};
+
+&led2 {
+    status = "disabled";
+};
+
+&led3 {
+    status = "disabled";
+};
+
+&pwm_led0 {
+    status = "disabled";
+};
+
+&button0 {
+    status = "disabled";
+};
+
+&button1 {
+    status = "disabled";
+};
+
+&button2 {
+    status = "disabled";
+};
+
+&button3 {
+    status = "disabled";
 };
 
 /delete-node/ &slot0_partition;

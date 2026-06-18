@@ -935,9 +935,9 @@ int uwb_anchor_session_init(struct uwb_anchor_session *session,
 }
 
 void uwb_anchor_note_idle_scan(struct uwb_anchor_session *session,
-                               uint16_t startup_us,
-                               uint16_t pll_us,
-                               uint16_t rx_us,
+                               uint32_t startup_us,
+                               uint32_t pll_us,
+                               uint32_t rx_us,
                                bool preamble_detected)
 {
     if (session == NULL) {
@@ -949,8 +949,7 @@ void uwb_anchor_note_idle_scan(struct uwb_anchor_session *session,
     diagnostics_add_saturated(&session->diagnostics.scan_pll_time_us, pll_us);
     diagnostics_add_saturated(&session->diagnostics.scan_rx_time_us, rx_us);
     diagnostics_add_awake_time(&session->diagnostics,
-                               (uint32_t)startup_us + (uint32_t)pll_us +
-                               (uint32_t)rx_us);
+                               startup_us + pll_us + rx_us);
     if (preamble_detected) {
         session->diagnostics.preambles++;
     }

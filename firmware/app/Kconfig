@@ -2,6 +2,19 @@ mainmenu "IMEC UWB firmware"
 
 source "Kconfig.zephyr"
 
+menu "IMEC power management"
+
+config IMEC_CLICKER_SYSTEMOFF_IDLE
+    bool "Put the clicker in system-off while idle"
+    default y
+    select POWEROFF
+    help
+      The clicker parks the DWM3000 and board GPIOs, arms the physical click
+      button as a wake source, and enters nRF system-off whenever it is not
+      actively handling a click or self-test interaction.
+
+endmenu
+
 menu "IMEC high-debug bring-up"
 
 config IMEC_HIGH_DEBUG
@@ -82,6 +95,36 @@ config IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE
       Bench-only diagnostic path that lets a Stage 1 clicker schedule and range
       one anchor. Production normal-click acceptance remains three unique
       RANGE_OK anchors.
+
+config IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS
+    bool "Continuously transmit Stage 1 tag wake claims"
+    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_TAG
+    help
+      Bench-only diagnostic path that bypasses button/system-off behavior and
+      repeatedly transmits normal Stage 1 WAKE_CLAIM trains from boot. This is
+      intended for anchor RX bring-up with no manual button presses.
+
+config IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN
+    bool "Use high-duty Stage 1 anchor UWB wake scan"
+    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_ANCHOR
+    help
+      Bench-only diagnostic path that keeps the Stage 1 anchor listening for
+      wake claims with an 80 ms RX window in each 400 ms wake-train period. The
+      scan uses one software-bounded open RX window with the hardware preamble
+      timeout disabled, matching the known-working DS-TWR responder listen style.
+      It retries immediately after partial/bad wake activity instead of applying
+      the normal false-wake cooldown. Production and normal high-debug low-duty
+      scan timing are unchanged when this is off.
+
+config IMEC_STAGE1_ANCHOR_FOCUSED_RX_LOGS
+    bool "Reduce repetitive Stage 1 anchor RX scan logs"
+    depends on IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN
+    default y
+    help
+      Bench-only log filter for high-duty anchor scans. It keeps claim,
+      arbitration, decode, and periodic diagnostics visible while suppressing
+      per-millisecond RX start, SFD-timeout, and sleep/wake chatter that can
+      overflow RTT and hide the protocol events under test.
 
 config IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS
     int "High-debug counter dump period in milliseconds"

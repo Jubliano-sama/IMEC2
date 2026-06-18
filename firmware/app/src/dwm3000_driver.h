@@ -59,6 +59,10 @@ struct dwm3000_driver_stats {
     uint32_t sys_status_poll_loops;
     uint32_t sys_status_poll_timeouts;
     uint32_t sys_status_poll_max_duration_us;
+    uint32_t sleep_wake_count;
+    uint32_t sleep_wake_total_us;
+    uint32_t sleep_wake_max_us;
+    uint32_t sleep_wake_failures;
     uint32_t rx_starts;
     uint32_t rx_dones;
     uint32_t rx_timeouts;
@@ -75,6 +79,7 @@ int dwm3000_driver_configure_default(void);
 int dwm3000_driver_configure_range_mode(void);
 int dwm3000_driver_configure_mesh_payload_mode(void);
 int dwm3000_driver_configure_wake_mode(void);
+int dwm3000_driver_idle(void);
 int dwm3000_driver_standby(void);
 int dwm3000_driver_send_frame(const uint8_t *frame,
                               size_t frame_len,
@@ -92,6 +97,13 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                           uint8_t *quality,
                                           int8_t *rsl_dbm,
                                           enum dwm3000_rx_failure *failure);
+int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
+                                            uint8_t *frame,
+                                            size_t frame_cap,
+                                            size_t *frame_len,
+                                            uint8_t *quality,
+                                            int8_t *rsl_dbm,
+                                            enum dwm3000_rx_failure *failure);
 int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                    struct dwm3000_range_result *result);
 int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,
