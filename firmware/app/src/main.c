@@ -15,7 +15,11 @@
 
 #if defined(CONFIG_BT)
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gap.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/net_buf.h>
 #if defined(CONFIG_BT_LL_SOFTDEVICE_HEADERS_INCLUDE)
 #include <bluetooth/hci_vs_sdc.h>
@@ -26,10 +30,16 @@
 #include <hal/nrf_power.h>
 
 #include <zephyr/device.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#if defined(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND)
+#include <zephyr/logging/log_backend.h>
+#include <zephyr/logging/log_backend_std.h>
+#include <zephyr/logging/log_output.h>
+#endif
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/random/random.h>
 #if defined(CONFIG_RETENTION_BOOT_MODE)
@@ -56,6 +66,24 @@ LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
 
 #ifndef DEVICE_ROLE
 #define DEVICE_ROLE ROLE_CLICKER
+#endif
+
+#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+#define BLE_CONNECTIVITY_TEST_UNUSED __attribute__((unused))
+#else
+#define BLE_CONNECTIVITY_TEST_UNUSED
+#endif
+
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+#define ML_ANCHOR_ONLY_UNUSED
+#else
+#define ML_ANCHOR_ONLY_UNUSED __attribute__((unused))
+#endif
+
+#if defined(CONFIG_IMEC_ML_CLICKER)
+#define ML_CLICKER_BUTTON_UNUSED __attribute__((unused))
+#else
+#define ML_CLICKER_BUTTON_UNUSED
 #endif
 
 #ifndef GATEWAY_ID
@@ -170,16 +198,39 @@ static void stage1_anchor_focused_note_wake_claim(
 #define STATUS1_GREEN_NODE DT_ALIAS(status1_green)
 #define STATUS1_BLUE_NODE DT_ALIAS(status1_blue)
 #define BATTERY_ADC_ENABLE_NODE DT_ALIAS(battery_adc_enable)
+#define BATTERY_ADC_NODE DT_NODELABEL(battery_adc)
 #define USB_CONSOLE_NODE DT_CHOSEN(zephyr_console)
 #define CLICK_BUTTON_RELEASE_TIMEOUT_MS 3000u
 #define CLICK_BUTTON_RELEASE_POLL_MS 5u
 #define CLICK_BUTTON_RELEASE_STABLE_MS BUTTON_DEBOUNCE_MS
 
+#ifndef IMEC_ML_ANCHOR_SLOT
+#define IMEC_ML_ANCHOR_SLOT 0u
+#endif
+
+#ifndef IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED
+#define IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED 0
+#endif
+
+#ifndef IMEC_HIGH_DEBUG_ANCHOR_SLOT
+#define IMEC_HIGH_DEBUG_ANCHOR_SLOT 0u
+#endif
+
+#if IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED
+#define ANCHOR_DISCOVERY_SLOT_SOURCE "flashed"
+#elif defined(CONFIG_IMEC_ML_ANCHOR)
+#define ANCHOR_DISCOVERY_SLOT_SOURCE "ml"
+#else
+#define ANCHOR_DISCOVERY_SLOT_SOURCE "hash"
+#endif
+
 #if DT_NODE_HAS_STATUS(CLICK_BUTTON_NODE, okay)
 static const struct gpio_dt_spec click_button = GPIO_DT_SPEC_GET(CLICK_BUTTON_NODE, gpios);
 static struct gpio_callback click_button_cb;
 static struct k_work click_button_work;
+static struct k_work_delayable click_button_release_work;
 static struct k_work_delayable self_test_arm_timeout_work;
+static struct k_work clicker_action_work;
 #define CLICK_BUTTON_PORT_NUM DT_PROP(DT_GPIO_CTLR(CLICK_BUTTON_NODE, gpios), port)
 #define CLICK_BUTTON_PIN_NUM DT_GPIO_PIN(CLICK_BUTTON_NODE, gpios)
 #define HAS_CLICK_BUTTON 1
@@ -209,6 +260,20 @@ static const struct gpio_dt_spec status1_blue = GPIO_DT_SPEC_GET(STATUS1_BLUE_NO
 static const struct gpio_dt_spec battery_adc_enable =
     GPIO_DT_SPEC_GET(BATTERY_ADC_ENABLE_NODE, gpios);
 #endif
+#if DT_NODE_HAS_STATUS(BATTERY_ADC_NODE, okay)
+static const struct adc_dt_spec battery_adc = {
+    .dev = DEVICE_DT_GET(DT_PARENT(BATTERY_ADC_NODE)),
+    .channel_id = DT_REG_ADDR(BATTERY_ADC_NODE),
+    .channel_cfg_dt_node_exists = true,
+    .channel_cfg = ADC_CHANNEL_CFG_DT(BATTERY_ADC_NODE),
+    .vref_mv = DT_PROP_OR(BATTERY_ADC_NODE, zephyr_vref_mv, 0),
+    .resolution = DT_PROP_OR(BATTERY_ADC_NODE, zephyr_resolution, 0),
+    .oversampling = DT_PROP_OR(BATTERY_ADC_NODE, zephyr_oversampling, 0),
+};
+#define HAS_BATTERY_ADC 1
+#else
+#define HAS_BATTERY_ADC 0
+#endif
 
 #if DT_NODE_HAS_STATUS(USB_CONSOLE_NODE, okay)
 static const struct device *serial_console = DEVICE_DT_GET(USB_CONSOLE_NODE);
@@ -228,7 +293,15 @@ static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable report_tx_work;
 static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
-static struct k_work_delayable gateway_serial_rx_work;
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+static struct k_work_delayable ml_anchor_battery_led_work;
+#endif
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+static struct k_work gateway_ble_rx_work;
+#endif
+#if defined(CONFIG_IMEC_ML_CLICKER)
+static struct k_work ml_clicker_collect_work;
+#endif
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 static struct k_work_delayable high_debug_serial_work;
 static struct k_work_delayable high_debug_counter_work;
@@ -270,9 +343,10 @@ struct high_debug_counters {
     uint32_t mesh_retry;
     uint32_t mesh_drop;
     uint32_t gateway_packets_emitted;
-    uint32_t usb_connects;
-    uint32_t usb_disconnects;
-    uint32_t usb_resets;
+    uint32_t gateway_ble_connects;
+    uint32_t gateway_ble_disconnects;
+    uint32_t gateway_ble_notify_failures;
+    uint32_t gateway_ble_rx_drops;
     uint32_t bootloader_entry_requests;
     uint32_t command_rx;
     uint32_t command_result_tx;
@@ -290,28 +364,42 @@ static size_t high_debug_command_len;
 #define MAX_SUCCESSFUL_ANCHORS 16u
 #define WAKE_ADV_MS 400u
 #define ANCHOR_UWB_WAIT_MS 500u
-#if IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
+#if IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)
+#define ANCHOR_UWB_SCAN_INTERVAL_MS CONFIG_IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
+#define ANCHOR_UWB_SCAN_RX_US 20000u
+#define ANCHOR_UWB_SCAN_RX_MS 20u
+#define ANCHOR_STAGE1_FOCUSED_RX_SPIN_MS 0u
+#elif IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
 #define ANCHOR_UWB_SCAN_INTERVAL_MS 317u
 #define ANCHOR_UWB_SCAN_RX_US 80000u
 #define ANCHOR_UWB_SCAN_RX_MS 80u
 #define ANCHOR_STAGE1_FOCUSED_RX_SPIN_MS 0u
+#elif IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_SCAN_ALLOW_OVER_RX_BUDGET)
+#define ANCHOR_UWB_SCAN_INTERVAL_MS CONFIG_IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
+#define ANCHOR_UWB_SCAN_RX_US CONFIG_IMEC_ANCHOR_UWB_SCAN_RX_US
+#define ANCHOR_UWB_SCAN_RX_MS ((CONFIG_IMEC_ANCHOR_UWB_SCAN_RX_US + 999u) / 1000u)
+#define ANCHOR_STAGE1_FOCUSED_RX_SPIN_MS 0u
 #else
-#define ANCHOR_UWB_SCAN_INTERVAL_MS 396u
-#define ANCHOR_UWB_SCAN_RX_US 1000u
-#define ANCHOR_UWB_SCAN_RX_MS 1u
+#define ANCHOR_UWB_SCAN_INTERVAL_MS CONFIG_IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
+#define ANCHOR_UWB_SCAN_RX_US CONFIG_IMEC_ANCHOR_UWB_SCAN_RX_US
+#define ANCHOR_UWB_SCAN_RX_MS ((CONFIG_IMEC_ANCHOR_UWB_SCAN_RX_US + 999u) / 1000u)
 #define ANCHOR_STAGE1_FOCUSED_RX_SPIN_MS 0u
 #endif
 #define ANCHOR_UWB_STARTUP_US 2500u
 #define ANCHOR_UWB_PLL_US 170u
-#define ANCHOR_UWB_IDLE_BUDGET_US_PER_S 10000u
+#define ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S 13000u
+#define ANCHOR_UWB_IDLE_SCAN_DUTY_US ANCHOR_UWB_SCAN_RX_US
 #define ANCHOR_UWB_IDLE_SCAN_AWAKE_US \
     (ANCHOR_UWB_STARTUP_US + ANCHOR_UWB_PLL_US + ANCHOR_UWB_SCAN_RX_US)
 #define ANCHOR_UWB_IDLE_SCAN_PERIOD_US \
     ((ANCHOR_UWB_SCAN_INTERVAL_MS * 1000u) + ANCHOR_UWB_IDLE_SCAN_AWAKE_US)
+#define ANCHOR_UWB_IDLE_SCAN_RX_OFF_GAP_US \
+    ((ANCHOR_UWB_SCAN_INTERVAL_MS * 1000u) + ANCHOR_UWB_STARTUP_US + \
+     ANCHOR_UWB_PLL_US)
 #define ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS 60000u
 #define ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS \
-    ((((uint64_t)WAKE_ADV_MS * 1000ull) - ANCHOR_UWB_IDLE_SCAN_AWAKE_US - 1ull) / \
-     1000ull)
+    ((((uint64_t)WAKE_ADV_MS * 1000ull) - ANCHOR_UWB_STARTUP_US - \
+      ANCHOR_UWB_PLL_US - 1ull) / 1000ull)
 #define ANCHOR_UWB_SCAN_MAX_INTERVAL_MS \
     (ANCHOR_UWB_SCAN_WAKE_OVERLAP_MAX_INTERVAL_MS < \
      ANCHOR_UWB_SCAN_COMMAND_ABSOLUTE_MAX_INTERVAL_MS ? \
@@ -321,14 +409,16 @@ static size_t high_debug_command_len;
 #define ANCHOR_FALSE_WAKE_COOLDOWN_MS 100u
 #define UWB_DISCOVERY_SLOT_US 1000u
 #define UWB_DISCOVERY_RX_GUARD_MS 8u
-#define UWB_DISCOVERY_LISTEN_MS (UWB_DISCOVERY_RX_GUARD_MS * 2u)
+#define UWB_DISCOVERY_RX_LATE_GUARD_MS 100u
+#define UWB_DISCOVERY_LISTEN_MS \
+    (UWB_DISCOVERY_RX_GUARD_MS + UWB_DISCOVERY_RX_LATE_GUARD_MS)
 #define UWB_DISCOVERY_REPLY_TX_TIMEOUT_MS 20u
 #define UWB_CONTROL_TX_TIMEOUT_MS 20u
 #define UWB_RANGE_SCHEDULE_RX_MS 80u
 #define UWB_SCHEDULE_GUARD_MS 10u
 #define UWB_WAKE_CHANNEL UWB_CHANNEL_WAKE_CONTACT
 #define UWB_RANGING_CHANNEL UWB_CHANNEL_WAKE_CONTACT
-#define UWB_RANGE_FIRST_POLL_DELAY_MS 5u
+#define UWB_RANGE_FIRST_POLL_DELAY_MS 50u
 #define UWB_SAMPLES_PER_ANCHOR 2u
 #define UWB_MAX_DISCOVERY_WINDOW_MS \
     (((MAX_SCHEDULED_ANCHORS * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
@@ -364,36 +454,18 @@ static size_t high_debug_command_len;
 #define CLICK_REPORT_DEADLINE_MS 15000u
 #define UWB_MESH_ANCHOR_RX_INTERVAL_MS 6000u
 #define UWB_MESH_ANCHOR_RX_WINDOW_MS 2u
-#define UWB_MESH_ANCHOR_RX_AWAKE_US \
-    (ANCHOR_UWB_STARTUP_US + ANCHOR_UWB_PLL_US + \
-     (UWB_MESH_ANCHOR_RX_WINDOW_MS * 1000u))
-#define UWB_MESH_ANCHOR_RX_PERIOD_US \
-    ((UWB_MESH_ANCHOR_RX_INTERVAL_MS * 1000u) + UWB_MESH_ANCHOR_RX_AWAKE_US)
-#define UWB_MESH_ANCHOR_RX_US_PER_S \
-    (((uint64_t)UWB_MESH_ANCHOR_RX_AWAKE_US * 1000000ull + \
-      UWB_MESH_ANCHOR_RX_PERIOD_US - 1ull) / UWB_MESH_ANCHOR_RX_PERIOD_US)
-#define ANCHOR_UWB_SCAN_BUDGET_US_PER_S \
-    (ANCHOR_UWB_IDLE_BUDGET_US_PER_S - UWB_MESH_ANCHOR_RX_US_PER_S)
-#define ANCHOR_UWB_SCAN_ONLY_MIN_INTERVAL_MS \
-    ((((uint64_t)ANCHOR_UWB_IDLE_SCAN_AWAKE_US * 1000000ull + \
-       ANCHOR_UWB_IDLE_BUDGET_US_PER_S - 1ull) / \
-      ANCHOR_UWB_IDLE_BUDGET_US_PER_S - \
-      ANCHOR_UWB_IDLE_SCAN_AWAKE_US + 999ull) / 1000ull)
-#define ANCHOR_UWB_SCAN_COMBINED_MIN_INTERVAL_MS \
-    ((((uint64_t)ANCHOR_UWB_IDLE_SCAN_AWAKE_US * 1000000ull + \
-       ANCHOR_UWB_SCAN_BUDGET_US_PER_S - 1ull) / \
-      ANCHOR_UWB_SCAN_BUDGET_US_PER_S - \
-      ANCHOR_UWB_IDLE_SCAN_AWAKE_US + 999ull) / 1000ull)
 #define ANCHOR_UWB_SCAN_MIN_INTERVAL_MS \
-    (ANCHOR_UWB_SCAN_COMBINED_MIN_INTERVAL_MS > \
-     ANCHOR_UWB_SCAN_ONLY_MIN_INTERVAL_MS ? \
-     ANCHOR_UWB_SCAN_COMBINED_MIN_INTERVAL_MS : \
-     ANCHOR_UWB_SCAN_ONLY_MIN_INTERVAL_MS)
-#define ANCHOR_UWB_SCAN_US_PER_S \
+    ((((uint64_t)ANCHOR_UWB_IDLE_SCAN_DUTY_US * 1000000ull + \
+       ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S - 1ull) / \
+      ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S - \
+      ANCHOR_UWB_IDLE_SCAN_DUTY_US + 999ull) / 1000ull)
+#define ANCHOR_UWB_SCAN_RX_US_PER_S \
+    (((uint64_t)ANCHOR_UWB_IDLE_SCAN_DUTY_US * 1000000ull + \
+      ANCHOR_UWB_IDLE_SCAN_PERIOD_US - 1ull) / ANCHOR_UWB_IDLE_SCAN_PERIOD_US)
+#define ANCHOR_UWB_SCAN_AWAKE_US_PER_S \
     (((uint64_t)ANCHOR_UWB_IDLE_SCAN_AWAKE_US * 1000000ull + \
       ANCHOR_UWB_IDLE_SCAN_PERIOD_US - 1ull) / ANCHOR_UWB_IDLE_SCAN_PERIOD_US)
-#define ANCHOR_UWB_PERIODIC_IDLE_US_PER_S \
-    (ANCHOR_UWB_SCAN_US_PER_S + UWB_MESH_ANCHOR_RX_US_PER_S)
+#define ANCHOR_UWB_PERIODIC_IDLE_US_PER_S ANCHOR_UWB_SCAN_AWAKE_US_PER_S
 #define UWB_MESH_GATEWAY_RX_WINDOW_MS 50u
 #define UWB_MESH_GATEWAY_RX_IDLE_MS 2u
 #define MESH_EVENT_DEFAULT_INTERVAL_MS 80u
@@ -402,8 +474,8 @@ static size_t high_debug_command_len;
 #define MESH_EVENT_DEFAULT_GUARD_MS UWB_SCHEDULE_GUARD_MS
 #define MESH_EVENT_DEFAULT_MAX_MISSED 3u
 #define MESH_EVENT_DEFAULT_SUPERVISION_MS 1000u
-#define GATEWAY_SERIAL_POLL_MS 10u
-#define GATEWAY_SERIAL_MAX_BYTES_PER_POLL 64u
+#define GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH 4u
+#define GATEWAY_BLE_DEFAULT_NOTIFY_CHUNK 20u
 #define MESH_RX_QUEUE_DEPTH 8
 #define REPORT_TX_QUEUE_DEPTH 16
 #define REPORT_TX_RETRY_DELAY_MS 1000u
@@ -428,26 +500,32 @@ static size_t high_debug_command_len;
     (ROUTE_GATEWAY_ACK_TIMEOUT_MS + UWB_MESH_TX_TIMEOUT_MS + 250u)
 #define ANCHOR_SURVEY_WORKQUEUE_STACK_SIZE 4096u
 #define ANCHOR_SURVEY_WORKQUEUE_PRIORITY K_LOWEST_APPLICATION_THREAD_PRIO
+#define CLICKER_ACTION_WORKQUEUE_STACK_SIZE 8192u
+#define CLICKER_ACTION_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
 #define GATEWAY_SURVEY_AUTO_RETRY_MS 100u
 #define GATEWAY_SURVEY_PAIR_SETTLE_MS 50u
 #define GATEWAY_COMMAND_MESH_TIMEOUT_MARGIN_MS 1000u
 
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS * 1000u >= ANCHOR_UWB_SCAN_RX_US,
              "anchor scan millisecond timeout must cover configured RX microseconds");
-#if !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
-BUILD_ASSERT(UWB_MESH_ANCHOR_RX_US_PER_S < ANCHOR_UWB_IDLE_BUDGET_US_PER_S,
-             "periodic anchor UWB mesh RX must leave idle duty budget for wake scans");
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) && \
+    !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN) && \
+    !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_SCAN_ALLOW_OVER_RX_BUDGET)
 BUILD_ASSERT(ANCHOR_UWB_SCAN_INTERVAL_MS >= ANCHOR_UWB_SCAN_MIN_INTERVAL_MS,
-             "anchor wake scan interval must leave duty budget for periodic mesh RX");
-BUILD_ASSERT(ANCHOR_UWB_PERIODIC_IDLE_US_PER_S <= ANCHOR_UWB_IDLE_BUDGET_US_PER_S,
-             "anchor periodic UWB scan plus mesh RX must stay at or below 1 percent");
+             "anchor wake scan interval must keep channel-5 idle scan inside the calibrated RX budget");
+BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_US_PER_S <= ANCHOR_UWB_IDLE_RX_BUDGET_US_PER_S,
+             "anchor periodic channel-5 UWB scan must stay inside the calibrated RX budget");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_MIN_INTERVAL_MS <= ANCHOR_UWB_SCAN_MAX_INTERVAL_MS,
              "anchor scan duty command range must satisfy duty and wake overlap limits");
 BUILD_ASSERT(((uint64_t)ANCHOR_UWB_SCAN_MAX_INTERVAL_MS * 1000ull) +
-             ANCHOR_UWB_IDLE_SCAN_AWAKE_US < ((uint64_t)WAKE_ADV_MS * 1000ull),
+             ANCHOR_UWB_STARTUP_US + ANCHOR_UWB_PLL_US <
+             ((uint64_t)WAKE_ADV_MS * 1000ull),
              "maximum anchor scan duty command interval must preserve wake overlap");
-BUILD_ASSERT(WAKE_ADV_MS * 1000u > ANCHOR_UWB_IDLE_SCAN_PERIOD_US,
-             "clicker wake train must cover at least one complete anchor scan period");
+#endif
+#if !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
+BUILD_ASSERT(WAKE_ADV_MS * 1000u > ANCHOR_UWB_IDLE_SCAN_RX_OFF_GAP_US,
+             "clicker wake train must cover the anchor RX-off gap");
 BUILD_ASSERT(WAKE_ADV_MS * 1000u > ANCHOR_UWB_IDLE_SCAN_AWAKE_US,
              "clicker wake train must exceed one anchor scan awake window");
 #endif
@@ -475,6 +553,12 @@ BUILD_ASSERT(GATEWAY_COMMAND_RESULT_TIMEOUT_MS >=
              (UWB_MESH_ANCHOR_RX_INTERVAL_MS + ROUTE_GATEWAY_ACK_TIMEOUT_MS +
               GATEWAY_COMMAND_MESH_TIMEOUT_MARGIN_MS),
              "gateway command timeout must cover anchor UWB mesh RX cadence and ACK");
+BUILD_ASSERT(UWB_RANGE_FIRST_POLL_DELAY_MS > UWB_SCHEDULE_GUARD_MS,
+             "first scheduled poll must leave room for the anchor schedule guard");
+BUILD_ASSERT(SERIAL_FRAME_MAX_LEN <= UINT16_MAX,
+             "gateway BLE frame queue length field must hold a full COBS frame");
+BUILD_ASSERT(GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH >= 2u,
+             "gateway BLE RX queue must absorb at least one pending and one arriving frame");
 BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >=
              (SURVEY_DISCOVERY_RX_GUARD_MS + SURVEY_DISCOVERY_TX_TIMEOUT_MS + 2u),
              "survey discovery slots must fit guard time and one probe transmission");
@@ -488,6 +572,19 @@ BUILD_ASSERT(SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT > 0u &&
              "default survey discovery slots must fit survey TLV limits");
 BUILD_ASSERT(SURVEY_RESULT_MESH_SLOT_MS > ROUTE_GATEWAY_ACK_TIMEOUT_MS,
              "survey result mesh slots must leave room for one tracked TX ACK wait");
+#if IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED
+BUILD_ASSERT(IMEC_HIGH_DEBUG_ANCHOR_SLOT < UWB_DISCOVERY_SLOT_COUNT,
+             "flashed high-debug anchor slot must fit the UWB discovery slot field");
+#endif
+#if defined(CONFIG_IMEC_ML_CLICKER)
+BUILD_ASSERT(CONFIG_IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR <=
+             UWB_RANGING_REQUESTS_MAX_PER_ANCHOR,
+             "ML default samples per anchor must fit the UWB schedule field");
+BUILD_ASSERT(CONFIG_IMEC_ML_MAX_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+             "ML selected anchors must fit the production range schedule frame");
+BUILD_ASSERT(CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT <= UWB_DISCOVERY_SLOT_COUNT,
+             "ML discovery slot count must fit the UWB discovery field");
+#endif
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 BUILD_ASSERT(!(IS_ENABLED(CONFIG_IMEC_ROLE_TAG) || IS_ENABLED(CONFIG_IMEC_ROLE_CLICKER)) ||
              DEVICE_ROLE == ROLE_CLICKER,
@@ -506,17 +603,59 @@ struct mesh_rx_pending {
     uint32_t received_at_ms;
 };
 
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+struct gateway_ble_frame_pending {
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    uint16_t len;
+};
+#endif
+
+#if defined(CONFIG_IMEC_ML_CLICKER)
+struct ml_clicker_request {
+    struct proto_packet command;
+    uint64_t host_id;
+    uint8_t samples_per_anchor;
+    uint8_t max_anchor_count;
+    uint8_t discovery_slot_count;
+};
+
+struct ml_clicker_runtime {
+    struct ml_clicker_request request;
+    uint32_t event_seq;
+    uint32_t burst_id;
+    uint16_t next_packet_seq;
+    uint16_t emitted_samples;
+    uint16_t notify_failures;
+    uint16_t attempted_ranges;
+    uint16_t selected_anchors;
+    bool active;
+};
+#endif
+
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+K_MSGQ_DEFINE(gateway_ble_rx_msgq,
+              sizeof(struct gateway_ble_frame_pending),
+              GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH,
+              4);
+#endif
 K_THREAD_STACK_DEFINE(anchor_survey_work_q_stack, ANCHOR_SURVEY_WORKQUEUE_STACK_SIZE);
+K_THREAD_STACK_DEFINE(clicker_action_work_q_stack, CLICKER_ACTION_WORKQUEUE_STACK_SIZE);
 
 static struct k_work_q anchor_survey_work_q;
 static const struct k_work_queue_config anchor_survey_work_q_config = {
     .name = "anchor_survey",
 };
-static uint8_t gateway_serial_rx_frame[SERIAL_FRAME_MAX_LEN];
-static size_t gateway_serial_rx_len;
-static bool gateway_serial_rx_overflow;
+static struct k_work_q clicker_action_work_q;
+static const struct k_work_queue_config clicker_action_work_q_config = {
+    .name = "clicker_action",
+};
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+static uint8_t gateway_ble_rx_frame[SERIAL_FRAME_MAX_LEN];
+static size_t gateway_ble_rx_len;
+static bool gateway_ble_rx_overflow;
+#endif
 static uint16_t gateway_command_seq;
 static uint16_t anchor_heartbeat_seq;
 static uint16_t anchor_survey_seq;
@@ -542,10 +681,37 @@ static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
+static atomic_t clicker_action_active;
+static enum button_action clicker_pending_action;
+#if defined(CONFIG_IMEC_ML_CLICKER)
+static atomic_t ml_clicker_busy;
+static struct ml_clicker_request ml_clicker_pending_request;
+static struct ml_clicker_runtime ml_clicker_runtime;
+static uint8_t ml_clicker_discovery_slot_override;
+#endif
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+static uint16_t ml_anchor_battery_mv;
+static bool ml_anchor_battery_led_on;
+#endif
 
 static int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 static int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 static int mesh_request_route(uint64_t target_id, const char *reason);
+#if defined(CONFIG_IMEC_ML_CLICKER)
+static void ml_clicker_collect_work_handler(struct k_work *work);
+static void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len);
+static uint8_t ml_clicker_discovery_slot_count_override(void);
+static int ml_clicker_emit_range_sample_if_active(
+    const struct uwb_clicker_session *session,
+    const struct uwb_range_schedule_frame *schedule,
+    const struct uwb_range_step *step,
+    const struct dwm3000_range_result *range_result);
+static bool ml_clicker_continue_after_range_start_failure(void);
+#endif
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+static void ml_anchor_battery_led_work_handler(struct k_work *work);
+static uint16_t ml_anchor_cached_battery_mv(void);
+#endif
 static bool mesh_handle_event_control(const struct proto_packet *packet,
                                       const uint8_t *payload,
                                       size_t payload_len,
@@ -558,6 +724,7 @@ static void anchor_set_uwb_busy(bool busy);
 static void anchor_note_uwb_awake_since(int64_t start_ms, uint32_t already_counted_us);
 static int anchor_start_uwb_scan(void);
 static void clicker_enter_systemoff_idle(void);
+static void clicker_enter_idle(void);
 static void mesh_stop_role_scan(void);
 static void mesh_restart_role_scan(void);
 static void anchor_survey_work_handler(struct k_work *work);
@@ -583,6 +750,15 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
 static void gateway_survey_auto_note_command_timeout(const struct proto_packet *command,
                                                      enum command_id command_id);
 static void anchor_heartbeat_work_handler(struct k_work *work);
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+static void gateway_ble_rx_work_handler(struct k_work *work);
+static void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len);
+#endif
+static int gateway_ble_init(void);
+static int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len);
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+static int gateway_ble_send_log_bytes(const uint8_t *data, size_t len);
+#endif
 static bool mesh_queue_from_frame(const uint8_t *frame,
                                   size_t frame_len,
                                   uint8_t link_quality,
@@ -703,29 +879,32 @@ static const char *claim_decision_name(enum uwb_anchor_claim_decision decision)
     }
 }
 
-static bool high_debug_gateway_binary_cdc_active(void)
+static bool gateway_ble_transport_enabled(void)
 {
-#if defined(CONFIG_IMEC_HIGH_DEBUG) && defined(CONFIG_IMEC_GATEWAY_BINARY_CDC)
-    return DEVICE_ROLE == ROLE_GATEWAY && IS_ENABLED(CONFIG_IMEC_GATEWAY_BINARY_CDC);
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+    return IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE) &&
+           (DEVICE_ROLE == ROLE_GATEWAY ||
+            (DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER)) ||
+            (DEVICE_ROLE == ROLE_ANCHOR && IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)));
 #else
     return false;
 #endif
 }
 
-static bool gateway_binary_cdc_enabled(void)
+static bool clicker_systemon_retained_idle_enabled(void)
 {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (DEVICE_ROLE == ROLE_GATEWAY) {
-        return IS_ENABLED(CONFIG_IMEC_GATEWAY_BINARY_CDC);
-    }
-#endif
-    return true;
+    return DEVICE_ROLE == ROLE_CLICKER &&
+           IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE) &&
+           !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS);
 }
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 static bool high_debug_cdc_command_enabled(void)
 {
-    return !high_debug_gateway_binary_cdc_active();
+    if (clicker_systemon_retained_idle_enabled()) {
+        return false;
+    }
+    return !gateway_ble_transport_enabled();
 }
 
 static void high_debug_dump_counters(const char *event)
@@ -747,7 +926,8 @@ static void high_debug_dump_counters(const char *event)
                          "schedule_tx=%u schedule_rx=%u schedule_accept=%u schedule_reject=%u "
                          "ds_attempt=%u ds_ok=%u ds_fail=%u ds_timing_reject=%u "
                          "mesh_tx=%u mesh_rx=%u mesh_ack=%u mesh_retry=%u mesh_drop=%u "
-                         "gateway_packets=%u usb_connect=%u usb_disconnect=%u usb_reset=%u bootloader_req=%u command_rx=%u command_result_tx=%u",
+                         "gateway_packets=%u ble_connect=%u ble_disconnect=%u ble_notify_fail=%u ble_rx_drop=%u "
+                         "bootloader_req=%u command_rx=%u command_result_tx=%u",
                          high_debug_counters.boot_count,
                          high_debug_counters.dwm_dev_id_successes,
                          high_debug_counters.dwm_dev_id_failures,
@@ -788,9 +968,10 @@ static void high_debug_dump_counters(const char *event)
                          high_debug_counters.mesh_retry,
                          high_debug_counters.mesh_drop,
                          high_debug_counters.gateway_packets_emitted,
-                         high_debug_counters.usb_connects,
-                         high_debug_counters.usb_disconnects,
-                         high_debug_counters.usb_resets,
+                         high_debug_counters.gateway_ble_connects,
+                         high_debug_counters.gateway_ble_disconnects,
+                         high_debug_counters.gateway_ble_notify_failures,
+                         high_debug_counters.gateway_ble_rx_drops,
                          high_debug_counters.bootloader_entry_requests,
                          high_debug_counters.command_rx,
                          high_debug_counters.command_result_tx);
@@ -810,7 +991,8 @@ static void high_debug_boot_banner(void)
     high_debug_log_event("BOOT_CONFIG",
                          "device_id=0x%016llx gateway_id=0x%016llx network_id=0x%08x "
                          "uwb_channel=%u mesh_payload_channel=%u spi_hz=%u sys_status_polling=1 "
-                         "usb_bootloader=%u usb_cdc_logs=%u rtt_logs=%u gateway_binary_cdc=%u",
+                         "usb_bootloader=%u usb_cdc_logs=%u rtt_logs=%u gateway_ble=%u "
+                         "ble_log_backend=%u anchor_slot_source=%s highdebug_anchor_slot=%u",
                          (unsigned long long)DEVICE_ID,
                          (unsigned long long)GATEWAY_ID,
                          NETWORK_ID,
@@ -820,7 +1002,10 @@ static void high_debug_boot_banner(void)
                          IS_ENABLED(CONFIG_IMEC_USB_BOOTLOADER) ? 1u : 0u,
                          IS_ENABLED(CONFIG_IMEC_USB_CDC_LOGS) ? 1u : 0u,
                          IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
-                         high_debug_gateway_binary_cdc_active() ? 1u : 0u);
+                         gateway_ble_transport_enabled() ? 1u : 0u,
+                         IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND) ? 1u : 0u,
+                         ANCHOR_DISCOVERY_SLOT_SOURCE,
+                         (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
 }
 
 static int high_debug_request_bootloader(void)
@@ -891,7 +1076,7 @@ static bool mesh_id_is_unicast(uint64_t node_id)
     return node_id != MESH_BROADCAST_ID;
 }
 
-static int configure_output(const struct gpio_dt_spec *gpio)
+static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
 {
     if (!gpio_is_ready_dt(gpio)) {
         return -ENODEV;
@@ -919,7 +1104,85 @@ static int battery_adc_divider_disable(void)
 #endif
 }
 
-static bool reset_reason_was_systemoff(void)
+static int battery_adc_divider_enable(void)
+{
+#if DT_NODE_HAS_STATUS(BATTERY_ADC_ENABLE_NODE, okay)
+    int ret;
+
+    if (!gpio_is_ready_dt(&battery_adc_enable)) {
+        return -ENODEV;
+    }
+
+    ret = gpio_pin_configure(battery_adc_enable.port, battery_adc_enable.pin,
+                             GPIO_OUTPUT_LOW);
+    if (ret < 0) {
+        return ret;
+    }
+    return gpio_pin_set_raw(battery_adc_enable.port, battery_adc_enable.pin, 0);
+#else
+    return 0;
+#endif
+}
+
+static int ML_ANCHOR_ONLY_UNUSED battery_sample_lithium_mv(uint16_t *battery_mv)
+{
+#if HAS_BATTERY_ADC
+    int16_t raw_sample = 0;
+    int32_t adc_mv;
+    struct adc_sequence sequence = {
+        .buffer = &raw_sample,
+        .buffer_size = sizeof(raw_sample),
+    };
+    int ret;
+
+    if (battery_mv == NULL) {
+        return -EINVAL;
+    }
+    if (!adc_is_ready_dt(&battery_adc)) {
+        return -ENODEV;
+    }
+
+    ret = battery_adc_divider_enable();
+    if (ret < 0) {
+        return ret;
+    }
+    k_msleep(6);
+
+    ret = adc_channel_setup_dt(&battery_adc);
+    if (ret < 0) {
+        (void)battery_adc_divider_disable();
+        return ret;
+    }
+    ret = adc_sequence_init_dt(&battery_adc, &sequence);
+    if (ret < 0) {
+        (void)battery_adc_divider_disable();
+        return ret;
+    }
+    ret = adc_read_dt(&battery_adc, &sequence);
+    if (ret < 0) {
+        (void)battery_adc_divider_disable();
+        return ret;
+    }
+    (void)battery_adc_divider_disable();
+
+    adc_mv = raw_sample;
+    ret = adc_raw_to_millivolts_dt(&battery_adc, &adc_mv);
+    if (ret < 0) {
+        return ret;
+    }
+    if (adc_mv < 0) {
+        adc_mv = 0;
+    }
+    adc_mv *= 2;
+    *battery_mv = (uint16_t)MIN(adc_mv, (int32_t)UINT16_MAX);
+    return 0;
+#else
+    ARG_UNUSED(battery_mv);
+    return -ENODEV;
+#endif
+}
+
+static bool BLE_CONNECTIVITY_TEST_UNUSED reset_reason_was_systemoff(void)
 {
 #if NRF_POWER_HAS_RESETREAS
     uint32_t reset_reason = nrf_power_resetreas_get(NRF_POWER);
@@ -933,7 +1196,78 @@ static bool reset_reason_was_systemoff(void)
 #endif
 }
 
-static void set_output(const struct gpio_dt_spec *gpio, bool enabled)
+static uint32_t systemoff_ram_retention_mask(void)
+{
+    uint32_t mask = 0u;
+
+#if defined(POWER_RAM_POWER_S0RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S0RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S1RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S1RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S2RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S2RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S3RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S3RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S4RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S4RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S5RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S5RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S6RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S6RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S7RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S7RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S8RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S8RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S9RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S9RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S10RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S10RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S11RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S11RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S12RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S12RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S13RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S13RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S14RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S14RETENTION_Msk;
+#endif
+#if defined(POWER_RAM_POWER_S15RETENTION_Msk)
+    mask |= POWER_RAM_POWER_S15RETENTION_Msk;
+#endif
+    return mask;
+}
+
+static void BLE_CONNECTIVITY_TEST_UNUSED clicker_request_systemoff_ram_retention(void)
+{
+#if defined(POWER_RAM_POWER_S0RETENTION_Msk)
+    uint32_t retention_mask;
+
+    if (!IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_RAM_RETENTION)) {
+        return;
+    }
+
+    retention_mask = systemoff_ram_retention_mask();
+    for (size_t block = 0u; block < ARRAY_SIZE(NRF_POWER->RAM); block++) {
+        nrf_power_rampower_mask_on(NRF_POWER, (uint8_t)block, retention_mask);
+    }
+#endif
+}
+
+static void BLE_CONNECTIVITY_TEST_UNUSED set_output(const struct gpio_dt_spec *gpio, bool enabled)
 {
     if (gpio_is_ready_dt(gpio)) {
         (void)gpio_pin_set_dt(gpio, enabled ? 1 : 0);
@@ -961,6 +1295,21 @@ static void status_leds_set(bool red, bool green, bool blue)
     set_output(&status1_blue, blue);
 #endif
 }
+
+static void ML_ANCHOR_ONLY_UNUSED status_led0_set(bool red, bool green, bool blue)
+{
+#if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
+    set_output(&status0_red, red);
+#endif
+#if DT_NODE_HAS_STATUS(STATUS0_GREEN_NODE, okay)
+    set_output(&status0_green, green);
+#endif
+#if DT_NODE_HAS_STATUS(STATUS0_BLUE_NODE, okay)
+    set_output(&status0_blue, blue);
+#endif
+}
+
+static int status_leds_init(void);
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 enum stage1_led_phase {
@@ -1234,6 +1583,28 @@ static void stage1_led_hold_click_result(int ret, uint32_t hold_ms)
     stage1_led_result(forced_result);
     k_msleep(hold_ms);
 }
+
+static void stage1_clicker_early_led(const char *where,
+                                     enum stage1_led_phase phase,
+                                     enum stage1_led_result result,
+                                     uint32_t hold_ms)
+{
+    if (!stage1_leds_enabled() || DEVICE_ROLE != ROLE_CLICKER) {
+        return;
+    }
+
+    (void)status_leds_init();
+    stage1_led_phase(phase);
+    stage1_led_result(result);
+    printk("CLICKER_LED_CODE where=%s phase=%s result=%s hold_ms=%u\n",
+           where == NULL ? "unknown" : where,
+           stage1_led_phase_name(phase),
+           stage1_led_result_name(result),
+           hold_ms);
+    if (hold_ms > 0u) {
+        k_msleep(hold_ms);
+    }
+}
 #else
 #define stage1_led_phase(phase) do { } while (0)
 #define stage1_led_result(result) do { } while (0)
@@ -1241,16 +1612,17 @@ static void stage1_led_hold_click_result(int ret, uint32_t hold_ms)
 #define stage1_click_diag(fmt, ...) do { } while (0)
 #define stage1_click_trace_reset() do { } while (0)
 #define stage1_click_trace_dump(reason) do { } while (0)
+#define stage1_clicker_early_led(where, phase, result, hold_ms) do { } while (0)
 #endif
 
-static void disconnect_gpio(const struct gpio_dt_spec *gpio)
+static void BLE_CONNECTIVITY_TEST_UNUSED disconnect_gpio(const struct gpio_dt_spec *gpio)
 {
     if (gpio_is_ready_dt(gpio)) {
         (void)gpio_pin_configure_dt(gpio, GPIO_DISCONNECTED);
     }
 }
 
-static void status_leds_disconnect(void)
+static void BLE_CONNECTIVITY_TEST_UNUSED status_leds_disconnect(void)
 {
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     disconnect_gpio(&status0_red);
@@ -1353,6 +1725,61 @@ static int status_leds_init(void)
     return ret;
 }
 
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+#define ML_ANCHOR_BATTERY_LED_ON_MS 100u
+#define ML_ANCHOR_BATTERY_LED_PERIOD_MS 1000u
+#define ML_ANCHOR_BATTERY_RED_MAX_MV 3450u
+#define ML_ANCHOR_BATTERY_GREEN_MIN_MV 3850u
+
+static void ml_anchor_battery_led_set_for_mv(uint16_t battery_mv)
+{
+    if (battery_mv == 0u || battery_mv <= ML_ANCHOR_BATTERY_RED_MAX_MV) {
+        status_led0_set(true, false, false);
+    } else if (battery_mv < ML_ANCHOR_BATTERY_GREEN_MIN_MV) {
+        status_led0_set(false, false, true);
+    } else {
+        status_led0_set(false, true, false);
+    }
+}
+
+static void ml_anchor_battery_led_work_handler(struct k_work *work)
+{
+    uint16_t sampled_mv = 0u;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)) {
+        return;
+    }
+
+    if (!ml_anchor_battery_led_on) {
+        ret = battery_sample_lithium_mv(&sampled_mv);
+        if (ret == 0) {
+            ml_anchor_battery_mv = sampled_mv;
+        } else {
+            LOG_WRN("ML anchor battery ADC sample failed: %d", ret);
+        }
+        ml_anchor_battery_led_set_for_mv(ml_anchor_battery_mv);
+        ml_anchor_battery_led_on = true;
+        (void)k_work_reschedule(&ml_anchor_battery_led_work,
+                                K_MSEC(ML_ANCHOR_BATTERY_LED_ON_MS));
+        return;
+    }
+
+    status_led0_set(false, false, false);
+    ml_anchor_battery_led_on = false;
+    (void)k_work_reschedule(
+        &ml_anchor_battery_led_work,
+        K_MSEC(ML_ANCHOR_BATTERY_LED_PERIOD_MS - ML_ANCHOR_BATTERY_LED_ON_MS));
+}
+
+static uint16_t ml_anchor_cached_battery_mv(void)
+{
+    return DEVICE_ROLE == ROLE_ANCHOR ? ml_anchor_battery_mv : 0u;
+}
+#endif
+
 static int radio_guard_uwb_start(const char *reason)
 {
     k_spinlock_key_t key;
@@ -1384,6 +1811,9 @@ static void radio_guard_uwb_stop(void)
 
 static int debug_serial_init(void)
 {
+    if (gateway_ble_transport_enabled()) {
+        return 0;
+    }
 #if HAS_SERIAL_CONSOLE
     if (!device_is_ready(serial_console)) {
         return -ENODEV;
@@ -1395,13 +1825,11 @@ static int debug_serial_init(void)
     if (ret < 0 && ret != -EALREADY) {
         return ret;
     }
-    if (ret == 0) {
-        HIGH_DEBUG_COUNTER_INC(usb_connects);
-    }
 #endif
     return 0;
 }
 
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
 static bool debug_serial_dtr_ready(void)
 {
 #if HAS_SERIAL_CONSOLE && defined(CONFIG_UART_LINE_CTRL)
@@ -1413,32 +1841,448 @@ static bool debug_serial_dtr_ready(void)
 #endif
     return true;
 }
+#endif
 
-static int gateway_emit_serial_packet(const struct proto_packet *packet,
-                                      const uint8_t *payload,
-                                      size_t payload_len)
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
+#define BT_UUID_IMEC_GATEWAY_SERVICE_VAL \
+    BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000001ULL)
+#define BT_UUID_IMEC_GATEWAY_PACKET_TX_VAL \
+    BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000002ULL)
+#define BT_UUID_IMEC_GATEWAY_PACKET_RX_VAL \
+    BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000003ULL)
+#define BT_UUID_IMEC_GATEWAY_LOG_TX_VAL \
+    BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000004ULL)
+
+#define BT_UUID_IMEC_GATEWAY_SERVICE BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_SERVICE_VAL)
+#define BT_UUID_IMEC_GATEWAY_PACKET_TX BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_PACKET_TX_VAL)
+#define BT_UUID_IMEC_GATEWAY_PACKET_RX BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_PACKET_RX_VAL)
+#define BT_UUID_IMEC_GATEWAY_LOG_TX BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_LOG_TX_VAL)
+
+#define GATEWAY_BLE_PACKET_TX_ATTR_INDEX 2u
+#define GATEWAY_BLE_LOG_TX_ATTR_INDEX 7u
+#define GATEWAY_BLE_DEVICE_NAME CONFIG_BT_DEVICE_NAME
+#define GATEWAY_BLE_DEVICE_NAME_LEN (sizeof(GATEWAY_BLE_DEVICE_NAME) - 1u)
+
+static struct bt_conn *gateway_ble_conn;
+static bool gateway_ble_advertising_active;
+static bool gateway_ble_packet_notify_enabled;
+static bool gateway_ble_log_notify_enabled;
+
+static const struct bt_data gateway_ble_ad[] = {
+    BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+    BT_DATA(BT_DATA_NAME_COMPLETE, GATEWAY_BLE_DEVICE_NAME, GATEWAY_BLE_DEVICE_NAME_LEN),
+};
+
+static const struct bt_data gateway_ble_sd[] = {
+    BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_IMEC_GATEWAY_SERVICE_VAL),
+};
+
+static void gateway_ble_rx_bytes(const uint8_t *data, size_t len);
+static int gateway_ble_start_advertising(void);
+static int gateway_ble_stop_advertising(const char *reason);
+
+static void gateway_ble_packet_ccc_changed(const struct bt_gatt_attr *attr,
+                                           uint16_t value)
 {
-#if HAS_SERIAL_CONSOLE
+    ARG_UNUSED(attr);
+
+    gateway_ble_packet_notify_enabled = value == BT_GATT_CCC_NOTIFY;
+}
+
+static void gateway_ble_log_ccc_changed(const struct bt_gatt_attr *attr,
+                                        uint16_t value)
+{
+    ARG_UNUSED(attr);
+
+    gateway_ble_log_notify_enabled = value == BT_GATT_CCC_NOTIFY;
+}
+
+static ssize_t gateway_ble_packet_rx_write(struct bt_conn *conn,
+                                           const struct bt_gatt_attr *attr,
+                                           const void *buf,
+                                           uint16_t len,
+                                           uint16_t offset,
+                                           uint8_t flags)
+{
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    ARG_UNUSED(flags);
+
+    if (!gateway_ble_transport_enabled()) {
+        return BT_GATT_ERR(BT_ATT_ERR_WRITE_NOT_PERMITTED);
+    }
+    if (offset != 0u) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    gateway_ble_rx_bytes(buf, len);
+    return len;
+}
+
+BT_GATT_SERVICE_DEFINE(gateway_ble_svc,
+    BT_GATT_PRIMARY_SERVICE(BT_UUID_IMEC_GATEWAY_SERVICE),
+    BT_GATT_CHARACTERISTIC(BT_UUID_IMEC_GATEWAY_PACKET_TX,
+                           BT_GATT_CHRC_NOTIFY,
+                           BT_GATT_PERM_READ,
+                           NULL, NULL, NULL),
+    BT_GATT_CCC(gateway_ble_packet_ccc_changed,
+                BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    BT_GATT_CHARACTERISTIC(BT_UUID_IMEC_GATEWAY_PACKET_RX,
+                           BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+                           BT_GATT_PERM_WRITE,
+                           NULL, gateway_ble_packet_rx_write, NULL),
+    BT_GATT_CHARACTERISTIC(BT_UUID_IMEC_GATEWAY_LOG_TX,
+                           BT_GATT_CHRC_NOTIFY,
+                           BT_GATT_PERM_READ,
+                           NULL, NULL, NULL),
+    BT_GATT_CCC(gateway_ble_log_ccc_changed,
+                BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
+
+static uint16_t gateway_ble_notify_chunk_len(void)
+{
+    uint16_t mtu;
+
+    if (gateway_ble_conn == NULL) {
+        return GATEWAY_BLE_DEFAULT_NOTIFY_CHUNK;
+    }
+
+    mtu = bt_gatt_get_mtu(gateway_ble_conn);
+    return mtu > 3u ? (uint16_t)(mtu - 3u) : GATEWAY_BLE_DEFAULT_NOTIFY_CHUNK;
+}
+
+static int gateway_ble_notify_attr(const struct bt_gatt_attr *attr,
+                                   const uint8_t *data,
+                                   size_t len,
+                                   bool notify_enabled)
+{
+    size_t offset = 0u;
+    uint16_t chunk_cap;
+    int ret;
+
+    if (gateway_ble_conn == NULL) {
+        return -ENOTCONN;
+    }
+    if (!notify_enabled) {
+        return -EACCES;
+    }
+    if (data == NULL && len != 0u) {
+        return -EINVAL;
+    }
+
+    chunk_cap = gateway_ble_notify_chunk_len();
+    if (chunk_cap == 0u) {
+        return -EMSGSIZE;
+    }
+
+    while (offset < len) {
+        uint16_t chunk_len = (uint16_t)MIN(len - offset, (size_t)chunk_cap);
+
+        ret = bt_gatt_notify(gateway_ble_conn, attr, &data[offset], chunk_len);
+        if (ret < 0) {
+            return ret;
+        }
+        offset += chunk_len;
+    }
+
+    return 0;
+}
+
+static int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
+{
+    return gateway_ble_notify_attr(&gateway_ble_svc.attrs[GATEWAY_BLE_PACKET_TX_ATTR_INDEX],
+                                   frame,
+                                   frame_len,
+                                   gateway_ble_packet_notify_enabled);
+}
+
+static int gateway_ble_send_log_bytes(const uint8_t *data, size_t len)
+{
+    return gateway_ble_notify_attr(&gateway_ble_svc.attrs[GATEWAY_BLE_LOG_TX_ATTR_INDEX],
+                                   data,
+                                   len,
+                                   gateway_ble_log_notify_enabled);
+}
+
+#if defined(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND)
+static uint8_t gateway_ble_log_output_buf[128];
+
+static int gateway_ble_log_backend_out(uint8_t *buf, size_t len, void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    (void)gateway_ble_send_log_bytes(buf, len);
+    return (int)len;
+}
+
+LOG_OUTPUT_DEFINE(gateway_ble_log_output,
+                  gateway_ble_log_backend_out,
+                  gateway_ble_log_output_buf,
+                  sizeof(gateway_ble_log_output_buf));
+
+static void gateway_ble_log_backend_process(const struct log_backend *const backend,
+                                            union log_msg_generic *msg)
+{
+    uint32_t flags = log_backend_std_get_flags();
+    log_format_func_t log_output_func = log_format_func_t_get(LOG_OUTPUT_TEXT);
+
+    ARG_UNUSED(backend);
+
+    log_output_func(&gateway_ble_log_output, &msg->log, flags);
+}
+
+static void gateway_ble_log_backend_dropped(const struct log_backend *const backend,
+                                            uint32_t cnt)
+{
+    ARG_UNUSED(backend);
+
+    log_backend_std_dropped(&gateway_ble_log_output, cnt);
+}
+
+static void gateway_ble_log_backend_panic(const struct log_backend *const backend)
+{
+    ARG_UNUSED(backend);
+
+    log_backend_std_panic(&gateway_ble_log_output);
+}
+
+static const struct log_backend_api gateway_ble_log_backend_api = {
+    .process = gateway_ble_log_backend_process,
+    .dropped = gateway_ble_log_backend_dropped,
+    .panic = gateway_ble_log_backend_panic,
+};
+
+LOG_BACKEND_DEFINE(log_backend_gateway_ble, gateway_ble_log_backend_api, true);
+#endif
+
+static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
+{
+    if (!gateway_ble_transport_enabled()) {
+        return;
+    }
+    if (err != 0u) {
+        LOG_WRN("gateway BLE connection failed: err=0x%02x", err);
+        (void)gateway_ble_start_advertising();
+        return;
+    }
+    if (gateway_ble_conn != NULL) {
+        (void)bt_conn_disconnect(conn, BT_HCI_ERR_CONN_LIMIT_EXCEEDED);
+        return;
+    }
+
+    (void)gateway_ble_stop_advertising("connected");
+    gateway_ble_conn = bt_conn_ref(conn);
+    gateway_ble_packet_notify_enabled = false;
+    gateway_ble_log_notify_enabled = false;
+    gateway_ble_rx_len = 0u;
+    gateway_ble_rx_overflow = false;
+    HIGH_DEBUG_COUNTER_INC(gateway_ble_connects);
+    LOG_INF("gateway BLE PC link connected");
+}
+
+static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
+{
+    if (!gateway_ble_transport_enabled()) {
+        return;
+    }
+    if (gateway_ble_conn != conn) {
+        return;
+    }
+
+    bt_conn_unref(gateway_ble_conn);
+    gateway_ble_conn = NULL;
+    gateway_ble_packet_notify_enabled = false;
+    gateway_ble_log_notify_enabled = false;
+    gateway_ble_rx_len = 0u;
+    gateway_ble_rx_overflow = false;
+    HIGH_DEBUG_COUNTER_INC(gateway_ble_disconnects);
+    LOG_INF("gateway BLE PC link disconnected: reason=0x%02x", reason);
+    (void)gateway_ble_start_advertising();
+}
+
+BT_CONN_CB_DEFINE(gateway_ble_conn_callbacks) = {
+    .connected = gateway_ble_connected,
+    .disconnected = gateway_ble_disconnected,
+};
+
+static int gateway_ble_start_advertising(void)
+{
+    int ret;
+
+    ret = bt_le_adv_start(BT_LE_ADV_CONN,
+                          gateway_ble_ad,
+                          ARRAY_SIZE(gateway_ble_ad),
+                          gateway_ble_sd,
+                          ARRAY_SIZE(gateway_ble_sd));
+    if (ret == -EALREADY) {
+        gateway_ble_advertising_active = true;
+        return 0;
+    }
+    if (ret == 0) {
+        gateway_ble_advertising_active = true;
+    }
+    return ret;
+}
+
+static int gateway_ble_stop_advertising(const char *reason)
+{
+    int ret;
+
+    if (!gateway_ble_advertising_active) {
+        return 0;
+    }
+
+    ret = bt_le_adv_stop();
+    if (ret != 0 && ret != -EALREADY) {
+        LOG_WRN("gateway BLE advertising stop failed: reason=%s ret=%d",
+                reason == NULL ? "unknown" : reason,
+                ret);
+        return ret;
+    }
+
+    gateway_ble_advertising_active = false;
+    LOG_INF("gateway BLE advertising stopped: reason=%s primary_channels=37-39",
+            reason == NULL ? "unknown" : reason);
+    high_debug_log_event("BLE_GATEWAY_ADV_STOP",
+                         "reason=%s primary_channels=37-39",
+                         reason == NULL ? "unknown" : reason);
+    return 0;
+}
+
+static int gateway_ble_init(void)
+{
+    int ret;
+
+    if (!gateway_ble_transport_enabled()) {
+        return 0;
+    }
+
+    k_work_init(&gateway_ble_rx_work, gateway_ble_rx_work_handler);
+    gateway_ble_rx_len = 0u;
+    gateway_ble_rx_overflow = false;
+
+    ret = bt_enable(NULL);
+    if (ret != 0 && ret != -EALREADY) {
+        LOG_ERR("gateway BLE init failed: %d", ret);
+        return ret;
+    }
+
+    ret = gateway_ble_start_advertising();
+    if (ret < 0) {
+        LOG_ERR("gateway BLE advertising failed: %d", ret);
+        return ret;
+    }
+
+    LOG_INF("gateway BLE PC link advertising as %s", GATEWAY_BLE_DEVICE_NAME);
+    high_debug_log_event("BLE_GATEWAY_READY",
+                         "device_name=%s packet_notify=0 log_notify=0",
+                         GATEWAY_BLE_DEVICE_NAME);
+    return 0;
+}
+
+static void gateway_ble_queue_frame(void)
+{
+    struct gateway_ble_frame_pending pending = {0};
+    int ret;
+
+    if (gateway_ble_rx_len <= 1u) {
+        gateway_ble_rx_len = 0u;
+        return;
+    }
+
+    pending.len = (uint16_t)gateway_ble_rx_len;
+    memcpy(pending.frame, gateway_ble_rx_frame, gateway_ble_rx_len);
+    ret = k_msgq_put(&gateway_ble_rx_msgq, &pending, K_NO_WAIT);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(gateway_ble_rx_drops);
+        LOG_WRN("gateway BLE RX frame queue full: len=%u", pending.len);
+    } else {
+        (void)k_work_submit(&gateway_ble_rx_work);
+    }
+    gateway_ble_rx_len = 0u;
+}
+
+static void gateway_ble_rx_bytes(const uint8_t *data, size_t len)
+{
+    if (data == NULL && len != 0u) {
+        return;
+    }
+
+    for (size_t i = 0u; i < len; i++) {
+        uint8_t byte = data[i];
+
+        if (gateway_ble_rx_overflow) {
+            if (byte == SERIAL_FRAME_DELIMITER) {
+                gateway_ble_rx_overflow = false;
+                gateway_ble_rx_len = 0u;
+                HIGH_DEBUG_COUNTER_INC(gateway_ble_rx_drops);
+                LOG_WRN("gateway BLE RX frame dropped after overflow");
+            }
+            continue;
+        }
+
+        if (gateway_ble_rx_len >= sizeof(gateway_ble_rx_frame)) {
+            gateway_ble_rx_overflow = true;
+            gateway_ble_rx_len = 0u;
+            continue;
+        }
+
+        gateway_ble_rx_frame[gateway_ble_rx_len] = byte;
+        gateway_ble_rx_len++;
+        if (byte == SERIAL_FRAME_DELIMITER) {
+            gateway_ble_queue_frame();
+        }
+    }
+}
+
+static void gateway_ble_rx_work_handler(struct k_work *work)
+{
+    struct gateway_ble_frame_pending pending;
+
+    ARG_UNUSED(work);
+
+    if (!gateway_ble_transport_enabled()) {
+        return;
+    }
+
+    while (k_msgq_get(&gateway_ble_rx_msgq, &pending, K_NO_WAIT) == 0) {
+        gateway_handle_ble_frame(pending.frame, pending.len);
+    }
+}
+#else
+static int gateway_ble_init(void)
+{
+    return gateway_ble_transport_enabled() ? -ENOTSUP : 0;
+}
+
+static int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
+{
+    ARG_UNUSED(frame);
+    ARG_UNUSED(frame_len);
+
+    return -ENOTSUP;
+}
+#endif
+
+static int gateway_emit_host_packet(const struct proto_packet *packet,
+                                    const uint8_t *payload,
+                                    size_t payload_len)
+{
     struct proto_packet frame_packet;
     uint8_t frame[SERIAL_FRAME_MAX_LEN];
     size_t frame_len = 0u;
     int ret;
 
-    if (DEVICE_ROLE != ROLE_GATEWAY) {
+    if (DEVICE_ROLE != ROLE_GATEWAY &&
+        !(DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER))) {
         return 0;
     }
-    if (!gateway_binary_cdc_enabled()) {
+    if (!gateway_ble_transport_enabled()) {
         return -ENOTSUP;
     }
     if (packet == NULL || (payload == NULL && payload_len != 0u) ||
         payload_len > UINT8_MAX) {
         return -EINVAL;
-    }
-    if (!device_is_ready(serial_console)) {
-        return -ENODEV;
-    }
-    if (!debug_serial_dtr_ready()) {
-        return -EAGAIN;
     }
 
     frame_packet = *packet;
@@ -1452,34 +2296,28 @@ static int gateway_emit_serial_packet(const struct proto_packet *packet,
         return -EINVAL;
     }
 
-    uart_poll_out(serial_console, SERIAL_FRAME_DELIMITER);
-    for (size_t i = 0u; i < frame_len; i++) {
-        uart_poll_out(serial_console, frame[i]);
+    ret = gateway_ble_send_packet_frame(frame, frame_len);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(gateway_ble_notify_failures);
+        return ret;
     }
 
-    LOG_INF("gateway USB COBS frame emitted: msg=0x%02x src=0x%016llx seq=%u payload_len=%u frame_len=%u",
+    LOG_INF("gateway BLE COBS frame emitted: msg=0x%02x src=0x%016llx seq=%u payload_len=%u frame_len=%u",
             frame_packet.msg_type,
             (unsigned long long)frame_packet.src_id,
             frame_packet.seq,
             (unsigned int)payload_len,
             (unsigned int)frame_len);
     HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
-    high_debug_log_event("USB_GATEWAY_PACKET_TX",
-                         "msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u frame_len=%u binary_cdc=%u",
+    high_debug_log_event("BLE_GATEWAY_PACKET_TX",
+                         "msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u frame_len=%u",
                          frame_packet.msg_type,
                          (unsigned long long)frame_packet.src_id,
                          (unsigned long long)frame_packet.dst_id,
                          frame_packet.seq,
                          (unsigned int)payload_len,
-                         (unsigned int)frame_len,
-                         high_debug_gateway_binary_cdc_active() ? 1u : 0u);
+                         (unsigned int)frame_len);
     return 0;
-#else
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    return -ENODEV;
-#endif
 }
 
 static int mesh_errno_from_proto(int ret)
@@ -2437,10 +3275,10 @@ static void anchor_handle_survey_pair_prepare(const struct proto_packet *packet,
             reason);
 }
 
-static void gateway_emit_serial_command_result(const struct proto_packet *command,
-                                               enum command_id command_id,
-                                               enum command_status status,
-                                               uint8_t reason)
+static void gateway_emit_host_command_result(const struct proto_packet *command,
+                                             enum command_id command_id,
+                                             enum command_status status,
+                                             uint8_t reason)
 {
     struct proto_packet result = {0};
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
@@ -2466,13 +3304,13 @@ static void gateway_emit_serial_command_result(const struct proto_packet *comman
         return;
     }
 
-    ret = gateway_emit_serial_packet(&result, payload, payload_len);
+    ret = gateway_emit_host_packet(&result, payload, payload_len);
     if (ret < 0) {
-        LOG_WRN("gateway USB command failure result not emitted: %d", ret);
+        LOG_WRN("gateway BLE command failure result not emitted: %d", ret);
     }
     HIGH_DEBUG_COUNTER_INC(command_result_tx);
     high_debug_log_event("COMMAND_RESULT_TX",
-                         "transport=gateway_cobs command=0x%04x status=%s reason=%u ret=%d",
+                         "transport=gateway_ble command=0x%04x status=%s reason=%u ret=%d",
                          (unsigned int)command_id,
                          command_status_name(status),
                          reason,
@@ -2526,7 +3364,7 @@ static void gateway_command_result_timeout_handler(struct k_work *work)
     mesh_relay_note_delivery_failure(&mesh_runtime, command.dst_id);
     mesh_clear_route_waiting_tx(&command);
     gateway_survey_auto_note_command_timeout(&command, command_id);
-    gateway_emit_serial_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
+    gateway_emit_host_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
 }
 
 static void gateway_note_command_result(const struct proto_packet *packet,
@@ -2764,7 +3602,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         host_packet->msg_type != MSG_COMMAND ||
         host_packet->payload_len != host_payload_len ||
         (host_packet->dst_id != MESH_BROADCAST_ID && host_packet->dst_id != DEVICE_ID)) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_DENIED,
                                            1u);
@@ -2776,7 +3614,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                             &survey_id,
                                             &duration_ms);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_MALFORMED_PAYLOAD,
                                            (uint8_t)(-ret));
@@ -2787,7 +3625,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                               host_payload_len,
                                               &sample_count);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_MALFORMED_PAYLOAD,
                                            (uint8_t)(-ret));
@@ -2798,7 +3636,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                                   SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT,
                                                   &config.slot_count);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_MALFORMED_PAYLOAD,
                                            (uint8_t)(-ret));
@@ -2817,7 +3655,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         ret = PROTO_ERR_NO_SPACE;
     }
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_MALFORMED_PAYLOAD,
                                            (uint8_t)(-ret));
@@ -2826,7 +3664,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     if (discovery_duration_ms == 0u ||
         UINT32_MAX - config.start_delay_ms < report_mesh_duration_ms ||
         UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms < duration_ms) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_MALFORMED_PAYLOAD,
                                            2u);
@@ -2839,7 +3677,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                              &payload_len,
                                              &config);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_INTERNAL_ERROR,
                                            (uint8_t)(-ret));
@@ -2853,7 +3691,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                              seq,
                                              (uint8_t)payload_len);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_INTERNAL_ERROR,
                                            (uint8_t)(-ret));
@@ -2864,7 +3702,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
 
     ret = survey_gateway_begin(&gateway_survey_context, survey_id, sample_count);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_INTERNAL_ERROR,
                                            (uint8_t)(-ret));
@@ -2872,7 +3710,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     ret = survey_gateway_auto_begin(&gateway_survey_auto);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            COMMAND_INTERNAL_ERROR,
                                            (uint8_t)(-ret));
@@ -2885,7 +3723,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         gateway_survey_active = false;
         (void)survey_gateway_auto_begin(&gateway_survey_auto);
         (void)k_work_cancel_delayable(&gateway_survey_work);
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_REACHABILITY,
                                            ret == -EBUSY ? COMMAND_BUSY : COMMAND_RADIO_ERROR,
                                            (uint8_t)(-ret));
@@ -2893,7 +3731,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
 
     (void)k_work_reschedule(&gateway_survey_work, K_MSEC(collection_delay_ms));
-    gateway_emit_serial_command_result(host_packet, CMD_SURVEY_REACHABILITY, COMMAND_OK, 0u);
+    gateway_emit_host_command_result(host_packet, CMD_SURVEY_REACHABILITY, COMMAND_OK, 0u);
     LOG_INF("gateway survey discovery broadcast: survey=%u start_delay_ms=%u slot_ms=%u slots=%u discovery_ms=%u report_train_end_ms=%u report_grace_ms=%u samples=%u seq=%u",
             survey_id,
             config.start_delay_ms,
@@ -3323,7 +4161,7 @@ static int gateway_route_survey_pair_prepare(const struct proto_packet *host_pac
         host_payload == NULL ||
         host_packet->msg_type != MSG_COMMAND ||
         host_packet->payload_len != host_payload_len) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_PREPARE_PAIR,
                                            COMMAND_DENIED,
                                            1u);
@@ -3334,7 +4172,7 @@ static int gateway_route_survey_pair_prepare(const struct proto_packet *host_pac
     if (ret != PROTO_OK ||
         (host_packet->dst_id != pair.initiator_id &&
          host_packet->dst_id != pair.responder_id)) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_PREPARE_PAIR,
                                            ret == PROTO_OK ? COMMAND_DENIED :
                                            COMMAND_MALFORMED_PAYLOAD,
@@ -3347,7 +4185,7 @@ static int gateway_route_survey_pair_prepare(const struct proto_packet *host_pac
                                   &payload_len,
                                   &pair);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_PREPARE_PAIR,
                                            COMMAND_INTERNAL_ERROR,
                                            (uint8_t)(-ret));
@@ -3361,7 +4199,7 @@ static int gateway_route_survey_pair_prepare(const struct proto_packet *host_pac
                                           seq,
                                           (uint8_t)payload_len);
     if (ret != PROTO_OK) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_PREPARE_PAIR,
                                            COMMAND_INTERNAL_ERROR,
                                            (uint8_t)(-ret));
@@ -3372,7 +4210,7 @@ static int gateway_route_survey_pair_prepare(const struct proto_packet *host_pac
 
     ret = gateway_begin_command_result_wait(&outbound.packet, CMD_SURVEY_PREPARE_PAIR);
     if (ret < 0) {
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_PREPARE_PAIR,
                                            ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
                                            (uint8_t)(-ret));
@@ -3382,7 +4220,7 @@ static int gateway_route_survey_pair_prepare(const struct proto_packet *host_pac
     ret = mesh_start_tracked_tx(&outbound, "survey-pair-prepare");
     if (ret < 0) {
         gateway_clear_pending_command_result(&outbound.packet);
-        gateway_emit_serial_command_result(host_packet,
+        gateway_emit_host_command_result(host_packet,
                                            CMD_SURVEY_PREPARE_PAIR,
                                            ret == -EHOSTUNREACH ? COMMAND_TIMEOUT :
                                            ret == -EBUSY ? COMMAND_BUSY :
@@ -3411,17 +4249,26 @@ static int gateway_route_survey_command(const struct proto_packet *host_packet,
     case CMD_SURVEY_PREPARE_PAIR:
         return gateway_route_survey_pair_prepare(host_packet, host_payload, host_payload_len);
     default:
-        gateway_emit_serial_command_result(host_packet,
-                                           command_id,
-                                           COMMAND_UNSUPPORTED_COMMAND,
-                                           1u);
+        gateway_emit_host_command_result(host_packet,
+                                         command_id,
+                                         COMMAND_UNSUPPORTED_COMMAND,
+                                         1u);
         return -ENOTSUP;
     }
 }
 
-static int gateway_route_serial_packet(struct proto_packet *packet,
-                                       uint8_t *payload,
-                                       size_t payload_len)
+#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST) || \
+    defined(CONFIG_IMEC_ML_CLICKER) || \
+    defined(CONFIG_IMEC_ML_ANCHOR) || \
+    !defined(CONFIG_IMEC_GATEWAY_BLE)
+#define GATEWAY_BLE_HOST_COMMAND_UNUSED __attribute__((unused))
+#else
+#define GATEWAY_BLE_HOST_COMMAND_UNUSED
+#endif
+
+static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct proto_packet *packet,
+                                                                    uint8_t *payload,
+                                                                    size_t payload_len)
 {
     struct mesh_outbound outbound = {0};
     enum command_id command_id = CMD_VENDOR_BASE;
@@ -3448,12 +4295,12 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
                                            &outbound,
                                            &command_id);
     if (ret != PROTO_OK) {
-        LOG_WRN("gateway rejected USB command: %d", ret);
-        gateway_emit_serial_command_result(packet,
-                                           CMD_VENDOR_BASE,
-                                           ret == PROTO_ERR_ARG ? COMMAND_DENIED :
-                                           COMMAND_MALFORMED_PAYLOAD,
-                                           (uint8_t)(-ret));
+        LOG_WRN("gateway rejected BLE host command: %d", ret);
+        gateway_emit_host_command_result(packet,
+                                         CMD_VENDOR_BASE,
+                                         ret == PROTO_ERR_ARG ? COMMAND_DENIED :
+                                         COMMAND_MALFORMED_PAYLOAD,
+                                         (uint8_t)(-ret));
         return mesh_errno_from_proto(ret);
     }
 
@@ -3463,16 +4310,16 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
                 (unsigned int)command_id,
                 (unsigned long long)outbound.packet.dst_id,
                 ret);
-        gateway_emit_serial_command_result(&outbound.packet,
-                                           command_id,
-                                           ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
-                                           (uint8_t)(-ret));
+        gateway_emit_host_command_result(&outbound.packet,
+                                         command_id,
+                                         ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                         (uint8_t)(-ret));
         return ret;
     }
 
-    ret = mesh_start_tracked_tx(&outbound, "usb-command");
+    ret = mesh_start_tracked_tx(&outbound, "ble-command");
     if (ret < 0) {
-        LOG_WRN("gateway USB command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
+        LOG_WRN("gateway BLE command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
                 (unsigned int)command_id,
                 (unsigned long long)outbound.packet.dst_id,
                 ret);
@@ -3483,14 +4330,14 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
             return 0;
         }
         gateway_clear_pending_command_result(&outbound.packet);
-        gateway_emit_serial_command_result(&outbound.packet,
-                                           command_id,
-                                           ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
-                                           (uint8_t)(-ret));
+        gateway_emit_host_command_result(&outbound.packet,
+                                         command_id,
+                                         ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                         (uint8_t)(-ret));
         return ret;
     }
 
-    LOG_INF("gateway USB command routed: cmd=0x%04x dst=0x%016llx session=%u seq=%u ttl=%u",
+    LOG_INF("gateway BLE command routed: cmd=0x%04x dst=0x%016llx session=%u seq=%u ttl=%u",
             (unsigned int)command_id,
             (unsigned long long)outbound.packet.dst_id,
             outbound.packet.session_id,
@@ -3499,8 +4346,30 @@ static int gateway_route_serial_packet(struct proto_packet *packet,
     return 0;
 }
 
-static void gateway_handle_serial_frame(const uint8_t *frame, size_t frame_len)
+#undef GATEWAY_BLE_HOST_COMMAND_UNUSED
+
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+static void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
 {
+#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+    int ret;
+
+    ret = gateway_ble_send_packet_frame(frame, frame_len);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(gateway_ble_notify_failures);
+        LOG_WRN("gateway BLE connectivity test echo failed: frame_len=%u ret=%d",
+                (unsigned int)frame_len,
+                ret);
+        return;
+    }
+    LOG_INF("gateway BLE connectivity test echoed packet frame: frame_len=%u",
+            (unsigned int)frame_len);
+#elif defined(CONFIG_IMEC_ML_CLICKER)
+    ml_clicker_handle_ble_frame(frame, frame_len);
+#elif defined(CONFIG_IMEC_ML_ANCHOR)
+    LOG_WRN("ML anchor BLE packet RX ignored: frame_len=%u",
+            (unsigned int)frame_len);
+#else
     struct proto_packet packet = {0};
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     size_t payload_len = 0u;
@@ -3513,76 +4382,28 @@ static void gateway_handle_serial_frame(const uint8_t *frame, size_t frame_len)
                                      sizeof(payload),
                                      &payload_len);
     if (ret != PROTO_OK) {
-        LOG_WRN("gateway USB COBS frame decode failed: %d", ret);
+        LOG_WRN("gateway BLE COBS frame decode failed: %d", ret);
         return;
     }
     HIGH_DEBUG_COUNTER_INC(command_rx);
     high_debug_log_event("COMMAND_RX",
-                         "transport=gateway_cobs msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
+                         "transport=gateway_ble msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
                          packet.msg_type,
                          (unsigned long long)packet.src_id,
                          (unsigned long long)packet.dst_id,
                          packet.seq,
                          (unsigned int)payload_len);
 
-    ret = gateway_route_serial_packet(&packet, payload, payload_len);
+    ret = gateway_route_host_packet(&packet, payload, payload_len);
     if (ret < 0) {
-        LOG_WRN("gateway USB packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
+        LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
                 packet.msg_type,
                 (unsigned long long)packet.dst_id,
                 ret);
     }
-}
-
-static void gateway_serial_rx_work_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-
-    if (DEVICE_ROLE != ROLE_GATEWAY) {
-        return;
-    }
-    if (!gateway_binary_cdc_enabled()) {
-        return;
-    }
-
-#if HAS_SERIAL_CONSOLE
-    if (device_is_ready(serial_console) && debug_serial_dtr_ready()) {
-        unsigned char byte;
-        uint16_t read_count = 0u;
-
-        while (read_count < GATEWAY_SERIAL_MAX_BYTES_PER_POLL &&
-               uart_poll_in(serial_console, &byte) == 0) {
-            read_count++;
-
-            if (gateway_serial_rx_overflow) {
-                if (byte == SERIAL_FRAME_DELIMITER) {
-                    gateway_serial_rx_overflow = false;
-                    gateway_serial_rx_len = 0u;
-                    LOG_WRN("gateway USB RX frame dropped after overflow");
-                }
-                continue;
-            }
-
-            if (gateway_serial_rx_len >= sizeof(gateway_serial_rx_frame)) {
-                gateway_serial_rx_overflow = true;
-                gateway_serial_rx_len = 0u;
-                continue;
-            }
-
-            gateway_serial_rx_frame[gateway_serial_rx_len] = byte;
-            gateway_serial_rx_len++;
-            if (byte == SERIAL_FRAME_DELIMITER) {
-                if (gateway_serial_rx_len > 1u) {
-                    gateway_handle_serial_frame(gateway_serial_rx_frame, gateway_serial_rx_len);
-                }
-                gateway_serial_rx_len = 0u;
-            }
-        }
-    }
 #endif
-
-    (void)k_work_reschedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
 }
+#endif
 
 static uint16_t local_uwb_short_addr(void)
 {
@@ -3600,6 +4421,23 @@ static uint32_t discovery_window_ms_for_slots(uint8_t slot_count)
     }
     slot_window_us = (uint32_t)slot_count * UWB_DISCOVERY_SLOT_US;
     return (slot_window_us + 999u) / 1000u;
+}
+
+static int __attribute__((unused)) local_anchor_discovery_slot(uint8_t slot_count,
+                                                               uint8_t *anchor_slot)
+{
+    if (anchor_slot == NULL || slot_count == 0u) {
+        return PROTO_ERR_ARG;
+    }
+#if IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED
+    if ((uint32_t)IMEC_HIGH_DEBUG_ANCHOR_SLOT >= slot_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *anchor_slot = (uint8_t)IMEC_HIGH_DEBUG_ANCHOR_SLOT;
+    return PROTO_OK;
+#else
+    return uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, anchor_slot);
+#endif
 }
 
 static uint8_t local_survey_discovery_slot(uint8_t slot_count)
@@ -4762,6 +5600,8 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         expected.round_index = round_index;
         expected.flags = schedule->flags;
         expected.capture_rsl = true;
+        expected.skip_responder_report = true;
+        expected.expect_clicker_diag = round_index == 0u;
 
         LOG_INF("anchor scheduled UWB sample listen: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u",
                 (unsigned long long)schedule->clicker_id,
@@ -4773,7 +5613,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         stage1_led_phase(STAGE1_LED_PHASE_RANGE);
         stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
         high_debug_log_event("DS_TWR_POLL_RX",
-                             "listen=1 clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u",
+                             "listen=1 clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u schedule_rx_ms=%lld target_us=%lld listen_start_ms=%lld now_ms=%lld deadline_ms=%lld first_poll_ms=%u stride_us=%u",
                              (unsigned long long)schedule->clicker_id,
                              schedule->click_event_id,
                              schedule->attempt_index,
@@ -4782,7 +5622,16 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                              (unsigned int)(sample_index + 1u),
                              (unsigned int)total_samples,
                              round_index,
-                             seq);
+                             seq,
+                             (long long)schedule_rx_ms,
+                             (long long)scheduled_range_sample_target_us(schedule_rx_ms,
+                                                                         schedule,
+                                                                         sample_index),
+                             (long long)listen_start_ms,
+                             (long long)k_uptime_get(),
+                             (long long)listen_deadline_ms,
+                             schedule->first_poll_delay_ms,
+                             schedule->exchange_stride_us);
         while (k_uptime_get() < listen_deadline_ms) {
             int64_t remaining_ms = listen_deadline_ms - k_uptime_get();
 
@@ -4949,8 +5798,14 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     uint8_t frame[UWB_RANGE_SCHEDULE_MAX_LEN];
     size_t frame_len = 0u;
     int ret;
+    int last_discovery_ret = -ETIMEDOUT;
+    int last_discovery_decode_ret = PROTO_OK;
+    int64_t discovery_start_ms;
+    int64_t discovery_deadline_ms;
     enum uwb_anchor_claim_decision decision = UWB_ANCHOR_CLAIM_ACCEPTED;
     enum uwb_anchor_claim_decision selected_decision = UWB_ANCHOR_CLAIM_ACCEPTED;
+    bool discover_received = false;
+    struct uwb_discover_frame discover;
 
     if (first_claim == NULL) {
         return false;
@@ -5017,12 +5872,13 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         uint8_t quality = 0u;
         int64_t remaining_ms = collect_deadline_ms - k_uptime_get();
 
-        ret = dwm3000_driver_receive_frame((uint32_t)MAX(1, remaining_ms),
-                                           frame,
-                                           sizeof(frame),
-                                           &frame_len,
-                                           &quality,
-                                           NULL);
+        ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
+                                                      frame,
+                                                      sizeof(frame),
+                                                      &frame_len,
+                                                      &quality,
+                                                      NULL,
+                                                      NULL);
         if (ret == -ETIMEDOUT) {
             break;
         }
@@ -5090,9 +5946,21 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             (unsigned long long)anchor_uwb_session.epoch.priority_id,
             selected_decision);
 
+    discovery_start_ms =
+        (int64_t)selected_rx_ms + selected_claim.discovery_starts_in_ms;
+    discovery_deadline_ms = discovery_start_ms + UWB_DISCOVERY_RX_LATE_GUARD_MS;
+    high_debug_log_event("DISCOVER_WAIT",
+                         "clicker=0x%016llx event_seq=%u attempt=%u selected_rx_ms=%lld discovery_starts_in_ms=%u wait_start_ms=%lld deadline_ms=%lld listen_ms=%u",
+                         (unsigned long long)selected_claim.clicker_id,
+                         selected_claim.click_event_id,
+                         selected_claim.attempt_index,
+                         (long long)selected_rx_ms,
+                         selected_claim.discovery_starts_in_ms,
+                         (long long)(discovery_start_ms - UWB_DISCOVERY_RX_GUARD_MS),
+                         (long long)discovery_deadline_ms,
+                         UWB_DISCOVERY_LISTEN_MS);
+
     {
-        int64_t discovery_start_ms =
-            (int64_t)selected_rx_ms + selected_claim.discovery_starts_in_ms;
         int64_t discover_listen_start_ms =
             discovery_start_ms - UWB_DISCOVERY_RX_GUARD_MS;
 
@@ -5107,29 +5975,62 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
     stage1_led_phase(STAGE1_LED_PHASE_DISCOVERY);
     stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
-    ret = dwm3000_driver_receive_frame(UWB_DISCOVERY_LISTEN_MS,
-                                       frame,
-                                       sizeof(frame),
-                                       &frame_len,
-                                       &selected_quality,
-                                       NULL);
-    if (ret == 0) {
-        struct uwb_discover_frame discover;
-        struct uwb_discovery_reply_frame reply;
 
-        ret = uwb_decode_discover(frame, frame_len, &discover);
-        if (ret != PROTO_OK) {
-            enum uwb_wake_decode_failure failure = wake_failure_from_proto_ret(ret);
+    while (k_uptime_get() < discovery_deadline_ms) {
+        uint8_t quality = 0u;
+        int64_t remaining_ms = discovery_deadline_ms - k_uptime_get();
 
-            uwb_anchor_note_wake_decode_failure(&anchor_uwb_session,
-                                                failure);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            LOG_WRN("anchor UWB DISCOVER decode failed: ret=%d reason=%s frame_len=%u",
-                    ret,
-                    wake_decode_failure_name(failure),
-                    (unsigned int)frame_len);
-            return true;
+        ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
+                                                      frame,
+                                                      sizeof(frame),
+                                                      &frame_len,
+                                                      &quality,
+                                                      NULL,
+                                                      NULL);
+        if (ret == -ETIMEDOUT) {
+            last_discovery_ret = ret;
+            break;
         }
+        if (ret < 0) {
+            last_discovery_ret = ret;
+            continue;
+        }
+
+        last_discovery_decode_ret = uwb_decode_discover(frame, frame_len, &discover);
+        if (last_discovery_decode_ret == PROTO_OK) {
+            selected_quality = quality;
+            discover_received = true;
+            break;
+        }
+
+        if (frame_len == UWB_WAKE_CLAIM_LEN) {
+            struct uwb_wake_claim_frame late_claim;
+
+            ret = uwb_decode_wake_claim(frame, frame_len, &late_claim);
+            if (ret == PROTO_OK) {
+                LOG_DBG("anchor ignored late UWB WAKE_CLAIM while waiting for DISCOVER: clicker=0x%016llx event_seq=%u attempt=%u",
+                        (unsigned long long)late_claim.clicker_id,
+                        late_claim.click_event_id,
+                        late_claim.attempt_index);
+                continue;
+            }
+        }
+
+        LOG_DBG("anchor ignored non-DISCOVER frame during discovery wait: decode_ret=%d frame_len=%u type=0x%02x quality=%u",
+                last_discovery_decode_ret,
+                (unsigned int)frame_len,
+                frame_len >= UWB_SYNC_HEADER_LEN ? frame[2] : 0u,
+                quality);
+    }
+
+    if (discover_received) {
+        struct uwb_discovery_reply_frame reply;
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+        uint16_t discovery_battery_mv = ml_anchor_cached_battery_mv();
+#else
+        uint16_t discovery_battery_mv = 0u;
+#endif
+
         HIGH_DEBUG_COUNTER_INC(discovery_rx);
         high_debug_log_event("DISCOVER_RX",
                              "clicker=0x%016llx event_seq=%u attempt=%u network_id=0x%08x channel=%u quality=%u",
@@ -5143,13 +6044,29 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         ret = uwb_anchor_build_discovery_reply(&anchor_uwb_session,
                                                &discover,
                                                selected_quality,
-                                               0u,
+                                               discovery_battery_mv,
                                                &reply);
         if (ret != PROTO_OK) {
             stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_WRN("anchor UWB DISCOVERY_REPLY build rejected: %d", ret);
             return true;
         }
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+        if (discover.discovery_slot_count > 0u) {
+            reply.anchor_slot = (uint8_t)(IMEC_ML_ANCHOR_SLOT %
+                                          discover.discovery_slot_count);
+        }
+#else
+        ret = local_anchor_discovery_slot(discover.discovery_slot_count,
+                                          &reply.anchor_slot);
+        if (ret != PROTO_OK) {
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            LOG_WRN("anchor UWB DISCOVERY_REPLY slot rejected: slot_count=%u ret=%d",
+                    discover.discovery_slot_count,
+                    ret);
+            return true;
+        }
+#endif
 
         sleep_precise_us((uint32_t)reply.anchor_slot * UWB_DISCOVERY_SLOT_US);
         ret = uwb_encode_discovery_reply(&reply, frame, sizeof(frame), &frame_len);
@@ -5169,31 +6086,37 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         HIGH_DEBUG_COUNTER_INC(discovery_reply_tx);
         stage1_led_result(STAGE1_LED_RESULT_OK);
         high_debug_log_event("DISCOVERY_REPLY_TX",
-                             "clicker=0x%016llx event_seq=%u slot=%u quality=%u",
+                             "clicker=0x%016llx event_seq=%u slot=%u slot_source=%s quality=%u",
                              (unsigned long long)reply.selected_clicker_id,
                              reply.click_event_id,
                              reply.anchor_slot,
+                             ANCHOR_DISCOVERY_SLOT_SOURCE,
                              reply.rx_quality);
-        LOG_INF("anchor UWB DISCOVERY_REPLY sent: clicker=0x%016llx slot=%u quality=%u",
+        LOG_INF("anchor UWB DISCOVERY_REPLY sent: clicker=0x%016llx slot=%u source=%s quality=%u",
                 (unsigned long long)reply.selected_clicker_id,
                 reply.anchor_slot,
+                ANCHOR_DISCOVERY_SLOT_SOURCE,
                 reply.rx_quality);
     } else {
-        stage1_led_result(ret == -ETIMEDOUT ?
+        stage1_led_result(last_discovery_ret == -ETIMEDOUT ?
                           STAGE1_LED_RESULT_TIMEOUT :
                           STAGE1_LED_RESULT_ERROR);
-        LOG_WRN("anchor UWB DISCOVER not received: ret=%d", ret);
+        LOG_WRN("anchor UWB DISCOVER not received: ret=%d decode_ret=%d listen_ms=%u",
+                last_discovery_ret,
+                last_discovery_decode_ret,
+                UWB_DISCOVERY_LISTEN_MS);
         return true;
     }
 
     stage1_led_phase(STAGE1_LED_PHASE_SCHEDULE);
     stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
-    ret = dwm3000_driver_receive_frame(UWB_RANGE_SCHEDULE_RX_MS,
-                                       frame,
-                                       sizeof(frame),
-                                       &frame_len,
-                                       NULL,
-                                       NULL);
+    ret = dwm3000_driver_receive_frame_continuous(UWB_RANGE_SCHEDULE_RX_MS,
+                                                  frame,
+                                                  sizeof(frame),
+                                                  &frame_len,
+                                                  NULL,
+                                                  NULL,
+                                                  NULL);
     if (ret == 0) {
         struct uwb_range_schedule_frame schedule;
         int64_t schedule_rx_ms = k_uptime_get();
@@ -5355,7 +6278,6 @@ focused_scan_attempt:
 
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
-#if IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
         ret = dwm3000_driver_receive_frame_continuous(ANCHOR_UWB_SCAN_RX_MS,
                                                       frame,
                                                       sizeof(frame),
@@ -5363,15 +6285,6 @@ focused_scan_attempt:
                                                       &quality,
                                                       NULL,
                                                       &rx_failure);
-#else
-        ret = dwm3000_driver_receive_frame_detailed(ANCHOR_UWB_SCAN_RX_MS,
-                                                    frame,
-                                                    sizeof(frame),
-                                                    &frame_len,
-                                                    &quality,
-                                                    NULL,
-                                                    &rx_failure);
-#endif
     }
     preamble_detected = ret == 0 || rx_failure_detected_preamble(rx_failure);
     uwb_anchor_note_idle_scan(&anchor_uwb_session,
@@ -6635,11 +7548,11 @@ static void mesh_rx_work_handler(struct k_work *work)
             gateway_handle_survey_discovery_report(&pending.packet,
                                                    pending.payload,
                                                    pending.payload_len);
-            ret = gateway_emit_serial_packet(&pending.packet,
-                                             pending.payload,
-                                             pending.payload_len);
+            ret = gateway_emit_host_packet(&pending.packet,
+                                           pending.payload,
+                                           pending.payload_len);
             if (ret < 0) {
-                LOG_WRN("gateway USB COBS frame not emitted: %d", ret);
+                LOG_WRN("gateway BLE COBS frame not emitted: %d", ret);
             }
         } else if ((result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
                    DEVICE_ROLE == ROLE_ANCHOR) {
@@ -6843,16 +7756,21 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         return;
     }
 
-    ret = radio_guard_uwb_start("mesh UWB RX");
-    if (ret < 0) {
-        mesh_schedule_uwb_rx(mesh_uwb_rx_idle_delay_ms());
-        return;
-    }
-
     channel9_event = mesh_select_channel9_rx_event(k_uptime_get_32(),
                                                    &channel9_plan,
                                                    &channel9_peer_id,
                                                    &channel9_timing_index);
+    if (DEVICE_ROLE == ROLE_ANCHOR && !channel9_event) {
+        mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+        return;
+    }
+
+    ret = radio_guard_uwb_start(channel9_event ? "mesh channel9 UWB RX" : "mesh UWB RX");
+    if (ret < 0) {
+        mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+        return;
+    }
+
     window_ms = channel9_event ? channel9_plan.window_ms : mesh_uwb_rx_window_ms();
     uwb_window_start_ms = k_uptime_get();
     ret = channel9_event ?
@@ -7062,6 +7980,11 @@ build_payload:
                                                             RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT)) :
                                                 1u;
             diagnostics.phy_config_id = UWB_CHANNEL_WAKE_CONTACT;
+            diagnostics.clock_offset_raw = range_result->clock_offset_raw;
+            diagnostics.clock_offset_present = range_result->clock_offset_sampled;
+            diagnostics.carrier_integrator = range_result->carrier_integrator;
+            diagnostics.carrier_integrator_present =
+                range_result->carrier_integrator_sampled;
             diagnostics.clicker_diag = range_result->clicker_diag_received ?
                                        range_result->clicker_diag : NULL;
             diagnostics.clicker_diag_len = range_result->clicker_diag_received ?
@@ -7414,6 +8337,27 @@ static void clicker_ble_courtesy_stop(void)
         ble_courtesy_scan_active = false;
     }
 }
+
+static void clicker_ble_courtesy_low_power_stop(void)
+{
+    int ret;
+
+    clicker_ble_courtesy_stop();
+    if (!ble_courtesy_init_attempted) {
+        return;
+    }
+
+    ret = bt_disable();
+    if (ret != 0 && ret != -EALREADY) {
+        LOG_WRN("BLE courtesy disable before retained idle failed: %d", ret);
+    }
+    ble_courtesy_init_attempted = false;
+    ble_courtesy_available = false;
+    clicker_ble_courtesy_clear_higher_peer();
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    high_debug_log_event("BLE_TEST", "phase=low_power_stop ret=%d", ret);
+#endif
+}
 #else
 static int clicker_ble_courtesy_start(uint32_t event_seq,
                                       uint8_t attempt_index,
@@ -7433,8 +8377,13 @@ static uint32_t clicker_ble_courtesy_higher_wait_ms(void)
 static void clicker_ble_courtesy_stop(void)
 {
 }
+
+static void BLE_CONNECTIVITY_TEST_UNUSED clicker_ble_courtesy_low_power_stop(void)
+{
+}
 #endif
 
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
 #if defined(CONFIG_BT) && DEVICE_ROLE == ROLE_CLICKER
 static int high_debug_stage0_ble_advertise_test(uint32_t event_seq,
                                                 uint32_t duration_ms)
@@ -7485,6 +8434,7 @@ static int high_debug_stage0_ble_advertise_test(uint32_t event_seq,
     ARG_UNUSED(duration_ms);
     return -ENOTSUP;
 }
+#endif
 #endif
 
 static uint32_t clicker_apply_contention_delay(struct uwb_clicker_session *session,
@@ -7898,6 +8848,11 @@ static int clicker_send_wake_claim_train(struct uwb_clicker_session *session,
         goto out;
     }
 
+    high_debug_log_event("WAKE_CLAIM_TX",
+                         "phase=start event_seq=%u attempt=%u duration_ms=%u",
+                         session->config.click_event_id,
+                         session->attempt_index,
+                         WAKE_ADV_MS);
     close_ms = k_uptime_get() + WAKE_ADV_MS;
     while (k_uptime_get() < close_ms) {
         struct uwb_wake_claim_frame claim;
@@ -7926,12 +8881,6 @@ static int clicker_send_wake_claim_train(struct uwb_clicker_session *session,
         }
         sent_count++;
         HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
-        high_debug_log_event("WAKE_CLAIM_TX",
-                             "event_seq=%u attempt=%u remaining_ms=%u sent=%u",
-                             session->config.click_event_id,
-                             session->attempt_index,
-                             remaining_u16,
-                             sent_count);
         uwb_clicker_note_wake_claim_tx(session, 1u);
 
         if (k_uptime_get() < close_ms) {
@@ -7958,6 +8907,12 @@ out:
     stage1_led_result(sent_count == 0u ?
                       STAGE1_LED_RESULT_TIMEOUT :
                       STAGE1_LED_RESULT_OK);
+    high_debug_log_event("WAKE_CLAIM_TX",
+                         "phase=done event_seq=%u attempt=%u sent=%u duration_ms=%u",
+                         session->config.click_event_id,
+                         session->attempt_index,
+                         sent_count,
+                         WAKE_ADV_MS);
     LOG_INF("clicker UWB WAKE_CLAIM train complete: sent=%u duration_ms=%u",
             sent_count,
             WAKE_ADV_MS);
@@ -7982,6 +8937,11 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     if (ret != PROTO_OK) {
         return -EINVAL;
     }
+#if defined(CONFIG_IMEC_ML_CLICKER)
+    if (ml_clicker_discovery_slot_count_override() > 0u) {
+        discover.discovery_slot_count = ml_clicker_discovery_slot_count_override();
+    }
+#endif
     reply_window_ms = discovery_window_ms_for_slots(discover.discovery_slot_count) +
                       UWB_DISCOVERY_RX_GUARD_MS;
     ret = uwb_encode_discover(&discover, frame, sizeof(frame), &frame_len);
@@ -8017,12 +8977,13 @@ static int clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
         uint8_t quality = 0u;
         int64_t remaining_ms = deadline_ms - k_uptime_get();
 
-        ret = dwm3000_driver_receive_frame((uint32_t)MAX(1, remaining_ms),
-                                           frame,
-                                           sizeof(frame),
-                                           &frame_len,
-                                           &quality,
-                                           NULL);
+        ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
+                                                      frame,
+                                                      sizeof(frame),
+                                                      &frame_len,
+                                                      &quality,
+                                                      NULL,
+                                                      NULL);
         if (ret == -ETIMEDOUT) {
             break;
         }
@@ -8133,13 +9094,16 @@ static int clicker_send_range_schedule(const struct uwb_range_schedule_frame *sc
     HIGH_DEBUG_COUNTER_INC(schedules_tx);
     stage1_led_result(STAGE1_LED_RESULT_OK);
     high_debug_log_event("RANGE_SCHEDULE_TX",
-                         "clicker=0x%016llx event_seq=%u attempt=%u selected=%u samples_per_anchor=%u reply_delay_uus=%u BENCH_ONLY=%u",
+                         "clicker=0x%016llx event_seq=%u attempt=%u selected=%u samples_per_anchor=%u reply_delay_uus=%u first_poll_ms=%u stride_us=%u burst_ms=%u BENCH_ONLY=%u",
                          (unsigned long long)schedule->clicker_id,
                          schedule->click_event_id,
                          schedule->attempt_index,
                          schedule->selected_count,
                          schedule->samples_per_anchor,
                          schedule->reply_delay_us,
+                         schedule->first_poll_delay_ms,
+                         schedule->exchange_stride_us,
+                         schedule->burst_window_ms,
                          (IMEC_STAGE == 1 &&
                           IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) ? 1u : 0u);
     LOG_INF("clicker UWB RANGE_SCHEDULE TX complete: selected=%u samples_per_anchor=%u",
@@ -8305,6 +9269,11 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
         range_request.seq = step.seq;
         range_request.round_index = step.round_index;
         range_request.flags = session->config.flags;
+        range_request.skip_responder_report = true;
+        range_request.send_clicker_diag = step.round_index == 0u;
+#if defined(CONFIG_IMEC_ML_CLICKER)
+        range_request.capture_rsl = ml_clicker_runtime.active;
+#endif
         slot_timeout_ms = MIN(slot_timeout_ms,
                               (uint32_t)ceil_us_to_ms(schedule->exchange_stride_us) +
                               UWB_SCHEDULE_GUARD_MS);
@@ -8338,7 +9307,7 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                 range_request.timeout_ms);
         HIGH_DEBUG_COUNTER_INC(ds_twr_attempts);
         high_debug_log_event("DS_TWR_POLL_TX",
-                             "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u timeout_ms=%u",
+                             "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u schedule_base_ms=%lld target_us=%lld now_ms=%lld late_us=%lld first_poll_ms=%u stride_us=%u timeout_ms=%u",
                              (unsigned long long)step.anchor_id,
                              session->config.click_event_id,
                              session->attempt_index,
@@ -8348,6 +9317,12 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                              (unsigned int)total_samples,
                              step.round_index,
                              step.seq,
+                             (long long)schedule_tx_ms,
+                             (long long)target_us,
+                             (long long)k_uptime_get(),
+                             (long long)((k_uptime_get() * 1000) - target_us),
+                             schedule->first_poll_delay_ms,
+                             schedule->exchange_stride_us,
                              range_request.timeout_ms);
         ret = dwm3000_driver_range_initiator(&range_request, &range_result);
         (void)dwm3000_driver_standby();
@@ -8361,7 +9336,6 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
             }
             HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             (void)uwb_clicker_record_range_result(session, &step, status);
-            (void)uwb_clicker_abort_attempt(session);
             stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
             LOG_WRN("scheduled click DS-TWR did not start: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
                     (unsigned long long)step.anchor_id,
@@ -8386,6 +9360,17 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                                  step.seq,
                                  ret,
                                  range_status_name(status));
+#if defined(CONFIG_IMEC_ML_CLICKER)
+            (void)ml_clicker_emit_range_sample_if_active(session,
+                                                         schedule,
+                                                         &step,
+                                                         &range_result);
+            if (ml_clicker_continue_after_range_start_failure()) {
+                last_ret = ret < 0 ? ret : -EIO;
+                continue;
+            }
+#endif
+            (void)uwb_clicker_abort_attempt(session);
             last_ret = ret < 0 ? ret : -EIO;
             break;
         }
@@ -8430,6 +9415,12 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                                  range_result.quality,
                                  range_result.rsl_dbm,
                                  range_result.rsl_sampled ? 1u : 0u);
+#if defined(CONFIG_IMEC_ML_CLICKER)
+            (void)ml_clicker_emit_range_sample_if_active(session,
+                                                         schedule,
+                                                         &step,
+                                                         &range_result);
+#endif
             last_ret = 0;
         } else {
             enum range_status status = range_result.status;
@@ -8480,6 +9471,12 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
                                  ret,
                                  range_status_name(status),
                                  status);
+#if defined(CONFIG_IMEC_ML_CLICKER)
+            (void)ml_clicker_emit_range_sample_if_active(session,
+                                                         schedule,
+                                                         &step,
+                                                         &range_result);
+#endif
             last_ret = ret < 0 ? ret : -EIO;
         }
 
@@ -8490,6 +9487,449 @@ static int range_uwb_scheduled_anchors(struct uwb_clicker_session *session,
 
     return session->state == UWB_CLICKER_SUCCEEDED ? 0 : last_ret;
 }
+
+#if defined(CONFIG_IMEC_ML_CLICKER)
+static uint8_t ml_clicker_discovery_slot_count_override(void)
+{
+    return ml_clicker_discovery_slot_override;
+}
+
+static bool ml_clicker_continue_after_range_start_failure(void)
+{
+    return ml_clicker_runtime.active;
+}
+
+static int ml_clicker_read_u8_tlv(const uint8_t *payload,
+                                  size_t payload_len,
+                                  uint8_t type,
+                                  uint8_t default_value,
+                                  uint8_t min_value,
+                                  uint8_t max_value,
+                                  uint8_t *value)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+    int ret;
+
+    if (value == NULL || min_value > max_value) {
+        return -EINVAL;
+    }
+
+    *value = default_value;
+    ret = tlv_find(payload, payload_len, type, &tlv_value, &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return 0;
+    }
+    if (ret != PROTO_OK || tlv_value == NULL) {
+        return -EINVAL;
+    }
+    if (tlv_len == 1u) {
+        *value = tlv_value[0];
+    } else if (tlv_len == 2u) {
+        uint16_t raw = proto_get_u16_le(tlv_value);
+
+        if (raw > UINT8_MAX) {
+            return -ERANGE;
+        }
+        *value = (uint8_t)raw;
+    } else {
+        return -EINVAL;
+    }
+
+    return *value >= min_value && *value <= max_value ? 0 : -ERANGE;
+}
+
+static int ml_clicker_send_command_result(const struct ml_clicker_request *request,
+                                          enum command_status status,
+                                          uint8_t reason)
+{
+    struct proto_packet result = {0};
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    bool collection_context;
+    int ret;
+
+    if (request == NULL) {
+        return -EINVAL;
+    }
+
+    ret = mesh_append_command_result(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     CMD_ML_START_COLLECTION,
+                                     status,
+                                     reason);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    collection_context =
+        ml_clicker_runtime.event_seq != 0u &&
+        request->command.seq == ml_clicker_runtime.request.command.seq &&
+        request->command.session_id == ml_clicker_runtime.request.command.session_id;
+    if (collection_context) {
+        ret = tlv_append_u32(payload,
+                             sizeof(payload),
+                             &payload_len,
+                             TLV_EVENT_SEQ,
+                             ml_clicker_runtime.event_seq);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+        ret = tlv_append_u16(payload,
+                             sizeof(payload),
+                             &payload_len,
+                             TLV_SAMPLE_COUNT,
+                             ml_clicker_runtime.emitted_samples);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+    }
+
+    result.msg_type = MSG_COMMAND_RESULT;
+    result.flags = FLAG_DIAGNOSTIC;
+    if (status != COMMAND_OK) {
+        result.flags |= FLAG_ERROR;
+    }
+    result.src_id = DEVICE_ID;
+    result.dst_id = request->host_id == 0u ? GATEWAY_ID : request->host_id;
+    result.session_id = request->command.session_id == 0u ?
+                        k_uptime_get_32() : request->command.session_id;
+    if (result.session_id == 0u) {
+        result.session_id = 1u;
+    }
+    result.seq = request->command.seq;
+    if (result.seq == 0u) {
+        result.seq = gateway_next_command_seq();
+    }
+    result.ttl = 1u;
+    result.payload_len = (uint8_t)payload_len;
+    return gateway_emit_host_packet(&result, payload, payload_len);
+}
+
+static int ml_clicker_emit_range_sample_if_active(
+    const struct uwb_clicker_session *session,
+    const struct uwb_range_schedule_frame *schedule,
+    const struct uwb_range_step *step,
+    const struct dwm3000_range_result *range_result)
+{
+    struct range_report_diagnostics diagnostics = {0};
+    struct range_report_fields fields = {0};
+    struct proto_packet packet = {0};
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    int32_t distance_sample_mm;
+    uint8_t round_index;
+    uint64_t timestamp_ms = 0u;
+    uint16_t total_samples;
+    uint8_t local_cir[UWB_CIR_SAMPLE_LEN] = {0};
+    int64_t sample_ms;
+    int ret;
+
+    if (!ml_clicker_runtime.active) {
+        return 0;
+    }
+    if (session == NULL || schedule == NULL || step == NULL || range_result == NULL) {
+        ml_clicker_runtime.notify_failures++;
+        return -EINVAL;
+    }
+
+    total_samples = (uint16_t)MIN(uwb_range_schedule_total_samples(schedule),
+                                  (size_t)UINT16_MAX);
+    distance_sample_mm = range_result->distance_mm;
+    round_index = step->round_index;
+    sample_ms = range_result->exchange_started ?
+                range_result->exchange_start_ms : k_uptime_get();
+    anchor_sequence_timestamp_at(sample_ms, &timestamp_ms);
+
+    if (range_result->cir_sampled) {
+        memcpy(local_cir, range_result->cir_sample, sizeof(local_cir));
+    }
+
+    diagnostics.status_flags = range_result->rsl_sampled ||
+                               range_result->cir_sampled ||
+                               range_result->clock_offset_sampled ||
+                               range_result->carrier_integrator_sampled ?
+                               RANGE_DIAG_CLICKER_PRESENT :
+                               RANGE_DIAG_CLICKER_MISSING;
+    diagnostics.status_flags |= range_result->cir_sampled ?
+                                RANGE_DIAG_ANCHOR_PRESENT :
+                                RANGE_DIAG_ANCHOR_MISSING;
+    diagnostics.burst_id = ml_clicker_runtime.burst_id;
+    diagnostics.exchange_stride_us = schedule->exchange_stride_us;
+    diagnostics.burst_duration_ms = schedule->burst_window_ms;
+    diagnostics.diag_bytes_captured = range_result->cir_sampled ?
+                                      UWB_CIR_SAMPLE_LEN : 0u;
+    diagnostics.diag_bytes_transmitted = diagnostics.diag_bytes_captured;
+    diagnostics.report_fragment_count = 1u;
+    diagnostics.phy_config_id = schedule->ranging_channel;
+    diagnostics.clock_offset_raw = range_result->clock_offset_raw;
+    diagnostics.clock_offset_present = range_result->clock_offset_sampled;
+    diagnostics.carrier_integrator = range_result->carrier_integrator;
+    diagnostics.carrier_integrator_present =
+        range_result->carrier_integrator_sampled;
+    diagnostics.clicker_diag = range_result->cir_sampled ? local_cir : NULL;
+    diagnostics.clicker_diag_len = range_result->cir_sampled ?
+                                   UWB_CIR_SAMPLE_LEN : 0u;
+
+    fields.clicker_id = session->config.clicker_id;
+    fields.anchor_id = step->anchor_id;
+    fields.event_seq = session->config.click_event_id;
+    fields.timestamp_ms = timestamp_ms;
+    fields.distance_mm = range_result->distance_mm;
+    fields.quality = range_result->quality;
+    fields.rsl_dbm = range_result->rsl_dbm;
+    fields.cir_sample = range_result->cir_sampled ? local_cir : NULL;
+    fields.range_status = range_status_valid(range_result->status) ?
+                          range_result->status : RANGE_INTERNAL_ERROR;
+    fields.distance_samples_mm = &distance_sample_mm;
+    fields.range_round_indices = &round_index;
+    fields.sequence_start_timestamps_ms = &timestamp_ms;
+    fields.sample_index = (uint16_t)MIN(step->sample_index, (size_t)UINT16_MAX);
+    fields.sample_count = total_samples == 0u ? 1u : total_samples;
+    fields.distance_sample_count = 1u;
+    fields.omit_rsl = !range_result->rsl_sampled;
+    fields.omit_cir = !range_result->cir_sampled;
+    fields.diagnostics = &diagnostics;
+
+    ret = report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields);
+    if (ret != PROTO_OK) {
+        ml_clicker_runtime.notify_failures++;
+        LOG_WRN("ML range sample TLV build failed: ret=%d anchor=0x%016llx sample=%u",
+                ret,
+                (unsigned long long)step->anchor_id,
+                (unsigned int)step->sample_index);
+        return -EINVAL;
+    }
+
+    packet.msg_type = MSG_CLICK_REPORT;
+    packet.flags = FLAG_DIAGNOSTIC;
+    packet.src_id = DEVICE_ID;
+    packet.dst_id = ml_clicker_runtime.request.host_id == 0u ?
+                    GATEWAY_ID : ml_clicker_runtime.request.host_id;
+    packet.session_id = session->config.click_event_id;
+    packet.seq = ml_clicker_runtime.next_packet_seq++;
+    if (packet.seq == 0u) {
+        packet.seq = ml_clicker_runtime.next_packet_seq++;
+    }
+    packet.ttl = 1u;
+    packet.payload_len = (uint8_t)payload_len;
+
+    ret = gateway_emit_host_packet(&packet, payload, payload_len);
+    if (ret < 0) {
+        ml_clicker_runtime.notify_failures++;
+        LOG_WRN("ML range sample notify failed: ret=%d anchor=0x%016llx sample=%u",
+                ret,
+                (unsigned long long)step->anchor_id,
+                (unsigned int)step->sample_index);
+        return ret;
+    }
+
+    ml_clicker_runtime.emitted_samples++;
+    return 0;
+}
+
+static enum command_status ml_clicker_status_from_ret(int ret)
+{
+    if (ret == 0) {
+        return COMMAND_OK;
+    }
+    if (ret == -ETIMEDOUT || ret == PROTO_ERR_NOT_FOUND) {
+        return COMMAND_TIMEOUT;
+    }
+    if (ret == -EINVAL || ret == PROTO_ERR_MALFORMED) {
+        return COMMAND_MALFORMED_PAYLOAD;
+    }
+    if (ret == -EBUSY || ret == PROTO_ERR_BUSY) {
+        return COMMAND_BUSY;
+    }
+    return COMMAND_RADIO_ERROR;
+}
+
+static void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
+{
+    struct proto_packet packet = {0};
+    struct ml_clicker_request request = {0};
+    enum command_id command_id = CMD_VENDOR_BASE;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    const uint8_t *decoded_payload = NULL;
+    size_t payload_len = 0u;
+    int ret;
+
+    ret = serial_frame_decode_packet(frame,
+                                     frame_len,
+                                     &packet,
+                                     payload,
+                                     sizeof(payload),
+                                     &payload_len);
+    if (ret != PROTO_OK) {
+        LOG_WRN("ML clicker BLE COBS frame decode failed: %d", ret);
+        return;
+    }
+
+    decoded_payload = payload;
+    ret = gateway_command_extract_id(decoded_payload, payload_len, &command_id);
+    if (packet.msg_type != MSG_COMMAND || ret != PROTO_OK) {
+        request.command = packet;
+        request.host_id = packet.src_id;
+        (void)ml_clicker_send_command_result(&request,
+                                             COMMAND_MALFORMED_PAYLOAD,
+                                             0u);
+        return;
+    }
+    if (command_id != CMD_ML_START_COLLECTION) {
+        request.command = packet;
+        request.host_id = packet.src_id;
+        (void)ml_clicker_send_command_result(&request,
+                                             COMMAND_UNSUPPORTED_COMMAND,
+                                             0u);
+        return;
+    }
+    if (packet.dst_id != DEVICE_ID &&
+        packet.dst_id != GATEWAY_ID &&
+        packet.dst_id != MESH_BROADCAST_ID) {
+        request.command = packet;
+        request.host_id = packet.src_id;
+        (void)ml_clicker_send_command_result(&request,
+                                             COMMAND_DENIED,
+                                             0u);
+        return;
+    }
+
+    request.command = packet;
+    request.host_id = packet.src_id;
+    request.samples_per_anchor = CONFIG_IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR;
+    request.max_anchor_count = CONFIG_IMEC_ML_MAX_ANCHORS;
+    request.discovery_slot_count = CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT;
+
+    ret = ml_clicker_read_u8_tlv(decoded_payload,
+                                 payload_len,
+                                 TLV_SAMPLE_COUNT,
+                                 request.samples_per_anchor,
+                                 1u,
+                                 UWB_RANGING_REQUESTS_MAX_PER_ANCHOR,
+                                 &request.samples_per_anchor);
+    if (ret == 0) {
+        ret = ml_clicker_read_u8_tlv(decoded_payload,
+                                     payload_len,
+                                     TLV_DISCOVERY_SLOT_COUNT,
+                                     request.discovery_slot_count,
+                                     1u,
+                                     UWB_DISCOVERY_SLOT_COUNT,
+                                     &request.discovery_slot_count);
+    }
+    if (ret < 0) {
+        (void)ml_clicker_send_command_result(&request,
+                                             COMMAND_MALFORMED_PAYLOAD,
+                                             0u);
+        return;
+    }
+
+    if (!atomic_cas(&ml_clicker_busy, 0, 1)) {
+        (void)ml_clicker_send_command_result(&request, COMMAND_BUSY, 0u);
+        return;
+    }
+
+    ml_clicker_pending_request = request;
+    ret = k_work_submit_to_queue(&clicker_action_work_q, &ml_clicker_collect_work);
+    if (ret < 0) {
+        atomic_clear(&ml_clicker_busy);
+        (void)ml_clicker_send_command_result(&request,
+                                             COMMAND_INTERNAL_ERROR,
+                                             0u);
+    }
+}
+
+static void ml_clicker_collect_work_handler(struct k_work *work)
+{
+    struct ml_clicker_request request = ml_clicker_pending_request;
+    struct uwb_clicker_session session;
+    struct uwb_range_schedule_frame schedule;
+    struct uwb_clicker_config config;
+    enum command_status status;
+    int64_t click_deadline_ms;
+    uint32_t event_seq;
+    uint64_t priority_id;
+    uint8_t attempted_count = 0u;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    memset(&session, 0, sizeof(session));
+    memset(&schedule, 0, sizeof(schedule));
+    memset(&config, 0, sizeof(config));
+
+    event_seq = next_click_event_seq();
+    priority_id = clicker_priority_id(event_seq, 1u);
+    click_deadline_ms = k_uptime_get() + CLICK_REPORT_DEADLINE_MS;
+
+    config.network_id = NETWORK_ID;
+    config.clicker_id = DEVICE_ID;
+    config.click_event_id = event_seq;
+    config.nonce = clicker_nonce(event_seq);
+    config.min_anchor_count = 1u;
+    config.max_anchor_count = request.max_anchor_count;
+    config.max_attempts = 1u;
+    config.samples_per_anchor = request.samples_per_anchor;
+    config.wake_channel = UWB_WAKE_CHANNEL;
+    config.ranging_channel = UWB_RANGING_CHANNEL;
+    config.flags = FLAG_DIAGNOSTIC;
+
+    memset(&ml_clicker_runtime, 0, sizeof(ml_clicker_runtime));
+    ml_clicker_runtime.request = request;
+    ml_clicker_runtime.event_seq = event_seq;
+    ml_clicker_runtime.burst_id = uwb_schedule_burst_id(event_seq, 1u);
+    ml_clicker_runtime.next_packet_seq = 1u;
+    ml_clicker_runtime.active = true;
+    ml_clicker_discovery_slot_override = request.discovery_slot_count;
+
+    LOG_INF("ML collection start: event_seq=%u samples_per_anchor=%u max_anchors=%u discovery_slots=%u host=0x%016llx",
+            event_seq,
+            request.samples_per_anchor,
+            request.max_anchor_count,
+            request.discovery_slot_count,
+            (unsigned long long)request.host_id);
+
+    ret = uwb_clicker_session_start(&session, &config);
+    if (ret == PROTO_OK) {
+        ret = clicker_attempt_gate(&session,
+                                   event_seq,
+                                   priority_id,
+                                   click_deadline_ms,
+                                   false);
+    }
+    if (ret == 0) {
+        ret = clicker_collect_uwb_attempt(&session, priority_id, &schedule);
+    }
+    if (ret == 0) {
+        ml_clicker_runtime.selected_anchors = schedule.selected_count;
+        ret = range_uwb_scheduled_anchors(&session,
+                                          &schedule,
+                                          click_deadline_ms,
+                                          &attempted_count);
+        ml_clicker_runtime.attempted_ranges = attempted_count;
+    }
+
+    ml_clicker_runtime.active = false;
+    ml_clicker_discovery_slot_override = 0u;
+    status = ml_clicker_status_from_ret(ret);
+    if (status == COMMAND_OK && ml_clicker_runtime.notify_failures > 0u) {
+        status = COMMAND_INTERNAL_ERROR;
+    }
+
+    LOG_INF("ML collection done: event_seq=%u ret=%d status=%s selected=%u attempted=%u emitted=%u notify_failures=%u ds_ok=%u ds_fail=%u",
+            event_seq,
+            ret,
+            command_status_name(status),
+            ml_clicker_runtime.selected_anchors,
+            ml_clicker_runtime.attempted_ranges,
+            ml_clicker_runtime.emitted_samples,
+            ml_clicker_runtime.notify_failures,
+            session.diagnostics.ds_twr_successes,
+            session.diagnostics.ds_twr_failures);
+    (void)ml_clicker_send_command_result(&request, status, 0u);
+    atomic_clear(&ml_clicker_busy);
+}
+#endif
 
 static uint8_t clicker_debug_min_anchor_count(void);
 static uint8_t clicker_debug_max_anchor_count(void);
@@ -9401,7 +10841,7 @@ static void handle_button_action(enum button_action action)
             status.click_accepted = ret == 0;
             status.click_failure = ret == 0 ? 0 : CLICK_FAILURE_INSUFFICIENT_RANGES;
             status_apply(&status);
-            clicker_enter_systemoff_idle();
+            clicker_enter_idle();
             break;
         }
 #endif
@@ -9432,11 +10872,11 @@ static void handle_button_action(enum button_action action)
         stage1_click_diag("button before_led_hold ret=%d", ret);
         stage1_led_hold_click_result(ret, 2000u);
         high_debug_log_event("BUTTON_ACTION",
-                             "action=normal_click point=before_systemoff ret=%d",
+                             "action=normal_click point=before_idle ret=%d",
                              ret);
-        stage1_click_diag("button before_systemoff ret=%d", ret);
-        stage1_click_trace_dump("before_systemoff");
-        clicker_enter_systemoff_idle();
+        stage1_click_diag("button before_idle ret=%d", ret);
+        stage1_click_trace_dump("before_idle");
+        clicker_enter_idle();
         break;
     case BUTTON_ACTION_SELF_TEST_ARMED:
         status.self_test_armed = true;
@@ -9470,12 +10910,12 @@ static void handle_button_action(enum button_action action)
         {
             (void)clicker_emit_self_test_report(self_test_event_seq, failure);
         }
-        clicker_enter_systemoff_idle();
+        clicker_enter_idle();
         break;
     case BUTTON_ACTION_SELF_TEST_CANCELLED:
         status_apply(&status);
         LOG_INF("self-test arm cancelled");
-        clicker_enter_systemoff_idle();
+        clicker_enter_idle();
         break;
     case BUTTON_ACTION_NONE:
     default:
@@ -9537,6 +10977,23 @@ static bool click_button_wait_for_release(void)
     }
 
     return click_button_pressed() == 0;
+}
+
+static int click_button_arm_idle_interrupt(void)
+{
+    int ret;
+
+    ret = click_button_configure_input();
+    if (ret < 0) {
+        return ret;
+    }
+    (void)gpio_pin_interrupt_configure(click_button.port,
+                                       click_button.pin,
+                                       GPIO_INT_DISABLE);
+    click_button_clear_latch();
+    return gpio_pin_interrupt_configure(click_button.port,
+                                        click_button.pin,
+                                        GPIO_INT_EDGE_TO_ACTIVE);
 }
 
 static bool clicker_capture_systemoff_button_action(enum button_action *action)
@@ -9623,6 +11080,13 @@ static void clicker_prepare_radio_systemoff(void)
     }
 }
 
+static void clicker_systemoff_now(void)
+{
+    clicker_request_systemoff_ram_retention();
+    LOG_PANIC();
+    sys_poweroff();
+}
+
 static void clicker_enter_systemoff_idle(void)
 {
     int ret;
@@ -9640,8 +11104,12 @@ static void clicker_enter_systemoff_idle(void)
     ret = click_button_configure_input();
     if (ret < 0) {
         LOG_WRN("click button wake arm unavailable: %d", ret);
-        LOG_PANIC();
-        sys_poweroff();
+        stage1_clicker_early_led("button_wake_input_unavailable",
+                                 STAGE1_LED_PHASE_IDLE,
+                                 STAGE1_LED_RESULT_ERROR,
+                                 750u);
+        clicker_systemoff_now();
+        return;
     }
 
     (void)gpio_pin_interrupt_configure(click_button.port,
@@ -9649,9 +11117,13 @@ static void clicker_enter_systemoff_idle(void)
                                        GPIO_INT_DISABLE);
     if (!click_button_wait_for_release()) {
         LOG_WRN("click button still held; entering system-off without wake arm");
+        stage1_clicker_early_led("button_still_held_no_wake_arm",
+                                 STAGE1_LED_PHASE_IDLE,
+                                 STAGE1_LED_RESULT_TIMEOUT,
+                                 750u);
         (void)gpio_pin_configure_dt(&click_button, GPIO_DISCONNECTED);
-        LOG_PANIC();
-        sys_poweroff();
+        clicker_systemoff_now();
+        return;
     }
     click_button_clear_latch();
 
@@ -9660,19 +11132,168 @@ static void clicker_enter_systemoff_idle(void)
                                        GPIO_INT_LEVEL_LOW);
     if (ret < 0) {
         LOG_WRN("click button wake arm failed: %d", ret);
+        stage1_clicker_early_led("button_wake_arm_failed",
+                                 STAGE1_LED_PHASE_IDLE,
+                                 STAGE1_LED_RESULT_ERROR,
+                                 750u);
     }
 
     LOG_INF("clicker entering system-off idle; wake source=P0.%u physical-low",
             (unsigned int)CLICK_BUTTON_PIN_NUM);
-    LOG_PANIC();
-    sys_poweroff();
+    clicker_systemoff_now();
+}
+
+static void clicker_enter_systemon_retained_idle(void)
+{
+    bool radio_retained = false;
+    int ret;
+
+    if (!clicker_systemon_retained_idle_enabled()) {
+        return;
+    }
+
+    (void)battery_adc_divider_disable();
+    clicker_ble_courtesy_low_power_stop();
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        LOG_WRN("DWM3000 retained-idle preconfigure failed: %d", ret);
+    } else {
+        ret = dwm3000_driver_standby();
+        if (ret < 0) {
+            LOG_WRN("DWM3000 retained-idle sleep failed: %d", ret);
+        } else {
+            radio_retained = true;
+        }
+    }
+    ret = dwm3000_port_float_pins();
+    if (ret < 0) {
+        LOG_WRN("DWM3000 retained-idle pin float failed: %d", ret);
+    }
+
+    ret = click_button_arm_idle_interrupt();
+    if (ret < 0) {
+        LOG_WRN("click button retained-idle wake arm failed: %d", ret);
+    }
+    high_debug_log_event("CLICKER_IDLE",
+                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 usb_command_poll=0 radio_retained=%u dwm_pins=float",
+                         (unsigned int)CLICK_BUTTON_PIN_NUM,
+                         radio_retained ? 1u : 0u);
+    LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",
+            (unsigned int)CLICK_BUTTON_PIN_NUM);
+    status_leds_set(false, false, false);
+    status_leds_disconnect();
+}
+
+static void clicker_enter_idle(void)
+{
+    if (clicker_systemon_retained_idle_enabled()) {
+        clicker_enter_systemon_retained_idle();
+        return;
+    }
+
+    clicker_enter_systemoff_idle();
+}
+
+static void clicker_action_work_handler(struct k_work *work)
+{
+    enum button_action action = clicker_pending_action;
+
+    ARG_UNUSED(work);
+
+    clicker_pending_action = BUTTON_ACTION_NONE;
+    high_debug_log_event("BUTTON_ACTION",
+                         "point=action_worker_begin action=%u",
+                         (unsigned int)action);
+    handle_button_action(action);
+    high_debug_log_event("BUTTON_ACTION",
+                         "point=action_worker_end action=%u",
+                         (unsigned int)action);
+    atomic_set(&clicker_action_active, 0);
+}
+
+static void clicker_submit_button_action(enum button_action action)
+{
+    int ret;
+
+    if (action == BUTTON_ACTION_NONE) {
+        return;
+    }
+    if (!atomic_cas(&clicker_action_active, 0, 1)) {
+        high_debug_log_event("BUTTON_ACTION",
+                             "point=action_drop reason=busy action=%u",
+                             (unsigned int)action);
+        LOG_WRN("clicker button action ignored while previous action is active: %u",
+                (unsigned int)action);
+        return;
+    }
+
+    clicker_pending_action = action;
+    ret = k_work_submit_to_queue(&clicker_action_work_q, &clicker_action_work);
+    if (ret < 0) {
+        clicker_pending_action = BUTTON_ACTION_NONE;
+        atomic_set(&clicker_action_active, 0);
+        high_debug_log_event("BUTTON_ACTION",
+                             "point=action_submit_failed action=%u ret=%d",
+                             (unsigned int)action,
+                             ret);
+        LOG_ERR("clicker button action queue submit failed: action=%u ret=%d",
+                (unsigned int)action,
+                ret);
+    }
+}
+
+static void click_button_handle_signal(enum button_signal signal, const char *source)
+{
+    enum button_action action;
+    int ret;
+
+    ret = button_fsm_handle(&button_fsm, signal, k_uptime_get_32(), &action);
+    if (ret != PROTO_OK) {
+        LOG_ERR("button FSM rejected signal %u from %s: %d",
+                (unsigned int)signal,
+                source == NULL ? "unknown" : source,
+                ret);
+        return;
+    }
+    high_debug_log_event("BUTTON_EDGE",
+                         "source=%s signal=%u action=%u",
+                         source == NULL ? "unknown" : source,
+                         (unsigned int)signal,
+                         (unsigned int)action);
+    clicker_submit_button_action(action);
+}
+
+static void click_button_release_work_handler(struct k_work *work)
+{
+    int pressed;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    pressed = click_button_pressed();
+    if (pressed < 0) {
+        LOG_ERR("failed to poll click button release: %d", pressed);
+        return;
+    }
+    if (pressed != 0) {
+        (void)k_work_reschedule(&click_button_release_work,
+                                K_MSEC(CLICK_BUTTON_RELEASE_POLL_MS));
+        return;
+    }
+
+    click_button_clear_latch();
+    click_button_handle_signal(BUTTON_SIGNAL_RELEASE, "release_poll");
+    ret = click_button_arm_idle_interrupt();
+    if (ret < 0) {
+        LOG_WRN("click button rearm after release poll failed: %d", ret);
+    }
 }
 
 static void click_button_work_handler(struct k_work *work)
 {
-    enum button_action action;
     enum button_signal signal;
     int pressed;
+    int ret;
 
     ARG_UNUSED(work);
 
@@ -9681,13 +11302,31 @@ static void click_button_work_handler(struct k_work *work)
         LOG_ERR("failed to read click button: %d", pressed);
         return;
     }
+    if (pressed != 0) {
+        (void)gpio_pin_interrupt_configure(click_button.port,
+                                           click_button.pin,
+                                           GPIO_INT_DISABLE);
+    }
+    if (pressed != 0 && clicker_systemon_retained_idle_enabled() &&
+        atomic_get(&clicker_action_active) == 0) {
+        stage1_clicker_early_led("systemon_button_press",
+                                 STAGE1_LED_PHASE_WAKE,
+                                 STAGE1_LED_RESULT_ACTIVE,
+                                 0u);
+    }
 
     signal = pressed != 0 ? BUTTON_SIGNAL_PRESS : BUTTON_SIGNAL_RELEASE;
-    if (button_fsm_handle(&button_fsm, signal, k_uptime_get_32(), &action) != PROTO_OK) {
-        LOG_ERR("button FSM rejected signal");
-        return;
+    click_button_handle_signal(signal, "irq");
+    if (pressed != 0) {
+        (void)k_work_reschedule(&click_button_release_work,
+                                K_MSEC(CLICK_BUTTON_RELEASE_STABLE_MS));
+    } else {
+        (void)k_work_cancel_delayable(&click_button_release_work);
+        ret = click_button_arm_idle_interrupt();
+        if (ret < 0) {
+            LOG_WRN("click button rearm after release IRQ failed: %d", ret);
+        }
     }
-    handle_button_action(action);
 }
 
 static void click_button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
@@ -9707,11 +11346,11 @@ static void self_test_arm_timeout_handler(struct k_work *work)
 
     if (button_fsm_handle(&button_fsm, BUTTON_SIGNAL_TICK,
                                k_uptime_get_32(), &action) == PROTO_OK) {
-        handle_button_action(action);
+        clicker_submit_button_action(action);
     }
 }
 
-static int click_button_init(void)
+static int ML_CLICKER_BUTTON_UNUSED click_button_init(void)
 {
     int ret;
 
@@ -9728,6 +11367,8 @@ static int click_button_init(void)
     }
 
     k_work_init(&click_button_work, click_button_work_handler);
+    k_work_init_delayable(&click_button_release_work, click_button_release_work_handler);
+    k_work_init(&clicker_action_work, clicker_action_work_handler);
     k_work_init_delayable(&self_test_arm_timeout_work, self_test_arm_timeout_handler);
     gpio_init_callback(&click_button_cb, click_button_isr, BIT(click_button.pin));
     ret = gpio_add_callback(click_button.port, &click_button_cb);
@@ -9735,10 +11376,7 @@ static int click_button_init(void)
         return ret;
     }
 
-    click_button_clear_latch();
-    ret = gpio_pin_interrupt_configure(click_button.port,
-                                       click_button.pin,
-                                       GPIO_INT_EDGE_BOTH);
+    ret = click_button_arm_idle_interrupt();
     if (ret < 0) {
         (void)gpio_remove_callback(click_button.port, &click_button_cb);
         return ret;
@@ -9748,7 +11386,11 @@ static int click_button_init(void)
     return 0;
 }
 #else
-static void clicker_enter_systemoff_idle(void)
+static void BLE_CONNECTIVITY_TEST_UNUSED clicker_enter_systemoff_idle(void)
+{
+}
+
+static void clicker_enter_idle(void)
 {
 }
 
@@ -9758,11 +11400,62 @@ static int click_button_init(void)
 }
 #endif
 
+#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+static void gateway_ble_connectivity_test_run(void)
+{
+    uint32_t heartbeat = 0u;
+    int ret;
+
+    printk("gateway BLE connectivity test booting\n");
+    ret = gateway_ble_init();
+    if (ret < 0) {
+        printk("gateway BLE connectivity test init failed: %d\n", ret);
+        LOG_ERR("gateway BLE connectivity test init failed: %d", ret);
+        for (;;) {
+            k_sleep(K_SECONDS(30));
+        }
+    }
+
+    LOG_INF("gateway BLE connectivity test active; no UWB, mesh, DWM3000, USB CDC, ADC, LEDs, or buttons initialized");
+    for (;;) {
+        char line[128];
+        int len;
+
+        LOG_INF("gateway BLE connectivity test heartbeat: seq=%u connected=%u packet_notify=%u log_notify=%u",
+                heartbeat,
+                gateway_ble_conn != NULL ? 1u : 0u,
+                gateway_ble_packet_notify_enabled ? 1u : 0u,
+                gateway_ble_log_notify_enabled ? 1u : 0u);
+        len = snprintk(line,
+                       sizeof(line),
+                       "BLE_GATEWAY_TEST heartbeat=%u connected=%u packet_notify=%u log_notify=%u\n",
+                       heartbeat,
+                       gateway_ble_conn != NULL ? 1u : 0u,
+                       gateway_ble_packet_notify_enabled ? 1u : 0u,
+                       gateway_ble_log_notify_enabled ? 1u : 0u);
+        if (len > 0) {
+            ret = gateway_ble_send_log_bytes((const uint8_t *)line,
+                                             (size_t)MIN(len, (int)sizeof(line) - 1));
+            if (ret < 0 && ret != -ENOTCONN && ret != -EACCES) {
+                LOG_WRN("gateway BLE connectivity test log notify failed: %d", ret);
+            }
+        }
+        heartbeat++;
+        k_sleep(K_SECONDS(5));
+    }
+}
+#endif
+
 int main(void)
 {
     enum button_action boot_button_action = BUTTON_ACTION_NONE;
     int ret;
     int battery_adc_ret;
+
+#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+    gateway_ble_connectivity_test_run();
+    return 0;
+#endif
 
     battery_adc_ret = battery_adc_divider_disable();
     button_fsm_init(&button_fsm);
@@ -9770,10 +11463,19 @@ int main(void)
 #if HAS_CLICK_BUTTON
     if (DEVICE_ROLE == ROLE_CLICKER &&
         IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE) &&
+        !clicker_systemon_retained_idle_enabled() &&
         !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)) {
         if (reset_reason_was_systemoff()) {
+            stage1_clicker_early_led("systemoff_button_wake",
+                                     STAGE1_LED_PHASE_WAKE,
+                                     STAGE1_LED_RESULT_ACTIVE,
+                                     0u);
             if (!clicker_capture_systemoff_button_action(&boot_button_action)) {
                 LOG_WRN("system-off wake button capture failed; returning to idle");
+                stage1_clicker_early_led("systemoff_button_capture_failed",
+                                         STAGE1_LED_PHASE_WAKE,
+                                         STAGE1_LED_RESULT_ERROR,
+                                         750u);
                 clicker_enter_systemoff_idle();
             }
         } else {
@@ -9782,21 +11484,32 @@ int main(void)
     }
 #endif
 
-    ret = debug_serial_init();
-    if (ret < 0) {
-        printk("USB serial debug init failed: %d\n", ret);
+    if (clicker_systemon_retained_idle_enabled()) {
+        ret = 0;
+        printk("local serial debug skipped for retained clicker idle\n");
+    } else if (!gateway_ble_transport_enabled()) {
+        ret = debug_serial_init();
+        if (ret < 0) {
+            printk("local serial debug init failed: %d\n", ret);
+        } else {
+            printk("local serial debug active; firmware booting\n");
+        }
     } else {
-        printk("USB serial debug active; firmware booting\n");
+        ret = debug_serial_init();
+        if (ret < 0) {
+            printk("local serial debug init failed: %d\n", ret);
+        }
     }
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
     HIGH_DEBUG_COUNTER_INC(boot_count);
     high_debug_boot_banner();
-    high_debug_log_event("USB_READY",
-                         "cdc_logs=%u rtt_logs=%u gateway_binary_cdc=%u command_parser=%u",
+    high_debug_log_event("DEBUG_TRANSPORT_READY",
+                         "cdc_logs=%u rtt_logs=%u gateway_ble=%u ble_log_backend=%u command_parser=%u",
                          IS_ENABLED(CONFIG_IMEC_USB_CDC_LOGS) ? 1u : 0u,
                          IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
-                         high_debug_gateway_binary_cdc_active() ? 1u : 0u,
+                         gateway_ble_transport_enabled() ? 1u : 0u,
+                         IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND) ? 1u : 0u,
                          high_debug_cdc_command_enabled() ? 1u : 0u);
     high_debug_log_event("BOOTLOADER_READY",
                          "configured=%u entry_command=%u recovery=jlink",
@@ -9804,8 +11517,10 @@ int main(void)
                          IS_ENABLED(CONFIG_RETENTION_BOOT_MODE) ? 1u : 0u);
     k_work_init_delayable(&high_debug_counter_work, high_debug_counter_work_handler);
     k_work_init_delayable(&high_debug_serial_work, high_debug_serial_work_handler);
-    (void)k_work_schedule(&high_debug_counter_work,
-                          K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS));
+    if (!clicker_systemon_retained_idle_enabled()) {
+        (void)k_work_schedule(&high_debug_counter_work,
+                              K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS));
+    }
     if (high_debug_cdc_command_enabled()) {
         (void)k_work_schedule(&high_debug_serial_work,
                               K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COMMAND_POLL_MS));
@@ -9823,7 +11538,7 @@ int main(void)
     if (battery_adc_ret < 0) {
         LOG_WRN("battery ADC divider disable failed: %d", battery_adc_ret);
     }
-    LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_scheduled=%u wake_ms=%u max_attempts=%u min_unique_anchors=%u anchor_scan_interval_ms=%u anchor_scan_window_ms=%u anchor_mesh_rx_interval_ms=%u anchor_idle_uwb_us_per_s=%u anchor_uwb_wait_ms=%u",
+    LOG_INF("runtime config: device_id=0x%016llx gateway_id=0x%016llx max_scheduled=%u wake_ms=%u max_attempts=%u min_unique_anchors=%u anchor_scan_interval_ms=%u anchor_scan_window_ms=%u anchor_mesh_rx_interval_ms=%u anchor_idle_uwb_rx_us_per_s=%u anchor_idle_uwb_awake_us_per_s=%u anchor_uwb_wait_ms=%u anchor_slot_source=%s highdebug_anchor_slot=%u",
             (unsigned long long)DEVICE_ID,
             (unsigned long long)GATEWAY_ID,
             MAX_SCHEDULED_ANCHORS,
@@ -9833,8 +11548,11 @@ int main(void)
             anchor_uwb_scan_interval_ms,
             ANCHOR_UWB_SCAN_RX_MS,
             UWB_MESH_ANCHOR_RX_INTERVAL_MS,
+            (unsigned int)ANCHOR_UWB_SCAN_RX_US_PER_S,
             (unsigned int)ANCHOR_UWB_PERIODIC_IDLE_US_PER_S,
-            ANCHOR_UWB_WAIT_MS);
+            ANCHOR_UWB_WAIT_MS,
+            ANCHOR_DISCOVERY_SLOT_SOURCE,
+            (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
 
     ret = status_leds_init();
     if (ret < 0) {
@@ -9870,15 +11588,37 @@ int main(void)
 #endif
 
     if (DEVICE_ROLE == ROLE_CLICKER) {
+#if defined(CONFIG_IMEC_ML_CLICKER)
+        k_work_queue_start(&clicker_action_work_q,
+                           clicker_action_work_q_stack,
+                           K_THREAD_STACK_SIZEOF(clicker_action_work_q_stack),
+                           CLICKER_ACTION_WORKQUEUE_PRIORITY,
+                           &clicker_action_work_q_config);
+        k_work_init(&ml_clicker_collect_work, ml_clicker_collect_work_handler);
+        ret = gateway_ble_init();
+        if (ret < 0) {
+            LOG_ERR("ML clicker BLE PC link unavailable: %d", ret);
+        }
+        LOG_INF("ML clicker ready; BLE-triggered UWB collection enabled");
+#else
+#if HAS_CLICK_BUTTON
+        k_work_queue_start(&clicker_action_work_q,
+                           clicker_action_work_q_stack,
+                           K_THREAD_STACK_SIZEOF(clicker_action_work_q_stack),
+                           CLICKER_ACTION_WORKQUEUE_PRIORITY,
+                           &clicker_action_work_q_config);
+#endif
         ret = click_button_init();
         if (ret < 0) {
             LOG_WRN("click button unavailable: %d", ret);
         }
         if (boot_button_action != BUTTON_ACTION_NONE) {
             handle_button_action(boot_button_action);
-        } else if (IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE)) {
-            clicker_enter_systemoff_idle();
+        } else if (clicker_systemon_retained_idle_enabled() ||
+                   IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE)) {
+            clicker_enter_idle();
         }
+#endif
     }
 
     if (DEVICE_ROLE == ROLE_ANCHOR) {
@@ -9903,6 +11643,15 @@ int main(void)
         k_work_init_delayable(&anchor_heartbeat_work, anchor_heartbeat_work_handler);
         k_work_init_delayable(&anchor_reboot_work, anchor_reboot_work_handler);
         k_work_init_delayable(&anchor_survey_work, anchor_survey_work_handler);
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+        k_work_init_delayable(&ml_anchor_battery_led_work,
+                              ml_anchor_battery_led_work_handler);
+        (void)k_work_schedule(&ml_anchor_battery_led_work, K_NO_WAIT);
+        ret = gateway_ble_init();
+        if (ret < 0) {
+            LOG_ERR("ML anchor BLE debug log link unavailable: %d", ret);
+        }
+#endif
         k_work_queue_start(&anchor_survey_work_q,
                            anchor_survey_work_q_stack,
                            K_THREAD_STACK_SIZEOF(anchor_survey_work_q_stack),
@@ -9922,16 +11671,16 @@ int main(void)
                         DEVICE_ID,
                         GATEWAY_ID,
                         1u);
-        k_work_init_delayable(&gateway_serial_rx_work, gateway_serial_rx_work_handler);
+        ret = gateway_ble_init();
+        if (ret < 0) {
+            LOG_ERR("gateway BLE PC link unavailable: %d", ret);
+        }
         ret = mesh_start_uwb_rx("gateway startup");
         if (ret < 0) {
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
         }
-        if (gateway_binary_cdc_enabled()) {
-            (void)k_work_schedule(&gateway_serial_rx_work, K_MSEC(GATEWAY_SERIAL_POLL_MS));
-        }
-        LOG_INF("gateway reactive mesh root active; USB COBS packet input/output %s",
-                gateway_binary_cdc_enabled() ? "active" : "disabled");
+        LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",
+                gateway_ble_transport_enabled() ? "advertising" : "disabled");
     }
 
     return 0;

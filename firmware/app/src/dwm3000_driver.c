@@ -72,10 +72,6 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DWM3000_IPATOV_RSL_OFFSET_DB_Q8 31165
 #define DWM3000_ACCUM_CIR_SAMPLE_READ_LEN (UWB_CIR_SAMPLE_LEN + 1u)
 
-#ifndef DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
-#define DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS 690u
-#endif
-#define POLL_TX_TO_RESP_RX_DLY_UUS DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
 /*
  * DS-TWR ranging accuracy is more sensitive to unequal reply delays than to
  * making both replies absolutely shortest. Keep the responder response delay
@@ -106,33 +102,62 @@ static bool focused_anchor_rx_logs_enabled(void)
 #endif
 #define DS_TWR_REPLY_DLY_UUS DWM3000_DS_TWR_REPLY_DLY_UUS
 #define RESP_RX_TO_FINAL_TX_DLY_UUS DS_TWR_REPLY_DLY_UUS
+#define POLL_RX_TO_RESP_TX_DLY_UUS DS_TWR_REPLY_DLY_UUS
+
+#ifndef DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS
+#define DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS 4000u
+#endif
+#ifndef DWM3000_DS_TWR_RX_GUARD_AFTER_UUS
+#define DWM3000_DS_TWR_RX_GUARD_AFTER_UUS 5000u
+#endif
+#ifndef DWM3000_DS_TWR_RX_WAIT_MARGIN_MS
+#define DWM3000_DS_TWR_RX_WAIT_MARGIN_MS 8u
+#endif
+#define DS_TWR_UUS_TO_MS_CEIL(value_uus) (((uint32_t)(value_uus) + 999u) / 1000u)
+#define DS_TWR_RX_DEFAULT_GUARD_BEFORE_UUS \
+    (DS_TWR_REPLY_DLY_UUS > DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS ? \
+     DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS : DS_TWR_REPLY_DLY_UUS)
+#define DS_TWR_RX_DEFAULT_AFTER_TX_DLY_UUS \
+    (DS_TWR_REPLY_DLY_UUS - DS_TWR_RX_DEFAULT_GUARD_BEFORE_UUS)
+#define DS_TWR_RX_DEFAULT_TIMEOUT_UUS \
+    (DS_TWR_RX_DEFAULT_GUARD_BEFORE_UUS + DWM3000_DS_TWR_RX_GUARD_AFTER_UUS)
+
+#ifndef DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
+#define DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS DS_TWR_RX_DEFAULT_AFTER_TX_DLY_UUS
+#endif
+#define POLL_TX_TO_RESP_RX_DLY_UUS DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
 #ifndef DWM3000_RESP_RX_TIMEOUT_UUS
-#define DWM3000_RESP_RX_TIMEOUT_UUS 2000u
+#define DWM3000_RESP_RX_TIMEOUT_UUS DS_TWR_RX_DEFAULT_TIMEOUT_UUS
 #endif
 #define RESP_RX_TIMEOUT_UUS DWM3000_RESP_RX_TIMEOUT_UUS
 #ifndef DWM3000_RESP_RX_TIMEOUT_MS
-#define DWM3000_RESP_RX_TIMEOUT_MS 8u
+#define DWM3000_RESP_RX_TIMEOUT_MS \
+    (DS_TWR_UUS_TO_MS_CEIL(POLL_TX_TO_RESP_RX_DLY_UUS + RESP_RX_TIMEOUT_UUS) + \
+     DWM3000_DS_TWR_RX_WAIT_MARGIN_MS)
 #endif
 #define RESP_RX_TIMEOUT_MS DWM3000_RESP_RX_TIMEOUT_MS
-#define POLL_RX_TO_RESP_TX_DLY_UUS DS_TWR_REPLY_DLY_UUS
 #ifndef DWM3000_RESP_TX_TO_FINAL_RX_DLY_UUS
-#define DWM3000_RESP_TX_TO_FINAL_RX_DLY_UUS 670u
+#define DWM3000_RESP_TX_TO_FINAL_RX_DLY_UUS DS_TWR_RX_DEFAULT_AFTER_TX_DLY_UUS
 #endif
 #define RESP_TX_TO_FINAL_RX_DLY_UUS DWM3000_RESP_TX_TO_FINAL_RX_DLY_UUS
 #ifndef DWM3000_FINAL_RX_TIMEOUT_UUS
-#define DWM3000_FINAL_RX_TIMEOUT_UUS 2000u
+#define DWM3000_FINAL_RX_TIMEOUT_UUS DS_TWR_RX_DEFAULT_TIMEOUT_UUS
 #endif
 #define FINAL_RX_TIMEOUT_UUS DWM3000_FINAL_RX_TIMEOUT_UUS
 #ifndef DWM3000_FINAL_RX_TIMEOUT_MS
-#define DWM3000_FINAL_RX_TIMEOUT_MS 8u
+#define DWM3000_FINAL_RX_TIMEOUT_MS \
+    (DS_TWR_UUS_TO_MS_CEIL(RESP_TX_TO_FINAL_RX_DLY_UUS + FINAL_RX_TIMEOUT_UUS) + \
+     DWM3000_DS_TWR_RX_WAIT_MARGIN_MS)
 #endif
 #define FINAL_RX_TIMEOUT_MS DWM3000_FINAL_RX_TIMEOUT_MS
 #ifndef DWM3000_REPORT_RX_TIMEOUT_UUS
-#define DWM3000_REPORT_RX_TIMEOUT_UUS 2500u
+#define DWM3000_REPORT_RX_TIMEOUT_UUS 16000u
 #endif
 #define REPORT_RX_TIMEOUT_UUS DWM3000_REPORT_RX_TIMEOUT_UUS
 #ifndef DWM3000_REPORT_RX_TIMEOUT_MS
-#define DWM3000_REPORT_RX_TIMEOUT_MS 12u
+#define DWM3000_REPORT_RX_TIMEOUT_MS \
+    (DS_TWR_UUS_TO_MS_CEIL(REPORT_RX_TIMEOUT_UUS) + \
+     DWM3000_DS_TWR_RX_WAIT_MARGIN_MS)
 #endif
 #define REPORT_RX_TIMEOUT_MS DWM3000_REPORT_RX_TIMEOUT_MS
 #ifndef DWM3000_REPLY_TIMING_TOLERANCE_US
@@ -150,8 +175,10 @@ static bool focused_anchor_rx_logs_enabled(void)
 #ifndef DWM3000_REPLY_DELAY_CALIBRATION_STEP_UUS
 #define DWM3000_REPLY_DELAY_CALIBRATION_STEP_UUS 1u
 #endif
-#define CLICKER_DIAG_TX_TIMEOUT_MS 4u
-#define CLICKER_DIAG_RX_TIMEOUT_MS 4u
+#define CLICKER_DIAG_TX_TIMEOUT_MS 16u
+#define CLICKER_DIAG_RX_TIMEOUT_MS 16u
+#define CLICKER_DIAG_TX_AFTER_FINAL_DELAY_US 2000u
+#define CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC 0u
 #define CLICKER_DIAG_COMPACT_BYTES_LEN 12u
 /*
  * A zero preamble-detect timeout disables the preamble hunt timeout. That is
@@ -251,6 +278,28 @@ BUILD_ASSERT(DWM3000_STATUS_POLL_INTERVAL_US <= DS_TWR_RX_PATH_DELTA_US,
              "DWM3000 status polling must remain inside the equal-reply DS-TWR timing margin");
 BUILD_ASSERT(DWM3000_WAKE_PHY_SFD_TIMEOUT >= DWM3000_PHY_SFD_TIMEOUT,
              "wake/discovery open-window RX must not be shorter than the ranging SFD timeout");
+BUILD_ASSERT(DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS <= UINT16_MAX,
+             "DS-TWR delayed-RX leading guard must fit DWM3000 timeout units");
+BUILD_ASSERT(DWM3000_DS_TWR_RX_GUARD_AFTER_UUS <= UINT16_MAX,
+             "DS-TWR delayed-RX trailing guard must fit DWM3000 timeout units");
+BUILD_ASSERT(POLL_TX_TO_RESP_RX_DLY_UUS <= DS_TWR_REPLY_DLY_UUS,
+             "initiator response RX must not start after the scheduled response");
+BUILD_ASSERT((POLL_TX_TO_RESP_RX_DLY_UUS + RESP_RX_TIMEOUT_UUS) >=
+             (DS_TWR_REPLY_DLY_UUS + DWM3000_DS_TWR_RX_GUARD_AFTER_UUS),
+             "initiator response RX window must cover the selected reply delay");
+BUILD_ASSERT(RESP_TX_TO_FINAL_RX_DLY_UUS <= DS_TWR_REPLY_DLY_UUS,
+             "responder final RX must not start after the scheduled final");
+BUILD_ASSERT((RESP_TX_TO_FINAL_RX_DLY_UUS + FINAL_RX_TIMEOUT_UUS) >=
+             (DS_TWR_REPLY_DLY_UUS + DWM3000_DS_TWR_RX_GUARD_AFTER_UUS),
+             "responder final RX window must cover the selected reply delay");
+BUILD_ASSERT(RESP_RX_TIMEOUT_MS >=
+             DS_TWR_UUS_TO_MS_CEIL(POLL_TX_TO_RESP_RX_DLY_UUS + RESP_RX_TIMEOUT_UUS),
+             "initiator response wait timeout must cover delayed RX");
+BUILD_ASSERT(FINAL_RX_TIMEOUT_MS >=
+             DS_TWR_UUS_TO_MS_CEIL(RESP_TX_TO_FINAL_RX_DLY_UUS + FINAL_RX_TIMEOUT_UUS),
+             "responder final wait timeout must cover delayed RX");
+BUILD_ASSERT(REPORT_RX_TIMEOUT_MS >= DS_TWR_UUS_TO_MS_CEIL(REPORT_RX_TIMEOUT_UUS),
+             "initiator report wait timeout must cover report RX timeout");
 
 static dwt_config_t default_config = {
     DWM3000_PHY_CHANNEL,
@@ -460,6 +509,33 @@ static uint16_t reply_delay_uus_from_round_index(uint8_t round_index)
     (void)round_index;
     return DS_TWR_REPLY_DLY_UUS;
 #endif
+}
+
+static uint16_t ds_twr_rx_guard_before_uus(uint16_t reply_delay_uus)
+{
+    return reply_delay_uus > DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS ?
+           DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS : reply_delay_uus;
+}
+
+static uint16_t ds_twr_rx_after_tx_delay_uus(uint16_t reply_delay_uus)
+{
+    return reply_delay_uus - ds_twr_rx_guard_before_uus(reply_delay_uus);
+}
+
+static uint16_t ds_twr_rx_timeout_uus(uint16_t reply_delay_uus)
+{
+    uint32_t timeout_uus = (uint32_t)ds_twr_rx_guard_before_uus(reply_delay_uus) +
+                           DWM3000_DS_TWR_RX_GUARD_AFTER_UUS;
+
+    return timeout_uus > UINT16_MAX ? UINT16_MAX : (uint16_t)timeout_uus;
+}
+
+static uint32_t ds_twr_rx_wait_timeout_ms(uint16_t reply_delay_uus)
+{
+    uint32_t timeout_uus = (uint32_t)ds_twr_rx_after_tx_delay_uus(reply_delay_uus) +
+                           ds_twr_rx_timeout_uus(reply_delay_uus);
+
+    return DS_TWR_UUS_TO_MS_CEIL(timeout_uus) + DWM3000_DS_TWR_RX_WAIT_MARGIN_MS;
 }
 
 static int validate_driver_reply_timing(uint16_t poll_to_resp_uus,
@@ -942,15 +1018,26 @@ static bool read_cir_sample(const dwt_rxdiag_t *diagnostics,
 
 static void read_rx_diagnostics(int8_t *rsl_dbm,
                                 uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
-                                bool *cir_sampled)
+                                bool *cir_sampled,
+                                int16_t *clock_offset_raw,
+                                bool *clock_offset_sampled,
+                                int32_t *carrier_integrator,
+                                bool *carrier_integrator_sampled)
 {
     dwt_rxdiag_t diagnostics;
 
-    if (rsl_dbm == NULL && cir_sample == NULL) {
+    if (rsl_dbm == NULL && cir_sample == NULL &&
+        clock_offset_raw == NULL && carrier_integrator == NULL) {
         return;
     }
     if (cir_sampled != NULL) {
         *cir_sampled = false;
+    }
+    if (clock_offset_sampled != NULL) {
+        *clock_offset_sampled = false;
+    }
+    if (carrier_integrator_sampled != NULL) {
+        *carrier_integrator_sampled = false;
     }
 
     memset(&diagnostics, 0, sizeof(diagnostics));
@@ -961,6 +1048,18 @@ static void read_rx_diagnostics(int8_t *rsl_dbm,
     if (read_cir_sample(&diagnostics, cir_sample)) {
         if (cir_sampled != NULL) {
             *cir_sampled = true;
+        }
+    }
+    if (clock_offset_raw != NULL) {
+        *clock_offset_raw = dwt_readclockoffset();
+        if (clock_offset_sampled != NULL) {
+            *clock_offset_sampled = true;
+        }
+    }
+    if (carrier_integrator != NULL) {
+        *carrier_integrator = dwt_readcarrierintegrator();
+        if (carrier_integrator_sampled != NULL) {
+            *carrier_integrator_sampled = true;
         }
     }
 }
@@ -1135,6 +1234,22 @@ static bool range_flags_valid(uint8_t flags)
            flags == FLAG_COUNT_AS_CLICK;
 }
 
+static bool request_sends_clicker_diag(const struct dwm3000_range_request *request)
+{
+    return DWM3000_CLICKER_DIAG_ENABLED &&
+           request != NULL &&
+           request->send_clicker_diag &&
+           request->round_index == 0u;
+}
+
+static bool request_expects_clicker_diag(const struct dwm3000_range_request *request)
+{
+    return DWM3000_CLICKER_DIAG_ENABLED &&
+           request != NULL &&
+           request->expect_clicker_diag &&
+           request->round_index == 0u;
+}
+
 static void result_set_request_metadata(struct dwm3000_range_result *result,
                                         const struct dwm3000_range_request *request)
 {
@@ -1225,7 +1340,11 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          uint8_t *buffer, size_t buffer_len, size_t *frame_len,
                          uint64_t *rx_timestamp, uint8_t *quality,
                          int8_t *rsl_dbm, uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
-                         bool *cir_sampled, bool capture_rsl, bool log_events)
+                         bool *cir_sampled, int16_t *clock_offset_raw,
+                         bool *clock_offset_sampled,
+                         int32_t *carrier_integrator,
+                         bool *carrier_integrator_sampled,
+                         bool capture_rsl, bool log_events)
 {
     int ret;
 
@@ -1283,7 +1402,9 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         *quality = 100u;
     }
     if (capture_rsl) {
-        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled);
+        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
+                            clock_offset_raw, clock_offset_sampled,
+                            carrier_integrator, carrier_integrator_sampled);
     }
 
     *frame_len = read_rx_frame(buffer, buffer_len);
@@ -1318,6 +1439,10 @@ static int receive_response(const struct dwm3000_range_request *request,
                             int8_t *rsl_dbm,
                             uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
                             bool *cir_sampled,
+                            int16_t *clock_offset_raw,
+                            bool *clock_offset_sampled,
+                            int32_t *carrier_integrator,
+                            bool *carrier_integrator_sampled,
                             enum range_status *status_out,
                             bool capture_rsl)
 {
@@ -1347,7 +1472,9 @@ static int receive_response(const struct dwm3000_range_request *request,
         *quality = 100u;
     }
     if (capture_rsl) {
-        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled);
+        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
+                            clock_offset_raw, clock_offset_sampled,
+                            carrier_integrator, carrier_integrator_sampled);
     }
 
     frame_len = read_rx_frame(rx_buffer, sizeof(rx_buffer));
@@ -1385,7 +1512,7 @@ static int receive_report(const struct dwm3000_range_request *request,
 
     ret = receive_frame(REPORT_RX_TIMEOUT_MS, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL,
-                        NULL, NULL, NULL, false, true);
+                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, true);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->responder_id = responder_id;
@@ -1545,7 +1672,15 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
 
     dwt_setrxaftertxdelay(0u);
     dwt_setrxtimeout(0u);
-    dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
+    dwt_setpreambledetecttimeout(CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
+    dwm3000_debug_event(false,
+                        "CLICKER_DIAG_RX",
+                        "short=0x%04x seq=%u round=%u timeout_ms=%u preamble_timeout_pac=%u",
+                        poll->initiator_short_addr,
+                        poll->seq,
+                        poll->round_index,
+                        CLICKER_DIAG_RX_TIMEOUT_MS,
+                        CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
     clear_all_events();
     if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
         return -EIO;
@@ -1556,6 +1691,10 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
                         rx_buffer,
                         sizeof(rx_buffer),
                         &frame_len,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
                         NULL,
                         NULL,
                         NULL,
@@ -1845,6 +1984,10 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                         &rx_rsl_dbm,
                         NULL,
                         NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
                         rsl_dbm != NULL,
                         log_events);
     if (ret < 0) {
@@ -1964,8 +2107,16 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     }
     reply_delay_uus = reply_delay_uus_from_round_index(request->round_index);
 
-    dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-    dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+    dwm3000_debug_event(false,
+                        "DS_TWR_TIMING",
+                        "role=initiator reply_delay_uus=%u resp_rx_after_uus=%u resp_rx_timeout_uus=%u wait_timeout_ms=%u",
+                        reply_delay_uus,
+                        ds_twr_rx_after_tx_delay_uus(reply_delay_uus),
+                        ds_twr_rx_timeout_uus(reply_delay_uus),
+                        request->timeout_ms == 0u ?
+                        RESP_RX_TIMEOUT_MS : request->timeout_ms);
+    dwt_setrxaftertxdelay(ds_twr_rx_after_tx_delay_uus(reply_delay_uus));
+    dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
     dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
     poll_header.type = MSG_UWB_POLL;
@@ -1997,11 +2148,17 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     result->exchange_started = true;
 
     ret = receive_response(request, &response, &resp_rx_ts, &quality, &rsl_dbm,
-                           NULL, NULL, &range_status, false);
+                           result->cir_sample, &result->cir_sampled,
+                           &result->clock_offset_raw,
+                           &result->clock_offset_sampled,
+                           &result->carrier_integrator,
+                           &result->carrier_integrator_sampled,
+                           &range_status, request->capture_rsl);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
+        result->rsl_sampled = request->capture_rsl;
         result->status = range_status;
         return ret;
     }
@@ -2036,6 +2193,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         result->responder_id = request->responder_id;
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
+        result->rsl_sampled = request->capture_rsl;
         result->status = RANGE_TIMING_INVALID;
         return -ETIME;
     }
@@ -2046,23 +2204,83 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         return -EINVAL;
     }
 
-    dwt_setrxaftertxdelay(0u);
-    dwt_setrxtimeout(REPORT_RX_TIMEOUT_UUS);
-    dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
+    clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    if (request->skip_responder_report) {
+        ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_DLY_RS);
+    } else {
+        dwt_setrxaftertxdelay(0u);
+        dwt_setrxtimeout(REPORT_RX_TIMEOUT_UUS);
+        dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
+        dwm3000_debug_event(false,
+                            "DS_TWR_TIMING",
+                            "role=initiator_report report_rx_after_uus=0 report_rx_timeout_uus=%u wait_timeout_ms=%u",
+                            REPORT_RX_TIMEOUT_UUS,
+                            REPORT_RX_TIMEOUT_MS);
 
-    ret = send_range_frame(tx_buffer, tx_len,
-                           DWT_START_TX_DLY_RS | DWT_RESPONSE_EXPECTED);
+        ret = send_range_frame(tx_buffer, tx_len,
+                               DWT_START_TX_DLY_RS | DWT_RESPONSE_EXPECTED);
+    }
     if (ret < 0) {
+            result_set_request_metadata(result, request);
+            result->responder_id = request->responder_id;
+            result->quality = quality;
+            result->rsl_dbm = rsl_dbm;
+            result->rsl_sampled = request->capture_rsl;
+            result->status = RANGE_DELAYED_TX_MISSED;
+            return -ETIME;
+    }
+
+    if (request->skip_responder_report) {
+        ret = wait_tx_complete(ds_twr_rx_wait_timeout_ms(reply_delay_uus));
+        if (ret < 0) {
+            result_set_request_metadata(result, request);
+            result->responder_id = request->responder_id;
+            result->quality = quality;
+            result->rsl_dbm = rsl_dbm;
+            result->status = RANGE_INTERNAL_ERROR;
+            return ret;
+        }
+
         result_set_request_metadata(result, request);
-        result->responder_id = request->responder_id;
+        result->responder_id = response.header.responder_id;
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
-        result->status = RANGE_DELAYED_TX_MISSED;
-        return -ETIME;
+        result->rsl_sampled = request->capture_rsl;
+        result->status = RANGE_OK;
+
+        if (request_sends_clicker_diag(request)) {
+            int diag_ret;
+
+            k_busy_wait(CLICKER_DIAG_TX_AFTER_FINAL_DELAY_US);
+            dwm3000_debug_event(false,
+                                "CLICKER_DIAG_TX",
+                                "anchor=0x%016llx seq=%u round=%u delay_after_final_us=%u",
+                                (unsigned long long)response.header.responder_id,
+                                request->seq,
+                                request->round_index,
+                                CLICKER_DIAG_TX_AFTER_FINAL_DELAY_US);
+            diag_ret = send_clicker_diag(request,
+                                         &response,
+                                         &final,
+                                         resp_rx_ts,
+                                         quality,
+                                         rsl_dbm,
+                                         false);
+            if (diag_ret < 0) {
+                result->status = RANGE_INTERNAL_ERROR;
+                LOG_WRN("UWB clicker diagnostic TX failed: anchor=0x%016llx seq=%u ret=%d",
+                        (unsigned long long)response.header.responder_id,
+                        request->seq,
+                        diag_ret);
+                return diag_ret;
+            }
+        }
+
+        return 0;
     }
 
     ret = receive_report(request, response.header.responder_id, result);
-    if (ret == 0 && result->status == RANGE_OK && DWM3000_CLICKER_DIAG_ENABLED) {
+    if (ret == 0 && result->status == RANGE_OK && request_sends_clicker_diag(request)) {
         int diag_ret = send_clicker_diag(request,
                                          &response,
                                          &final,
@@ -2141,7 +2359,8 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
-                        &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL, false, true);
+                        &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
+                        NULL, NULL, NULL, NULL, false, true);
     if (ret < 0) {
         if (ret == -ETIMEDOUT) {
             return -ETIMEDOUT;
@@ -2219,8 +2438,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -EINVAL;
     }
 
-    dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
-    dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
+    dwm3000_debug_event(false,
+                        "DS_TWR_TIMING",
+                        "role=responder reply_delay_uus=%u final_rx_after_uus=%u final_rx_timeout_uus=%u wait_timeout_ms=%u",
+                        reply_delay_uus,
+                        ds_twr_rx_after_tx_delay_uus(reply_delay_uus),
+                        ds_twr_rx_timeout_uus(reply_delay_uus),
+                        ds_twr_rx_wait_timeout_ms(reply_delay_uus));
+    dwt_setrxaftertxdelay(ds_twr_rx_after_tx_delay_uus(reply_delay_uus));
+    dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
     dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
 
     ret = send_range_frame(tx_buffer, tx_len,
@@ -2233,10 +2459,14 @@ static int responder_poll_once(uint64_t local_anchor_id,
     }
 
     capture_final_rsl = expected->capture_rsl;
-    ret = receive_frame(FINAL_RX_TIMEOUT_MS, &status,
+    ret = receive_frame(ds_twr_rx_wait_timeout_ms(reply_delay_uus), &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len,
                         &final_rx_ts, &quality, &rsl_dbm,
                         cir_sample, &cir_sampled,
+                        result != NULL ? &result->clock_offset_raw : NULL,
+                        result != NULL ? &result->clock_offset_sampled : NULL,
+                        result != NULL ? &result->carrier_integrator : NULL,
+                        result != NULL ? &result->carrier_integrator_sampled : NULL,
                         capture_final_rsl,
                         true);
     if (ret < 0) {
@@ -2274,6 +2504,45 @@ static int responder_poll_once(uint64_t local_anchor_id,
         }
     }
 
+    if (result != NULL) {
+        result_set_poll_metadata(result, &poll, local_anchor_id);
+        result->distance_mm = distance_mm;
+        result->quality = quality;
+        result->rsl_dbm = rsl_dbm;
+        result->rsl_sampled = capture_final_rsl;
+        if (cir_sampled) {
+            memcpy(result->cir_sample, cir_sample, UWB_CIR_SAMPLE_LEN);
+        }
+        result->cir_sampled = cir_sampled;
+        result->status = report_status;
+    }
+
+    if (report_status == RANGE_OK && request_expects_clicker_diag(expected)) {
+        int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
+
+        if (diag_ret < 0) {
+            LOG_DBG("UWB clicker diagnostic not received: short=0x%04x seq=%u ret=%d",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    diag_ret);
+        } else {
+            LOG_INF("UWB clicker diagnostic received: short=0x%04x seq=%u bytes=%u",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    result != NULL ? result->clicker_diag_len : 0u);
+        }
+    }
+
+    if (expected->skip_responder_report) {
+        LOG_INF("UWB responder report skipped for short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",
+                poll.initiator_short_addr,
+                report_status,
+                distance_mm,
+                quality,
+                rsl_dbm);
+        return report_status == RANGE_OK ? 0 : -EIO;
+    }
+
     report.header.type = MSG_UWB_REPORT;
     report.header.seq = poll.seq;
     report.header.round_index = poll.round_index;
@@ -2306,35 +2575,12 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return ret;
     }
 
-    if (report_status == RANGE_OK && DWM3000_CLICKER_DIAG_ENABLED) {
-        int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
-
-        if (diag_ret < 0) {
-            LOG_DBG("UWB clicker diagnostic not received: short=0x%04x seq=%u ret=%d",
-                    poll.initiator_short_addr,
-                    poll.seq,
-                    diag_ret);
-        }
-    }
-
     LOG_INF("UWB report sent to short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",
             poll.initiator_short_addr,
             report.status,
             report.distance_mm,
             report.quality,
             report.rsl_dbm);
-    if (result != NULL) {
-        result_set_poll_metadata(result, &poll, local_anchor_id);
-        result->distance_mm = distance_mm;
-        result->quality = quality;
-        result->rsl_dbm = rsl_dbm;
-        result->rsl_sampled = capture_final_rsl;
-        if (cir_sampled) {
-            memcpy(result->cir_sample, cir_sample, UWB_CIR_SAMPLE_LEN);
-        }
-        result->cir_sampled = cir_sampled;
-        result->status = report_status;
-    }
     return report_status == RANGE_OK ? 0 : -EIO;
 }
 

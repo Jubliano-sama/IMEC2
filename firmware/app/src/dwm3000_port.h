@@ -18,6 +18,7 @@ int dwm3000_port_set_fast_spi(void);
 uint32_t dwm3000_port_current_spi_hz(void);
 int dwm3000_port_hw_reset(void);
 int dwm3000_port_wakeup(void);
+int dwm3000_port_float_pins(void);
 int dwm3000_port_prepare_systemoff(void);
 bool dwm3000_port_dev_id_supported(uint32_t dev_id);
 int dwm3000_port_read_dev_id(uint32_t *dev_id);

@@ -181,6 +181,11 @@
     status = "disabled";
 };
 
+&gpio0 {
+    /* P0.26 click button: use GPIO SENSE/PORT instead of a GPIOTE IN event channel. */
+    sense-edge-mask = <0x04000000>;
+};
+
 &led0 {
     status = "disabled";
 };

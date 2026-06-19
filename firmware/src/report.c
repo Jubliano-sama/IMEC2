@@ -192,6 +192,22 @@ static int append_diagnostics(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (diagnostics->clock_offset_present) {
+        ret = tlv_append_u16(payload, payload_cap, offset,
+                             TLV_UWB_CLOCK_OFFSET_RAW,
+                             (uint16_t)diagnostics->clock_offset_raw);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    if (diagnostics->carrier_integrator_present) {
+        ret = tlv_append_i32(payload, payload_cap, offset,
+                             TLV_UWB_CARRIER_INTEGRATOR,
+                             diagnostics->carrier_integrator);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     if (diagnostics->clicker_diag_len > 0u) {
         ret = tlv_append_bytes(payload, payload_cap, offset,
                                TLV_CLICKER_DIAG_BYTES,

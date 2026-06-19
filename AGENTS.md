@@ -36,6 +36,18 @@ Zephyr role builds:
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-gateway -- -DFIRMWARE_ROLE=gateway
 ```
 
+Flash the exact build directory for the image you intend to program; do not rely on west's previous build context:
+
+```sh
+.venv/bin/west flash --runner pyocd --build-dir build/firmware-clicker
+.venv/bin/west flash --runner pyocd --build-dir build/firmware-anchor
+.venv/bin/west flash --runner pyocd --build-dir build/firmware-gateway
+.venv/bin/west flash --runner pyocd --build-dir build/ml-clicker
+.venv/bin/west flash --runner pyocd --build-dir build/ml-anchor-1
+```
+
+For deterministic ML anchors, replace `build/ml-anchor-1` with the anchor image being programmed, such as `build/ml-anchor-2` through `build/ml-anchor-8`.
+
 ## Coding Style & Naming Conventions
 
 Code is C using Zephyr conventions: 4-space indentation, braces on the same line for functions/control blocks, and `snake_case` for functions and variables. Do not add project-wide prefixes such as `IMEC_` to new identifiers; use descriptive module-scoped names and the existing protocol/route/status naming style. Keep hardware-independent logic in `firmware/src`; keep Zephyr, GPIO, BLE, and SPI code in `firmware/app`.

@@ -296,6 +296,100 @@ static void test_range_report_combines_clicker_and_anchor_diagnostics(void)
     assert(memcmp(value, anchor_diag, sizeof(anchor_diag)) == 0);
 }
 
+static void test_ml_single_sample_diagnostics_fit_and_encode_offsets(void)
+{
+    const int32_t distance_sample = 4389;
+    const uint8_t round_index = 7u;
+    const uint64_t sample_timestamp_ms = UINT64_C(1234567890456);
+    const uint8_t cir_sample[UWB_CIR_SAMPLE_LEN] = {
+        0x31u, 0x32u, 0x33u, 0x91u, 0x92u, 0x93u,
+    };
+    const struct range_report_diagnostics diagnostics = {
+        .status_flags = RANGE_DIAG_CLICKER_PRESENT | RANGE_DIAG_ANCHOR_PRESENT,
+        .burst_id = 0xA1B2C3D4u,
+        .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+        .burst_duration_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
+        .diag_bytes_captured = sizeof(cir_sample),
+        .diag_bytes_transmitted = sizeof(cir_sample),
+        .report_fragment_count = 1u,
+        .phy_config_id = UWB_CHANNEL_WAKE_CONTACT,
+        .clock_offset_raw = -321,
+        .carrier_integrator = -12345678,
+        .clicker_diag = cir_sample,
+        .clicker_diag_len = sizeof(cir_sample),
+        .clock_offset_present = true,
+        .carrier_integrator_present = true,
+    };
+    const struct range_report_fields fields = {
+        .clicker_id = 0x1111222233334444ull,
+        .anchor_id = 0x5555666677778888ull,
+        .event_seq = 127u,
+        .timestamp_ms = sample_timestamp_ms,
+        .distance_mm = distance_sample,
+        .quality = 88u,
+        .rsl_dbm = -72,
+        .cir_sample = cir_sample,
+        .range_status = RANGE_OK,
+        .distance_samples_mm = &distance_sample,
+        .range_round_indices = &round_index,
+        .sequence_start_timestamps_ms = &sample_timestamp_ms,
+        .sample_index = 7u,
+        .sample_count = 32u,
+        .distance_sample_count = 1u,
+        .diagnostics = &diagnostics,
+    };
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    struct proto_packet packet = {0};
+
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
+           PROTO_OK);
+    assert(payload_len <= PACKET_MAX_PAYLOAD_LEN);
+    assert(report_init_range_packet(&packet,
+                                    fields.clicker_id,
+                                    0x9999888877776666ull,
+                                    fields.event_seq,
+                                    12u,
+                                    FLAG_DIAGNOSTIC,
+                                    (uint8_t)payload_len) == PROTO_OK);
+
+    assert(packet.msg_type == MSG_CLICK_REPORT);
+    assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
+    assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
+
+    assert(tlv_find(payload, payload_len, TLV_SAMPLE_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 2u);
+    assert(proto_get_u16_le(value) == fields.sample_count);
+    assert(tlv_find(payload, payload_len, TLV_SAMPLE_INDEX, &value, &value_len) == PROTO_OK);
+    assert(value_len == 2u);
+    assert(proto_get_u16_le(value) == fields.sample_index);
+    assert(tlv_find(payload, payload_len, TLV_DISTANCE_SAMPLES_MM, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == sizeof(distance_sample));
+    assert((int32_t)proto_get_u32_le(value) == distance_sample);
+    assert(tlv_find(payload, payload_len, TLV_UWB_RSL_DBM, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert((int8_t)value[0] == fields.rsl_dbm);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CIR_SAMPLE, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == sizeof(cir_sample));
+    assert(memcmp(value, cir_sample, sizeof(cir_sample)) == 0);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CLOCK_OFFSET_RAW, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 2u);
+    assert((int16_t)proto_get_u16_le(value) == diagnostics.clock_offset_raw);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CARRIER_INTEGRATOR, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == 4u);
+    assert((int32_t)proto_get_u32_le(value) == diagnostics.carrier_integrator);
+    assert(tlv_find(payload, payload_len, TLV_CLICKER_DIAG_BYTES, &value, &value_len) ==
+           PROTO_OK);
+    assert(value_len == sizeof(cir_sample));
+    assert(memcmp(value, cir_sample, sizeof(cir_sample)) == 0);
+}
+
 static void test_rejects_unbounded_diagnostic_bytes(void)
 {
     uint8_t oversized[RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET + 1u] = {0};
@@ -746,6 +840,7 @@ int main(void)
     test_diagnostic_range_packet_is_not_click();
     test_timing_invalid_range_report_is_preserved();
     test_range_report_combines_clicker_and_anchor_diagnostics();
+    test_ml_single_sample_diagnostics_fit_and_encode_offsets();
     test_rejects_unbounded_diagnostic_bytes();
     test_full_diagnostic_first_fragment_stays_inside_packet_payload();
     test_self_test_report_is_diagnostic_not_click();

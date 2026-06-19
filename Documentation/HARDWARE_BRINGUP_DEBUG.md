@@ -18,7 +18,7 @@ All stage presets enable:
 - `CONFIG_IMEC_USB_BOOTLOADER=y`
 - CDC logs and command input for tag/anchor presets
 - RTT logs for all high-debug presets
-- gateway binary CDC output kept separate from human logs in `gateway_stage3_highdebug`
+- gateway packet and debug-log streams exposed through the connected BLE gateway service in `gateway_stage3_highdebug`
 
 The UWB protocol policy is unchanged:
 
@@ -26,12 +26,14 @@ The UWB protocol policy is unchanged:
 - Channel 9 is reserved for negotiated payload/mesh events after contact timing exists.
 - PHY is 850 kbps, 4096-symbol preamble, PAC32, 4073-symbol SFD timeout, STS disabled, with maximum configured DWM3000 TX power.
 - The current long-range main firmware selects `UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS = 8000`, with a 30 ms scheduled exchange stride. `UWB_RANGE_REPLY_DELAY_SHORT_RANGE_UUS = 2750` is a provisional lower-delay candidate. Both values still need recalibration on the final firmware timing path.
+- Normal clicker deployment builds and all tag/clicker high-debug stages default to retained System ON idle through `CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE=y`. The clicker boots once, parks BLE, LEDs, the battery divider, and the DWM3000, puts the DWM3000 into retained sleep, floats DWM3000 SPI/CS/WAKE/RST pins to avoid leakage, disables USB command polling, and then lets the kernel sleep until the button GPIO interrupt fires. The click button on P0.26 is included in the GPIO `sense-edge-mask`, so Zephyr uses the low-power GPIO SENSE/PORT path for the idle edge interrupt instead of a GPIOTE IN event channel.
 - Normal click ranging still requires at least three eligible anchor replies.
 - Up to four anchors may be scheduled in a normal-click burst.
 - The normal-click responder burst is one continuous 400 ms channel-5 window.
 - Three unique `RANGE_OK` anchors from the same click event and burst accept the click.
 - Every shared mesh packet carries a saturated millisecond packet-age field. Relays and report queues add elapsed time before retransmit or send.
 - Gateway time-sync broadcast is retired; Stage 3 timing checks should use packet age and local event uptime, not `CMD_SYNC_TIME` or `TIME_SYNC_AGE_MS`.
+- Stage 2 high-debug anchors use a flashed deterministic discovery slot through `-DIMEC_HIGH_DEBUG_ANCHOR_SLOT=<slot>`. This is a bench bring-up invariant for multi-anchor click discovery, not a gateway-negotiated value.
 - Gateway survey setup uses `SURVEY_DISCOVERY_START`, UWB `SURVEY_DISCOVERY_PROBE`, and `SURVEY_DISCOVERY_REPORT`.
 - Survey discovery uses hash-derived anchor slots from the gateway-provided slot count and currently uses the same 850 kbps, 4096-symbol channel-5 long-preamble mode, which is the lowest data rate exposed by the local DW3000 SDK.
 - Survey discovery reports are also paced by hash-derived per-anchor mesh report slots, so the gateway receives a report train instead of a simultaneous report flood.
@@ -42,9 +44,9 @@ High-debug log lines use this stable prefix:
 [uptime_ms][role][device_id][stage][event] key=value key=value
 ```
 
-The boot banner logs `BOOT_START`, `BOOT_CONFIG`, `USB_READY`, and `BOOTLOADER_READY`, including git/build identity, role, stage, board, device ID, network ID, UWB channels, SPI speed, SYS_STATUS polling, USB bootloader state, CDC log state, RTT log state, and gateway binary CDC state.
+The boot banner logs `BOOT_START`, `BOOT_CONFIG`, `DEBUG_TRANSPORT_READY`, and `BOOTLOADER_READY`, including git/build identity, role, stage, board, device ID, network ID, UWB channels, SPI speed, SYS_STATUS polling, USB bootloader state, CDC log state, RTT log state, gateway BLE packet state, and BLE log-backend state.
 
-Counters are dumped periodically and through `dump_counters`. They include DWM3000 DEV_ID results, SYS_STATUS polling, RX/TX results, wake claims, discovery, schedules, DS-TWR, mesh, gateway packets, USB, bootloader requests, and command results. Boot count is currently volatile unless persistent storage is added later.
+Counters are dumped periodically and through `dump_counters`. They include DWM3000 DEV_ID results, SYS_STATUS polling, RX/TX results, wake claims, discovery, schedules, DS-TWR, mesh, gateway packets, gateway BLE connects, disconnects, notification failures, RX drops, bootloader requests, and command results. Boot count is currently volatile unless persistent storage is added later.
 
 ## Build Matrix
 
@@ -66,7 +68,8 @@ The built-in default IDs are role-specific for bench safety: tag/clicker images 
 | `anchor_stage2_highdebug` | anchor | 2 | Multi-anchor scheduled responder debug |
 | `tag_stage3_highdebug` | tag/clicker | 3 | Multi-anchor click path with gateway correlation fields |
 | `anchor_stage3_highdebug` | anchor | 3 | Report queue and UWB mesh delivery debug |
-| `gateway_stage3_highdebug` | gateway | 3 | Gateway mesh, ACK, command, and binary USB output debug |
+| `gateway_stage3_highdebug` | gateway | 3 | Gateway mesh, ACK, command, BLE packet output, and BLE log debug |
+| `gateway_ble_connectivity_test` | gateway | BLE only | Connected BLE gateway service smoke test with no UWB, DWM3000, mesh, USB CDC, GPIO, or ADC runtime |
 
 ## Build Commands
 
@@ -109,6 +112,12 @@ Clean high-debug gateway build:
 env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/gateway_stage3_highdebug --pristine -- -DIMEC_BUILD_PRESET=gateway_stage3_highdebug -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
 ```
 
+Clean BLE-only gateway connectivity build:
+
+```sh
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/gateway_ble_connectivity_test --pristine -- -DIMEC_BUILD_PRESET=gateway_ble_connectivity_test -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+```
+
 Production role build check:
 
 ```sh
@@ -119,15 +128,15 @@ Production role build check:
 
 ## Anchor ID Builds
 
-Build anchors with unique device IDs using CMake cache overrides. Discovery slots are no longer build inputs; anchors derive their slot from the device ID hash and the gateway/clicker-provided slot count. Keep the same source tree:
+Build Stage 2 anchors with unique device IDs and flashed deterministic discovery slots using CMake cache overrides. Use consecutive slots starting at zero for the bench set. The slot is used by the high-debug anchor discovery reply path and is not negotiated by a gateway:
 
 ```sh
-env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a1 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000001ull -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
-env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a2 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000002ull -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
-env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a3 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000003ull -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a1 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000001ull -DIMEC_HIGH_DEBUG_ANCHOR_SLOT=0 -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a2 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000002ull -DIMEC_HIGH_DEBUG_ANCHOR_SLOT=1 -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
+env ZEPHYR_NRF_MODULE_DIR=$PWD/nrf PATH=$PWD/.venv/bin:$PWD/firmware/app/scripts:$PATH .venv/bin/west build --sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/anchor_stage2_highdebug_a3 --pristine -- -DIMEC_BUILD_PRESET=anchor_stage2_highdebug -DIMEC_DEVICE_ID=0x2222000000000003ull -DIMEC_HIGH_DEBUG_ANCHOR_SLOT=2 -DPYTHON_EXECUTABLE=$PWD/.venv/bin/python -DPython3_EXECUTABLE=$PWD/.venv/bin/python
 ```
 
-Use the same pattern for Stage 3 anchors by replacing `anchor_stage2_highdebug` with `anchor_stage3_highdebug`.
+Use the same device IDs for later Stage 3 report-delivery bring-up if you keep the same physical anchors. Stage 3 survey discovery remains hash-derived from the survey slot count unless explicitly changed.
 
 ## First Flash With J-Link
 
@@ -152,7 +161,7 @@ The high-debug sysbuild uses MCUboot serial recovery with a single application s
 
 1. Put the board in MCUboot serial recovery.
    - Tag and anchor high-debug images: open the CDC console and send `bootloader`.
-   - Gateway Stage 3: CDC is reserved for binary COBS gateway output, so use reset into the MCUboot wait-for-DFU window or J-Link recovery. Human gateway logs use RTT by default.
+   - Gateway Stage 3: the application runtime uses the connected BLE gateway service for PC traffic and logs, so use reset into the MCUboot wait-for-DFU window or J-Link recovery. RTT remains a bench-side backup for high-debug logs.
 2. Upload the signed application image.
 3. Reset the board.
 
@@ -183,7 +192,7 @@ If serial recovery cannot be entered or the image will not boot, recover with J-
 .venv/bin/west flash --runner nrfjprog --build-dir build/<preset>
 ```
 
-## USB CDC And RTT Logs
+## Logs And Gateway Bluetooth
 
 Tag and anchor high-debug presets use CDC for human logs and the simple command parser:
 
@@ -205,7 +214,9 @@ reboot
 bootloader
 ```
 
-`gateway_stage3_highdebug` uses CDC for binary COBS gateway packets and RTT for human logs. Do not mix human text with the gateway binary CDC endpoint.
+`gateway_stage3_highdebug` uses the connected BLE gateway service for both COBS-framed packet traffic and debug-log notifications. Subscribe to the packet notify characteristic for binary gateway packets and the log notify characteristic for human-readable log text. RTT remains available as a bench-side backup in high-debug builds.
+
+`gateway_ble_connectivity_test` advertises as `IMEC BLE Gateway Test`, stops primary-channel advertising on channels 37-39 once the PC connects, sends periodic `BLE_GATEWAY_TEST heartbeat=...` log lines through the BLE log characteristic, and echoes complete COBS packet frames written to the packet RX characteristic back on the packet notify characteristic. It does not initialize UWB, DWM3000, mesh routing, buttons, LEDs, ADC, USB CDC, or the staged high-debug runtime.
 
 Open RTT logs with your local J-Link RTT tool, for example:
 
@@ -260,6 +271,19 @@ Behavior:
 - Tag short press sends the wake train, discovery, accepts one discovery reply in bench mode, sends one schedule, runs DS-TWR, and logs distance/status/quality.
 - Identity, nonce, event, anchor ID, reply-delay, and schedule validation remain active.
 - Stage 1 debug LEDs are intentionally verbose and do not optimize for current: status LED 0 shows phase (`blue=idle/listen`, `cyan=wake claim`, `yellow=discovery`, `magenta=schedule`, `white=DS-TWR`), while status LED 1 shows outcome (`blue=active`, `green=success`, `amber=timeout/no packet`, `red=reject/error`).
+- The retained System ON clicker idle default avoids the measured reset/boot delay of the fallback system-off path.
+- The fallback system-off path remains available with `CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE=y`; when used, RAM retention is requested by `CONFIG_IMEC_CLICKER_SYSTEMOFF_RAM_RETENTION=y`, but wake still enters through a reset-style boot path.
+
+Stage 1.0 clicker early LED codes are emitted from `firmware/app/src/main.c` through `stage1_clicker_early_led()`. When logs are available, the same point also prints `CLICKER_LED_CODE where=<point> phase=<phase> result=<result> hold_ms=<ms>`.
+
+| Code point | Function path | LED meaning |
+| --- | --- | --- |
+| `systemon_button_press` | `click_button_work_handler()` after retained-idle GPIO wake | LED0 cyan plus LED1 blue immediately when the live button interrupt is processed |
+| `systemoff_button_wake` | `main()` after `reset_reason_was_systemoff()` | LED0 cyan plus LED1 blue immediately after a button wake from system-off |
+| `systemoff_button_capture_failed` | `main()` if the press/release cannot be reconstructed | LED0 cyan plus LED1 red for 750 ms, then return to system-off |
+| `button_wake_input_unavailable` | `clicker_enter_systemoff_idle()` before arming sleep wake | LED0 blue plus LED1 red for 750 ms, then enter system-off without a valid button input |
+| `button_still_held_no_wake_arm` | `clicker_enter_systemoff_idle()` while waiting for release | LED0 blue plus LED1 amber for 750 ms, then enter system-off without arming the held button |
+| `button_wake_arm_failed` | `clicker_enter_systemoff_idle()` after `GPIO_INT_LEVEL_LOW` arm fails | LED0 blue plus LED1 red for 750 ms, then enter system-off |
 
 Expected snippets:
 
@@ -288,6 +312,7 @@ Behavior:
 - Tag schedules up to four anchors.
 - Scheduled anchors remain in the same continuous 400 ms responder burst window.
 - DS-TWR remains addressed and serialized, not parallel.
+- Each Stage 2 anchor must be built with a unique flashed `IMEC_HIGH_DEBUG_ANCHOR_SLOT` value. The anchor uses that flashed slot for its discovery reply, logs `slot_source=flashed`, and rejects a discovery frame whose advertised slot count cannot contain the flashed slot.
 - Anchor logs discovery slot ID, anchor ID, reply decision, schedule received/rejected, poll matched/wrong-target/ignored, range status, and report queued.
 - Tag prints discovery, schedule, and range tables in machine-greppable logs.
 - Final click decision logs accepted/retry/fail, unique `RANGE_OK` count, attempt, and burst ID.
@@ -298,7 +323,8 @@ Expected snippets:
 
 ```text
 [00001000][tag][0x1111111111111111][2][DISCOVER_TX] event_seq=... attempt=...
-[00001020][tag][0x1111111111111111][2][DISCOVERY_REPLY_RX] anchor=0x... slot=1 accepted_for_schedule=1
+[00001010][anchor][0x2222000000000001][2][DISCOVERY_REPLY_TX] clicker=0x... event_seq=... slot=0 slot_source=flashed quality=...
+[00001020][tag][0x1111111111111111][2][DISCOVERY_REPLY_RX] anchor=0x... slot=0 accepted_for_schedule=1
 [00001080][tag][0x1111111111111111][2][RANGE_SCHEDULE_TX] burst_id=... anchors=3
 [00001120][anchor][0x2222000000000001][2][DS_TWR_POLL_RX] matched=1 round=0 sample=0
 [00001200][tag][0x1111111111111111][2][RANGE_OK] anchor=0x2222000000000001 distance_mm=...
@@ -313,15 +339,15 @@ Build outputs:
 - `anchor_stage3_highdebug`
 - `gateway_stage3_highdebug`
 
-Purpose: verify report delivery, UWB mesh, gateway ACKs, USB gateway output, command/debug path, and gateway-driven survey discovery.
+Purpose: verify report delivery, UWB mesh, gateway ACKs, BLE gateway packet/log output, command/debug path, and gateway-driven survey discovery.
 
 Behavior:
 
 - Tag keeps the Stage 2 click/range behavior and logs clicker/tag ID, click event, attempt, burst ID, anchor ID, sample index, and round.
 - Anchor queues reports after ranging, drains them through UWB mesh, waits for gateway ACK before considering a report delivered, and gives active click service priority over mesh traffic.
 - Anchor report logs include mesh packet age at transmit time. Age should increase through queueing, relay, and retry delay, and must not require gateway time sync.
-- Gateway boots as gateway, receives mesh reports, emits binary COBS packets on CDC, logs human-readable diagnostics over RTT, and routes commands.
-- Gateway logs boot/config, route requests/replies, mesh RX/TX, gateway ACK TX, report decode, USB packet output, command RX, command routing, and command result/timeout.
+- Gateway boots as gateway, receives mesh reports, emits binary COBS packets over the BLE packet characteristic, logs human-readable diagnostics over the BLE log characteristic with RTT as a backup, and routes commands.
+- Gateway logs boot/config, route requests/replies, mesh RX/TX, gateway ACK TX, report decode, BLE packet output, command RX, command routing, and command result/timeout.
 - Gateway command hooks cover ping anchor, get anchor status, trigger LED pattern, start/stop heartbeat, dump route table, clear route, and dump counters through the existing command path.
 - Gateway survey reachability command now broadcasts `SURVEY_DISCOVERY_START` instead of relying on route-state reachability.
 - Anchors use packet age from the discovery start packet to compute the remaining start delay, then preempt ordinary mesh/report work for the survey discovery epoch.
@@ -332,12 +358,12 @@ Behavior:
 Expected snippets:
 
 ```text
-[00000020][gateway][0x3333333333333333][3][BOOT_CONFIG] ... usb_cdc_logs=0 rtt_logs=1 gateway_binary_cdc=1
+[00000020][gateway][0x3333333333333333][3][BOOT_CONFIG] ... cdc_logs=0 rtt_logs=1 gateway_ble=1 ble_log_backend=1
 [00002000][anchor][0x2222000000000001][3][ANCHOR_REPORT_QUEUE] clicker=0x... event_seq=... burst_id=...
 [00002050][anchor][0x2222000000000001][3][MESH_TX] msg=report gateway=0x...
 [00002100][gateway][0x3333333333333333][3][MESH_RX] msg=report anchor=0x...
 [00002110][gateway][0x3333333333333333][3][GATEWAY_ACK_TX] seq=...
-[00002120][gateway][0x3333333333333333][3][USB_GATEWAY_PACKET_TX] msg=0x...
+[00002120][gateway][0x3333333333333333][3][BLE_GATEWAY_PACKET_TX] msg=0x...
 [00003000][gateway][0x3333333333333333][3][COMMAND_RX] command=...
 [00003050][anchor][0x2222000000000001][3][COMMAND_RESULT_TX] status=ok
 [00004000][gateway][0x3333333333333333][3][MESH_TX] reason=survey-discovery-start msg=0x54 age_ms=...
@@ -354,14 +380,15 @@ Expected snippets:
 | Symptom | Likely area | First checks |
 | --- | --- | --- |
 | No USB device | USB or boot state | J-Link recover, confirm MCUboot first flash, check `/dev/ttyACM*`, try reset into MCUboot wait window |
-| No boot banner | Console route | Tag/anchor use CDC; gateway Stage 3 uses RTT for human logs |
+| No boot banner | Console route | Tag/anchor use CDC; gateway Stage 3 uses BLE log notifications with RTT backup; the BLE connectivity test uses BLE log notifications |
 | DEV_ID fail | DWM3000 SPI/reset/wake | Check reset/wake pins, SPI CS/SCK/MOSI/MISO, `DWM_DEV_ID_READ`, `DWM_DEV_ID_FAIL`, and SPI speed logs |
 | TX/RX hang | Status polling path | Check `UWB_SYS_STATUS_POLL_START`, `DONE`, `TIMEOUT`, max poll duration, and poll timeout counters |
 | Anchor never accepts wake | Wake scan or frame identity | Check channel 5, network ID, epoch, clicker ID, nonce, CRC, and accept/reject reason |
 | Stage 1 does not range | Bench gate or schedule | Confirm `CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE=y` and `BENCH_ONLY` log is present |
 | Stage 2 ranges with fewer than three anchors | Production threshold regression | Stop and inspect tag logs; Stage 2 must release/retry/fail instead of ranging with one or two replies |
+| Stage 2 discovery replies collide or arrive in the wrong order | Flashed anchor slot setup | Check each anchor build command includes a unique `IMEC_HIGH_DEBUG_ANCHOR_SLOT`, and confirm `BOOT_CONFIG anchor_slot_source=flashed` plus `DISCOVERY_REPLY_TX slot_source=flashed` |
 | Wrong anchor responds | Identity/schedule validation | Compare click event, nonce, anchor ID, schedule order, round, and sample index |
-| Gateway CDC unreadable | Binary CDC expected | Use RTT for human logs; CDC carries COBS packets in `gateway_stage3_highdebug` |
+| Gateway BLE packet/log stream missing | BLE connection, subscription, or GATT client | Connect to `IMEC Gateway` or `IMEC BLE Gateway Test`, subscribe to packet/log notify characteristics, then check BLE connect, disconnect, notify-failure, and RX-drop counters |
 | Gateway report never delivered | Mesh or ACK | Check route request/reply, mesh retry/drop, gateway ACK TX/RX, duplicate handling, and active-click preemption logs |
 | Survey discovery does not start together | Packet age or start-delay handling | Check `SURVEY_DISCOVERY_START` mesh TX/RX `age_ms`, anchor computed wait, and whether late packets are joining the current slot or expiring |
 | Survey probes collide | Slot count or ID hash collision | Check `DISCOVERY_SLOT_COUNT`, device IDs, and whether two anchors hash to the same slot for that count |
@@ -374,7 +401,7 @@ Expected snippets:
 - RTT monitoring through pyOCD needs a TTY-backed session. A non-TTY attach can find the RTT control block and still fail before useful logs are visible.
 - The DWM3000 wake path is not a cold reinitialize path. Wake the chip, wait for the ready state, restore common state, restore TX/RX state, then resume RX/TX. Reapplying the full PHY setup after every retained sleep wake is a workaround, not the intended path.
 - Treat SPI speed transitions and retained sleep configuration as first-class suspects when the radio works once after reset and then fails after sleep. Wake and sleep setup must run on the slow SPI path; normal transfers may return to fast SPI afterward.
-- Normal anchor idle uses DWM3000 DEEPSLEEP, a 396 ms scan interval, and a 1 ms receive window so the full scan period fits inside the 400 ms wake train while staying near the 1% DWM3000 awake-time target.
+- Normal anchor idle uses DWM3000 DEEPSLEEP, a 380 ms scan interval, and a 5 ms receive window. Stage 1 bring-up showed this catches the 400 ms wake train reliably on the tested board; the conservative model charges 7.67 ms of DWM3000 awake time per scan cycle, so final battery estimates must use the calibrated RX-duty and measured awake-time budget rather than a nominal 1% target.
 - Stage 0.9 wake-scan proof is: the anchor detects repeated long-preamble wake claims, decodes CRC-valid `WAKE_CLAIM` frames, and logs `WAKE_CLAIM_ACCEPT`. Discovery or DS-TWR can be deliberately absent in wake-spam builds and should not be confused with a wake-scan failure.
 - USB data lines on the first board revision are not part of firmware validation. Use SWD/Debugprobe and RTT/CDC paths that do not rely on the board USB D+/D- pair.
 - Clicker sleep current depends on firmware pin state as well as hardware rails: park LEDs, DWM/SPI control pins, and the battery ADC divider-disable MOSFET before system-off. The battery ADC enable path must not be allowed to leak in sleep.
@@ -415,7 +442,8 @@ Hardware validation is pending. Run the bench in this order:
 
 1. J-Link flash `tag_stage0_highdebug` to one tag. Verify USB enumeration, boot banner, DWM3000 DEV_ID, button simulated click, self-test sleep/wake, `dump_counters`, and `bootloader`.
 2. J-Link flash `tag_stage1_highdebug` and `anchor_stage1_highdebug`. Verify anchor low-duty scan, valid `WAKE_CLAIM_ACCEPT`, discovery reply, one-anchor `BENCH_ONLY` schedule, DS-TWR, and one `RANGE_OK`.
-3. Build and flash at least three `anchor_stage2_highdebug` images with distinct `IMEC_DEVICE_ID` values. Flash `tag_stage2_highdebug`. Verify three discovery replies, schedule table, same continuous responder burst, three unique `RANGE_OK`, and correct release/retry behavior with fewer than three anchors.
-4. Flash `gateway_stage3_highdebug`, keep gateway human logs on RTT, and keep CDC for COBS binary packets. Verify anchor report queueing, mesh route, gateway ACK, USB packet output, and a gateway command returning `COMMAND_RESULT`.
-5. Run a Stage 3 survey reachability command. Verify `SURVEY_DISCOVERY_START` age propagation, hash-derived probe slots, hash-derived discovery-report mesh slots, gateway discovery-report recording, reachability graph planning, and the first pair prepare/start sequence.
-6. Capture logs from all boards and only then mark hardware validation complete for the stage that passed.
+3. Build and flash at least three `anchor_stage2_highdebug` images with distinct `IMEC_DEVICE_ID` values and unique flashed `IMEC_HIGH_DEBUG_ANCHOR_SLOT` values. Flash `tag_stage2_highdebug`. Verify three discovery replies in their flashed slots, schedule table, same continuous responder burst, three unique `RANGE_OK`, and correct release/retry behavior with fewer than three anchors.
+4. Flash `gateway_ble_connectivity_test`, connect from the PC, subscribe to packet and log notifications, verify heartbeat log notifications, write a COBS packet frame, and confirm the frame is echoed back on the packet notify characteristic.
+5. Flash `gateway_stage3_highdebug`, keep gateway human logs on BLE log notifications with RTT backup, and use the BLE packet characteristic for COBS binary packets. Verify anchor report queueing, mesh route, gateway ACK, BLE packet output, and a gateway command returning `COMMAND_RESULT`.
+6. Run a Stage 3 survey reachability command. Verify `SURVEY_DISCOVERY_START` age propagation, hash-derived probe slots, hash-derived discovery-report mesh slots, gateway discovery-report recording, reachability graph planning, and the first pair prepare/start sequence.
+7. Capture logs from all boards and only then mark hardware validation complete for the stage that passed.

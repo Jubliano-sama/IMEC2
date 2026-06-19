@@ -1,6 +1,7 @@
 #include "dwm3000_port.h"
 
 #include <hal/nrf_gpio.h>
+#include <hal/nrf_spim.h>
 
 #include <zephyr/devicetree.h>
 #include <zephyr/device.h>
@@ -8,6 +9,7 @@
 #include <zephyr/drivers/spi.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
 
 #include <errno.h>
@@ -40,9 +42,12 @@ LOG_MODULE_REGISTER(dwm3000_port, DWM3000_PORT_LOG_LEVEL);
 #define DWM3000_SPI_BUS_NODE DT_BUS(DWM3000_NODE)
 #define DWM3000_SPI_DEFAULT_PINCTRL DT_PHANDLE_BY_IDX(DWM3000_SPI_BUS_NODE, pinctrl_0, 0)
 #define DWM3000_SPI_DEFAULT_GROUP DT_CHILD(DWM3000_SPI_DEFAULT_PINCTRL, group1)
+#define DWM3000_SPI_REG ((NRF_SPIM_Type *)DT_REG_ADDR(DWM3000_SPI_BUS_NODE))
 #define DWM3000_SPI_PIN(idx) \
     (((DT_PROP_BY_IDX(DWM3000_SPI_DEFAULT_GROUP, psels, idx)) >> NRF_PIN_POS) & NRF_PIN_MSK)
 
+BUILD_ASSERT(DT_NODE_HAS_COMPAT(DWM3000_SPI_BUS_NODE, nordic_nrf_spim),
+             "DWM3000 port pin parking assumes an nRF SPIM bus");
 BUILD_ASSERT(DWM3000_SLOW_SPI_HZ <= 7000000u,
              "DW3000 reset and soft-reset SPI rate must be <= 7 MHz");
 BUILD_ASSERT(DWM3000_FAST_SPI_HZ >= DWM3000_RUNTIME_MIN_HZ,
@@ -72,6 +77,46 @@ static uint32_t u32_from_le(const uint8_t data[4])
            ((uint32_t)data[1] << 8) |
            ((uint32_t)data[2] << 16) |
            ((uint32_t)data[3] << 24);
+}
+
+static int pm_action_ret(int ret)
+{
+    if (ret == -EALREADY || ret == -ENOSYS) {
+        return 0;
+    }
+
+    return ret;
+}
+
+static int dwm3000_spi_resume(void)
+{
+#if defined(CONFIG_PM_DEVICE)
+    return pm_action_ret(pm_device_action_run(dwm_spi.bus,
+                                              PM_DEVICE_ACTION_RESUME));
+#else
+    return 0;
+#endif
+}
+
+static int dwm3000_spi_suspend(void)
+{
+    int ret = 0;
+
+#if defined(CONFIG_PM_DEVICE)
+    ret = pm_action_ret(pm_device_action_run(dwm_spi.bus,
+                                             PM_DEVICE_ACTION_SUSPEND));
+#endif
+
+    nrf_spim_disable(DWM3000_SPI_REG);
+    nrf_spim_pins_set(DWM3000_SPI_REG,
+                      NRF_SPIM_PIN_NOT_CONNECTED,
+                      NRF_SPIM_PIN_NOT_CONNECTED,
+                      NRF_SPIM_PIN_NOT_CONNECTED);
+    nrf_gpio_cfg_default(DWM3000_SPI_PIN(0));
+    nrf_gpio_cfg_default(DWM3000_SPI_PIN(1));
+    nrf_gpio_cfg_default(DWM3000_SPI_PIN(2));
+
+    return ret;
 }
 
 static int ensure_ready(void)
@@ -108,11 +153,25 @@ int dwm3000_port_init(void)
 {
     int ret;
 
+    ret = dwm3000_spi_resume();
+    if (ret < 0) {
+        return ret;
+    }
+
     if (!spi_is_ready_dt(&dwm_spi)) {
         return -ENODEV;
     }
     if (!gpio_is_ready_dt(&dwm_reset) || !gpio_is_ready_dt(&dwm_wakeup)) {
         return -ENODEV;
+    }
+
+    if (dwm_spi.config.cs.gpio.port != NULL &&
+        gpio_is_ready_dt(&dwm_spi.config.cs.gpio)) {
+        ret = gpio_pin_configure_dt(&dwm_spi.config.cs.gpio,
+                                    GPIO_OUTPUT_INACTIVE);
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     ret = gpio_pin_configure_dt(&dwm_wakeup, GPIO_OUTPUT_INACTIVE);
@@ -196,14 +255,20 @@ int dwm3000_port_wakeup(void)
     return 0;
 }
 
-int dwm3000_port_prepare_systemoff(void)
+int dwm3000_port_float_pins(void)
 {
-    int ret = 0;
+    int ret;
+
+    ret = dwm3000_spi_suspend();
 
     if (dwm_spi.config.cs.gpio.port != NULL &&
         gpio_is_ready_dt(&dwm_spi.config.cs.gpio)) {
-        ret = gpio_pin_configure_dt(&dwm_spi.config.cs.gpio,
-                                    GPIO_DISCONNECTED);
+        int cs_ret = gpio_pin_configure_dt(&dwm_spi.config.cs.gpio,
+                                           GPIO_DISCONNECTED);
+
+        if (ret == 0 && cs_ret < 0) {
+            ret = cs_ret;
+        }
     }
     if (gpio_is_ready_dt(&dwm_wakeup)) {
         int wake_ret = gpio_pin_configure_dt(&dwm_wakeup,
@@ -221,12 +286,14 @@ int dwm3000_port_prepare_systemoff(void)
             ret = reset_ret;
         }
     }
-    nrf_gpio_cfg_default(DWM3000_SPI_PIN(0));
-    nrf_gpio_cfg_default(DWM3000_SPI_PIN(1));
-    nrf_gpio_cfg_default(DWM3000_SPI_PIN(2));
 
     port_ready = false;
     return ret;
+}
+
+int dwm3000_port_prepare_systemoff(void)
+{
+    return dwm3000_port_float_pins();
 }
 
 bool dwm3000_port_dev_id_supported(uint32_t dev_id)

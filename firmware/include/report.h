@@ -41,10 +41,14 @@ struct range_report_diagnostics {
     uint32_t channel9_report_latency_ms;
     uint32_t gateway_ack_latency_ms;
     uint8_t phy_config_id;
+    int16_t clock_offset_raw;
+    int32_t carrier_integrator;
     const uint8_t *clicker_diag;
     uint8_t clicker_diag_len;
     const uint8_t *anchor_diag;
     uint8_t anchor_diag_len;
+    bool clock_offset_present;
+    bool carrier_integrator_present;
 };
 
 struct range_report_fields {

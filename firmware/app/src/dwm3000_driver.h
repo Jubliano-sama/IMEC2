@@ -19,6 +19,9 @@ struct dwm3000_range_request {
     uint8_t flags;
     uint32_t timeout_ms;
     bool capture_rsl;
+    bool skip_responder_report;
+    bool send_clicker_diag;
+    bool expect_clicker_diag;
 };
 
 struct dwm3000_range_result {
@@ -32,6 +35,8 @@ struct dwm3000_range_result {
     int32_t distance_mm;
     uint8_t quality;
     int8_t rsl_dbm;
+    int16_t clock_offset_raw;
+    int32_t carrier_integrator;
     uint8_t cir_sample[UWB_CIR_SAMPLE_LEN];
     uint8_t clicker_diag[UWB_CLICKER_DIAG_MAX_BYTES];
     uint8_t clicker_diag_len;
@@ -39,6 +44,8 @@ struct dwm3000_range_result {
     uint32_t clicker_diag_status_detect_latency_us;
     bool rsl_sampled;
     bool cir_sampled;
+    bool clock_offset_sampled;
+    bool carrier_integrator_sampled;
     bool clicker_diag_received;
     bool clicker_diag_dropped;
     bool clicker_diag_truncated;

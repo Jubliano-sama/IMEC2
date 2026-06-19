@@ -6,12 +6,83 @@ menu "IMEC power management"
 
 config IMEC_CLICKER_SYSTEMOFF_IDLE
     bool "Put the clicker in system-off while idle"
+    default n if IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
     default y
     select POWEROFF
     help
-      The clicker parks the DWM3000 and board GPIOs, arms the physical click
-      button as a wake source, and enters nRF system-off whenever it is not
-      actively handling a click or self-test interaction.
+      Fallback mode for power profiling or recovery experiments. The clicker
+      parks the DWM3000 and board GPIOs, arms the physical click button as a
+      wake source, and enters nRF system-off whenever it is not actively
+      handling a click or self-test interaction.
+
+config IMEC_CLICKER_SYSTEMOFF_RAM_RETENTION
+    bool "Retain RAM while clicker is in system-off idle"
+    default y
+    depends on IMEC_CLICKER_SYSTEMOFF_IDLE
+    help
+      Before entering nRF system-off idle, request RAM section retention so a
+      button wake can preserve retained RAM state. This is the fallback
+      clicker power-profile behavior when retained System ON idle is disabled.
+
+config IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
+    bool "Keep the clicker in retained system-on idle"
+    default y if IMEC_HIGH_DEBUG && (IMEC_ROLE_TAG || IMEC_ROLE_CLICKER)
+    help
+      Deployment default for clicker idle. Keep the clicker booted, park board
+      power sinks, put the DWM3000 into retained sleep, and let the kernel sleep
+      until the physical button GPIO interrupt fires. This is lower latency than
+      system-off because it avoids the reset/boot path, while still allowing
+      low-current System ON sleep. The system-off path remains available by
+      disabling this option.
+
+endmenu
+
+menu "IMEC ML data collection"
+
+config IMEC_ML_CLICKER
+    bool "Build the BLE-controlled ML range data clicker"
+    depends on BT && IMEC_GATEWAY_BLE
+    help
+      Exposes the existing connected gateway BLE packet/log service from the
+      clicker role and accepts a BLE command to run fresh UWB discovery plus
+      production-like DS-TWR sample collection for range offset training.
+      Normal clicker button and idle behavior are left disabled in this image.
+
+config IMEC_ML_ANCHOR
+    bool "Build the deterministic ML data collection anchor"
+    help
+      Uses the proven UWB discovery/ranging path with ML-specific deterministic
+      discovery slots, a higher 20/200 ms idle receive duty cycle, and periodic
+      Li-ion battery-status LED blinking. Normal anchor duty-cycle limits are
+      unchanged unless this image is explicitly selected.
+
+config IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR
+    int "Default ML collection samples per anchor"
+    depends on IMEC_ML_CLICKER
+    default 8
+    range 1 15
+    help
+      Default sample count requested per selected anchor. The production range
+      schedule still caps the total exchanges that fit in one burst.
+
+config IMEC_ML_MAX_ANCHORS
+    int "Maximum anchors selected per ML collection"
+    depends on IMEC_ML_CLICKER
+    default 4
+    range 1 4
+    help
+      Maximum discovered anchors selected into one production-like range
+      schedule. The current UWB schedule frame supports up to four anchors.
+
+config IMEC_ML_DISCOVERY_SLOT_COUNT
+    int "ML discovery reply slot count"
+    depends on IMEC_ML_CLICKER
+    default 8
+    range 1 50
+    help
+      Slot count used by the ML clicker discovery frame. This can be larger
+      than the scheduled-anchor cap so deterministic anchor images can reply in
+      separate slots without colliding during fresh discovery.
 
 endmenu
 
@@ -64,22 +135,45 @@ config IMEC_USB_CDC_LOGS
     depends on IMEC_HIGH_DEBUG
     default y
     help
-      Human-readable logs use the selected USB CDC console. Disable this when
-      the USB CDC endpoint must be reserved for binary gateway COBS packets.
+      Human-readable logs use the selected USB CDC console. Gateway builds use
+      the connected Bluetooth gateway link for PC packet traffic and logs.
 
 config IMEC_RTT_LOGS
     bool "Use RTT for high-debug human logs"
     depends on IMEC_HIGH_DEBUG
     help
-      Route human-readable logs to RTT. Used by default for high-debug gateway
-      builds so USB CDC can stay dedicated to binary gateway packets.
+      Route human-readable logs to RTT. Gateway high-debug builds may keep RTT
+      as a bench-side backup while the PC-facing runtime link uses Bluetooth.
 
-config IMEC_GATEWAY_BINARY_CDC
-    bool "Reserve USB CDC for gateway binary COBS packets"
-    depends on IMEC_HIGH_DEBUG
+config IMEC_GATEWAY_BLE
+    bool "Use connected Bluetooth for gateway PC communication"
+    depends on BT
     help
-      The gateway serial frame endpoint remains binary-only. Human-readable
-      debug logs must use RTT or another endpoint.
+      The gateway exposes a connectable BLE GATT service to the PC. One
+      characteristic accepts COBS-delimited binary gateway packets, one
+      notifies COBS-delimited gateway packets back to the PC, and a separate
+      notify characteristic carries debug log text. This replaces the old
+      app-side USB CDC gateway transport.
+
+config IMEC_GATEWAY_BLE_LOG_BACKEND
+    bool "Mirror Zephyr logs over the gateway Bluetooth link"
+    depends on IMEC_GATEWAY_BLE && LOG
+    default y
+    help
+      Adds a lightweight Zephyr log backend that forwards formatted log output
+      to the gateway BLE log notify characteristic whenever a connected PC has
+      enabled log notifications.
+
+config IMEC_GATEWAY_BLE_CONNECTIVITY_TEST
+    bool "Build only the gateway Bluetooth connectivity test"
+    depends on IMEC_GATEWAY_BLE
+    help
+      Boots only the connected gateway BLE service. It does not initialize the
+      DWM3000, UWB mesh, command routing, buttons, status LEDs, ADC, USB CDC,
+      or high-debug staged bring-up flow. Incoming packet-characteristic bytes
+      are re-emitted on the packet notification characteristic so a PC can
+      verify connection, write, notification, COBS framing, and debug-log
+      notification behavior without any UWB hardware dependency.
 
 config IMEC_STAGE0_SEND_WAKE_CLAIM_ON_CLICK
     bool "Send one WAKE_CLAIM train on Stage 0 short press"
@@ -125,6 +219,28 @@ config IMEC_STAGE1_ANCHOR_FOCUSED_RX_LOGS
       arbitration, decode, and periodic diagnostics visible while suppressing
       per-millisecond RX start, SFD-timeout, and sleep/wake chatter that can
       overflow RTT and hide the protocol events under test.
+
+config IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
+    int "Anchor low-duty UWB wake scan interval in milliseconds"
+    default 380
+    range 1 60000
+    help
+      Interval between low-duty anchor wake-scan attempts. This does not apply
+      when the Stage 1 high-duty continuous scan option is enabled.
+
+config IMEC_ANCHOR_UWB_SCAN_RX_US
+    int "Anchor low-duty UWB wake scan receive slice in microseconds"
+    default 5000
+    range 1 1000000
+    help
+      Active UWB receive time inside each low-duty anchor wake-scan attempt.
+
+config IMEC_STAGE1_ANCHOR_SCAN_ALLOW_OVER_RX_BUDGET
+    bool "Allow Stage 1 anchor wake scan above the calibrated RX duty budget"
+    default n
+    help
+      Debug-only escape hatch for bring-up scans that intentionally trade
+      anchor sleep current for wake reliability measurements.
 
 config IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS
     int "High-debug counter dump period in milliseconds"

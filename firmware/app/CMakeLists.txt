@@ -26,12 +26,27 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     tag_stage3_highdebug
     anchor_stage3_highdebug
     gateway_stage3_highdebug
+    gateway_ble_connectivity_test
+    ml_clicker
+    ml_anchor_1
+    ml_anchor_2
+    ml_anchor_3
+    ml_anchor_4
+    ml_anchor_5
+    ml_anchor_6
+    ml_anchor_7
+    ml_anchor_8
 )
 set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile")
 set(IMEC_USB_BOOTLOADER ON CACHE BOOL "Add MCUboot USB-C recovery config for high-debug builds")
+set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test")
+set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant")
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
 set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
 set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
+set(IMEC_ML_ANCHOR_SLOT "" CACHE STRING "Override deterministic ML anchor discovery slot")
+set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
+    "Override deterministic flashed high-debug anchor slot")
 
 set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway")
 set_property(CACHE FIRMWARE_ROLE PROPERTY STRINGS clicker tag anchor gateway)
@@ -39,6 +54,8 @@ set(DWM3000_SDK_DIR "${CMAKE_CURRENT_LIST_DIR}/../../dwm3000 examples and sdk")
 
 if(IMEC_BUILD_PRESET)
     set(IMEC_HIGH_DEBUG ON CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+    set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test" FORCE)
+    set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
     set(IMEC_PRESET_ROLE_CONF "")
     if(IMEC_BUILD_PRESET STREQUAL "tag_stage0_highdebug")
         set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
@@ -77,6 +94,26 @@ if(IMEC_BUILD_PRESET)
         set(FIRMWARE_ROLE "gateway" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_BENCH_STAGE 3)
         set(IMEC_PRESET_ROLE_CONF "role-gateway.conf")
+    elseif(IMEC_BUILD_PRESET STREQUAL "gateway_ble_connectivity_test")
+        set(FIRMWARE_ROLE "gateway" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST ON CACHE BOOL "Build only the gateway BLE connectivity test" FORCE)
+    elseif(IMEC_BUILD_PRESET STREQUAL "ml_clicker")
+        set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_ML_BUILD ON CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
+        set(IMEC_PRESET_EXTRA_CONF "ml-clicker.conf")
+    elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_([1-8])$")
+        set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_ML_BUILD ON CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
+        set(IMEC_PRESET_EXTRA_CONF "ml-anchor.conf")
+        set(IMEC_ML_ANCHOR_INDEX "${CMAKE_MATCH_1}")
+        math(EXPR IMEC_ML_ANCHOR_SLOT_VALUE "${IMEC_ML_ANCHOR_INDEX} - 1")
+        set(IMEC_DEVICE_ID "0x222222222222220${IMEC_ML_ANCHOR_INDEX}ull" CACHE STRING
+            "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
+        set(IMEC_ML_ANCHOR_SLOT "${IMEC_ML_ANCHOR_SLOT_VALUE}" CACHE STRING
+            "Override deterministic ML anchor discovery slot" FORCE)
     else()
         message(FATAL_ERROR "Unknown IMEC_BUILD_PRESET: ${IMEC_BUILD_PRESET}")
     endif()
@@ -86,8 +123,21 @@ if(FIRMWARE_ROLE STREQUAL "tag")
     set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
 endif()
 
-if(FIRMWARE_ROLE STREQUAL "clicker")
+if(FIRMWARE_ROLE STREQUAL "gateway")
+    set(CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj-gateway.conf" CACHE STRING
+        "Base Kconfig fragment for gateway builds" FORCE)
+elseif(FIRMWARE_ROLE STREQUAL "clicker")
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj-clicker.conf")
+endif()
+
+if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/gateway-ble-connectivity-test.conf")
+    list(APPEND EXTRA_DTC_OVERLAY_FILE
+        "${CMAKE_CURRENT_LIST_DIR}/overlays/gateway-ble-connectivity-test.overlay")
+endif()
+
+if(IMEC_ML_BUILD AND IMEC_PRESET_EXTRA_CONF)
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/${IMEC_PRESET_EXTRA_CONF}")
 endif()
 
 if(IMEC_HIGH_DEBUG)
@@ -133,27 +183,31 @@ else()
     message(FATAL_ERROR "FIRMWARE_ROLE must be clicker, anchor, or gateway")
 endif()
 
-# Operational wake, discovery, ranging, and relay traffic use UWB frames.
-target_sources(app PRIVATE
-    src/main.c
-    src/dwm3000_driver.c
-    src/dwm3000_port.c
-    src/dwm3000_sdk_port.c
-    "${DWM3000_SDK_DIR}/decadriver/deca_device.c"
-    ../src/debug_log.c
-    ../src/protocol.c
-    ../src/gateway_command.c
-    ../src/uwb.c
-    ../src/uwb_ble_courtesy.c
-    ../src/uwb_session.c
-    ../src/mesh.c
-    ../src/mesh_relay.c
-    ../src/report.c
-    ../src/serial_frame.c
-    ../src/status.c
-    ../src/route.c
-    ../src/survey.c
-)
+if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+    target_sources(app PRIVATE src/main.c)
+else()
+    # Operational wake, discovery, ranging, and relay traffic use UWB frames.
+    target_sources(app PRIVATE
+        src/main.c
+        src/dwm3000_driver.c
+        src/dwm3000_port.c
+        src/dwm3000_sdk_port.c
+        "${DWM3000_SDK_DIR}/decadriver/deca_device.c"
+        ../src/debug_log.c
+        ../src/protocol.c
+        ../src/gateway_command.c
+        ../src/uwb.c
+        ../src/uwb_ble_courtesy.c
+        ../src/uwb_session.c
+        ../src/mesh.c
+        ../src/mesh_relay.c
+        ../src/report.c
+        ../src/serial_frame.c
+        ../src/status.c
+        ../src/route.c
+        ../src/survey.c
+    )
+endif()
 
 target_include_directories(app PRIVATE
     ../include
@@ -186,4 +240,24 @@ if(IMEC_GATEWAY_ID)
 endif()
 if(IMEC_NETWORK_ID)
     target_compile_definitions(app PRIVATE NETWORK_ID=${IMEC_NETWORK_ID})
+endif()
+if(NOT "${IMEC_HIGH_DEBUG_ANCHOR_SLOT}" STREQUAL "")
+    if(NOT IMEC_HIGH_DEBUG)
+        message(FATAL_ERROR "IMEC_HIGH_DEBUG_ANCHOR_SLOT is only valid for high-debug builds")
+    endif()
+    if(NOT FIRMWARE_ROLE STREQUAL "anchor")
+        message(FATAL_ERROR "IMEC_HIGH_DEBUG_ANCHOR_SLOT is only valid for anchor builds")
+    endif()
+    if(DEFINED IMEC_BENCH_STAGE AND IMEC_BENCH_STAGE LESS 2)
+        message(FATAL_ERROR "IMEC_HIGH_DEBUG_ANCHOR_SLOT is only valid for multi-anchor Stage 2/3 builds")
+    endif()
+    if(IMEC_HIGH_DEBUG_ANCHOR_SLOT LESS 0 OR IMEC_HIGH_DEBUG_ANCHOR_SLOT GREATER 49)
+        message(FATAL_ERROR "IMEC_HIGH_DEBUG_ANCHOR_SLOT must be in the UWB discovery slot range 0..49")
+    endif()
+    target_compile_definitions(app PRIVATE
+        IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED=1
+        IMEC_HIGH_DEBUG_ANCHOR_SLOT=${IMEC_HIGH_DEBUG_ANCHOR_SLOT})
+endif()
+if(NOT "${IMEC_ML_ANCHOR_SLOT}" STREQUAL "")
+    target_compile_definitions(app PRIVATE IMEC_ML_ANCHOR_SLOT=${IMEC_ML_ANCHOR_SLOT})
 endif()
