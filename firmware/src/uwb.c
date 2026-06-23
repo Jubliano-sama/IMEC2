@@ -17,8 +17,16 @@ static int validate_status(enum range_status status)
 
 static bool flags_valid(uint8_t flags)
 {
-    return flags == FLAG_DIAGNOSTIC ||
-           flags == FLAG_COUNT_AS_CLICK;
+    uint8_t mode_flags = flags & (FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK);
+
+    if ((flags & ~(FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK | FLAG_RANGE_ONLY)) != 0u) {
+        return false;
+    }
+    if ((flags & FLAG_RANGE_ONLY) != 0u) {
+        return mode_flags == FLAG_DIAGNOSTIC;
+    }
+    return mode_flags == FLAG_DIAGNOSTIC ||
+           mode_flags == FLAG_COUNT_AS_CLICK;
 }
 
 static uint16_t short_addr_from_id(uint64_t device_id)
@@ -174,6 +182,10 @@ bool uwb_frame_type_valid(uint8_t type)
            type == MSG_UWB_FINAL ||
            type == MSG_UWB_REPORT ||
            type == MSG_UWB_CLICKER_DIAG ||
+           type == MSG_UWB_ANCHOR_DIAG ||
+           type == MSG_UWB_ANCHOR_DIAG_FRAGMENT ||
+           type == MSG_UWB_ANCHOR_PAIR_SCHEDULE ||
+           type == MSG_UWB_ANCHOR_PAIR_RESULT ||
            type == MSG_UWB_SURVEY_DISCOVERY_PROBE;
 }
 
@@ -471,6 +483,210 @@ int uwb_decode_clicker_diag(const uint8_t *data,
     return PROTO_OK;
 }
 
+int uwb_encode_anchor_diag(const struct uwb_anchor_diag_frame *frame,
+                           uint8_t *out,
+                           size_t out_cap,
+                           size_t *written)
+{
+    size_t frame_len;
+    int ret;
+
+    if (frame == NULL || out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (frame->diag_len > UWB_ANCHOR_DIAG_MAX_BYTES ||
+        frame->quality > 100u ||
+        frame->status_flags == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = validate_status(frame->status);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    frame_len = UWB_ANCHOR_DIAG_FIXED_LEN + frame->diag_len;
+    if (out_cap < frame_len) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    ret = encode_header(&frame->header, MSG_UWB_ANCHOR_DIAG, out);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    proto_put_u32_le(&out[UWB_HEADER_LEN], (uint32_t)frame->distance_mm);
+    out[UWB_HEADER_LEN + 4u] = frame->quality;
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 5u], (uint16_t)frame->status);
+    out[UWB_HEADER_LEN + 7u] = (uint8_t)frame->rsl_dbm;
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 8u], frame->status_flags);
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 12u], (uint16_t)frame->clock_offset_raw);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 14u], (uint32_t)frame->carrier_integrator);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 18u], frame->poll_rx_ts_32);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 22u], frame->resp_tx_ts_32);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 26u], frame->final_rx_ts_32);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 30u], frame->poll_tx_ts_32);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 34u], frame->resp_rx_ts_32);
+    proto_put_u32_le(&out[UWB_HEADER_LEN + 38u], frame->final_tx_ts_32);
+    out[UWB_HEADER_LEN + 42u] = frame->diag_len;
+    if (frame->diag_len > 0u) {
+        memcpy(&out[UWB_ANCHOR_DIAG_FIXED_LEN], frame->diag_bytes, frame->diag_len);
+    }
+    *written = frame_len;
+    return PROTO_OK;
+}
+
+int uwb_decode_anchor_diag(const uint8_t *data,
+                           size_t len,
+                           struct uwb_anchor_diag_frame *frame)
+{
+    uint8_t diag_len;
+    int ret;
+
+    if (frame == NULL || data == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (len < UWB_ANCHOR_DIAG_FIXED_LEN ||
+        len > UWB_ANCHOR_DIAG_MAX_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+
+    ret = decode_header(data,
+                        UWB_HEADER_LEN,
+                        UWB_HEADER_LEN,
+                        MSG_UWB_ANCHOR_DIAG,
+                        &frame->header);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    frame->distance_mm = (int32_t)proto_get_u32_le(&data[UWB_HEADER_LEN]);
+    frame->quality = data[UWB_HEADER_LEN + 4u];
+    frame->status = (enum range_status)proto_get_u16_le(&data[UWB_HEADER_LEN + 5u]);
+    frame->rsl_dbm = (int8_t)data[UWB_HEADER_LEN + 7u];
+    frame->status_flags = proto_get_u32_le(&data[UWB_HEADER_LEN + 8u]);
+    frame->clock_offset_raw = (int16_t)proto_get_u16_le(&data[UWB_HEADER_LEN + 12u]);
+    frame->carrier_integrator = (int32_t)proto_get_u32_le(&data[UWB_HEADER_LEN + 14u]);
+    frame->poll_rx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 18u]);
+    frame->resp_tx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 22u]);
+    frame->final_rx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 26u]);
+    frame->poll_tx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 30u]);
+    frame->resp_rx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 34u]);
+    frame->final_tx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 38u]);
+    diag_len = data[UWB_HEADER_LEN + 42u];
+    if (diag_len > UWB_ANCHOR_DIAG_MAX_BYTES ||
+        len != UWB_ANCHOR_DIAG_FIXED_LEN + diag_len ||
+        frame->quality > 100u ||
+        frame->status_flags == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = validate_status(frame->status);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    frame->diag_len = diag_len;
+    if (diag_len > 0u) {
+        memcpy(frame->diag_bytes, &data[UWB_ANCHOR_DIAG_FIXED_LEN], diag_len);
+    }
+    return PROTO_OK;
+}
+
+int uwb_encode_anchor_diag_fragment(const struct uwb_anchor_diag_fragment_frame *frame,
+                                    uint8_t *out,
+                                    size_t out_cap,
+                                    size_t *written)
+{
+    size_t frame_len;
+    int ret;
+
+    if (frame == NULL || out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if ((frame->block_type != UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR &&
+         frame->block_type != UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_RX_DIAG) ||
+        frame->chunk_len > UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES ||
+        frame->total_len == 0u ||
+        frame->offset > frame->total_len ||
+        frame->chunk_len > frame->total_len - frame->offset ||
+        frame->fragment_count == 0u ||
+        frame->fragment_index >= frame->fragment_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    frame_len = UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN + frame->chunk_len;
+    if (out_cap < frame_len) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    ret = encode_header(&frame->header, MSG_UWB_ANCHOR_DIAG_FRAGMENT, out);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out[UWB_HEADER_LEN] = frame->block_type;
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 1u], frame->offset);
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 3u], frame->total_len);
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 5u], frame->first_path_index);
+    out[UWB_HEADER_LEN + 7u] = frame->fragment_index;
+    out[UWB_HEADER_LEN + 8u] = frame->fragment_count;
+    out[UWB_HEADER_LEN + 9u] = frame->flags;
+    out[UWB_HEADER_LEN + 10u] = frame->chunk_len;
+    if (frame->chunk_len > 0u) {
+        memcpy(&out[UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN],
+               frame->chunk,
+               frame->chunk_len);
+    }
+    *written = frame_len;
+    return PROTO_OK;
+}
+
+int uwb_decode_anchor_diag_fragment(const uint8_t *data,
+                                    size_t len,
+                                    struct uwb_anchor_diag_fragment_frame *frame)
+{
+    uint8_t chunk_len;
+    int ret;
+
+    if (frame == NULL || data == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (len < UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN ||
+        len > UWB_ANCHOR_DIAG_FRAGMENT_MAX_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+
+    ret = decode_header(data,
+                        UWB_HEADER_LEN,
+                        UWB_HEADER_LEN,
+                        MSG_UWB_ANCHOR_DIAG_FRAGMENT,
+                        &frame->header);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    frame->block_type = data[UWB_HEADER_LEN];
+    frame->offset = proto_get_u16_le(&data[UWB_HEADER_LEN + 1u]);
+    frame->total_len = proto_get_u16_le(&data[UWB_HEADER_LEN + 3u]);
+    frame->first_path_index = proto_get_u16_le(&data[UWB_HEADER_LEN + 5u]);
+    frame->fragment_index = data[UWB_HEADER_LEN + 7u];
+    frame->fragment_count = data[UWB_HEADER_LEN + 8u];
+    frame->flags = data[UWB_HEADER_LEN + 9u];
+    chunk_len = data[UWB_HEADER_LEN + 10u];
+    if ((frame->block_type != UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR &&
+         frame->block_type != UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_RX_DIAG) ||
+        chunk_len > UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES ||
+        len != UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN + chunk_len ||
+        frame->total_len == 0u ||
+        frame->offset > frame->total_len ||
+        chunk_len > frame->total_len - frame->offset ||
+        frame->fragment_count == 0u ||
+        frame->fragment_index >= frame->fragment_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    frame->chunk_len = chunk_len;
+    if (chunk_len > 0u) {
+        memcpy(frame->chunk, &data[UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN], chunk_len);
+    }
+    return PROTO_OK;
+}
+
 static int validate_wake_claim(const struct uwb_wake_claim_frame *frame)
 {
     if (frame == NULL) {
@@ -607,14 +823,22 @@ static int validate_range_schedule(const struct uwb_range_schedule_frame *frame)
         frame->min_successful_unique_anchors == 0u ||
         frame->min_successful_unique_anchors > frame->selected_count ||
         frame->sts_mode != UWB_RANGE_SCHEDULE_STS_DISABLED ||
-        frame->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED ||
+        frame->diagnostics_required > UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED ||
         frame->samples_per_anchor == 0u ||
         frame->samples_per_anchor > UWB_RANGING_REQUESTS_MAX_PER_ANCHOR ||
         !flags_valid(frame->flags)) {
         return PROTO_ERR_MALFORMED;
     }
-    if ((uint32_t)frame->max_exchanges * frame->exchange_stride_us >
-        (uint32_t)frame->burst_window_ms * 1000u) {
+    if ((frame->flags & FLAG_RANGE_ONLY) != 0u &&
+        frame->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((frame->flags & FLAG_RANGE_ONLY) == 0u &&
+        frame->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((uint64_t)frame->max_exchanges * frame->exchange_stride_us >
+        (uint64_t)frame->burst_window_ms * 1000ull) {
         return PROTO_ERR_MALFORMED;
     }
     if ((frame->flags & FLAG_COUNT_AS_CLICK) != 0u &&
@@ -663,6 +887,127 @@ static int validate_range_release(const struct uwb_range_release_frame *frame)
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
+}
+
+uint8_t uwb_anchor_pair_count(uint8_t anchor_count)
+{
+    if (anchor_count < UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS ||
+        anchor_count > UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS) {
+        return 0u;
+    }
+    return (uint8_t)(((uint16_t)anchor_count * (anchor_count - 1u)) / 2u);
+}
+
+static bool anchor_pair_schedule_duplicate(
+    const struct uwb_anchor_pair_schedule_frame *frame,
+    uint8_t index)
+{
+    for (uint8_t i = 0u; i < index; i++) {
+        if (frame->anchor_ids[i] == frame->anchor_ids[index]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int validate_anchor_pair_schedule(
+    const struct uwb_anchor_pair_schedule_frame *frame)
+{
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (frame->network_id == 0u ||
+        frame->clicker_id == 0u ||
+        frame->survey_id == 0u ||
+        frame->attempt_index == 0u ||
+        frame->nonce == 0u ||
+        frame->anchor_count < UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS ||
+        frame->anchor_count > UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS ||
+        frame->pair_count != uwb_anchor_pair_count(frame->anchor_count) ||
+        frame->ranging_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        frame->first_pair_delay_ms == 0u ||
+        frame->pair_stride_ms < UWB_ANCHOR_PAIR_SURVEY_MIN_STRIDE_MS ||
+        frame->pair_window_ms == 0u ||
+        frame->pair_window_ms > frame->pair_stride_ms ||
+        frame->reply_delay_us != UWB_DS_TWR_REPLY_DELAY_US ||
+        !flags_valid(frame->flags) ||
+        (frame->flags & FLAG_COUNT_AS_CLICK) != 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (uint8_t i = 0u; i < frame->anchor_count; i++) {
+        if (frame->anchor_start_delay_ms[i] < UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS ||
+            frame->anchor_start_delay_ms[i] > UWB_ANCHOR_PAIR_SCHEDULE_MAX_START_DELAY_MS ||
+            (frame->anchor_start_delay_ms[i] %
+             UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS) != 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (frame->anchor_ids[i] == 0u ||
+            frame->anchor_ids[i] == frame->clicker_id ||
+            anchor_pair_schedule_duplicate(frame, i)) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+    return PROTO_OK;
+}
+
+static int validate_anchor_pair_result(
+    const struct uwb_anchor_pair_result_frame *frame)
+{
+    int ret;
+
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = validate_status(frame->status);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (frame->network_id == 0u ||
+        frame->clicker_id == 0u ||
+        frame->survey_id == 0u ||
+        frame->nonce == 0u ||
+        frame->initiator_id == 0u ||
+        frame->responder_id == 0u ||
+        frame->initiator_id == frame->responder_id ||
+        frame->pair_count == 0u ||
+        frame->pair_count > uwb_anchor_pair_count(UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS) ||
+        frame->pair_index >= frame->pair_count ||
+        frame->seq == 0u ||
+        frame->quality > 100u ||
+        !flags_valid(frame->flags) ||
+        (frame->flags & FLAG_COUNT_AS_CLICK) != 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
+int uwb_anchor_pair_at(const struct uwb_anchor_pair_schedule_frame *frame,
+                       uint8_t pair_index,
+                       uint64_t *initiator_id,
+                       uint64_t *responder_id)
+{
+    uint8_t cursor = 0u;
+
+    if (frame == NULL || initiator_id == NULL || responder_id == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (validate_anchor_pair_schedule(frame) != PROTO_OK ||
+        pair_index >= frame->pair_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (uint8_t i = 0u; i < frame->anchor_count; i++) {
+        for (uint8_t j = (uint8_t)(i + 1u); j < frame->anchor_count; j++) {
+            if (cursor == pair_index) {
+                *initiator_id = frame->anchor_ids[i];
+                *responder_id = frame->anchor_ids[j];
+                return PROTO_OK;
+            }
+            cursor++;
+        }
+    }
+    return PROTO_ERR_NOT_FOUND;
 }
 
 int uwb_validate_range_schedule(const struct uwb_range_schedule_frame *frame)
@@ -988,17 +1333,16 @@ int uwb_encode_range_schedule(const struct uwb_range_schedule_frame *frame,
     proto_put_u16_le(&out[34], frame->poll_spacing_ms);
     proto_put_u16_le(&out[36], frame->burst_window_ms);
     proto_put_u16_le(&out[38], frame->exchange_stride_us);
-    out[40] = frame->max_exchanges;
-    out[41] = frame->min_successful_unique_anchors;
-    out[42] = frame->sts_mode;
-    out[43] = frame->diagnostics_required;
-    out[44] = frame->samples_per_anchor;
-    out[45] = frame->flags;
+    proto_put_u16_le(&out[40], frame->max_exchanges);
+    out[42] = frame->min_successful_unique_anchors;
+    out[43] = frame->sts_mode;
+    out[44] = frame->diagnostics_required;
+    out[45] = frame->samples_per_anchor;
+    out[46] = frame->flags;
 
     for (uint8_t i = 0u; i < frame->selected_count; i++) {
         proto_put_u64_le(&out[offset], frame->entries[i].anchor_id);
         out[offset + 8u] = frame->entries[i].seq;
-        out[offset + 9u] = frame->entries[i].sample_count;
         offset += UWB_RANGE_SCHEDULE_ENTRY_LEN;
     }
 
@@ -1047,12 +1391,12 @@ int uwb_decode_range_schedule(const uint8_t *data,
     frame->poll_spacing_ms = proto_get_u16_le(&data[34]);
     frame->burst_window_ms = proto_get_u16_le(&data[36]);
     frame->exchange_stride_us = proto_get_u16_le(&data[38]);
-    frame->max_exchanges = data[40];
-    frame->min_successful_unique_anchors = data[41];
-    frame->sts_mode = data[42];
-    frame->diagnostics_required = data[43];
-    frame->samples_per_anchor = data[44];
-    frame->flags = data[45];
+    frame->max_exchanges = proto_get_u16_le(&data[40]);
+    frame->min_successful_unique_anchors = data[42];
+    frame->sts_mode = data[43];
+    frame->diagnostics_required = data[44];
+    frame->samples_per_anchor = data[45];
+    frame->flags = data[46];
 
     expected_len = uwb_range_schedule_encoded_len(frame->selected_count);
     if (expected_len == 0u || len != expected_len) {
@@ -1062,11 +1406,203 @@ int uwb_decode_range_schedule(const uint8_t *data,
     for (uint8_t i = 0u; i < frame->selected_count; i++) {
         frame->entries[i].anchor_id = proto_get_u64_le(&data[offset]);
         frame->entries[i].seq = data[offset + 8u];
-        frame->entries[i].sample_count = data[offset + 9u];
+        frame->entries[i].sample_count = frame->samples_per_anchor;
         offset += UWB_RANGE_SCHEDULE_ENTRY_LEN;
     }
 
     return validate_range_schedule(frame);
+}
+
+size_t uwb_anchor_pair_schedule_encoded_len(uint8_t anchor_count)
+{
+    if (anchor_count < UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS ||
+        anchor_count > UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS) {
+        return 0u;
+    }
+    return UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN +
+           ((size_t)anchor_count * UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN) +
+           UWB_FRAME_CRC_LEN;
+}
+
+int uwb_encode_anchor_pair_schedule(const struct uwb_anchor_pair_schedule_frame *frame,
+                                    uint8_t *out,
+                                    size_t out_cap,
+                                    size_t *written)
+{
+    size_t len;
+    size_t offset = UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN;
+    int ret;
+
+    if (out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = validate_anchor_pair_schedule(frame);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    len = uwb_anchor_pair_schedule_encoded_len(frame->anchor_count);
+    if (out_cap < len) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    put_sync_prefix(out, MSG_UWB_ANCHOR_PAIR_SCHEDULE);
+    proto_put_u32_le(&out[3], frame->network_id);
+    proto_put_u64_le(&out[7], frame->clicker_id);
+    proto_put_u32_le(&out[15], frame->survey_id);
+    out[19] = frame->attempt_index;
+    proto_put_u64_le(&out[20], frame->nonce);
+    out[28] = frame->anchor_count;
+    out[29] = frame->pair_count;
+    out[30] = frame->ranging_channel;
+    proto_put_u16_le(&out[31], frame->first_pair_delay_ms);
+    proto_put_u16_le(&out[33], frame->pair_stride_ms);
+    proto_put_u16_le(&out[35], frame->pair_window_ms);
+    proto_put_u16_le(&out[37], frame->reply_delay_us);
+    out[39] = frame->flags;
+
+    for (uint8_t i = 0u; i < frame->anchor_count; i++) {
+        proto_put_u64_le(&out[offset], frame->anchor_ids[i]);
+        out[offset + 8u] = (uint8_t)(frame->anchor_start_delay_ms[i] /
+                                     UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS);
+        offset += UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN;
+    }
+
+    append_crc(out, len - UWB_FRAME_CRC_LEN);
+    *written = len;
+    return PROTO_OK;
+}
+
+int uwb_decode_anchor_pair_schedule(const uint8_t *data,
+                                    size_t len,
+                                    struct uwb_anchor_pair_schedule_frame *frame)
+{
+    size_t expected_len;
+    size_t offset = UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN;
+    int ret;
+
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (data == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (len < UWB_ANCHOR_PAIR_SCHEDULE_MIN_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+
+    ret = validate_sync_prefix(data, len, len, MSG_UWB_ANCHOR_PAIR_SCHEDULE);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = verify_crc(data, len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(frame, 0, sizeof(*frame));
+    frame->network_id = proto_get_u32_le(&data[3]);
+    frame->clicker_id = proto_get_u64_le(&data[7]);
+    frame->survey_id = proto_get_u32_le(&data[15]);
+    frame->attempt_index = data[19];
+    frame->nonce = proto_get_u64_le(&data[20]);
+    frame->anchor_count = data[28];
+    frame->pair_count = data[29];
+    frame->ranging_channel = data[30];
+    frame->first_pair_delay_ms = proto_get_u16_le(&data[31]);
+    frame->pair_stride_ms = proto_get_u16_le(&data[33]);
+    frame->pair_window_ms = proto_get_u16_le(&data[35]);
+    frame->reply_delay_us = proto_get_u16_le(&data[37]);
+    frame->flags = data[39];
+
+    expected_len = uwb_anchor_pair_schedule_encoded_len(frame->anchor_count);
+    if (expected_len == 0u || len != expected_len) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+    for (uint8_t i = 0u; i < frame->anchor_count; i++) {
+        frame->anchor_ids[i] = proto_get_u64_le(&data[offset]);
+        frame->anchor_start_delay_ms[i] =
+            (uint16_t)data[offset + 8u] * UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS;
+        offset += UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN;
+    }
+
+    return validate_anchor_pair_schedule(frame);
+}
+
+int uwb_encode_anchor_pair_result(const struct uwb_anchor_pair_result_frame *frame,
+                                  uint8_t *out,
+                                  size_t out_cap,
+                                  size_t *written)
+{
+    int ret;
+
+    if (out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (out_cap < UWB_ANCHOR_PAIR_RESULT_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    ret = validate_anchor_pair_result(frame);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    put_sync_prefix(out, MSG_UWB_ANCHOR_PAIR_RESULT);
+    proto_put_u32_le(&out[3], frame->network_id);
+    proto_put_u64_le(&out[7], frame->clicker_id);
+    proto_put_u32_le(&out[15], frame->survey_id);
+    proto_put_u64_le(&out[19], frame->nonce);
+    proto_put_u64_le(&out[27], frame->initiator_id);
+    proto_put_u64_le(&out[35], frame->responder_id);
+    out[43] = frame->pair_index;
+    out[44] = frame->pair_count;
+    out[45] = frame->seq;
+    out[46] = (uint8_t)frame->status;
+    out[47] = frame->quality;
+    proto_put_u32_le(&out[48], (uint32_t)frame->distance_mm);
+    out[52] = (uint8_t)frame->rsl_dbm;
+    out[53] = frame->flags;
+    append_crc(out, UWB_ANCHOR_PAIR_RESULT_LEN - UWB_FRAME_CRC_LEN);
+    *written = UWB_ANCHOR_PAIR_RESULT_LEN;
+    return PROTO_OK;
+}
+
+int uwb_decode_anchor_pair_result(const uint8_t *data,
+                                  size_t len,
+                                  struct uwb_anchor_pair_result_frame *frame)
+{
+    int ret;
+
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = validate_sync_prefix(data,
+                               len,
+                               UWB_ANCHOR_PAIR_RESULT_LEN,
+                               MSG_UWB_ANCHOR_PAIR_RESULT);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = verify_crc(data, len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    frame->network_id = proto_get_u32_le(&data[3]);
+    frame->clicker_id = proto_get_u64_le(&data[7]);
+    frame->survey_id = proto_get_u32_le(&data[15]);
+    frame->nonce = proto_get_u64_le(&data[19]);
+    frame->initiator_id = proto_get_u64_le(&data[27]);
+    frame->responder_id = proto_get_u64_le(&data[35]);
+    frame->pair_index = data[43];
+    frame->pair_count = data[44];
+    frame->seq = data[45];
+    frame->status = (enum range_status)data[46];
+    frame->quality = data[47];
+    frame->distance_mm = (int32_t)proto_get_u32_le(&data[48]);
+    frame->rsl_dbm = (int8_t)data[52];
+    frame->flags = data[53];
+    return validate_anchor_pair_result(frame);
 }
 
 int uwb_encode_range_release(const struct uwb_range_release_frame *frame,

@@ -7,6 +7,18 @@
 
 #include "uwb.h"
 
+#define DWM3000_RX_DIAG_RAW_LEN 108u
+#define DWM3000_CIR_SAMPLE_BYTES UWB_CIR_SAMPLE_LEN
+#define DWM3000_CIR_ACCUM_SAMPLE_COUNT 2048u
+#define DWM3000_CIR_WINDOW_PRE_SAMPLES 64u
+#define DWM3000_CIR_WINDOW_SAMPLE_COUNT 192u
+#define DWM3000_CIR_WINDOW_BYTES \
+    (DWM3000_CIR_SAMPLE_BYTES * DWM3000_CIR_WINDOW_SAMPLE_COUNT)
+#define DWM3000_FULL_CIR_SAMPLE_BYTES DWM3000_CIR_SAMPLE_BYTES
+#define DWM3000_FULL_CIR_SAMPLE_COUNT DWM3000_CIR_WINDOW_SAMPLE_COUNT
+#define DWM3000_FULL_CIR_BYTES \
+    DWM3000_CIR_WINDOW_BYTES
+
 struct dwm3000_range_request {
     uint64_t initiator_id;
     uint64_t responder_id;
@@ -18,10 +30,17 @@ struct dwm3000_range_request {
     uint8_t round_index;
     uint8_t flags;
     uint32_t timeout_ms;
+    uint16_t reply_delay_uus;
     bool capture_rsl;
     bool skip_responder_report;
     bool send_clicker_diag;
     bool expect_clicker_diag;
+    bool expect_anchor_diag;
+    bool send_anchor_diag;
+    bool expect_anchor_diag_fragments;
+    bool send_anchor_diag_fragments;
+    uint8_t *anchor_full_cir;
+    uint16_t anchor_full_cir_cap;
 };
 
 struct dwm3000_range_result {
@@ -37,13 +56,32 @@ struct dwm3000_range_result {
     int8_t rsl_dbm;
     int16_t clock_offset_raw;
     int32_t carrier_integrator;
+    uint32_t poll_tx_ts_32;
+    uint32_t poll_rx_ts_32;
+    uint32_t resp_tx_ts_32;
+    uint32_t resp_rx_ts_32;
+    uint32_t final_tx_ts_32;
+    uint32_t final_rx_ts_32;
     uint8_t cir_sample[UWB_CIR_SAMPLE_LEN];
+    uint8_t clicker_rx_diag_raw[DWM3000_RX_DIAG_RAW_LEN];
+    uint8_t anchor_rx_diag_raw[DWM3000_RX_DIAG_RAW_LEN];
     uint8_t clicker_diag[UWB_CLICKER_DIAG_MAX_BYTES];
+    uint16_t anchor_full_cir_len;
+    uint16_t anchor_full_cir_total_len;
+    uint16_t anchor_full_cir_first_path_index;
+    uint16_t anchor_full_cir_start_index;
     uint8_t clicker_diag_len;
+    uint8_t clicker_rx_diag_raw_len;
+    uint8_t anchor_rx_diag_raw_len;
     uint32_t clicker_diag_status_flags;
+    uint32_t anchor_diag_status_flags;
     uint32_t clicker_diag_status_detect_latency_us;
     bool rsl_sampled;
     bool cir_sampled;
+    bool clicker_rx_diag_sampled;
+    bool anchor_rx_diag_sampled;
+    bool anchor_full_cir_sampled;
+    bool anchor_full_cir_truncated;
     bool clock_offset_sampled;
     bool carrier_integrator_sampled;
     bool clicker_diag_received;
@@ -81,7 +119,6 @@ struct dwm3000_driver_stats {
 };
 
 int dwm3000_driver_probe(uint32_t *dev_id);
-int dwm3000_driver_initialise(bool idle_after_init);
 int dwm3000_driver_configure_default(void);
 int dwm3000_driver_configure_range_mode(void);
 int dwm3000_driver_configure_mesh_payload_mode(void);
@@ -117,8 +154,6 @@ int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,
                                            const struct dwm3000_range_request *expected,
                                            uint32_t timeout_ms,
                                            struct dwm3000_range_result *result);
-int dwm3000_driver_listen_activity(uint32_t timeout_ms, bool *activity_detected);
-void dwm3000_driver_stats_reset(void);
 void dwm3000_driver_stats_get(struct dwm3000_driver_stats *stats);
 
 #endif

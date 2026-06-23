@@ -169,6 +169,10 @@ int uwb_clicker_build_discover(struct uwb_clicker_session *session,
                                struct uwb_discover_frame *discover);
 int uwb_clicker_note_discovery_reply(struct uwb_clicker_session *session,
                                      const struct uwb_discovery_reply_frame *reply);
+int uwb_clicker_seed_discovered_anchor(struct uwb_clicker_session *session,
+                                       uint64_t anchor_id,
+                                       uint8_t anchor_slot,
+                                       uint8_t rx_quality);
 int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
                                      uint16_t reply_delay_us,
                                      uint16_t first_poll_delay_ms,

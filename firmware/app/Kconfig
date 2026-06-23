@@ -52,15 +52,15 @@ config IMEC_ML_ANCHOR
     bool "Build the deterministic ML data collection anchor"
     help
       Uses the proven UWB discovery/ranging path with ML-specific deterministic
-      discovery slots, a higher 20/200 ms idle receive duty cycle, and periodic
-      Li-ion battery-status LED blinking. Normal anchor duty-cycle limits are
-      unchanged unless this image is explicitly selected.
+      discovery slots, full-duty idle receive scanning, and periodic Li-ion
+      battery-status LED blinking. Normal anchor duty-cycle limits are unchanged
+      unless this image is explicitly selected.
 
 config IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR
     int "Default ML collection samples per anchor"
     depends on IMEC_ML_CLICKER
     default 8
-    range 1 15
+    range 1 100
     help
       Default sample count requested per selected anchor. The production range
       schedule still caps the total exchanges that fit in one burst.
@@ -68,21 +68,21 @@ config IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR
 config IMEC_ML_MAX_ANCHORS
     int "Maximum anchors selected per ML collection"
     depends on IMEC_ML_CLICKER
-    default 4
-    range 1 4
+    default 8
+    range 1 8
     help
-      Maximum discovered anchors selected into one production-like range
-      schedule. The current UWB schedule frame supports up to four anchors.
+      Compatibility cap for ML collection. The ML command path selects up to
+      the configured discovery slot count, and the UWB schedule supports up to
+      eight anchors.
 
 config IMEC_ML_DISCOVERY_SLOT_COUNT
     int "ML discovery reply slot count"
     depends on IMEC_ML_CLICKER
     default 8
-    range 1 50
+    range 1 8
     help
-      Slot count used by the ML clicker discovery frame. This can be larger
-      than the scheduled-anchor cap so deterministic anchor images can reply in
-      separate slots without colliding during fresh discovery.
+      Slot count used by the ML clicker discovery frame. The ML command path
+      can select as many anchors as this slot count, up to eight anchors.
 
 endmenu
 

@@ -11,6 +11,7 @@ Previous version: [[UWB+BLE Architecture 0.6.4]] Design rationale: [[UWB+BLE Des
 - Promoted the Stage 1 validated anchor wake scan to the normal target: 380 ms scan interval with a 5 ms RX slice.
 - Replaced the old 1% scan guard language with a calibrated 13,000 us/s RX-duty budget and a separate conservative awake-time estimate.
 - Updated the anchor battery estimate for the 7.67 ms conservative awake slice and removed the 300 ms continuous-RX debug estimate as the default Stage 1 reference.
+- Increased the scheduled DS-TWR exchange stride from 30 ms to 33 ms after high-sample ML collection showed the extra spacing eliminates the observed responder timeouts.
 
 ### 2026-06-19 - 0.6.4
 
@@ -165,7 +166,7 @@ These facts are used throughout the document. They are listed first so later sec
 | Schedule size | Up to four anchors can be scheduled in one normal-click burst. |
 | Ranging burst | One continuous 400 ms channel-5 responder window shared by the selected anchors. |
 | UWB PHY | 850 kbps, 4096-symbol preamble, PAC32, 4073-symbol SFD timeout, STS disabled, maximum configured DWM3000 TX power. Channel 5 is used for wake, discovery, route contact, and ranging; channel 9 uses the same PHY for negotiated payload events. |
-| Ranging timing | Fixed equal DWM/DW3000 delayed-TX response/final delay. The current long-range main firmware selects `UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS = 8000`; the short-range candidate is `UWB_RANGE_REPLY_DELAY_SHORT_RANGE_UUS = 2750`. Both values need recalibration before being treated as final. The scheduled exchange stride remains 30 ms. |
+| Ranging timing | Fixed equal DWM/DW3000 delayed-TX response/final delay. The current long-range main firmware selects `UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS = 8000`; the short-range candidate is `UWB_RANGE_REPLY_DELAY_SHORT_RANGE_UUS = 2750`. Both values need recalibration before being treated as final. The scheduled exchange stride is 33 ms. |
 | First-path sensitivity | DWM3000 `IP_CONFIG_LO.IP_NTM=12`, the lower recommended first-path threshold. This may increase outliers, so sample-level outlier rejection remains required. |
 | UWB active current model | 75 mA for RX/TX power estimates. Radio reset/configuration is still modeled separately at 20 mA where noted. |
 | DWM3000 completion detection | No DWM3000 IRQ pin is directly available to the MCU. Firmware does not configure `irq-gpios`; it polls `SYS_STATUS` over SPI every 50 us while waiting for bounded TX/RX events. |
@@ -312,7 +313,7 @@ t≈range     Scheduled anchors run no-STS DS-TWR inside one shared 400 ms respo
 t<15 s      Click succeeds after 3 unique anchors range, or retries up to 6 attempts
 ```
 
-Discovery replies prove that anchors are present; they are not distance measurements. A normal click only ranges after at least three eligible anchors reply. The schedule may include up to four anchors. All selected anchors share the same continuous 400 ms channel-5 responder burst while the clicker runs addressed exchanges with a 30 ms minimum exchange stride.
+Discovery replies prove that anchors are present; they are not distance measurements. A normal click only ranges after at least three eligible anchors reply. The schedule may include up to four anchors. All selected anchors share the same continuous 400 ms channel-5 responder burst while the clicker runs addressed exchanges with a 33 ms minimum exchange stride.
 
 If zero anchors reply, the clicker does not start burst ranging and sends no release. If one or two anchors reply, the clicker sends a compact range-release frame to those anchors before retrying or failing. That frame tells the anchors that this attempt did not reach the normal-click minimum and that they can return to low-duty scan instead of waiting for a schedule.
 
@@ -365,7 +366,7 @@ Scheduled receive legs use a zero preamble-detect timeout. That disables the sep
 | 4. FINAL TX | Delayed TX, FINAL on-air, read TX timestamp | ~1700 us |
 | 5. Wait for REPORT | RX enable, fixed selected `UWB_RANGE_REPLY_DELAY_UUS` DWM/DW3000 delayed-TX unit, responder compute, REPORT on-air | bounded by the delayed-TX unit plus on-air/read time |
 | 6. Read REPORT | Read and parse report frame | ~100 us |
-| **Total** | | **~21000 us practical, scheduled with a 30 ms stride** |
+| **Total** | | **~21000 us practical, scheduled with a 33 ms stride** |
 
 ### Diagnostics After Ranging
 

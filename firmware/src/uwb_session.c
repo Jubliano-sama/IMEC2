@@ -4,8 +4,16 @@
 
 static bool flags_valid(uint8_t flags)
 {
-    return flags == FLAG_DIAGNOSTIC ||
-           flags == FLAG_COUNT_AS_CLICK;
+    uint8_t mode_flags = flags & (FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK);
+
+    if ((flags & ~(FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK | FLAG_RANGE_ONLY)) != 0u) {
+        return false;
+    }
+    if ((flags & FLAG_RANGE_ONLY) != 0u) {
+        return mode_flags == FLAG_DIAGNOSTIC;
+    }
+    return mode_flags == FLAG_DIAGNOSTIC ||
+           mode_flags == FLAG_COUNT_AS_CLICK;
 }
 
 static bool discovery_reply_status_valid(uint8_t status)
@@ -133,6 +141,24 @@ static int decode_politeness_range_header(const uint8_t *frame,
         }
         return ret;
     }
+    case MSG_UWB_ANCHOR_DIAG: {
+        struct uwb_anchor_diag_frame diag;
+        int ret = uwb_decode_anchor_diag(frame, frame_len, &diag);
+
+        if (ret == PROTO_OK) {
+            *header = diag.header;
+        }
+        return ret;
+    }
+    case MSG_UWB_ANCHOR_DIAG_FRAGMENT: {
+        struct uwb_anchor_diag_fragment_frame fragment;
+        int ret = uwb_decode_anchor_diag_fragment(frame, frame_len, &fragment);
+
+        if (ret == PROTO_OK) {
+            *header = fragment.header;
+        }
+        return ret;
+    }
     default:
         return PROTO_ERR_MALFORMED;
     }
@@ -241,7 +267,9 @@ int uwb_clicker_decode_politeness_wait(const struct uwb_clicker_session *session
     case MSG_UWB_RESP:
     case MSG_UWB_FINAL:
     case MSG_UWB_REPORT:
-    case MSG_UWB_CLICKER_DIAG: {
+    case MSG_UWB_CLICKER_DIAG:
+    case MSG_UWB_ANCHOR_DIAG:
+    case MSG_UWB_ANCHOR_DIAG_FRAGMENT: {
         struct uwb_range_header header;
 
         ret = decode_politeness_range_header(frame, frame_len, type, &header);
@@ -415,16 +443,16 @@ static bool range_status_valid(enum range_status status)
            status != RANGE_STS_QUALITY_FAIL;
 }
 
-static uint8_t exchange_capacity_for_burst_window(uint16_t burst_window_ms)
+static uint16_t exchange_capacity_for_burst_window(uint16_t burst_window_ms)
 {
     uint32_t capacity;
 
     capacity = ((uint32_t)burst_window_ms * 1000u) /
                UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
-    if (capacity > UINT8_MAX) {
-        capacity = UINT8_MAX;
+    if (capacity > UINT16_MAX) {
+        capacity = UINT16_MAX;
     }
-    return (uint8_t)capacity;
+    return (uint16_t)capacity;
 }
 
 static void clear_anchor_schedule(struct uwb_anchor_session *session)
@@ -605,6 +633,56 @@ int uwb_clicker_note_discovery_reply(struct uwb_clicker_session *session,
     return PROTO_OK;
 }
 
+int uwb_clicker_seed_discovered_anchor(struct uwb_clicker_session *session,
+                                       uint64_t anchor_id,
+                                       uint8_t anchor_slot,
+                                       uint8_t rx_quality)
+{
+    struct uwb_anchor_candidate *candidate;
+    int index;
+
+    if (session == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (session->state != UWB_CLICKER_POLITENESS &&
+        session->state != UWB_CLICKER_WAKE &&
+        session->state != UWB_CLICKER_DISCOVERY) {
+        return PROTO_ERR_BUSY;
+    }
+    if (anchor_id == 0u ||
+        anchor_slot >= UWB_DISCOVERY_SLOT_COUNT ||
+        rx_quality > 100u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (successful_anchor_seen(session, anchor_id)) {
+        return PROTO_OK;
+    }
+
+    session->state = UWB_CLICKER_DISCOVERY;
+    index = candidate_index(session, anchor_id);
+    if (index >= 0) {
+        candidate = &session->candidates[index];
+        if (rx_quality > candidate->rx_quality) {
+            candidate->rx_quality = rx_quality;
+        }
+        candidate->anchor_slot = anchor_slot;
+        candidate->sample_count = session->config.samples_per_anchor;
+        return PROTO_OK;
+    }
+
+    if (session->candidate_count >= UWB_SESSION_DISCOVERY_CAPACITY) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    candidate = &session->candidates[session->candidate_count];
+    candidate->anchor_id = anchor_id;
+    candidate->anchor_slot = anchor_slot;
+    candidate->rx_quality = rx_quality;
+    candidate->sample_count = session->config.samples_per_anchor;
+    session->candidate_count++;
+    return PROTO_OK;
+}
+
 static int select_next_candidate(const struct uwb_clicker_session *session,
                                  const bool *used)
 {
@@ -634,7 +712,7 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
 {
     bool used[UWB_SESSION_DISCOVERY_CAPACITY] = {0};
     uint8_t selected_count;
-    uint8_t max_exchanges;
+    uint16_t max_exchanges;
 
     if (session == NULL || schedule == NULL) {
         return PROTO_ERR_ARG;
@@ -678,7 +756,10 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
     schedule->burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
     schedule->min_successful_unique_anchors = session->config.min_anchor_count;
     schedule->sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED;
-    schedule->diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED;
+    schedule->diagnostics_required =
+        (session->config.flags & FLAG_RANGE_ONLY) != 0u ?
+        UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED :
+        UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED;
     schedule->samples_per_anchor = session->config.samples_per_anchor;
     schedule->flags = session->config.flags;
 
@@ -1184,10 +1265,15 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
                                      uint32_t now_ms,
                                      uint16_t guard_ms)
 {
+    bool direct_range_only;
+
     if (session == NULL || schedule == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (session->state != UWB_ANCHOR_DISCOVERY_REPLIED) {
+    direct_range_only = session->state == UWB_ANCHOR_CLAIMED &&
+                        (schedule->flags & FLAG_RANGE_ONLY) != 0u;
+    if (session->state != UWB_ANCHOR_DISCOVERY_REPLIED &&
+        !direct_range_only) {
         return PROTO_ERR_BUSY;
     }
     if (!uwb_anchor_epoch_matches(&session->epoch,

@@ -36,14 +36,24 @@ Zephyr role builds:
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-gateway -- -DFIRMWARE_ROLE=gateway
 ```
 
+ML collection builds:
+
+```sh
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/ml-clicker -- -DIMEC_BUILD_PRESET=ml_clicker
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/ml-anchor-1 -- -DIMEC_BUILD_PRESET=ml_anchor_1
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/ml-anchor-2 -- -DIMEC_BUILD_PRESET=ml_anchor_2
+```
+
+For deterministic ML anchors, replace `build/ml-anchor-2` and `ml_anchor_2` with the anchor slot being programmed, such as `build/ml-anchor-3` / `ml_anchor_3` through `build/ml-anchor-8` / `ml_anchor_8`. Each preset assigns a unique `DEVICE_ID` and deterministic discovery slot.
+
 Flash the exact build directory for the image you intend to program; do not rely on west's previous build context:
 
 ```sh
-.venv/bin/west flash --runner pyocd --build-dir build/firmware-clicker
-.venv/bin/west flash --runner pyocd --build-dir build/firmware-anchor
-.venv/bin/west flash --runner pyocd --build-dir build/firmware-gateway
-.venv/bin/west flash --runner pyocd --build-dir build/ml-clicker
-.venv/bin/west flash --runner pyocd --build-dir build/ml-anchor-1
+.venv/bin/west flash --runner pyocd --build-dir build/firmware-clicker -- --frequency 4000000
+.venv/bin/west flash --runner pyocd --build-dir build/firmware-anchor -- --frequency 4000000
+.venv/bin/west flash --runner pyocd --build-dir build/firmware-gateway -- --frequency 4000000
+.venv/bin/west flash --runner pyocd --build-dir build/ml-clicker -- --frequency 4000000
+.venv/bin/west flash --runner pyocd --build-dir build/ml-anchor-1 -- --frequency 4000000
 ```
 
 For deterministic ML anchors, replace `build/ml-anchor-1` with the anchor image being programmed, such as `build/ml-anchor-2` through `build/ml-anchor-8`.

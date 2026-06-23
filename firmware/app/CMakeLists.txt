@@ -14,6 +14,37 @@ if(DEFINED SYSBUILD_CACHE AND EXISTS "${SYSBUILD_CACHE}" AND
     endif()
 endif()
 
+set(FIRMWARE_PRESET "" CACHE STRING "Compatibility alias for IMEC_BUILD_PRESET")
+set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
+    ""
+    tag_stage0_highdebug
+    tag_stage1_highdebug
+    tag_stage1_wake_spam
+    anchor_stage1_highdebug
+    tag_stage2_highdebug
+    anchor_stage2_highdebug
+    tag_stage3_highdebug
+    anchor_stage3_highdebug
+    gateway_stage3_highdebug
+    gateway_ble_connectivity_test
+    ml_clicker
+    ml_anchor_1
+    ml_anchor_2
+    ml_anchor_3
+    ml_anchor_4
+    ml_anchor_5
+    ml_anchor_6
+    ml_anchor_7
+    ml_anchor_8
+)
+if(FIRMWARE_PRESET)
+    if(IMEC_BUILD_PRESET AND NOT IMEC_BUILD_PRESET STREQUAL FIRMWARE_PRESET)
+        message(FATAL_ERROR
+            "FIRMWARE_PRESET (${FIRMWARE_PRESET}) conflicts with IMEC_BUILD_PRESET (${IMEC_BUILD_PRESET})")
+    endif()
+    set(IMEC_BUILD_PRESET "${FIRMWARE_PRESET}" CACHE STRING
+        "High-debug preset name, for example tag_stage0_highdebug" FORCE)
+endif()
 set(IMEC_BUILD_PRESET "${IMEC_BUILD_PRESET}" CACHE STRING "High-debug preset name, for example tag_stage0_highdebug")
 set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     ""
@@ -183,12 +214,27 @@ else()
     message(FATAL_ERROR "FIRMWARE_ROLE must be clicker, anchor, or gateway")
 endif()
 
+set(IMEC_APP_LOCAL_SOURCES
+    src/app_state.c
+    src/app_board.c
+    src/app_gateway_ble.c
+    src/app_clicker.c
+    src/app_ml.c
+    src/app_mesh_report.c
+    src/app_anchor.c
+    src/app_high_debug.c
+)
+
 if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
-    target_sources(app PRIVATE src/main.c)
+    target_sources(app PRIVATE
+        src/main.c
+        ${IMEC_APP_LOCAL_SOURCES}
+    )
 else()
     # Operational wake, discovery, ranging, and relay traffic use UWB frames.
     target_sources(app PRIVATE
         src/main.c
+        ${IMEC_APP_LOCAL_SOURCES}
         src/dwm3000_driver.c
         src/dwm3000_port.c
         src/dwm3000_sdk_port.c

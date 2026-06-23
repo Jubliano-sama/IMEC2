@@ -1,0 +1,17 @@
+#ifndef APP_ANCHOR_H
+#define APP_ANCHOR_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+struct app_mesh_report_callbacks;
+
+const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void);
+int app_anchor_init(void);
+int app_anchor_start_anchor_role(void);
+int app_anchor_start_gateway_role(void);
+#if defined(CONFIG_IMEC_GATEWAY_BLE)
+void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len);
+#endif
+
+#endif

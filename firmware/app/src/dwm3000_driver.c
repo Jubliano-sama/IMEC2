@@ -70,7 +70,12 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DWM3000_LOG2_TO_DB_Q8 771
 #define DWM3000_IPATOV_POWER_SCALE_DB_Q8 13101
 #define DWM3000_IPATOV_RSL_OFFSET_DB_Q8 31165
-#define DWM3000_ACCUM_CIR_SAMPLE_READ_LEN (UWB_CIR_SAMPLE_LEN + 1u)
+#define DWM3000_ACCUM_CIR_SAMPLE_READ_LEN (DWM3000_FULL_CIR_SAMPLE_BYTES + 1u)
+#define DWM3000_FULL_CIR_READ_CHUNK_SAMPLES \
+    (UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES / DWM3000_FULL_CIR_SAMPLE_BYTES)
+#define DWM3000_FULL_CIR_READ_CHUNK_BYTES \
+    (DWM3000_FULL_CIR_READ_CHUNK_SAMPLES * DWM3000_FULL_CIR_SAMPLE_BYTES)
+#define DWM3000_CIR_WINDOW_ANCHOR_BUDGET_COUNT 8u
 
 /*
  * DS-TWR ranging accuracy is more sensitive to unequal reply delays than to
@@ -180,6 +185,13 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define CLICKER_DIAG_TX_AFTER_FINAL_DELAY_US 2000u
 #define CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC 0u
 #define CLICKER_DIAG_COMPACT_BYTES_LEN 12u
+#define ANCHOR_DIAG_TX_TIMEOUT_MS 40u
+#define ANCHOR_DIAG_RX_TIMEOUT_MS 80u
+#define ANCHOR_DIAG_FRAGMENT_TX_TIMEOUT_MS 40u
+#define ANCHOR_DIAG_FRAGMENT_RX_TIMEOUT_MS 2000u
+#define ANCHOR_DIAG_FRAGMENT_TX_GAP_US 1500u
+#define CLICKER_DIAG_FULL_ANCHOR_DELAY_US 25000u
+#define ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC 0u
 /*
  * A zero preamble-detect timeout disables the preamble hunt timeout. That is
  * acceptable on optimized DS-TWR delayed-RX legs because the receiver is armed
@@ -201,7 +213,7 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DWM3000_PHY_PREAMBLE_LENGTH DWT_PLEN_4096
 #endif
 #ifndef DWM3000_PHY_RX_PAC
-#define DWM3000_PHY_RX_PAC DWT_PAC32
+#define DWM3000_PHY_RX_PAC DWT_PAC16
 #endif
 #ifndef DWM3000_PHY_TX_CODE
 #define DWM3000_PHY_TX_CODE 9
@@ -210,7 +222,7 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DWM3000_PHY_RX_CODE 9
 #endif
 #ifndef DWM3000_PHY_SFD_TYPE
-#define DWM3000_PHY_SFD_TYPE DWT_SFD_DW_8
+#define DWM3000_PHY_SFD_TYPE DWT_SFD_DW_16
 #endif
 #ifndef DWM3000_PHY_DATA_RATE
 #define DWM3000_PHY_DATA_RATE DWT_BR_850K
@@ -222,7 +234,7 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DWM3000_PHY_PHR_RATE DWT_PHRRATE_STD
 #endif
 #ifndef DWM3000_PHY_SFD_TIMEOUT
-#define DWM3000_PHY_SFD_TIMEOUT 4073
+#define DWM3000_PHY_SFD_TIMEOUT 4097
 #endif
 #ifndef DWM3000_WAKE_PHY_SFD_TIMEOUT
 #define DWM3000_WAKE_PHY_SFD_TIMEOUT DWM3000_PHY_SFD_TIMEOUT
@@ -280,6 +292,23 @@ BUILD_ASSERT(DWM3000_WAKE_PHY_SFD_TIMEOUT >= DWM3000_PHY_SFD_TIMEOUT,
              "wake/discovery open-window RX must not be shorter than the ranging SFD timeout");
 BUILD_ASSERT(DWM3000_DS_TWR_RX_GUARD_BEFORE_UUS <= UINT16_MAX,
              "DS-TWR delayed-RX leading guard must fit DWM3000 timeout units");
+BUILD_ASSERT((DWM3000_CIR_ACCUM_SAMPLE_COUNT * DWM3000_CIR_SAMPLE_BYTES) + 1u ==
+             ACC_BUFFER_MAX_LEN,
+             "DWM3000 accumulator constants must match the SDK buffer size plus dummy byte");
+BUILD_ASSERT(DWM3000_CIR_WINDOW_PRE_SAMPLES < DWM3000_CIR_WINDOW_SAMPLE_COUNT,
+             "CIR window must include samples after the first path");
+BUILD_ASSERT(DWM3000_CIR_WINDOW_SAMPLE_COUNT <= DWM3000_CIR_ACCUM_SAMPLE_COUNT,
+             "CIR window must fit inside the DWM3000 accumulator");
+BUILD_ASSERT((DWM3000_CIR_WINDOW_BYTES * DWM3000_CIR_WINDOW_ANCHOR_BUDGET_COUNT) <=
+             (DWM3000_CIR_ACCUM_SAMPLE_COUNT * DWM3000_CIR_SAMPLE_BYTES),
+             "Eight CIR windows must fit in the memory used by one full accumulator");
+BUILD_ASSERT(DWM3000_FULL_CIR_READ_CHUNK_SAMPLES > 0u,
+             "CIR window read chunks must include at least one complex sample");
+BUILD_ASSERT(DWM3000_FULL_CIR_READ_CHUNK_BYTES <= UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES,
+             "CIR window read chunk must fit the anchor diagnostic fragment payload");
+BUILD_ASSERT(((DWM3000_FULL_CIR_BYTES + UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES - 1u) /
+              UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES) <= UINT8_MAX,
+             "CIR window UWB fragment count must fit in the fragment header");
 BUILD_ASSERT(DWM3000_DS_TWR_RX_GUARD_AFTER_UUS <= UINT16_MAX,
              "DS-TWR delayed-RX trailing guard must fit DWM3000 timeout units");
 BUILD_ASSERT(POLL_TX_TO_RESP_RX_DLY_UUS <= DS_TWR_REPLY_DLY_UUS,
@@ -482,16 +511,16 @@ static uint16_t dwt_delta_to_uus(uint32_t start_ts, uint32_t end_ts)
     return uus > UINT16_MAX ? UINT16_MAX : (uint16_t)uus;
 }
 
-static uint32_t delayed_trx_offset_from_uus(uint16_t delay_uus)
+static uint32_t delayed_tx_time_from_rx_reference(uint64_t rx_reference_ts,
+                                                  uint16_t delay_uus)
 {
-    return (uint32_t)(((uint64_t)delay_uus * DWM3000_UUS_TO_DWT_TIME) >> 8);
+    return (uint32_t)((rx_reference_ts +
+                       ((uint64_t)delay_uus * DWM3000_UUS_TO_DWT_TIME)) >> 8);
 }
 
-static uint64_t delayed_tx_timestamp_from_rx_reference(uint64_t rx_reference_ts,
-                                                       uint32_t dx_time)
+static uint64_t delayed_tx_timestamp_from_programmed_time(uint32_t tx_time)
 {
-    return rx_reference_ts + (((uint64_t)(dx_time & 0xfffffffeUL)) << 8) +
-           DWM3000_TX_ANT_DLY;
+    return (((uint64_t)(tx_time & 0xfffffffeUL)) << 8) + DWM3000_TX_ANT_DLY;
 }
 
 static uint16_t reply_delay_uus_from_round_index(uint8_t round_index)
@@ -509,6 +538,14 @@ static uint16_t reply_delay_uus_from_round_index(uint8_t round_index)
     (void)round_index;
     return DS_TWR_REPLY_DLY_UUS;
 #endif
+}
+
+static uint16_t request_reply_delay_uus(const struct dwm3000_range_request *request)
+{
+    if (request != NULL && request->reply_delay_uus != 0u) {
+        return request->reply_delay_uus;
+    }
+    return reply_delay_uus_from_round_index(request == NULL ? 0u : request->round_index);
 }
 
 static uint16_t ds_twr_rx_guard_before_uus(uint16_t reply_delay_uus)
@@ -542,12 +579,6 @@ static int validate_driver_reply_timing(uint16_t poll_to_resp_uus,
                                         uint16_t resp_to_final_uus,
                                         uint16_t expected_uus)
 {
-#if DWM3000_DS_TWR_REPLY_DLY_UUS_USES_PROTOCOL_DEFAULT
-    return uwb_session_validate_reply_timing(poll_to_resp_uus,
-                                             resp_to_final_uus,
-                                             expected_uus,
-                                             DWM3000_REPLY_TIMING_TOLERANCE_US);
-#else
     uint16_t tolerance_uus = DWM3000_REPLY_TIMING_TOLERANCE_US;
     uint16_t poll_error_uus = poll_to_resp_uus > expected_uus ?
         poll_to_resp_uus - expected_uus : expected_uus - poll_to_resp_uus;
@@ -567,7 +598,6 @@ static int validate_driver_reply_timing(uint16_t poll_to_resp_uus,
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
-#endif
 }
 
 static int ensure_local_data(void)
@@ -933,6 +963,28 @@ static enum dwm3000_rx_failure status_to_rx_failure(uint32_t status)
     return DWM3000_RX_FAILURE_NONE;
 }
 
+#if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
+static const char *rx_failure_debug_name(enum dwm3000_rx_failure failure)
+{
+    switch (failure) {
+    case DWM3000_RX_FAILURE_NONE:
+        return "none";
+    case DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT:
+        return "no_preamble_timeout";
+    case DWM3000_RX_FAILURE_SFD_TIMEOUT:
+        return "sfd_timeout";
+    case DWM3000_RX_FAILURE_FRAME_TIMEOUT:
+        return "frame_timeout";
+    case DWM3000_RX_FAILURE_CRC_OR_PHY:
+        return "crc_or_phy";
+    case DWM3000_RX_FAILURE_BAD_FRAME:
+        return "bad_frame";
+    default:
+        return "unknown";
+    }
+}
+#endif
+
 static uint8_t floor_log2_u32(uint32_t value)
 {
     uint8_t log2 = 0u;
@@ -1007,13 +1059,186 @@ static bool read_cir_sample(const dwt_rxdiag_t *diagnostics,
     }
 
     fp_int = diagnostics->ipatovFpIndex >> 6;
-    if ((uint32_t)fp_int + DWM3000_ACCUM_CIR_SAMPLE_READ_LEN > ACC_BUFFER_MAX_LEN) {
+    if (fp_int >= DWM3000_CIR_ACCUM_SAMPLE_COUNT) {
         return false;
     }
 
     dwt_readaccdata(accum, sizeof(accum), fp_int);
     memcpy(cir_sample, &accum[1], UWB_CIR_SAMPLE_LEN);
     return true;
+}
+
+static void pack_rx_diag_raw(const dwt_rxdiag_t *diagnostics,
+                             uint8_t raw[DWM3000_RX_DIAG_RAW_LEN],
+                             uint8_t *raw_len)
+{
+    size_t offset = 0u;
+
+    if (raw_len != NULL) {
+        *raw_len = 0u;
+    }
+    if (diagnostics == NULL || raw == NULL) {
+        return;
+    }
+
+    memcpy(&raw[offset], diagnostics->ipatovRxTime, sizeof(diagnostics->ipatovRxTime));
+    offset += sizeof(diagnostics->ipatovRxTime);
+    raw[offset++] = diagnostics->ipatovRxStatus;
+    proto_put_u16_le(&raw[offset], diagnostics->ipatovPOA);
+    offset += sizeof(uint16_t);
+    memcpy(&raw[offset], diagnostics->stsRxTime, sizeof(diagnostics->stsRxTime));
+    offset += sizeof(diagnostics->stsRxTime);
+    proto_put_u16_le(&raw[offset], diagnostics->stsRxStatus);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&raw[offset], diagnostics->stsPOA);
+    offset += sizeof(uint16_t);
+    memcpy(&raw[offset], diagnostics->sts2RxTime, sizeof(diagnostics->sts2RxTime));
+    offset += sizeof(diagnostics->sts2RxTime);
+    proto_put_u16_le(&raw[offset], diagnostics->sts2RxStatus);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&raw[offset], diagnostics->sts2POA);
+    offset += sizeof(uint16_t);
+    memcpy(&raw[offset], diagnostics->tdoa, sizeof(diagnostics->tdoa));
+    offset += sizeof(diagnostics->tdoa);
+    proto_put_u16_le(&raw[offset], (uint16_t)diagnostics->pdoa);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&raw[offset], (uint16_t)diagnostics->xtalOffset);
+    offset += sizeof(uint16_t);
+    proto_put_u32_le(&raw[offset], diagnostics->ciaDiag1);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->ipatovPeak);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->ipatovPower);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->ipatovF1);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->ipatovF2);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->ipatovF3);
+    offset += sizeof(uint32_t);
+    proto_put_u16_le(&raw[offset], diagnostics->ipatovFpIndex);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&raw[offset], diagnostics->ipatovAccumCount);
+    offset += sizeof(uint16_t);
+    proto_put_u32_le(&raw[offset], diagnostics->stsPeak);
+    offset += sizeof(uint32_t);
+    proto_put_u16_le(&raw[offset], diagnostics->stsPower);
+    offset += sizeof(uint16_t);
+    proto_put_u32_le(&raw[offset], diagnostics->stsF1);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->stsF2);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->stsF3);
+    offset += sizeof(uint32_t);
+    proto_put_u16_le(&raw[offset], diagnostics->stsFpIndex);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&raw[offset], diagnostics->stsAccumCount);
+    offset += sizeof(uint16_t);
+    proto_put_u32_le(&raw[offset], diagnostics->sts2Peak);
+    offset += sizeof(uint32_t);
+    proto_put_u16_le(&raw[offset], diagnostics->sts2Power);
+    offset += sizeof(uint16_t);
+    proto_put_u32_le(&raw[offset], diagnostics->sts2F1);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->sts2F2);
+    offset += sizeof(uint32_t);
+    proto_put_u32_le(&raw[offset], diagnostics->sts2F3);
+    offset += sizeof(uint32_t);
+    proto_put_u16_le(&raw[offset], diagnostics->sts2FpIndex);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&raw[offset], diagnostics->sts2AccumCount);
+    offset += sizeof(uint16_t);
+
+    if (offset == DWM3000_RX_DIAG_RAW_LEN && raw_len != NULL) {
+        *raw_len = (uint8_t)offset;
+    }
+}
+
+static bool capture_rx_diag_raw(uint8_t raw[DWM3000_RX_DIAG_RAW_LEN],
+                                uint8_t *raw_len,
+                                uint16_t *first_path_index)
+{
+    dwt_rxdiag_t diagnostics;
+
+    if (raw_len != NULL) {
+        *raw_len = 0u;
+    }
+    if (first_path_index != NULL) {
+        *first_path_index = 0u;
+    }
+    if (raw == NULL) {
+        return false;
+    }
+
+    memset(&diagnostics, 0, sizeof(diagnostics));
+    dwt_readdiagnostics(&diagnostics);
+    pack_rx_diag_raw(&diagnostics, raw, raw_len);
+    if (first_path_index != NULL) {
+        *first_path_index = diagnostics.ipatovFpIndex >> 6;
+    }
+    return raw_len == NULL || *raw_len == DWM3000_RX_DIAG_RAW_LEN;
+}
+
+static uint16_t cir_window_start_sample(uint16_t first_path_index,
+                                        uint16_t window_samples)
+{
+    uint16_t start_sample;
+
+    if (window_samples >= DWM3000_CIR_ACCUM_SAMPLE_COUNT) {
+        return 0u;
+    }
+    if (first_path_index >= DWM3000_CIR_ACCUM_SAMPLE_COUNT) {
+        first_path_index = DWM3000_CIR_ACCUM_SAMPLE_COUNT - 1u;
+    }
+
+    start_sample = first_path_index > DWM3000_CIR_WINDOW_PRE_SAMPLES ?
+                   first_path_index - DWM3000_CIR_WINDOW_PRE_SAMPLES : 0u;
+    if (start_sample + window_samples > DWM3000_CIR_ACCUM_SAMPLE_COUNT) {
+        start_sample = DWM3000_CIR_ACCUM_SAMPLE_COUNT - window_samples;
+    }
+    return start_sample;
+}
+
+static uint16_t read_cir_window(uint8_t *buffer,
+                                uint16_t buffer_cap,
+                                uint16_t requested_len,
+                                uint16_t first_path_index,
+                                uint16_t *start_index)
+{
+    uint8_t accum[DWM3000_FULL_CIR_READ_CHUNK_BYTES + 1u];
+    uint16_t total_len;
+    uint16_t total_samples;
+    uint16_t start_sample;
+    uint16_t sample_index;
+    uint16_t byte_offset = 0u;
+
+    if (start_index != NULL) {
+        *start_index = 0u;
+    }
+    if (buffer == NULL || buffer_cap == 0u) {
+        return 0u;
+    }
+
+    total_len = MIN(requested_len, buffer_cap);
+    total_len -= total_len % DWM3000_FULL_CIR_SAMPLE_BYTES;
+    total_samples = total_len / DWM3000_FULL_CIR_SAMPLE_BYTES;
+    start_sample = cir_window_start_sample(first_path_index, total_samples);
+    sample_index = start_sample;
+    if (start_index != NULL) {
+        *start_index = start_sample;
+    }
+    while (sample_index < start_sample + total_samples) {
+        uint16_t chunk_samples =
+            MIN((uint16_t)DWM3000_FULL_CIR_READ_CHUNK_SAMPLES,
+                (uint16_t)(start_sample + total_samples - sample_index));
+        uint16_t chunk_len = chunk_samples * DWM3000_FULL_CIR_SAMPLE_BYTES;
+
+        dwt_readaccdata(accum, chunk_len + 1u, sample_index);
+        memcpy(&buffer[byte_offset], &accum[1], chunk_len);
+        sample_index += chunk_samples;
+        byte_offset += chunk_len;
+    }
+    return byte_offset;
 }
 
 static void read_rx_diagnostics(int8_t *rsl_dbm,
@@ -1154,6 +1379,38 @@ static int decode_clicker_diag_frame(const uint8_t *buffer, size_t frame_len,
     return ret == PROTO_OK ? 0 : -EBADMSG;
 }
 
+static int decode_anchor_diag_frame(const uint8_t *buffer, size_t frame_len,
+                                    struct uwb_anchor_diag_frame *frame)
+{
+    int ret;
+
+    ret = uwb_decode_anchor_diag(buffer, frame_len, frame);
+    if (ret == PROTO_OK) {
+        return 0;
+    }
+
+    ret = uwb_decode_anchor_diag(buffer, payload_len_without_fcs(frame_len), frame);
+    return ret == PROTO_OK ? 0 : -EBADMSG;
+}
+
+static int decode_anchor_diag_fragment_frame(
+    const uint8_t *buffer,
+    size_t frame_len,
+    struct uwb_anchor_diag_fragment_frame *frame)
+{
+    int ret;
+
+    ret = uwb_decode_anchor_diag_fragment(buffer, frame_len, frame);
+    if (ret == PROTO_OK) {
+        return 0;
+    }
+
+    ret = uwb_decode_anchor_diag_fragment(buffer,
+                                          payload_len_without_fcs(frame_len),
+                                          frame);
+    return ret == PROTO_OK ? 0 : -EBADMSG;
+}
+
 static int write_tx_frame(const uint8_t *frame, size_t frame_len)
 {
     if (frame == NULL || frame_len > UINT16_MAX) {
@@ -1231,6 +1488,7 @@ static bool poll_matches_expected(const struct uwb_range_header *poll,
 static bool range_flags_valid(uint8_t flags)
 {
     return flags == FLAG_DIAGNOSTIC ||
+           flags == (FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY) ||
            flags == FLAG_COUNT_AS_CLICK;
 }
 
@@ -1247,6 +1505,44 @@ static bool request_expects_clicker_diag(const struct dwm3000_range_request *req
     return DWM3000_CLICKER_DIAG_ENABLED &&
            request != NULL &&
            request->expect_clicker_diag &&
+           request->round_index == 0u;
+}
+
+static bool request_expects_anchor_diag(const struct dwm3000_range_request *request)
+{
+    return request != NULL &&
+           request->expect_anchor_diag &&
+           request->round_index == 0u;
+}
+
+static bool request_expects_anchor_diag_fragments(const struct dwm3000_range_request *request)
+{
+    return request != NULL &&
+           request->expect_anchor_diag_fragments &&
+           request->anchor_full_cir != NULL &&
+           request->anchor_full_cir_cap > 0u &&
+           request->round_index == 0u;
+}
+
+static bool request_sends_anchor_diag(const struct dwm3000_range_request *request)
+{
+    return request != NULL &&
+           request->send_anchor_diag &&
+           request->round_index == 0u;
+}
+
+static bool request_sends_anchor_diag_fragments(const struct dwm3000_range_request *request)
+{
+    return request != NULL &&
+           request->send_anchor_diag_fragments &&
+           request->round_index == 0u;
+}
+
+static bool request_captures_anchor_full_cir(const struct dwm3000_range_request *request)
+{
+    return request != NULL &&
+           request->anchor_full_cir != NULL &&
+           request->anchor_full_cir_cap > 0u &&
            request->round_index == 0u;
 }
 
@@ -1439,6 +1735,9 @@ static int receive_response(const struct dwm3000_range_request *request,
                             int8_t *rsl_dbm,
                             uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
                             bool *cir_sampled,
+                            uint8_t rx_diag_raw[DWM3000_RX_DIAG_RAW_LEN],
+                            uint8_t *rx_diag_raw_len,
+                            bool *rx_diag_sampled,
                             int16_t *clock_offset_raw,
                             bool *clock_offset_sampled,
                             int32_t *carrier_integrator,
@@ -1475,6 +1774,13 @@ static int receive_response(const struct dwm3000_range_request *request,
         read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
                             clock_offset_raw, clock_offset_sampled,
                             carrier_integrator, carrier_integrator_sampled);
+        if (capture_rx_diag_raw(rx_diag_raw, rx_diag_raw_len, NULL)) {
+            if (rx_diag_sampled != NULL) {
+                *rx_diag_sampled = true;
+            }
+        } else if (rx_diag_sampled != NULL) {
+            *rx_diag_sampled = false;
+        }
     }
 
     frame_len = read_rx_frame(rx_buffer, sizeof(rx_buffer));
@@ -1607,7 +1913,8 @@ static int send_clicker_diag(const struct dwm3000_range_request *request,
                              uint64_t resp_rx_ts,
                              uint8_t resp_quality,
                              int8_t resp_rsl_dbm,
-                             bool resp_rsl_sampled)
+                             bool resp_rsl_sampled,
+                             struct dwm3000_range_result *result)
 {
     struct uwb_clicker_diag_frame diag = {0};
     uint8_t tx_buffer[UWB_CLICKER_DIAG_MAX_LEN];
@@ -1653,7 +1960,11 @@ static int send_clicker_diag(const struct dwm3000_range_request *request,
     if (ret < 0) {
         return ret;
     }
-    return wait_tx_complete(CLICKER_DIAG_TX_TIMEOUT_MS);
+    ret = wait_tx_complete(CLICKER_DIAG_TX_TIMEOUT_MS);
+    if (ret == 0) {
+        store_clicker_diag_result(result, &diag);
+    }
+    return ret;
 }
 
 static int receive_clicker_diag(const struct uwb_range_header *poll,
@@ -1722,6 +2033,422 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
     return 0;
 }
 
+static bool anchor_diag_matches_request(const struct uwb_anchor_diag_frame *diag,
+                                        const struct dwm3000_range_request *request)
+{
+    if (diag == NULL || request == NULL) {
+        return false;
+    }
+
+    return diag->header.type == MSG_UWB_ANCHOR_DIAG &&
+           diag->header.seq == request->seq &&
+           diag->header.round_index == request->round_index &&
+           diag->header.network_id == request->network_id &&
+           diag->header.session_id == request->session_id &&
+           diag->header.session_nonce == request->session_nonce &&
+           diag->header.initiator_short_addr == short_addr_from_id(request->initiator_id) &&
+           diag->header.responder_short_addr == request->responder_short_addr &&
+           diag->header.flags == request->flags &&
+           diag->header.initiator_id == request->initiator_id &&
+           diag->header.responder_id == request->responder_id;
+}
+
+static void store_anchor_diag_result(struct dwm3000_range_result *result,
+                                     const struct uwb_anchor_diag_frame *diag)
+{
+    if (result == NULL || diag == NULL) {
+        return;
+    }
+
+    result->distance_mm = diag->distance_mm;
+    result->quality = diag->quality;
+    result->status = diag->status;
+    result->anchor_diag_status_flags = diag->status_flags;
+    result->rsl_dbm = diag->rsl_dbm;
+    result->rsl_sampled =
+        (diag->status_flags & UWB_ANCHOR_DIAG_STATUS_RSL_PRESENT) != 0u;
+    result->clock_offset_raw = diag->clock_offset_raw;
+    result->clock_offset_sampled =
+        (diag->status_flags & UWB_ANCHOR_DIAG_STATUS_CLOCK_OFFSET_PRESENT) != 0u;
+    result->carrier_integrator = diag->carrier_integrator;
+    result->carrier_integrator_sampled =
+        (diag->status_flags & UWB_ANCHOR_DIAG_STATUS_CARRIER_INTEGRATOR_PRESENT) != 0u;
+    result->poll_rx_ts_32 = diag->poll_rx_ts_32;
+    result->resp_tx_ts_32 = diag->resp_tx_ts_32;
+    result->final_rx_ts_32 = diag->final_rx_ts_32;
+    result->poll_tx_ts_32 = diag->poll_tx_ts_32;
+    result->resp_rx_ts_32 = diag->resp_rx_ts_32;
+    result->final_tx_ts_32 = diag->final_tx_ts_32;
+    result->cir_sampled =
+        (diag->status_flags & UWB_ANCHOR_DIAG_STATUS_CIR_SAMPLE_PRESENT) != 0u &&
+        diag->diag_len >= UWB_CIR_SAMPLE_LEN;
+    if (result->cir_sampled) {
+        memcpy(result->cir_sample, diag->diag_bytes, UWB_CIR_SAMPLE_LEN);
+    }
+}
+
+static int receive_anchor_diag(const struct dwm3000_range_request *request,
+                               struct dwm3000_range_result *result)
+{
+    struct uwb_anchor_diag_frame diag;
+    uint8_t rx_buffer[UWB_ANCHOR_DIAG_MAX_LEN + FCS_LEN];
+    uint32_t status = 0u;
+    size_t frame_len = 0u;
+    int ret;
+
+    if (request == NULL) {
+        return -EINVAL;
+    }
+
+    dwt_setrxaftertxdelay(0u);
+    dwt_setrxtimeout(0u);
+    dwt_setpreambledetecttimeout(ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
+    dwm3000_debug_event(false,
+                        "ANCHOR_DIAG_RX",
+                        "anchor=0x%016llx seq=%u round=%u timeout_ms=%u preamble_timeout_pac=%u",
+                        (unsigned long long)request->responder_id,
+                        request->seq,
+                        request->round_index,
+                        ANCHOR_DIAG_RX_TIMEOUT_MS,
+                        ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
+    clear_all_events();
+    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+        return -EIO;
+    }
+
+    ret = receive_frame(ANCHOR_DIAG_RX_TIMEOUT_MS,
+                        &status,
+                        rx_buffer,
+                        sizeof(rx_buffer),
+                        &frame_len,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        false,
+                        true);
+    if (ret < 0) {
+        return ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
+    }
+
+    memset(&diag, 0, sizeof(diag));
+    ret = decode_anchor_diag_frame(rx_buffer, frame_len, &diag);
+    if (ret < 0 || !anchor_diag_matches_request(&diag, request)) {
+        return -EBADMSG;
+    }
+
+    store_anchor_diag_result(result, &diag);
+    return 0;
+}
+
+static bool anchor_diag_fragment_matches_request(
+    const struct uwb_anchor_diag_fragment_frame *fragment,
+    const struct dwm3000_range_request *request)
+{
+    if (fragment == NULL || request == NULL) {
+        return false;
+    }
+
+    return fragment->header.type == MSG_UWB_ANCHOR_DIAG_FRAGMENT &&
+           fragment->header.seq == request->seq &&
+           fragment->header.round_index == request->round_index &&
+           fragment->header.network_id == request->network_id &&
+           fragment->header.session_id == request->session_id &&
+           fragment->header.session_nonce == request->session_nonce &&
+           fragment->header.initiator_short_addr == short_addr_from_id(request->initiator_id) &&
+           fragment->header.responder_short_addr == request->responder_short_addr &&
+           fragment->header.flags == request->flags &&
+           fragment->header.initiator_id == request->initiator_id &&
+           fragment->header.responder_id == request->responder_id;
+}
+
+static int receive_anchor_diag_fragments(const struct dwm3000_range_request *request,
+                                         struct dwm3000_range_result *result)
+{
+    uint8_t rx_buffer[UWB_ANCHOR_DIAG_FRAGMENT_MAX_LEN + FCS_LEN];
+    int64_t deadline_ms;
+    int last_error = -ETIMEDOUT;
+
+    if (request == NULL || result == NULL || request->anchor_full_cir == NULL) {
+        return -EINVAL;
+    }
+
+    result->anchor_full_cir_len = 0u;
+    result->anchor_full_cir_total_len = 0u;
+    result->anchor_full_cir_first_path_index = 0u;
+    result->anchor_full_cir_start_index = 0u;
+    result->anchor_rx_diag_raw_len = 0u;
+    deadline_ms = k_uptime_get() + ANCHOR_DIAG_FRAGMENT_RX_TIMEOUT_MS;
+
+    while (k_uptime_get() < deadline_ms) {
+        bool expect_rx_diag =
+            (result->anchor_diag_status_flags & UWB_ANCHOR_DIAG_STATUS_RX_DIAG_PRESENT) != 0u;
+        bool expect_full_cir =
+            (result->anchor_diag_status_flags & UWB_ANCHOR_DIAG_STATUS_FULL_CIR_PRESENT) != 0u;
+        struct uwb_anchor_diag_fragment_frame fragment = {0};
+        uint32_t status = 0u;
+        size_t frame_len = 0u;
+        int64_t remaining_ms = deadline_ms - k_uptime_get();
+        int ret;
+
+        dwt_setrxaftertxdelay(0u);
+        dwt_setrxtimeout(0u);
+        dwt_setpreambledetecttimeout(ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
+        clear_all_events();
+        if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+            return -EIO;
+        }
+
+        ret = receive_frame((uint32_t)MAX(1, remaining_ms),
+                            &status,
+                            rx_buffer,
+                            sizeof(rx_buffer),
+                            &frame_len,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            false,
+                            true);
+        if (ret < 0) {
+            last_error = ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
+            if (ret == -ETIMEDOUT) {
+                break;
+            }
+            continue;
+        }
+
+        ret = decode_anchor_diag_fragment_frame(rx_buffer, frame_len, &fragment);
+        if (ret < 0) {
+            last_error = -EBADMSG;
+            LOG_DBG("ignored anchor diagnostic fragment decode miss: ret=%d len=%zu",
+                    ret,
+                    frame_len);
+            continue;
+        }
+        if (!anchor_diag_fragment_matches_request(&fragment, request)) {
+            last_error = -EBADMSG;
+            LOG_DBG("ignored anchor diagnostic fragment mismatch: seq=%u round=%u session=%u type=%u",
+                    fragment.header.seq,
+                    fragment.header.round_index,
+                    fragment.header.session_id,
+                    fragment.header.type);
+            continue;
+        }
+
+        if (fragment.block_type == UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_RX_DIAG) {
+            if (fragment.total_len > sizeof(result->anchor_rx_diag_raw) ||
+                fragment.offset != result->anchor_rx_diag_raw_len) {
+                return -EMSGSIZE;
+            }
+            memcpy(&result->anchor_rx_diag_raw[fragment.offset],
+                   fragment.chunk,
+                   fragment.chunk_len);
+            result->anchor_rx_diag_raw_len += fragment.chunk_len;
+            if ((fragment.flags & UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST) != 0u) {
+                result->anchor_rx_diag_sampled =
+                    result->anchor_rx_diag_raw_len == fragment.total_len;
+            }
+        } else if (fragment.block_type == UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR) {
+            if (fragment.total_len > request->anchor_full_cir_cap ||
+                fragment.offset != result->anchor_full_cir_len) {
+                return -EMSGSIZE;
+            }
+            memcpy(&request->anchor_full_cir[fragment.offset],
+                   fragment.chunk,
+                   fragment.chunk_len);
+            result->anchor_full_cir_len += fragment.chunk_len;
+            result->anchor_full_cir_total_len = fragment.total_len;
+            result->anchor_full_cir_first_path_index = fragment.first_path_index;
+            result->anchor_full_cir_start_index =
+                cir_window_start_sample(fragment.first_path_index,
+                                        fragment.total_len / DWM3000_FULL_CIR_SAMPLE_BYTES);
+            if ((fragment.flags & UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST) != 0u) {
+                result->anchor_full_cir_sampled =
+                    result->anchor_full_cir_len == fragment.total_len;
+                result->anchor_full_cir_truncated =
+                    result->anchor_full_cir_len < DWM3000_FULL_CIR_BYTES;
+            }
+        }
+
+        if ((!expect_rx_diag || result->anchor_rx_diag_sampled) &&
+            (!expect_full_cir || result->anchor_full_cir_sampled)) {
+            return 0;
+        }
+    }
+
+    return last_error;
+}
+
+static int send_anchor_diag_fragment_block(const struct uwb_range_header *poll,
+                                           uint8_t block_type,
+                                           const uint8_t *data,
+                                           uint16_t data_len,
+                                           uint16_t first_path_index)
+{
+    uint8_t tx_buffer[UWB_ANCHOR_DIAG_FRAGMENT_MAX_LEN];
+    uint8_t fragment_count;
+    uint16_t offset = 0u;
+
+    if (poll == NULL || data == NULL || data_len == 0u) {
+        return -EINVAL;
+    }
+
+    fragment_count = (uint8_t)((data_len + UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES - 1u) /
+                               UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES);
+    for (uint8_t fragment_index = 0u; fragment_index < fragment_count; fragment_index++) {
+        struct uwb_anchor_diag_fragment_frame fragment = {0};
+        size_t tx_len = 0u;
+        uint16_t chunk_len = MIN((uint16_t)UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES,
+                                 (uint16_t)(data_len - offset));
+        int ret;
+
+        k_busy_wait(ANCHOR_DIAG_FRAGMENT_TX_GAP_US);
+        fragment.header = *poll;
+        fragment.header.type = MSG_UWB_ANCHOR_DIAG_FRAGMENT;
+        fragment.block_type = block_type;
+        fragment.offset = offset;
+        fragment.total_len = data_len;
+        fragment.first_path_index = first_path_index;
+        fragment.fragment_index = fragment_index;
+        fragment.fragment_count = fragment_count;
+        fragment.flags = fragment_index == fragment_count - 1u ?
+                         UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST : 0u;
+        fragment.chunk_len = (uint8_t)chunk_len;
+        memcpy(fragment.chunk, &data[offset], chunk_len);
+
+        ret = uwb_encode_anchor_diag_fragment(&fragment,
+                                              tx_buffer,
+                                              sizeof(tx_buffer),
+                                              &tx_len);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+        clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+        ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = wait_tx_complete(ANCHOR_DIAG_FRAGMENT_TX_TIMEOUT_MS);
+        if (ret < 0) {
+            return ret;
+        }
+        offset += chunk_len;
+    }
+
+    return 0;
+}
+
+static int send_anchor_diag_fragments(const struct uwb_range_header *poll,
+                                      const struct dwm3000_range_request *expected,
+                                      const struct dwm3000_range_result *result)
+{
+    int ret;
+
+    if (poll == NULL || expected == NULL || result == NULL) {
+        return -EINVAL;
+    }
+
+    if (result->anchor_rx_diag_sampled && result->anchor_rx_diag_raw_len > 0u) {
+        ret = send_anchor_diag_fragment_block(poll,
+                                              UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_RX_DIAG,
+                                              result->anchor_rx_diag_raw,
+                                              result->anchor_rx_diag_raw_len,
+                                              result->anchor_full_cir_first_path_index);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    if (result->anchor_full_cir_sampled &&
+        expected->anchor_full_cir != NULL &&
+        result->anchor_full_cir_len > 0u) {
+        ret = send_anchor_diag_fragment_block(poll,
+                                              UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR,
+                                              expected->anchor_full_cir,
+                                              result->anchor_full_cir_len,
+                                              result->anchor_full_cir_first_path_index);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+static int send_anchor_diag(const struct uwb_range_header *poll,
+                            const struct dwm3000_range_result *result)
+{
+    struct uwb_anchor_diag_frame diag = {0};
+    uint8_t tx_buffer[UWB_ANCHOR_DIAG_MAX_LEN];
+    size_t tx_len = 0u;
+    int ret;
+
+    if (poll == NULL || result == NULL) {
+        return -EINVAL;
+    }
+
+    diag.header = *poll;
+    diag.header.type = MSG_UWB_ANCHOR_DIAG;
+    diag.distance_mm = result->distance_mm;
+    diag.quality = result->quality;
+    diag.status = result->status;
+    diag.rsl_dbm = result->rsl_dbm;
+    diag.poll_rx_ts_32 = result->poll_rx_ts_32;
+    diag.resp_tx_ts_32 = result->resp_tx_ts_32;
+    diag.final_rx_ts_32 = result->final_rx_ts_32;
+    diag.poll_tx_ts_32 = result->poll_tx_ts_32;
+    diag.resp_rx_ts_32 = result->resp_rx_ts_32;
+    diag.final_tx_ts_32 = result->final_tx_ts_32;
+    diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_RAW_TIMESTAMPS_PRESENT;
+    if (result->rsl_sampled) {
+        diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_RSL_PRESENT;
+    }
+    if (result->cir_sampled) {
+        diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_CIR_SAMPLE_PRESENT;
+        diag.diag_len = UWB_CIR_SAMPLE_LEN;
+        memcpy(diag.diag_bytes, result->cir_sample, UWB_CIR_SAMPLE_LEN);
+    }
+    if (result->clock_offset_sampled) {
+        diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_CLOCK_OFFSET_PRESENT;
+        diag.clock_offset_raw = result->clock_offset_raw;
+    }
+    if (result->carrier_integrator_sampled) {
+        diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_CARRIER_INTEGRATOR_PRESENT;
+        diag.carrier_integrator = result->carrier_integrator;
+    }
+    if (result->anchor_rx_diag_sampled) {
+        diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_RX_DIAG_PRESENT;
+    }
+    if (result->anchor_full_cir_sampled) {
+        diag.status_flags |= UWB_ANCHOR_DIAG_STATUS_FULL_CIR_PRESENT;
+    }
+    if (diag.status_flags == 0u) {
+        diag.status_flags = UWB_ANCHOR_DIAG_STATUS_RSL_PRESENT;
+    }
+
+    ret = uwb_encode_anchor_diag(&diag, tx_buffer, sizeof(tx_buffer), &tx_len);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+
+    clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
+    if (ret < 0) {
+        return ret;
+    }
+    return wait_tx_complete(ANCHOR_DIAG_TX_TIMEOUT_MS);
+}
+
 static int compute_distance_mm(const struct uwb_final_frame *final,
                                uint64_t poll_rx_ts,
                                uint64_t resp_tx_ts,
@@ -1780,11 +2507,6 @@ int dwm3000_driver_probe(uint32_t *dev_id)
     *dev_id = read_id;
     radio_awake = true;
     return 0;
-}
-
-int dwm3000_driver_initialise(bool idle_after_init)
-{
-    return initialise_radio(idle_after_init);
 }
 
 int dwm3000_driver_configure_default(void)
@@ -2082,7 +2804,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     uint64_t poll_tx_ts;
     uint64_t resp_rx_ts;
     uint64_t final_tx_ts;
-    uint32_t final_tx_offset;
+    uint32_t final_tx_time;
     uint16_t reply_delay_uus;
     uint8_t quality = 0u;
     int8_t rsl_dbm = 0;
@@ -2105,7 +2827,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         result->status = RANGE_INTERNAL_ERROR;
         return ret;
     }
-    reply_delay_uus = reply_delay_uus_from_round_index(request->round_index);
+    reply_delay_uus = request_reply_delay_uus(request);
 
     dwm3000_debug_event(false,
                         "DS_TWR_TIMING",
@@ -2149,12 +2871,24 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 
     ret = receive_response(request, &response, &resp_rx_ts, &quality, &rsl_dbm,
                            result->cir_sample, &result->cir_sampled,
+                           result->clicker_rx_diag_raw,
+                           &result->clicker_rx_diag_raw_len,
+                           &result->clicker_rx_diag_sampled,
                            &result->clock_offset_raw,
                            &result->clock_offset_sampled,
                            &result->carrier_integrator,
                            &result->carrier_integrator_sampled,
                            &range_status, request->capture_rsl);
     if (ret < 0) {
+#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+        LOG_WRN("UWB initiator RESP RX failed: ret=%d status=%u seq=%u round=%u timeout_ms=%u reply_delay_uus=%u",
+                ret,
+                range_status,
+                request->seq,
+                request->round_index,
+                request->timeout_ms == 0u ? RESP_RX_TIMEOUT_MS : request->timeout_ms,
+                reply_delay_uus);
+#endif
         result_set_request_metadata(result, request);
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
@@ -2162,12 +2896,15 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         result->status = range_status;
         return ret;
     }
+    if (request->capture_rsl) {
+        result->rsl_dbm = rsl_dbm;
+        result->rsl_sampled = true;
+    }
     poll_tx_ts = read_tx_timestamp_u64();
 
-    final_tx_offset = delayed_trx_offset_from_uus(reply_delay_uus);
-    dwt_setdelayedtrxtime(final_tx_offset);
-    final_tx_ts = delayed_tx_timestamp_from_rx_reference(resp_rx_ts,
-                                                         final_tx_offset);
+    final_tx_time = delayed_tx_time_from_rx_reference(resp_rx_ts,
+                                                      reply_delay_uus);
+    final_tx_ts = delayed_tx_timestamp_from_programmed_time(final_tx_time);
 
     final.header.type = MSG_UWB_FINAL;
     final.header.seq = request->seq;
@@ -2183,6 +2920,11 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     final.poll_tx_ts_32 = (uint32_t)poll_tx_ts;
     final.resp_rx_ts_32 = (uint32_t)resp_rx_ts;
     final.final_tx_ts_32 = (uint32_t)final_tx_ts;
+    result->poll_tx_ts_32 = final.poll_tx_ts_32;
+    result->poll_rx_ts_32 = response.poll_rx_ts_32;
+    result->resp_tx_ts_32 = response.resp_tx_ts_32;
+    result->resp_rx_ts_32 = final.resp_rx_ts_32;
+    result->final_tx_ts_32 = final.final_tx_ts_32;
 
     ret = validate_driver_reply_timing(
         dwt_delta_to_uus(response.poll_rx_ts_32, response.resp_tx_ts_32),
@@ -2206,21 +2948,26 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
 
     clear_status(SYS_STATUS_TXFRS_BIT_MASK);
     if (request->skip_responder_report) {
-        ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_DLY_RS);
+        dwt_setdelayedtrxtime(final_tx_time);
+        ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_DELAYED);
     } else {
         dwt_setrxaftertxdelay(0u);
         dwt_setrxtimeout(REPORT_RX_TIMEOUT_UUS);
         dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
-        dwm3000_debug_event(false,
-                            "DS_TWR_TIMING",
-                            "role=initiator_report report_rx_after_uus=0 report_rx_timeout_uus=%u wait_timeout_ms=%u",
-                            REPORT_RX_TIMEOUT_UUS,
-                            REPORT_RX_TIMEOUT_MS);
 
+        dwt_setdelayedtrxtime(final_tx_time);
         ret = send_range_frame(tx_buffer, tx_len,
-                               DWT_START_TX_DLY_RS | DWT_RESPONSE_EXPECTED);
+                               DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
     }
     if (ret < 0) {
+#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+            LOG_WRN("UWB initiator FINAL TX start failed: ret=%d anchor=0x%016llx seq=%u round=%u reply_delay_uus=%u",
+                    ret,
+                    (unsigned long long)request->responder_id,
+                    request->seq,
+                    request->round_index,
+                    reply_delay_uus);
+#endif
             result_set_request_metadata(result, request);
             result->responder_id = request->responder_id;
             result->quality = quality;
@@ -2230,9 +2977,44 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             return -ETIME;
     }
 
+#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+    LOG_INF("UWB initiator RESP RX ok: anchor=0x%016llx seq=%u round=%u quality=%u rsl=%d dBm poll_tx=0x%08x resp_rx=0x%08x",
+            (unsigned long long)response.header.responder_id,
+            request->seq,
+            request->round_index,
+            quality,
+            rsl_dbm,
+            (uint32_t)poll_tx_ts,
+            (uint32_t)resp_rx_ts);
+    LOG_INF("UWB initiator FINAL TX scheduled: anchor=0x%016llx seq=%u round=%u resp_to_final_uus=%u tx_time=0x%08x final_tx=0x%08x skip_report=%u",
+            (unsigned long long)response.header.responder_id,
+            request->seq,
+            request->round_index,
+            dwt_delta_to_uus(final.resp_rx_ts_32, final.final_tx_ts_32),
+            final_tx_time,
+            final.final_tx_ts_32,
+            request->skip_responder_report ? 1u : 0u);
+    if (!request->skip_responder_report) {
+        dwm3000_debug_event(false,
+                            "DS_TWR_TIMING",
+                            "role=initiator_report report_rx_after_uus=0 report_rx_timeout_uus=%u wait_timeout_ms=%u",
+                            REPORT_RX_TIMEOUT_UUS,
+                            REPORT_RX_TIMEOUT_MS);
+    }
+#endif
+
     if (request->skip_responder_report) {
         ret = wait_tx_complete(ds_twr_rx_wait_timeout_ms(reply_delay_uus));
         if (ret < 0) {
+#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+            LOG_WRN("UWB initiator FINAL TX complete failed: ret=%d anchor=0x%016llx seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
+                    ret,
+                    (unsigned long long)request->responder_id,
+                    request->seq,
+                    request->round_index,
+                    ds_twr_rx_wait_timeout_ms(reply_delay_uus),
+                    reply_delay_uus);
+#endif
             result_set_request_metadata(result, request);
             result->responder_id = request->responder_id;
             result->quality = quality;
@@ -2240,6 +3022,14 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             result->status = RANGE_INTERNAL_ERROR;
             return ret;
         }
+#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+        LOG_INF("UWB initiator FINAL TX complete: anchor=0x%016llx seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
+                (unsigned long long)response.header.responder_id,
+                request->seq,
+                request->round_index,
+                ds_twr_rx_wait_timeout_ms(reply_delay_uus),
+                reply_delay_uus);
+#endif
 
         result_set_request_metadata(result, request);
         result->responder_id = response.header.responder_id;
@@ -2265,7 +3055,8 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                          resp_rx_ts,
                                          quality,
                                          rsl_dbm,
-                                         false);
+                                         false,
+                                         result);
             if (diag_ret < 0) {
                 result->status = RANGE_INTERNAL_ERROR;
                 LOG_WRN("UWB clicker diagnostic TX failed: anchor=0x%016llx seq=%u ret=%d",
@@ -2273,6 +3064,35 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                         request->seq,
                         diag_ret);
                 return diag_ret;
+            }
+        }
+
+        if (request_expects_anchor_diag(request)) {
+            int anchor_diag_ret = receive_anchor_diag(request, result);
+
+            if (anchor_diag_ret < 0) {
+                LOG_WRN("UWB anchor diagnostic not received: anchor=0x%016llx seq=%u ret=%d",
+                        (unsigned long long)response.header.responder_id,
+                        request->seq,
+                        anchor_diag_ret);
+            } else {
+                LOG_INF("UWB anchor diagnostic received: anchor=0x%016llx seq=%u bytes=%u",
+                        (unsigned long long)response.header.responder_id,
+                        request->seq,
+                        result->cir_sampled ? UWB_CIR_SAMPLE_LEN : 0u);
+                if (request_expects_anchor_diag_fragments(request) &&
+                    (result->anchor_diag_status_flags &
+                     (UWB_ANCHOR_DIAG_STATUS_RX_DIAG_PRESENT |
+                      UWB_ANCHOR_DIAG_STATUS_FULL_CIR_PRESENT)) != 0u) {
+                    int fragment_ret = receive_anchor_diag_fragments(request, result);
+
+                    if (fragment_ret < 0) {
+                        LOG_WRN("UWB anchor diagnostic fragments not received: anchor=0x%016llx seq=%u ret=%d",
+                                (unsigned long long)response.header.responder_id,
+                                request->seq,
+                                fragment_ret);
+                    }
+                }
             }
         }
 
@@ -2287,13 +3107,42 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                          resp_rx_ts,
                                          quality,
                                          rsl_dbm,
-                                         false);
+                                         false,
+                                         result);
 
         if (diag_ret < 0) {
             LOG_WRN("UWB clicker diagnostic TX failed: anchor=0x%016llx seq=%u ret=%d",
                     (unsigned long long)response.header.responder_id,
                     request->seq,
                     diag_ret);
+        }
+    }
+    if (ret == 0 && result->status == RANGE_OK && request_expects_anchor_diag(request)) {
+        int anchor_diag_ret = receive_anchor_diag(request, result);
+
+        if (anchor_diag_ret < 0) {
+            LOG_WRN("UWB anchor diagnostic not received: anchor=0x%016llx seq=%u ret=%d",
+                    (unsigned long long)response.header.responder_id,
+                    request->seq,
+                    anchor_diag_ret);
+        } else {
+            LOG_INF("UWB anchor diagnostic received: anchor=0x%016llx seq=%u bytes=%u",
+                    (unsigned long long)response.header.responder_id,
+                    request->seq,
+                    result->cir_sampled ? UWB_CIR_SAMPLE_LEN : 0u);
+            if (request_expects_anchor_diag_fragments(request) &&
+                (result->anchor_diag_status_flags &
+                 (UWB_ANCHOR_DIAG_STATUS_RX_DIAG_PRESENT |
+                  UWB_ANCHOR_DIAG_STATUS_FULL_CIR_PRESENT)) != 0u) {
+                int fragment_ret = receive_anchor_diag_fragments(request, result);
+
+                if (fragment_ret < 0) {
+                    LOG_WRN("UWB anchor diagnostic fragments not received: anchor=0x%016llx seq=%u ret=%d",
+                            (unsigned long long)response.header.responder_id,
+                            request->seq,
+                            fragment_ret);
+                }
+            }
         }
     }
     if (ret < 0 && result->status == RANGE_OK) {
@@ -2322,7 +3171,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     size_t frame_len;
     size_t tx_len;
     uint32_t status;
-    uint32_t resp_tx_offset;
+    uint32_t resp_tx_time;
     uint64_t poll_rx_ts;
     uint64_t resp_tx_ts;
     uint64_t final_rx_ts;
@@ -2365,6 +3214,13 @@ static int responder_poll_once(uint64_t local_anchor_id,
         if (ret == -ETIMEDOUT) {
             return -ETIMEDOUT;
         }
+#if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
+        LOG_WRN("UWB responder POLL RX error: ret=%d sys_status=0x%08x failure=%s timeout_ms=%u",
+                ret,
+                status,
+                rx_failure_debug_name(status_to_rx_failure(status)),
+                timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms);
+#endif
         if (result != NULL) {
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
@@ -2409,12 +3265,11 @@ static int responder_poll_once(uint64_t local_anchor_id,
         result->exchange_started = true;
         result->status = RANGE_INTERNAL_ERROR;
     }
-    reply_delay_uus = reply_delay_uus_from_round_index(poll.round_index);
+    reply_delay_uus = request_reply_delay_uus(expected);
 
-    resp_tx_offset = delayed_trx_offset_from_uus(reply_delay_uus);
-    dwt_setdelayedtrxtime(resp_tx_offset);
-    resp_tx_ts = delayed_tx_timestamp_from_rx_reference(poll_rx_ts,
-                                                        resp_tx_offset);
+    resp_tx_time = delayed_tx_time_from_rx_reference(poll_rx_ts,
+                                                     reply_delay_uus);
+    resp_tx_ts = delayed_tx_timestamp_from_programmed_time(resp_tx_time);
 
     response.header.type = MSG_UWB_RESP;
     response.header.seq = poll.seq;
@@ -2438,6 +3293,19 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -EINVAL;
     }
 
+    dwt_setrxaftertxdelay(ds_twr_rx_after_tx_delay_uus(reply_delay_uus));
+    dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
+    dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
+
+    dwt_setdelayedtrxtime(resp_tx_time);
+    ret = send_range_frame(tx_buffer, tx_len,
+                           DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+    if (ret < 0) {
+        if (result != NULL) {
+            result->status = RANGE_DELAYED_TX_MISSED;
+        }
+        return -ETIME;
+    }
     dwm3000_debug_event(false,
                         "DS_TWR_TIMING",
                         "role=responder reply_delay_uus=%u final_rx_after_uus=%u final_rx_timeout_uus=%u wait_timeout_ms=%u",
@@ -2445,18 +3313,6 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         ds_twr_rx_after_tx_delay_uus(reply_delay_uus),
                         ds_twr_rx_timeout_uus(reply_delay_uus),
                         ds_twr_rx_wait_timeout_ms(reply_delay_uus));
-    dwt_setrxaftertxdelay(ds_twr_rx_after_tx_delay_uus(reply_delay_uus));
-    dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
-    dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
-
-    ret = send_range_frame(tx_buffer, tx_len,
-                           DWT_START_TX_DLY_RS | DWT_RESPONSE_EXPECTED);
-    if (ret < 0) {
-        if (result != NULL) {
-            result->status = RANGE_DELAYED_TX_MISSED;
-        }
-        return -ETIME;
-    }
 
     capture_final_rsl = expected->capture_rsl;
     ret = receive_frame(ds_twr_rx_wait_timeout_ms(reply_delay_uus), &status,
@@ -2470,12 +3326,45 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         capture_final_rsl,
                         true);
     if (ret < 0) {
+#if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
+        LOG_WRN("UWB responder FINAL RX failed: ret=%d sys_status=0x%08x failure=%s seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
+                ret,
+                status,
+                rx_failure_debug_name(status_to_rx_failure(status)),
+                poll.seq,
+                poll.round_index,
+                ds_twr_rx_wait_timeout_ms(reply_delay_uus),
+                reply_delay_uus);
+#endif
         if (result != NULL) {
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
             result->status = ret == -ETIMEDOUT ? RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
         }
         return ret;
+    }
+    if (result != NULL) {
+        result->poll_rx_ts_32 = (uint32_t)poll_rx_ts;
+        result->resp_tx_ts_32 = (uint32_t)resp_tx_ts;
+        result->final_rx_ts_32 = (uint32_t)final_rx_ts;
+    }
+    if (request_captures_anchor_full_cir(expected) && result != NULL) {
+        result->anchor_rx_diag_sampled =
+            capture_rx_diag_raw(result->anchor_rx_diag_raw,
+                                &result->anchor_rx_diag_raw_len,
+                                &result->anchor_full_cir_first_path_index);
+        result->anchor_full_cir_total_len = DWM3000_FULL_CIR_BYTES;
+        if (expected->anchor_full_cir != NULL && expected->anchor_full_cir_cap > 0u) {
+            result->anchor_full_cir_len = read_cir_window(
+                expected->anchor_full_cir,
+                expected->anchor_full_cir_cap,
+                DWM3000_FULL_CIR_BYTES,
+                result->anchor_full_cir_first_path_index,
+                &result->anchor_full_cir_start_index);
+            result->anchor_full_cir_sampled = result->anchor_full_cir_len > 0u;
+            result->anchor_full_cir_truncated =
+                result->anchor_full_cir_len < DWM3000_FULL_CIR_BYTES;
+        }
     }
 
     ret = decode_final_frame(rx_buffer, frame_len, &final);
@@ -2498,6 +3387,11 @@ static int responder_poll_once(uint64_t local_anchor_id,
                    reply_delay_uus) != PROTO_OK) {
         report_status = RANGE_TIMING_INVALID;
     } else {
+        if (result != NULL) {
+            result->poll_tx_ts_32 = final.poll_tx_ts_32;
+            result->resp_rx_ts_32 = final.resp_rx_ts_32;
+            result->final_tx_ts_32 = final.final_tx_ts_32;
+        }
         ret = compute_distance_mm(&final, poll_rx_ts, resp_tx_ts, final_rx_ts, &distance_mm);
         if (ret < 0) {
             report_status = RANGE_INTERNAL_ERROR;
@@ -2517,7 +3411,9 @@ static int responder_poll_once(uint64_t local_anchor_id,
         result->status = report_status;
     }
 
-    if (report_status == RANGE_OK && request_expects_clicker_diag(expected)) {
+    if (expected->skip_responder_report &&
+        report_status == RANGE_OK &&
+        request_expects_clicker_diag(expected)) {
         int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
 
         if (diag_ret < 0) {
@@ -2540,6 +3436,31 @@ static int responder_poll_once(uint64_t local_anchor_id,
                 distance_mm,
                 quality,
                 rsl_dbm);
+        if (report_status == RANGE_OK && request_sends_anchor_diag(expected)) {
+            int anchor_diag_ret = send_anchor_diag(&poll, result);
+
+            if (anchor_diag_ret < 0) {
+                LOG_WRN("UWB anchor diagnostic TX failed: short=0x%04x seq=%u ret=%d",
+                        poll.initiator_short_addr,
+                        poll.seq,
+                        anchor_diag_ret);
+            } else {
+                LOG_INF("UWB anchor diagnostic sent: short=0x%04x seq=%u bytes=%u",
+                        poll.initiator_short_addr,
+                        poll.seq,
+                        result != NULL && result->cir_sampled ? UWB_CIR_SAMPLE_LEN : 0u);
+                if (request_sends_anchor_diag_fragments(expected)) {
+                    int fragment_ret = send_anchor_diag_fragments(&poll, expected, result);
+
+                    if (fragment_ret < 0) {
+                        LOG_WRN("UWB anchor diagnostic fragments TX failed: short=0x%04x seq=%u ret=%d",
+                                poll.initiator_short_addr,
+                                poll.seq,
+                                fragment_ret);
+                    }
+                }
+            }
+        }
         return report_status == RANGE_OK ? 0 : -EIO;
     }
 
@@ -2581,6 +3502,46 @@ static int responder_poll_once(uint64_t local_anchor_id,
             report.distance_mm,
             report.quality,
             report.rsl_dbm);
+    if (report_status == RANGE_OK && request_expects_clicker_diag(expected)) {
+        int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
+
+        if (diag_ret < 0) {
+            LOG_DBG("UWB clicker diagnostic not received: short=0x%04x seq=%u ret=%d",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    diag_ret);
+        } else {
+            LOG_INF("UWB clicker diagnostic received: short=0x%04x seq=%u bytes=%u",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    result != NULL ? result->clicker_diag_len : 0u);
+        }
+    }
+    if (report_status == RANGE_OK && request_sends_anchor_diag(expected)) {
+        int anchor_diag_ret = send_anchor_diag(&poll, result);
+
+        if (anchor_diag_ret < 0) {
+            LOG_WRN("UWB anchor diagnostic TX failed: short=0x%04x seq=%u ret=%d",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    anchor_diag_ret);
+        } else {
+            LOG_INF("UWB anchor diagnostic sent: short=0x%04x seq=%u bytes=%u",
+                    poll.initiator_short_addr,
+                    poll.seq,
+                    result != NULL && result->cir_sampled ? UWB_CIR_SAMPLE_LEN : 0u);
+            if (request_sends_anchor_diag_fragments(expected)) {
+                int fragment_ret = send_anchor_diag_fragments(&poll, expected, result);
+
+                if (fragment_ret < 0) {
+                    LOG_WRN("UWB anchor diagnostic fragments TX failed: short=0x%04x seq=%u ret=%d",
+                            poll.initiator_short_addr,
+                            poll.seq,
+                            fragment_ret);
+                }
+            }
+        }
+    }
     return report_status == RANGE_OK ? 0 : -EIO;
 }
 
@@ -2604,49 +3565,6 @@ int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,
     }
 
     return responder_poll_once(local_anchor_id, expected, timeout_ms, result);
-}
-
-int dwm3000_driver_listen_activity(uint32_t timeout_ms, bool *activity_detected)
-{
-    uint32_t status = 0u;
-    int ret;
-
-    if (activity_detected == NULL || timeout_ms == 0u) {
-        return -EINVAL;
-    }
-
-    *activity_detected = false;
-    ret = ensure_phy_mode(DWM3000_PHY_RANGE);
-    if (ret < 0) {
-        return ret;
-    }
-
-    dwt_setpreambledetecttimeout(0u);
-    dwt_setrxtimeout(0u);
-    clear_all_events();
-    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
-        return -EIO;
-    }
-
-    ret = wait_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR,
-                      timeout_ms,
-                      &status);
-    dwt_forcetrxoff();
-    clear_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
-    if (ret == -ETIMEDOUT) {
-        return 0;
-    }
-    if (ret < 0) {
-        return ret;
-    }
-
-    *activity_detected = (status & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR)) != 0u;
-    return 0;
-}
-
-void dwm3000_driver_stats_reset(void)
-{
-    memset(&driver_stats, 0, sizeof(driver_stats));
 }
 
 void dwm3000_driver_stats_get(struct dwm3000_driver_stats *stats)

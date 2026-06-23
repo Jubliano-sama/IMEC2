@@ -147,6 +147,165 @@ static void test_clicker_diag_round_trip(void)
     assert(memcmp(decoded.diag_bytes, diag_bytes, sizeof(diag_bytes)) == 0);
 }
 
+static void test_anchor_diag_round_trip(void)
+{
+    const uint8_t diag_bytes[] = {0xB0u, 0xB1u, 0xB2u, 0xB3u, 0xB4u, 0xB5u};
+    const struct uwb_anchor_diag_frame diag = {
+        .header = header(MSG_UWB_ANCHOR_DIAG, FLAG_DIAGNOSTIC),
+        .distance_mm = 4321,
+        .quality = 91u,
+        .status = RANGE_OK,
+        .rsl_dbm = -74,
+        .status_flags = UWB_ANCHOR_DIAG_STATUS_RSL_PRESENT |
+                        UWB_ANCHOR_DIAG_STATUS_CIR_SAMPLE_PRESENT |
+                        UWB_ANCHOR_DIAG_STATUS_CLOCK_OFFSET_PRESENT |
+                        UWB_ANCHOR_DIAG_STATUS_CARRIER_INTEGRATOR_PRESENT |
+                        UWB_ANCHOR_DIAG_STATUS_RAW_TIMESTAMPS_PRESENT,
+        .clock_offset_raw = -17,
+        .carrier_integrator = 123456,
+        .poll_rx_ts_32 = 0x01020304u,
+        .resp_tx_ts_32 = 0x05060708u,
+        .final_rx_ts_32 = 0x090A0B0Cu,
+        .poll_tx_ts_32 = 0x11121314u,
+        .resp_rx_ts_32 = 0x15161718u,
+        .final_tx_ts_32 = 0x191A1B1Cu,
+        .diag_len = sizeof(diag_bytes),
+        .diag_bytes = {0xB0u, 0xB1u, 0xB2u, 0xB3u, 0xB4u, 0xB5u},
+    };
+    struct uwb_anchor_diag_frame decoded = {0};
+    uint8_t buf[UWB_ANCHOR_DIAG_MAX_LEN];
+    size_t written = 0u;
+
+    assert(sizeof(diag_bytes) == diag.diag_len);
+    assert(uwb_encode_anchor_diag(&diag, buf, sizeof(buf), &written) == PROTO_OK);
+    assert(written == UWB_ANCHOR_DIAG_FIXED_LEN + diag.diag_len);
+    assert(UWB_ANCHOR_DIAG_FIXED_LEN == 85u);
+    assert(buf[0] == UWB_MARKER);
+    assert(buf[1] == UWB_VERSION);
+    assert(buf[2] == MSG_UWB_ANCHOR_DIAG);
+
+    assert(uwb_decode_anchor_diag(buf, written, &decoded) == PROTO_OK);
+    assert_same_header(&decoded.header, &diag.header);
+    assert(decoded.distance_mm == diag.distance_mm);
+    assert(decoded.quality == diag.quality);
+    assert(decoded.status == diag.status);
+    assert(decoded.rsl_dbm == diag.rsl_dbm);
+    assert(decoded.status_flags == diag.status_flags);
+    assert(decoded.clock_offset_raw == diag.clock_offset_raw);
+    assert(decoded.carrier_integrator == diag.carrier_integrator);
+    assert(decoded.poll_rx_ts_32 == diag.poll_rx_ts_32);
+    assert(decoded.resp_tx_ts_32 == diag.resp_tx_ts_32);
+    assert(decoded.final_rx_ts_32 == diag.final_rx_ts_32);
+    assert(decoded.poll_tx_ts_32 == diag.poll_tx_ts_32);
+    assert(decoded.resp_rx_ts_32 == diag.resp_rx_ts_32);
+    assert(decoded.final_tx_ts_32 == diag.final_tx_ts_32);
+    assert(decoded.diag_len == diag.diag_len);
+    assert(memcmp(decoded.diag_bytes, diag_bytes, sizeof(diag_bytes)) == 0);
+}
+
+static void test_anchor_diag_fragment_round_trip(void)
+{
+    const uint8_t chunk[] = {0xC0u, 0xC1u, 0xC2u, 0xC3u, 0xC4u};
+    struct uwb_anchor_diag_fragment_frame fragment = {
+        .header = header(MSG_UWB_ANCHOR_DIAG_FRAGMENT, FLAG_DIAGNOSTIC),
+        .block_type = UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR,
+        .offset = 64u,
+        .total_len = 128u,
+        .first_path_index = 777u,
+        .fragment_index = 1u,
+        .fragment_count = 2u,
+        .flags = UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST,
+        .chunk_len = sizeof(chunk),
+        .chunk = {0xC0u, 0xC1u, 0xC2u, 0xC3u, 0xC4u},
+    };
+    struct uwb_anchor_diag_fragment_frame decoded = {0};
+    uint8_t buf[UWB_ANCHOR_DIAG_FRAGMENT_MAX_LEN];
+    size_t written = 0u;
+
+    assert(sizeof(chunk) == fragment.chunk_len);
+    assert(uwb_encode_anchor_diag_fragment(&fragment, buf, sizeof(buf), &written) ==
+           PROTO_OK);
+    assert(written == UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN + fragment.chunk_len);
+    assert(UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN == 53u);
+    assert(buf[0] == UWB_MARKER);
+    assert(buf[1] == UWB_VERSION);
+    assert(buf[2] == MSG_UWB_ANCHOR_DIAG_FRAGMENT);
+
+    assert(uwb_decode_anchor_diag_fragment(buf, written, &decoded) == PROTO_OK);
+    assert_same_header(&decoded.header, &fragment.header);
+    assert(decoded.block_type == fragment.block_type);
+    assert(decoded.offset == fragment.offset);
+    assert(decoded.total_len == fragment.total_len);
+    assert(decoded.first_path_index == fragment.first_path_index);
+    assert(decoded.fragment_index == fragment.fragment_index);
+    assert(decoded.fragment_count == fragment.fragment_count);
+    assert(decoded.flags == fragment.flags);
+    assert(decoded.chunk_len == fragment.chunk_len);
+    assert(memcmp(decoded.chunk, chunk, sizeof(chunk)) == 0);
+
+    fragment.block_type = 0u;
+    assert(uwb_encode_anchor_diag_fragment(&fragment, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    fragment.block_type = UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_RX_DIAG;
+    fragment.offset = fragment.total_len;
+    assert(uwb_encode_anchor_diag_fragment(&fragment, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    fragment.offset = 0u;
+    fragment.fragment_index = fragment.fragment_count;
+    assert(uwb_encode_anchor_diag_fragment(&fragment, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+
+    fragment.fragment_index = 0u;
+    assert(uwb_encode_anchor_diag_fragment(&fragment,
+                                           buf,
+                                           UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN,
+                                           &written) == PROTO_ERR_NO_SPACE);
+}
+
+static void test_cir_window_last_fragment_round_trip(void)
+{
+    enum {
+        cir_window_bytes = 1536u,
+        cir_window_fragment_count =
+            cir_window_bytes / UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES,
+    };
+    struct uwb_anchor_diag_fragment_frame fragment = {
+        .header = header(MSG_UWB_ANCHOR_DIAG_FRAGMENT, FLAG_DIAGNOSTIC),
+        .block_type = UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR,
+        .offset = cir_window_bytes - UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES,
+        .total_len = cir_window_bytes,
+        .first_path_index = 740u,
+        .fragment_index = cir_window_fragment_count - 1u,
+        .fragment_count = cir_window_fragment_count,
+        .flags = UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST,
+        .chunk_len = UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES,
+    };
+    struct uwb_anchor_diag_fragment_frame decoded = {0};
+    uint8_t buf[UWB_ANCHOR_DIAG_FRAGMENT_MAX_LEN];
+    size_t written = 0u;
+
+    for (uint8_t i = 0u; i < UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES; i++) {
+        fragment.chunk[i] = i;
+    }
+
+    assert(cir_window_bytes * 8u == 12288u);
+    assert(cir_window_fragment_count == 24u);
+    assert(cir_window_fragment_count <= UINT8_MAX);
+    assert(uwb_encode_anchor_diag_fragment(&fragment, buf, sizeof(buf), &written) ==
+           PROTO_OK);
+    assert(uwb_decode_anchor_diag_fragment(buf, written, &decoded) == PROTO_OK);
+    assert(decoded.offset == fragment.offset);
+    assert(decoded.total_len == fragment.total_len);
+    assert(decoded.first_path_index == fragment.first_path_index);
+    assert(decoded.fragment_index == fragment.fragment_index);
+    assert(decoded.fragment_count == fragment.fragment_count);
+    assert(decoded.flags == fragment.flags);
+    assert(decoded.chunk_len == fragment.chunk_len);
+    assert(memcmp(decoded.chunk, fragment.chunk, fragment.chunk_len) == 0);
+}
+
 static void test_rejects_bad_clicker_diag(void)
 {
     struct uwb_clicker_diag_frame diag = {
@@ -621,6 +780,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_schedule.diagnostics_required == UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
     assert(decoded_schedule.entries[0].anchor_id == schedule.entries[0].anchor_id);
     assert(decoded_schedule.entries[1].seq == schedule.entries[1].seq);
+    assert(decoded_schedule.entries[1].sample_count == schedule.samples_per_anchor);
     assert(decoded_schedule.entries[2].anchor_id == schedule.entries[2].anchor_id);
 }
 
@@ -1026,7 +1186,7 @@ static void test_range_schedule_decode_rejects_valid_crc_malformed_fields(void)
            PROTO_ERR_BAD_LENGTH);
 
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_OK);
-    buf[UWB_RANGE_SCHEDULE_FIXED_LEN + 9u] = schedule.samples_per_anchor + 1u;
+    buf[45] = UWB_RANGING_REQUESTS_MAX_PER_ANCHOR + 1u;
     refresh_frame_crc(buf, written);
     assert(uwb_decode_range_schedule(buf,
                                      written,
@@ -1563,11 +1723,111 @@ static void test_uwb_mesh_frame_round_trip_and_filters(void)
     assert(decoded_packet.dst_id == 0u);
 }
 
+static void test_anchor_pair_schedule_and_result_round_trip(void)
+{
+    const struct uwb_anchor_pair_schedule_frame schedule = {
+        .network_id = 0x494D4543u,
+        .clicker_id = UINT64_C(0x1111222233334444),
+        .survey_id = 99u,
+        .attempt_index = 1u,
+        .nonce = UINT64_C(0xCAFEBABE00001234),
+        .anchor_count = 4u,
+        .pair_count = 6u,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .first_pair_delay_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
+        .pair_stride_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS,
+        .pair_window_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS,
+        .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
+        .flags = FLAG_DIAGNOSTIC,
+        .anchor_ids = {
+            UINT64_C(0xAA00000000000001),
+            UINT64_C(0xAA00000000000002),
+            UINT64_C(0xAA00000000000003),
+            UINT64_C(0xAA00000000000004),
+        },
+        .anchor_start_delay_ms = {
+            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
+            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
+            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
+            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
+        },
+    };
+    const struct uwb_anchor_pair_result_frame result = {
+        .network_id = schedule.network_id,
+        .clicker_id = schedule.clicker_id,
+        .survey_id = schedule.survey_id,
+        .nonce = schedule.nonce,
+        .initiator_id = schedule.anchor_ids[1],
+        .responder_id = schedule.anchor_ids[3],
+        .pair_index = 4u,
+        .pair_count = schedule.pair_count,
+        .seq = 5u,
+        .status = RANGE_OK,
+        .quality = 91u,
+        .distance_mm = 1234,
+        .rsl_dbm = -81,
+        .flags = FLAG_DIAGNOSTIC,
+    };
+    uint8_t frame[UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN];
+    struct uwb_anchor_pair_schedule_frame decoded_schedule = {0};
+    struct uwb_anchor_pair_result_frame decoded_result = {0};
+    uint64_t initiator_id = 0u;
+    uint64_t responder_id = 0u;
+    size_t written = 0u;
+
+    assert(uwb_anchor_pair_count(4u) == 6u);
+    assert(uwb_anchor_pair_schedule_encoded_len(schedule.anchor_count) ==
+           UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN +
+           (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * schedule.anchor_count) +
+           UWB_FRAME_CRC_LEN);
+    assert(uwb_encode_anchor_pair_schedule(&schedule,
+                                           frame,
+                                           sizeof(frame),
+                                           &written) == PROTO_OK);
+    assert(uwb_decode_anchor_pair_schedule(frame,
+                                           written,
+                                           &decoded_schedule) == PROTO_OK);
+    assert(decoded_schedule.anchor_count == schedule.anchor_count);
+    assert(decoded_schedule.pair_count == schedule.pair_count);
+    assert(decoded_schedule.anchor_ids[3] == schedule.anchor_ids[3]);
+    assert(decoded_schedule.anchor_start_delay_ms[3] ==
+           schedule.anchor_start_delay_ms[3]);
+    assert(uwb_anchor_pair_at(&decoded_schedule,
+                              4u,
+                              &initiator_id,
+                              &responder_id) == PROTO_OK);
+    assert(initiator_id == schedule.anchor_ids[1]);
+    assert(responder_id == schedule.anchor_ids[3]);
+
+    assert(uwb_encode_anchor_pair_result(&result,
+                                         frame,
+                                         sizeof(frame),
+                                         &written) == PROTO_OK);
+    assert(written == UWB_ANCHOR_PAIR_RESULT_LEN);
+    assert(uwb_decode_anchor_pair_result(frame,
+                                         written,
+                                         &decoded_result) == PROTO_OK);
+    assert(decoded_result.survey_id == result.survey_id);
+    assert(decoded_result.initiator_id == result.initiator_id);
+    assert(decoded_result.responder_id == result.responder_id);
+    assert(decoded_result.pair_index == result.pair_index);
+    assert(decoded_result.distance_mm == result.distance_mm);
+    assert(decoded_result.rsl_dbm == result.rsl_dbm);
+
+    frame[20] ^= 0x01u;
+    assert(uwb_decode_anchor_pair_result(frame,
+                                         written,
+                                         &decoded_result) == PROTO_ERR_BAD_CRC);
+}
+
 int main(void)
 {
     test_poll_round_trip_diagnostic_not_click();
     test_response_final_and_report_round_trip();
     test_clicker_diag_round_trip();
+    test_anchor_diag_round_trip();
+    test_anchor_diag_fragment_round_trip();
+    test_cir_window_last_fragment_round_trip();
     test_rejects_bad_clicker_diag();
     test_rejects_invalid_header_and_status();
     test_decode_rejects_wrong_type();
@@ -1589,5 +1849,6 @@ int main(void)
     test_anchor_epoch_rejects_same_event_wrong_session_identity();
     test_claim_precedence_compare_uses_canonical_tuple();
     test_uwb_mesh_frame_round_trip_and_filters();
+    test_anchor_pair_schedule_and_result_round_trip();
     return 0;
 }

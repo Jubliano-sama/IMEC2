@@ -28,6 +28,23 @@ extern "C" {
 #define UWB_CLICKER_DIAG_STATUS_RESP_RX_PRESENT (1u << 0)
 #define UWB_CLICKER_DIAG_STATUS_RESP_RSL_PRESENT (1u << 1)
 #define UWB_CLICKER_DIAG_STATUS_COMPACT_BYTES_PRESENT (1u << 2)
+#define UWB_ANCHOR_DIAG_FIXED_LEN (UWB_HEADER_LEN + 43u)
+#define UWB_ANCHOR_DIAG_MAX_BYTES 40u
+#define UWB_ANCHOR_DIAG_MAX_LEN (UWB_ANCHOR_DIAG_FIXED_LEN + UWB_ANCHOR_DIAG_MAX_BYTES)
+#define UWB_ANCHOR_DIAG_STATUS_RSL_PRESENT (1u << 0)
+#define UWB_ANCHOR_DIAG_STATUS_CIR_SAMPLE_PRESENT (1u << 1)
+#define UWB_ANCHOR_DIAG_STATUS_CLOCK_OFFSET_PRESENT (1u << 2)
+#define UWB_ANCHOR_DIAG_STATUS_CARRIER_INTEGRATOR_PRESENT (1u << 3)
+#define UWB_ANCHOR_DIAG_STATUS_RAW_TIMESTAMPS_PRESENT (1u << 4)
+#define UWB_ANCHOR_DIAG_STATUS_RX_DIAG_PRESENT (1u << 5)
+#define UWB_ANCHOR_DIAG_STATUS_FULL_CIR_PRESENT (1u << 6)
+#define UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN (UWB_HEADER_LEN + 11u)
+#define UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES 64u
+#define UWB_ANCHOR_DIAG_FRAGMENT_MAX_LEN \
+    (UWB_ANCHOR_DIAG_FRAGMENT_FIXED_LEN + UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES)
+#define UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_CIR 1u
+#define UWB_ANCHOR_DIAG_FRAGMENT_BLOCK_RX_DIAG 2u
+#define UWB_ANCHOR_DIAG_FRAGMENT_FLAG_LAST (1u << 0)
 #define UWB_WAKE_CLAIM_LEN 49u
 #define UWB_DISCOVER_LEN 32u
 #define UWB_DISCOVERY_REPLY_LEN 44u
@@ -35,12 +52,41 @@ extern "C" {
 #define UWB_DISCOVERY_SLOT_COUNT 50u
 #define UWB_RANGE_RELEASE_LEN 34u
 #define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
+#define UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN 40u
+#define UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN 9u
+#define UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS 5u
+#define UWB_ANCHOR_PAIR_SCHEDULE_MAX_START_DELAY_MS \
+    (UINT8_MAX * UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS)
+#define UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS 2u
+#define UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS UWB_RANGE_SCHEDULE_MAX_ANCHORS
+#define UWB_ANCHOR_PAIR_SCHEDULE_MIN_LEN \
+    (UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN + \
+     (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) + \
+     UWB_FRAME_CRC_LEN)
+#define UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN \
+    (UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN + \
+     (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS) + \
+     UWB_FRAME_CRC_LEN)
+#define UWB_ANCHOR_PAIR_RESULT_LEN 56u
+#define UWB_ANCHOR_PAIR_SURVEY_MIN_STRIDE_MS 80u
+#define UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS 100u
+#define UWB_ANCHOR_PAIR_SURVEY_THEORETICAL_MIN_MS \
+    ((UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US + 999u) / 1000u)
+#define UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS \
+    ((5u * UWB_ANCHOR_PAIR_SURVEY_THEORETICAL_MIN_MS) + 100u)
+#define UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS \
+    UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS
+#define UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS \
+    UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS
+#define UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS \
+    (UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS + 100u)
+#define UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS 28u
 #define UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_DISCOVERY_START_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS 2000u
-#define UWB_RANGE_SCHEDULE_FIXED_LEN 46u
-#define UWB_RANGE_SCHEDULE_ENTRY_LEN 10u
-#define UWB_RANGE_SCHEDULE_MAX_ANCHORS 4u
+#define UWB_RANGE_SCHEDULE_FIXED_LEN 47u
+#define UWB_RANGE_SCHEDULE_ENTRY_LEN 9u
+#define UWB_RANGE_SCHEDULE_MAX_ANCHORS 8u
 #define UWB_NORMAL_CLICK_MIN_ANCHORS 3u
 #define UWB_RANGE_SCHEDULE_MIN_LEN \
     (UWB_RANGE_SCHEDULE_FIXED_LEN + UWB_FRAME_CRC_LEN)
@@ -51,10 +97,11 @@ extern "C" {
 #define UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS 50u
 #define UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS 400u
 #define UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS 400u
-#define UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US 30000u
+#define UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US 33000u
 #define UWB_RANGE_SCHEDULE_STS_DISABLED 0u
+#define UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED 0u
 #define UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED 1u
-#define UWB_RANGING_REQUESTS_MAX_PER_ANCHOR 15u
+#define UWB_RANGING_REQUESTS_MAX_PER_ANCHOR 100u
 /*
  * Provisional DS-TWR delayed-TX presets from bring-up. The main firmware runs
  * the long-range PHY, so the protocol currently advertises the long-range
@@ -119,6 +166,38 @@ struct uwb_clicker_diag_frame {
     int8_t resp_rsl_dbm;
     uint8_t diag_len;
     uint8_t diag_bytes[UWB_CLICKER_DIAG_MAX_BYTES];
+};
+
+struct uwb_anchor_diag_frame {
+    struct uwb_range_header header;
+    int32_t distance_mm;
+    uint8_t quality;
+    enum range_status status;
+    int8_t rsl_dbm;
+    uint32_t status_flags;
+    int16_t clock_offset_raw;
+    int32_t carrier_integrator;
+    uint32_t poll_rx_ts_32;
+    uint32_t resp_tx_ts_32;
+    uint32_t final_rx_ts_32;
+    uint32_t poll_tx_ts_32;
+    uint32_t resp_rx_ts_32;
+    uint32_t final_tx_ts_32;
+    uint8_t diag_len;
+    uint8_t diag_bytes[UWB_ANCHOR_DIAG_MAX_BYTES];
+};
+
+struct uwb_anchor_diag_fragment_frame {
+    struct uwb_range_header header;
+    uint8_t block_type;
+    uint16_t offset;
+    uint16_t total_len;
+    uint16_t first_path_index;
+    uint8_t fragment_index;
+    uint8_t fragment_count;
+    uint8_t flags;
+    uint8_t chunk_len;
+    uint8_t chunk[UWB_ANCHOR_DIAG_FRAGMENT_MAX_BYTES];
 };
 
 struct uwb_wake_claim_frame {
@@ -190,7 +269,7 @@ struct uwb_range_schedule_frame {
     uint16_t poll_spacing_ms;
     uint16_t burst_window_ms;
     uint16_t exchange_stride_us;
-    uint8_t max_exchanges;
+    uint16_t max_exchanges;
     uint8_t min_successful_unique_anchors;
     uint8_t sts_mode;
     uint8_t diagnostics_required;
@@ -208,6 +287,41 @@ struct uwb_range_release_frame {
     uint8_t discovered_anchor_count;
     uint8_t min_anchor_count;
     uint8_t reason;
+    uint8_t flags;
+};
+
+struct uwb_anchor_pair_schedule_frame {
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t survey_id;
+    uint8_t attempt_index;
+    uint64_t nonce;
+    uint8_t anchor_count;
+    uint8_t pair_count;
+    uint8_t ranging_channel;
+    uint16_t first_pair_delay_ms;
+    uint16_t pair_stride_ms;
+    uint16_t pair_window_ms;
+    uint16_t reply_delay_us;
+    uint8_t flags;
+    uint64_t anchor_ids[UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS];
+    uint16_t anchor_start_delay_ms[UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS];
+};
+
+struct uwb_anchor_pair_result_frame {
+    uint32_t network_id;
+    uint64_t clicker_id;
+    uint32_t survey_id;
+    uint64_t nonce;
+    uint64_t initiator_id;
+    uint64_t responder_id;
+    uint8_t pair_index;
+    uint8_t pair_count;
+    uint8_t seq;
+    enum range_status status;
+    uint8_t quality;
+    int32_t distance_mm;
+    int8_t rsl_dbm;
     uint8_t flags;
 };
 
@@ -269,6 +383,20 @@ int uwb_encode_clicker_diag(const struct uwb_clicker_diag_frame *frame,
 int uwb_decode_clicker_diag(const uint8_t *data,
                             size_t len,
                             struct uwb_clicker_diag_frame *frame);
+int uwb_encode_anchor_diag(const struct uwb_anchor_diag_frame *frame,
+                           uint8_t *out,
+                           size_t out_cap,
+                           size_t *written);
+int uwb_decode_anchor_diag(const uint8_t *data,
+                           size_t len,
+                           struct uwb_anchor_diag_frame *frame);
+int uwb_encode_anchor_diag_fragment(const struct uwb_anchor_diag_fragment_frame *frame,
+                                    uint8_t *out,
+                                    size_t out_cap,
+                                    size_t *written);
+int uwb_decode_anchor_diag_fragment(const uint8_t *data,
+                                    size_t len,
+                                    struct uwb_anchor_diag_fragment_frame *frame);
 
 int uwb_encode_wake_claim(const struct uwb_wake_claim_frame *frame,
                           uint8_t *out,
@@ -314,6 +442,26 @@ int uwb_encode_range_release(const struct uwb_range_release_frame *frame,
 int uwb_decode_range_release(const uint8_t *data,
                              size_t len,
                              struct uwb_range_release_frame *frame);
+uint8_t uwb_anchor_pair_count(uint8_t anchor_count);
+int uwb_anchor_pair_at(const struct uwb_anchor_pair_schedule_frame *frame,
+                       uint8_t pair_index,
+                       uint64_t *initiator_id,
+                       uint64_t *responder_id);
+size_t uwb_anchor_pair_schedule_encoded_len(uint8_t anchor_count);
+int uwb_encode_anchor_pair_schedule(const struct uwb_anchor_pair_schedule_frame *frame,
+                                    uint8_t *out,
+                                    size_t out_cap,
+                                    size_t *written);
+int uwb_decode_anchor_pair_schedule(const uint8_t *data,
+                                    size_t len,
+                                    struct uwb_anchor_pair_schedule_frame *frame);
+int uwb_encode_anchor_pair_result(const struct uwb_anchor_pair_result_frame *frame,
+                                  uint8_t *out,
+                                  size_t out_cap,
+                                  size_t *written);
+int uwb_decode_anchor_pair_result(const uint8_t *data,
+                                  size_t len,
+                                  struct uwb_anchor_pair_result_frame *frame);
 int uwb_validate_range_release(const struct uwb_range_release_frame *frame);
 int uwb_discovery_slot_for_anchor(uint64_t anchor_id,
                                   uint8_t slot_count,
