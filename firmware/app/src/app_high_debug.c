@@ -31,10 +31,10 @@ LOG_MODULE_REGISTER(app_high_debug, LOG_LEVEL_DBG);
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 static void high_debug_counter_work_handler(struct k_work *work);
-static void high_debug_serial_work_handler(struct k_work *work);
+static void high_debug_command_work_handler(struct k_work *work);
 
 static struct k_work_delayable high_debug_counter_work;
-static struct k_work_delayable high_debug_serial_work;
+static struct k_work_delayable high_debug_command_work;
 static struct app_high_debug_callbacks high_debug_callbacks;
 static bool high_debug_work_initialized;
 static char high_debug_command_buf[80];
@@ -45,8 +45,8 @@ int app_high_debug_init(void)
     if (!high_debug_work_initialized) {
         k_work_init_delayable(&high_debug_counter_work,
                               high_debug_counter_work_handler);
-        k_work_init_delayable(&high_debug_serial_work,
-                              high_debug_serial_work_handler);
+        k_work_init_delayable(&high_debug_command_work,
+                              high_debug_command_work_handler);
         high_debug_work_initialized = true;
     }
     return 0;
@@ -55,19 +55,19 @@ int app_high_debug_init(void)
 void app_high_debug_set_callbacks(const struct app_high_debug_callbacks *callbacks)
 {
     if (callbacks == NULL) {
-        high_debug_callbacks.cdc_command_enabled = NULL;
+        high_debug_callbacks.command_poll_enabled = NULL;
         high_debug_callbacks.handle_command = NULL;
         return;
     }
     high_debug_callbacks = *callbacks;
 }
 
-bool app_high_debug_cdc_command_enabled(void)
+bool app_high_debug_command_poll_enabled(void)
 {
-    if (high_debug_callbacks.cdc_command_enabled == NULL) {
+    if (high_debug_callbacks.command_poll_enabled == NULL) {
         return false;
     }
-    return high_debug_callbacks.cdc_command_enabled();
+    return high_debug_callbacks.command_poll_enabled();
 }
 
 void app_high_debug_start(bool schedule_counter_work)
@@ -77,8 +77,8 @@ void app_high_debug_start(bool schedule_counter_work)
         (void)k_work_schedule(&high_debug_counter_work,
                               K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS));
     }
-    if (app_high_debug_cdc_command_enabled()) {
-        (void)k_work_schedule(&high_debug_serial_work,
+    if (app_high_debug_command_poll_enabled()) {
+        (void)k_work_schedule(&high_debug_command_work,
                               K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COMMAND_POLL_MS));
     }
 }
@@ -752,7 +752,7 @@ void high_debug_boot_banner(void)
     high_debug_log_event("BOOT_CONFIG",
                          "device_id=0x%016llx gateway_id=0x%016llx network_id=0x%08x "
                          "uwb_channel=%u mesh_payload_channel=%u spi_hz=%u sys_status_polling=1 "
-                         "usb_bootloader=%u usb_cdc_logs=%u rtt_logs=%u gateway_ble=%u "
+                         "rtt_logs=%u gateway_ble=%u "
                          "ble_log_backend=%u anchor_slot_source=%s highdebug_anchor_slot=%u",
                          (unsigned long long)DEVICE_ID,
                          (unsigned long long)GATEWAY_ID,
@@ -760,13 +760,11 @@ void high_debug_boot_banner(void)
                          UWB_CHANNEL_WAKE_CONTACT,
                          UWB_CHANNEL_MESH_PAYLOAD,
                          (unsigned int)dwm3000_port_current_spi_hz(),
-                         IS_ENABLED(CONFIG_IMEC_USB_BOOTLOADER) ? 1u : 0u,
-                         IS_ENABLED(CONFIG_IMEC_USB_CDC_LOGS) ? 1u : 0u,
                          IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
                          gateway_ble_transport_enabled() ? 1u : 0u,
                          IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND) ? 1u : 0u,
                          ANCHOR_DISCOVERY_SLOT_SOURCE,
-	                         (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
+                         (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
 }
 
 int high_debug_probe_dwm3000(void)
@@ -1129,13 +1127,13 @@ static void high_debug_counter_work_handler(struct k_work *work)
                              K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS));
 }
 
-static void high_debug_serial_work_handler(struct k_work *work)
+static void high_debug_command_work_handler(struct k_work *work)
 {
     unsigned char byte;
 
     ARG_UNUSED(work);
 
-    if (!app_high_debug_cdc_command_enabled()) {
+    if (!app_high_debug_command_poll_enabled()) {
         return;
     }
 
@@ -1164,7 +1162,7 @@ static void high_debug_serial_work_handler(struct k_work *work)
                                  "status=failed reason=line_too_long");
         }
     }
-    (void)k_work_reschedule(&high_debug_serial_work,
+    (void)k_work_reschedule(&high_debug_command_work,
                             K_MSEC(CONFIG_IMEC_HIGH_DEBUG_COMMAND_POLL_MS));
 }
 #else

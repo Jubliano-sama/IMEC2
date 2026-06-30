@@ -537,15 +537,23 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
 
     ret = radio_guard_uwb_start("clicker UWB WAKE_CLAIM train");
     if (ret < 0) {
+        status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
+        LOG_WRN("clicker UWB WAKE_CLAIM guard failed: ret=%d", ret);
         return ret;
     }
+    status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
     stage1_led_phase(STAGE1_LED_PHASE_WAKE);
     stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
+    status_debug_note("DBG_WAKE_TRAIN_CONFIG_BEGIN\n");
     ret = dwm3000_driver_configure_wake_mode();
     if (ret < 0) {
+        status_debug_note("DBG_WAKE_TRAIN_CONFIG_FAIL\n");
+        LOG_WRN("clicker UWB WAKE_CLAIM wake-mode config failed: ret=%d",
+                ret);
         goto out;
     }
+    status_debug_note("DBG_WAKE_TRAIN_CONFIG_OK\n");
 
     high_debug_log_event("WAKE_CLAIM_TX",
                          "phase=start event_seq=%u attempt=%u duration_ms=%u",
@@ -565,21 +573,39 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
                                            clicker_claimed_duration_ms(remaining_u16, config),
                                            &claim);
         if (ret != PROTO_OK) {
+            status_debug_note("DBG_WAKE_TRAIN_BUILD_FAIL\n");
+            LOG_WRN("clicker UWB WAKE_CLAIM build failed: proto_ret=%d",
+                    ret);
             ret = -EINVAL;
             break;
         }
         ret = uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len);
         if (ret != PROTO_OK) {
+            status_debug_note("DBG_WAKE_TRAIN_ENCODE_FAIL\n");
+            LOG_WRN("clicker UWB WAKE_CLAIM encode failed: proto_ret=%d",
+                    ret);
             ret = -EINVAL;
             break;
         }
 
+        if (sent_count == 0u) {
+            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_BEGIN\n");
+        }
         ret = dwm3000_driver_send_frame(frame,
                                         frame_len,
                                         config->control_tx_timeout_ms);
         if (ret < 0) {
+            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_FAIL\n");
+            LOG_WRN("clicker UWB WAKE_CLAIM send failed: sent=%u ret=%d frame_len=%u",
+                    sent_count,
+                    ret,
+                    (unsigned int)frame_len);
             break;
         }
+        if (sent_count == 0u) {
+            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_OK\n");
+        }
+        status_debug_tx_wake_claim_sent_pulse();
         sent_count++;
         HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
         uwb_clicker_note_wake_claim_tx(session, 1u);
@@ -2792,7 +2818,7 @@ static void clicker_enter_systemon_retained_idle(void)
         LOG_WRN("click button retained-idle wake arm failed: %d", ret);
     }
     high_debug_log_event("CLICKER_IDLE",
-                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 usb_command_poll=0 radio_retained=%u dwm_pins=float",
+                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=float",
                          (unsigned int)CLICK_BUTTON_PIN_NUM,
                          radio_retained ? 1u : 0u);
     LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",

@@ -9,7 +9,9 @@ nrf/
 nrfxlib/
 old code/
 test/
-tools/
+tools/*
+!tools/
+!tools/mesh_ble_route_monitor.py
 zephyr/
 
 # Build outputs

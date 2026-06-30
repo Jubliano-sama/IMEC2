@@ -29,6 +29,9 @@ const char *role_name(void)
     case ROLE_CLICKER:
         return "clicker";
     case ROLE_ANCHOR:
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+            return "mesh-transmitter";
+        }
         return "anchor";
     case ROLE_GATEWAY:
         return "gateway";
@@ -123,7 +126,9 @@ bool gateway_ble_transport_enabled(void)
     return IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE) &&
            (DEVICE_ROLE == ROLE_GATEWAY ||
             (DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER)) ||
-            (DEVICE_ROLE == ROLE_ANCHOR && IS_ENABLED(CONFIG_IMEC_ML_ANCHOR)));
+            (DEVICE_ROLE == ROLE_ANCHOR &&
+             (IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) ||
+              IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST))));
 #else
     return false;
 #endif

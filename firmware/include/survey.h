@@ -19,6 +19,8 @@ extern "C" {
 #define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 8u
 #define SURVEY_GATEWAY_MAX_PAIRS 128u
 #define SURVEY_DISCOVERY_MAX_SLOT_COUNT 50u
+#define SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT 2u
+#define SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT 8u
 #define SURVEY_DISCOVERY_MIN_SLOT_MS 10u
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
@@ -55,6 +57,10 @@ struct survey_discovery_config {
     uint32_t start_delay_ms;
     uint16_t slot_ms;
     uint8_t slot_count;
+};
+
+struct survey_ml_anchor_pair_request {
+    uint8_t discovery_slot_count;
 };
 
 struct survey_discovery_timing {
@@ -167,6 +173,11 @@ int survey_extract_discovery_slot_count_tlv(const uint8_t *payload,
                                             size_t payload_len,
                                             uint8_t default_slot_count,
                                             uint8_t *slot_count);
+int survey_extract_ml_anchor_pair_request_tlvs(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint8_t default_slot_count,
+    struct survey_ml_anchor_pair_request *request);
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair);

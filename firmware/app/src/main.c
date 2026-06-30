@@ -6,6 +6,7 @@
 #include "app_high_debug.h"
 #include "app_ml.h"
 #include "app_mesh_report.h"
+#include "app_mesh_test.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
@@ -33,6 +34,7 @@ static const struct app_clicker_wake_train_config clicker_wake_train_config = {
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS * 1000u >= ANCHOR_UWB_SCAN_RX_US,
              "anchor scan millisecond timeout must cover configured RX microseconds");
 #if DEVICE_ROLE == ROLE_ANCHOR && \
+    !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && \
     !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) && \
     !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN) && \
     !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_SCAN_ALLOW_OVER_RX_BUDGET)
@@ -117,6 +119,11 @@ BUILD_ASSERT(CONFIG_IMEC_ML_MAX_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
              "ML selected anchors must fit the production range schedule frame");
 BUILD_ASSERT(CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
              "ML discovery slot count must fit the selected-anchor schedule");
+BUILD_ASSERT(CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT >=
+                 SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT &&
+             CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT <=
+                 SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT,
+             "ML anchor-pair survey default discovery slots must fit the 0x8002 contract");
 BUILD_ASSERT(UWB_ML_EXCHANGE_STRIDE_US >= UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
              "ML exchange stride must satisfy range schedule validation");
 BUILD_ASSERT(ML_CLICKER_COLLECTION_DEADLINE_MS > UWB_ML_MAX_BURST_MS,
@@ -136,12 +143,9 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_IMEC_ROLE_GATEWAY) || DEVICE_ROLE == ROLE_GATEWA
              "gateway high-debug role config must match DEVICE_ROLE");
 #endif
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
-static bool local_serial_command_poll_enabled(void)
+static bool local_command_poll_enabled(void)
 {
-    if (clicker_systemon_retained_idle_enabled()) {
-        return false;
-    }
-    return !gateway_ble_transport_enabled();
+    return false;
 }
 
 #endif
@@ -150,7 +154,7 @@ int main(void)
 {
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
     const struct app_high_debug_callbacks high_debug_callbacks = {
-        .cdc_command_enabled = local_serial_command_poll_enabled,
+        .command_poll_enabled = local_command_poll_enabled,
         .handle_command = high_debug_handle_command,
     };
 #endif
@@ -190,6 +194,14 @@ int main(void)
 #endif
 
     battery_adc_ret = battery_adc_divider_disable();
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    ret = status_leds_init();
+    if (ret < 0) {
+        LOG_WRN("status LED setup incomplete: %d", ret);
+    }
+    status_debug_tx_boot_test();
+    status_debug_gateway_boot_test();
+#endif
 #if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
     ret = app_clicker_init(&clicker_callbacks);
     if (ret < 0) {
@@ -200,19 +212,9 @@ int main(void)
 
     if (clicker_systemon_retained_idle_enabled()) {
         ret = 0;
-        printk("local serial debug skipped for retained clicker idle\n");
-    } else if (!gateway_ble_transport_enabled()) {
-        ret = debug_serial_init();
-        if (ret < 0) {
-            printk("local serial debug init failed: %d\n", ret);
-        } else {
-            printk("local serial debug active; firmware booting\n");
-        }
+        printk("local debug input skipped for retained clicker idle\n");
     } else {
-        ret = debug_serial_init();
-        if (ret < 0) {
-            printk("local serial debug init failed: %d\n", ret);
-        }
+        (void)debug_serial_init();
     }
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
@@ -221,20 +223,18 @@ int main(void)
     HIGH_DEBUG_COUNTER_INC(boot_count);
     high_debug_boot_banner();
     high_debug_log_event("DEBUG_TRANSPORT_READY",
-                         "cdc_logs=%u rtt_logs=%u gateway_ble=%u ble_log_backend=%u command_parser=%u",
-                         IS_ENABLED(CONFIG_IMEC_USB_CDC_LOGS) ? 1u : 0u,
+                         "rtt_logs=%u gateway_ble=%u ble_log_backend=%u command_parser=%u",
                          IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
                          gateway_ble_transport_enabled() ? 1u : 0u,
                          IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND) ? 1u : 0u,
-                         app_high_debug_cdc_command_enabled() ? 1u : 0u);
+                         app_high_debug_command_poll_enabled() ? 1u : 0u);
     high_debug_log_event("BOOTLOADER_READY",
-                         "configured=%u entry_command=%u recovery=jlink",
-                         IS_ENABLED(CONFIG_IMEC_USB_BOOTLOADER) ? 1u : 0u,
-                         IS_ENABLED(CONFIG_RETENTION_BOOT_MODE) ? 1u : 0u);
+                         "configured=0 entry_command=0 recovery=disabled");
     app_high_debug_start(!clicker_systemon_retained_idle_enabled());
 #endif
 
     (void)app_mesh_report_init(app_anchor_mesh_report_callbacks());
+    (void)app_mesh_test_init();
     gateway_command_result_tracking_init();
     (void)app_anchor_init();
     LOG_INF("UWB firmware starting as %s", role_name());
@@ -257,10 +257,12 @@ int main(void)
             ANCHOR_DISCOVERY_SLOT_SOURCE,
             (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
 
+#if !defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     ret = status_leds_init();
     if (ret < 0) {
         LOG_WRN("status LED setup incomplete: %d", ret);
     }
+#endif
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
     stage1_led_phase(STAGE1_LED_PHASE_IDLE);
     stage1_led_result(STAGE1_LED_RESULT_OFF);
@@ -323,13 +325,44 @@ int main(void)
     }
 
     if (DEVICE_ROLE == ROLE_ANCHOR) {
+        status_debug_note("DBG_BOOT_ANCHOR_ROLE_BEGIN\n");
+        high_debug_log_event("MESH_BOOT_STAGE",
+                             "stage=anchor_role_start_begin role=%s",
+                             role_name());
         ret = app_anchor_start_anchor_role();
+        status_debug_note("DBG_BOOT_ANCHOR_ROLE_DONE\n");
+        high_debug_log_event("MESH_BOOT_STAGE",
+                             "stage=anchor_role_start_done role=%s ret=%d",
+                             role_name(),
+                             ret);
         if (ret < 0) {
             return 0;
         }
+        high_debug_log_event("MESH_BOOT_STAGE",
+                             "stage=mesh_rx_start_begin role=%s",
+                             role_name());
+        status_debug_note("DBG_BOOT_MESH_RX_BEGIN\n");
         ret = mesh_start_uwb_rx("anchor startup");
+        status_debug_note("DBG_BOOT_MESH_RX_DONE\n");
+        high_debug_log_event("MESH_BOOT_STAGE",
+                             "stage=mesh_rx_start_done role=%s ret=%d",
+                             role_name(),
+                             ret);
         if (ret < 0) {
             LOG_ERR("anchor UWB mesh RX unavailable: %d", ret);
+        }
+        high_debug_log_event("MESH_BOOT_STAGE",
+                             "stage=mesh_test_start_begin role=%s",
+                             role_name());
+        status_debug_note("DBG_BOOT_MESH_TEST_BEGIN\n");
+        ret = app_mesh_test_start();
+        status_debug_note("DBG_BOOT_MESH_TEST_DONE\n");
+        high_debug_log_event("MESH_BOOT_STAGE",
+                             "stage=mesh_test_start_done role=%s ret=%d",
+                             role_name(),
+                             ret);
+        if (ret < 0) {
+            LOG_ERR("mesh-test runtime unavailable: %d", ret);
         }
     } else if (DEVICE_ROLE == ROLE_GATEWAY) {
         ret = app_anchor_start_gateway_role();

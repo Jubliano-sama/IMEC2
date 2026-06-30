@@ -257,6 +257,36 @@ static bool focused_anchor_rx_logs_enabled(void)
 #ifndef DWM3000_TX_PG_COUNT
 #define DWM3000_TX_PG_COUNT 0x0
 #endif
+#ifndef DWM3000_MESH_PHY_PREAMBLE_LENGTH
+#define DWM3000_MESH_PHY_PREAMBLE_LENGTH DWT_PLEN_1024
+#endif
+#ifndef DWM3000_MESH_PHY_RX_PAC
+#define DWM3000_MESH_PHY_RX_PAC DWT_PAC8
+#endif
+#ifndef DWM3000_MESH_PHY_TX_CODE
+#define DWM3000_MESH_PHY_TX_CODE 9
+#endif
+#ifndef DWM3000_MESH_PHY_RX_CODE
+#define DWM3000_MESH_PHY_RX_CODE 9
+#endif
+#ifndef DWM3000_MESH_PHY_SFD_TYPE
+#define DWM3000_MESH_PHY_SFD_TYPE DWT_SFD_IEEE_4Z
+#endif
+#ifndef DWM3000_MESH_PHY_SFD_TIMEOUT
+#define DWM3000_MESH_PHY_SFD_TIMEOUT (1024 + 1 + 8 - 8)
+#endif
+#ifndef DWM3000_MESH_PHY_STS_MODE
+#define DWM3000_MESH_PHY_STS_MODE DWT_STS_MODE_OFF
+#endif
+#ifndef DWM3000_MESH_PHY_STS_LENGTH
+#define DWM3000_MESH_PHY_STS_LENGTH DWT_STS_LEN_64
+#endif
+#ifndef DWM3000_MESH_PHY_PDOA_MODE
+#define DWM3000_MESH_PHY_PDOA_MODE DWT_PDOA_M0
+#endif
+#ifndef DWM3000_MESH_TX_POWER
+#define DWM3000_MESH_TX_POWER 0xfefefefeu
+#endif
 #ifndef DWM3000_CIA_DIAG_MODE
 #define DWM3000_CIA_DIAG_MODE DW_CIA_DIAG_LOG_ALL
 #endif
@@ -364,23 +394,29 @@ static dwt_config_t wake_config = {
 
 static dwt_config_t mesh_payload_config = {
     UWB_CHANNEL_MESH_PAYLOAD,
-    DWM3000_PHY_PREAMBLE_LENGTH,
-    DWM3000_PHY_RX_PAC,
-    DWM3000_PHY_TX_CODE,
-    DWM3000_PHY_RX_CODE,
-    DWM3000_PHY_SFD_TYPE,
+    DWM3000_MESH_PHY_PREAMBLE_LENGTH,
+    DWM3000_MESH_PHY_RX_PAC,
+    DWM3000_MESH_PHY_TX_CODE,
+    DWM3000_MESH_PHY_RX_CODE,
+    DWM3000_MESH_PHY_SFD_TYPE,
     DWM3000_PHY_DATA_RATE,
     DWM3000_PHY_PHR_MODE,
     DWM3000_PHY_PHR_RATE,
-    DWM3000_PHY_SFD_TIMEOUT,
-    DWM3000_PHY_STS_MODE,
-    DWM3000_PHY_STS_LENGTH,
-    DWM3000_PHY_PDOA_MODE,
+    DWM3000_MESH_PHY_SFD_TIMEOUT,
+    DWM3000_MESH_PHY_STS_MODE,
+    DWM3000_MESH_PHY_STS_LENGTH,
+    DWM3000_MESH_PHY_PDOA_MODE,
 };
 
 static dwt_txconfig_t default_txconfig = {
     DWM3000_TX_PG_DELAY,
     DWM3000_TX_POWER,
+    DWM3000_TX_PG_COUNT,
+};
+
+static dwt_txconfig_t mesh_payload_txconfig = {
+    DWM3000_TX_PG_DELAY,
+    DWM3000_MESH_TX_POWER,
     DWM3000_TX_PG_COUNT,
 };
 
@@ -393,6 +429,7 @@ enum dwm3000_phy_mode {
 
 static bool radio_configured;
 static bool radio_awake;
+static bool radio_restored_from_sleep;
 static enum dwm3000_phy_mode active_phy_mode;
 static struct dwm3000_driver_stats driver_stats;
 
@@ -629,6 +666,13 @@ static int initialise_radio(bool idle_after_init)
     return dwm3000_port_set_fast_spi();
 }
 
+static dwt_txconfig_t *txconfig_for_phy(enum dwm3000_phy_mode phy_mode)
+{
+    return phy_mode == DWM3000_PHY_MESH_PAYLOAD ?
+           &mesh_payload_txconfig :
+           &default_txconfig;
+}
+
 static int apply_radio_config(const dwt_config_t *config,
                               enum dwm3000_phy_mode phy_mode)
 {
@@ -641,7 +685,7 @@ static int apply_radio_config(const dwt_config_t *config,
     }
 
     configure_first_path_sensitivity();
-    dwt_configuretxrf(&default_txconfig);
+    dwt_configuretxrf(txconfig_for_phy(phy_mode));
     dwt_configciadiag(DWM3000_CIA_DIAG_MODE);
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
     dwt_settxantennadelay(DWM3000_TX_ANT_DLY);
@@ -651,6 +695,7 @@ static int apply_radio_config(const dwt_config_t *config,
 
     radio_configured = true;
     radio_awake = true;
+    radio_restored_from_sleep = false;
     active_phy_mode = phy_mode;
     return 0;
 }
@@ -713,6 +758,34 @@ static bool phy_configs_equal(const dwt_config_t *a, const dwt_config_t *b)
            a->pdoaMode == b->pdoaMode;
 }
 
+static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
+{
+    const dwt_config_t *config = config_for_phy(phy_mode);
+    int ret;
+
+    ret = dwm3000_port_init();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = dwm3000_port_wakeup();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = dwm3000_port_hw_reset();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = initialise_radio(false);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return apply_radio_config(config, phy_mode);
+}
+
 static int wake_configured_radio(void)
 {
     enum dwm3000_phy_mode requested_phy = active_phy_mode == DWM3000_PHY_NONE ?
@@ -756,6 +829,7 @@ static int wake_configured_radio(void)
     }
     radio_awake = true;
     active_phy_mode = requested_phy;
+    radio_restored_from_sleep = true;
 
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
@@ -779,7 +853,7 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
     int ret;
 
     if (!radio_configured) {
-        ret = dwm3000_driver_configure_default();
+        ret = configure_radio_from_reset(phy_mode);
         if (ret < 0) {
             return ret;
         }
@@ -790,20 +864,39 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
         }
     }
 
-    if (active_phy_mode == phy_mode) {
+    if (active_phy_mode == phy_mode && !radio_restored_from_sleep) {
         return 0;
     }
 
     config = config_for_phy(phy_mode);
     active_config = config_for_phy(active_phy_mode);
-    if (phy_configs_equal(active_config, config)) {
+    if (!radio_restored_from_sleep && phy_configs_equal(active_config, config)) {
         active_phy_mode = phy_mode;
         LOG_DBG("DWM3000 PHY mode %d selected without redundant reconfigure",
                 phy_mode);
         return 0;
     }
 
-    return apply_radio_config(config, phy_mode);
+    ret = apply_radio_config(config, phy_mode);
+    if (ret == 0) {
+        return 0;
+    }
+    if (!radio_restored_from_sleep) {
+        return ret;
+    }
+
+    LOG_WRN("DWM3000 PHY configure failed after retained sleep restore: phy=%d ret=%d; forcing full reinit",
+            phy_mode,
+            ret);
+    ret = configure_radio_from_reset(phy_mode);
+    if (ret < 0) {
+        LOG_WRN("DWM3000 full reinit after retained sleep configure failure failed: ret=%d",
+                ret);
+        return ret;
+    }
+    LOG_INF("DWM3000 PHY mode %d configured directly after full reinit",
+            phy_mode);
+    return 0;
 }
 
 static int ensure_current_phy_or_range(void)
@@ -1612,6 +1705,10 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
     ret = write_tx_frame(frame, frame_len);
     if (ret < 0) {
         driver_stats.tx_failures++;
+        LOG_WRN("DWM3000 TX write failed: ret=%d frame_len=%u tx_mode=0x%02x",
+                ret,
+                (unsigned int)frame_len,
+                tx_mode);
         dwm3000_debug_event(true,
                             "UWB_TX_DONE",
                             "status=write-fail ret=%d frame_len=%u",
@@ -1622,6 +1719,9 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
 
     if (dwt_starttx(tx_mode) != DWT_SUCCESS) {
         driver_stats.tx_failures++;
+        LOG_WRN("DWM3000 TX start failed: frame_len=%u tx_mode=0x%02x",
+                (unsigned int)frame_len,
+                tx_mode);
         dwm3000_debug_event(true,
                             "UWB_TX_DONE",
                             "status=start-fail frame_len=%u tx_mode=0x%02x",
@@ -2568,16 +2668,19 @@ int dwm3000_driver_configure_mesh_payload_mode(void)
 {
     int ret;
 
-    ret = ensure_current_phy_or_range();
+    ret = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
+          configure_radio_from_reset(DWM3000_PHY_MESH_PAYLOAD) :
+          ensure_phy_mode(DWM3000_PHY_MESH_PAYLOAD);
     if (ret < 0) {
         return ret;
     }
-    ret = apply_radio_config(&mesh_payload_config, DWM3000_PHY_MESH_PAYLOAD);
-    if (ret < 0) {
-        return ret;
-    }
+#if DWM3000_MESH_PHY_STS_MODE == DWT_STS_MODE_OFF
     LOG_INF("DWM3000 configured for channel %u 1024-symbol no-STS mesh payload at 850 kbps",
             UWB_CHANNEL_MESH_PAYLOAD);
+#else
+    LOG_INF("DWM3000 configured for channel %u 1024-symbol STS-mode-1 mesh payload at 850 kbps",
+            UWB_CHANNEL_MESH_PAYLOAD);
+#endif
     return 0;
 }
 
@@ -2630,12 +2733,21 @@ int dwm3000_driver_send_frame(const uint8_t *frame,
 
     ret = ensure_current_phy_or_range();
     if (ret < 0) {
+        LOG_WRN("DWM3000 send-frame PHY wake/restore failed: ret=%d frame_len=%u",
+                ret,
+                (unsigned int)frame_len);
         return ret;
     }
 
     clear_all_events();
     ret = send_range_frame(frame, frame_len, DWT_START_TX_IMMEDIATE);
     if (ret < 0) {
+        LOG_WRN("DWM3000 send-frame immediate TX failed: ret=%d frame_len=%u active_phy=%d awake=%u restored=%u",
+                ret,
+                (unsigned int)frame_len,
+                active_phy_mode,
+                radio_awake ? 1u : 0u,
+                radio_restored_from_sleep ? 1u : 0u);
         return ret;
     }
 

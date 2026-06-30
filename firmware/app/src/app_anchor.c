@@ -563,7 +563,8 @@ static int anchor_set_scan_duty_from_command(const uint8_t *payload,
 
     anchor_uwb_scan_interval_ms = interval_ms;
     if (!anchor_uwb_window_active()) {
-        (void)k_work_reschedule(&anchor_uwb_scan_work, K_MSEC(anchor_uwb_scan_interval_ms));
+        (void)k_work_reschedule(&anchor_uwb_scan_work,
+                                K_MSEC(anchor_uwb_scan_interval_ms));
     }
     LOG_INF("anchor UWB scan duty command applied: interval_ms=%u min_ms=%u max_ms=%u awake_us=%u",
             anchor_uwb_scan_interval_ms,
@@ -3424,6 +3425,33 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             }
         }
 
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            bool valid_mesh_frame = false;
+
+            if (mesh_queue_from_frame(frame,
+                                      frame_len,
+                                      quality,
+                                      UWB_CHANNEL_WAKE_CONTACT,
+                                      &valid_mesh_frame,
+                                      NULL) ||
+                valid_mesh_frame) {
+                high_debug_log_event("MESH_CH5_AFTER_WAKE_RX",
+                                     "clicker=0x%016llx event_seq=%u frame_len=%u quality=%u valid=%u",
+                                     (unsigned long long)selected_claim.clicker_id,
+                                     selected_claim.click_event_id,
+                                     (unsigned int)frame_len,
+                                     quality,
+                                     valid_mesh_frame ? 1u : 0u);
+                LOG_INF("anchor accepted channel-5 mesh frame after wake claim: clicker=0x%016llx event_seq=%u len=%u quality=%u valid=%u",
+                        (unsigned long long)selected_claim.clicker_id,
+                        selected_claim.click_event_id,
+                        (unsigned int)frame_len,
+                        quality,
+                        valid_mesh_frame ? 1u : 0u);
+                return true;
+            }
+        }
+
         LOG_DBG("anchor ignored non-DISCOVER frame during discovery wait: decode_ret=%d frame_len=%u type=0x%02x quality=%u",
                 last_discovery_decode_ret,
                 (unsigned int)frame_len,
@@ -3800,7 +3828,12 @@ focused_scan_attempt:
         } else {
             bool valid_mesh_frame = false;
 
-            if (mesh_queue_from_frame(frame, frame_len, quality, &valid_mesh_frame, NULL) ||
+            if (mesh_queue_from_frame(frame,
+                                      frame_len,
+                                      quality,
+                                      UWB_CHANNEL_WAKE_CONTACT,
+                                      &valid_mesh_frame,
+                                      NULL) ||
                 valid_mesh_frame) {
                 goto scan_complete;
             }
@@ -3937,12 +3970,21 @@ scan_complete:
 
 static int anchor_start_uwb_scan(void)
 {
+    uint32_t startup_delay_ms = 0u;
+
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return -EINVAL;
     }
 
-    (void)k_work_reschedule(&anchor_uwb_scan_work, K_NO_WAIT);
-    LOG_INF("anchor low-duty UWB wake scan scheduled: interval_ms=%u rx_window_ms=%u hash_slots=%u",
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        LOG_INF("mesh-test source transmitter skipping anchor low-duty UWB scan");
+        status_debug_note("DBG_ANCHOR_SCAN_SKIPPED_TX\n");
+        return 0;
+    }
+
+    (void)k_work_reschedule(&anchor_uwb_scan_work, K_MSEC(startup_delay_ms));
+    LOG_INF("anchor low-duty UWB wake scan scheduled: startup_delay_ms=%u interval_ms=%u rx_window_ms=%u hash_slots=%u",
+            startup_delay_ms,
             anchor_uwb_scan_interval_ms,
             ANCHOR_UWB_SCAN_RX_MS,
             UWB_DISCOVERY_SLOT_COUNT);
@@ -3994,6 +4036,16 @@ int app_anchor_start_anchor_role(void)
     k_work_init_delayable(&anchor_heartbeat_work, anchor_heartbeat_work_handler);
     k_work_init_delayable(&anchor_reboot_work, anchor_reboot_work_handler);
     k_work_init_delayable(&anchor_survey_work, anchor_survey_work_handler);
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_note("DBG_ANCHOR_BLE_INIT_BEGIN\n");
+    ret = gateway_ble_init();
+    status_debug_note("DBG_ANCHOR_BLE_INIT_DONE\n");
+    if (ret < 0) {
+        LOG_ERR("mesh-test anchor BLE debug log link unavailable: %d", ret);
+    } else {
+        LOG_INF("mesh-test anchor BLE debug log link ready before UWB scan");
+    }
+#endif
 #if defined(CONFIG_IMEC_ML_ANCHOR)
     (void)app_ml_init();
 #endif

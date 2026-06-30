@@ -75,6 +75,7 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_SELF_TEST_REPORT:
     case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
+    case MSG_MESH_HOP_ACK:
     case MSG_GATEWAY_ACK:
     case MSG_ROUTE_REQ:
     case MSG_ROUTE_REPLY:

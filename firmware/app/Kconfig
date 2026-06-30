@@ -86,6 +86,56 @@ config IMEC_ML_DISCOVERY_SLOT_COUNT
 
 endmenu
 
+menu "IMEC mesh route test"
+
+config IMEC_MESH_ROUTE_TEST
+    bool "Build the isolated mesh-routing test firmware"
+    depends on BT && IMEC_GATEWAY_BLE
+    help
+      Enables the isolated mesh-routing test profile. Devices expose the
+      existing connected BLE packet/log service for debug and keep the normal
+      production roles untouched unless a mesh_* build preset selects this
+      option.
+
+config IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    bool "Continuously transmit synthetic mesh-test packets"
+    depends on IMEC_MESH_ROUTE_TEST
+    help
+      Runs an anchor-role mesh node that continuously sends synthetic
+      MSG_MESH_DATA packets toward the gateway through the normal relay path.
+
+config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
+    int "Synthetic mesh-test packet interval in milliseconds"
+    depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    default 1000
+    range 100 60000
+
+config IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS
+    int "Mesh-test channel-5 anchor scan idle interval in milliseconds"
+    depends on IMEC_MESH_ROUTE_TEST
+    default 0
+    range 0 60000
+    help
+      Delay between channel-5 wake/contact scans for mesh-test anchors. A
+      value of zero makes the anchor immediately reschedule the next scan.
+
+config IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US
+    int "Mesh-test channel-5 anchor scan receive window in microseconds"
+    depends on IMEC_MESH_ROUTE_TEST
+    default 20000
+    range 1000 1000000
+
+config IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS
+    int "Mesh-test startup delay before UWB activity"
+    depends on IMEC_MESH_ROUTE_TEST
+    default 0
+    range 0 60000
+    help
+      Delay mesh-test UWB scan and synthetic TX startup long enough for BLE
+      debug advertising to become visible before UWB routing traffic starts.
+
+endmenu
+
 menu "IMEC high-debug bring-up"
 
 config IMEC_HIGH_DEBUG
@@ -123,21 +173,6 @@ config IMEC_ROLE_GATEWAY
     bool "Build as gateway"
     depends on IMEC_HIGH_DEBUG
 
-config IMEC_USB_BOOTLOADER
-    bool "Build for MCUboot USB-C serial recovery"
-    depends on IMEC_HIGH_DEBUG
-    help
-      Build the application as an MCUboot child image and enable the app-side
-      bootloader entry command when retention boot mode is available.
-
-config IMEC_USB_CDC_LOGS
-    bool "Use USB CDC for high-debug human logs"
-    depends on IMEC_HIGH_DEBUG
-    default y
-    help
-      Human-readable logs use the selected USB CDC console. Gateway builds use
-      the connected Bluetooth gateway link for PC packet traffic and logs.
-
 config IMEC_RTT_LOGS
     bool "Use RTT for high-debug human logs"
     depends on IMEC_HIGH_DEBUG
@@ -153,7 +188,7 @@ config IMEC_GATEWAY_BLE
       characteristic accepts COBS-delimited binary gateway packets, one
       notifies COBS-delimited gateway packets back to the PC, and a separate
       notify characteristic carries debug log text. This replaces the old
-      app-side USB CDC gateway transport.
+      app-side serial gateway transport.
 
 config IMEC_GATEWAY_BLE_LOG_BACKEND
     bool "Mirror Zephyr logs over the gateway Bluetooth link"
@@ -169,7 +204,7 @@ config IMEC_GATEWAY_BLE_CONNECTIVITY_TEST
     depends on IMEC_GATEWAY_BLE
     help
       Boots only the connected gateway BLE service. It does not initialize the
-      DWM3000, UWB mesh, command routing, buttons, status LEDs, ADC, USB CDC,
+      DWM3000, UWB mesh, command routing, buttons, status LEDs, ADC,
       or high-debug staged bring-up flow. Incoming packet-characteristic bytes
       are re-emitted on the packet notification characteristic so a PC can
       verify connection, write, notification, COBS framing, and debug-log
@@ -249,7 +284,7 @@ config IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS
     range 1000 3600000
 
 config IMEC_HIGH_DEBUG_COMMAND_POLL_MS
-    int "High-debug CDC command poll period in milliseconds"
+    int "High-debug command poll period in milliseconds"
     depends on IMEC_HIGH_DEBUG
     default 20
     range 5 1000

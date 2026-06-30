@@ -32,7 +32,7 @@ typedef bool (*app_high_debug_bool_handler_t)(void);
 typedef int (*app_high_debug_command_handler_t)(const char *command);
 
 struct app_high_debug_callbacks {
-    app_high_debug_bool_handler_t cdc_command_enabled;
+    app_high_debug_bool_handler_t command_poll_enabled;
     app_high_debug_command_handler_t handle_command;
 };
 
@@ -79,7 +79,7 @@ void high_debug_dump_counters(const char *event);
 void high_debug_boot_banner(void);
 int high_debug_request_bootloader(void);
 void app_high_debug_set_callbacks(const struct app_high_debug_callbacks *callbacks);
-bool app_high_debug_cdc_command_enabled(void);
+bool app_high_debug_command_poll_enabled(void);
 void app_high_debug_start(bool schedule_counter_work);
 int high_debug_probe_dwm3000(void);
 void high_debug_stage0_rainbow_led_test(void);
@@ -127,7 +127,7 @@ static inline int high_debug_request_bootloader(void)
     return -1;
 }
 
-static inline bool app_high_debug_cdc_command_enabled(void)
+static inline bool app_high_debug_command_poll_enabled(void)
 {
     return false;
 }

@@ -5,17 +5,19 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
-#if defined(CONFIG_USB_DEVICE_STACK)
-#include <zephyr/usb/usb_device.h>
+#if defined(CONFIG_USE_SEGGER_RTT)
+#include <SEGGER_RTT.h>
 #endif
 
 #include <errno.h>
 
 LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
+
+#define DEBUG_LED_PULSE_MS 75u
+#define DEBUG_TX_BOOT_TEST_MS 600u
 
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
 static const struct gpio_dt_spec status0_red = GPIO_DT_SPEC_GET(STATUS0_RED_NODE, gpios);
@@ -54,12 +56,8 @@ static const struct adc_dt_spec battery_adc = {
 #define HAS_BATTERY_ADC 0
 #endif
 
-#if defined(CONFIG_USB_DEVICE_STACK) && DT_NODE_HAS_STATUS(USB_CONSOLE_NODE, okay)
-static const struct device *serial_console = DEVICE_DT_GET(USB_CONSOLE_NODE);
-#define HAS_SERIAL_CONSOLE 1
-#else
-#define HAS_SERIAL_CONSOLE 0
-#endif
+static struct k_work_delayable status0_debug_pulse_off_work;
+static bool status0_debug_pulse_work_ready;
 
 static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
 {
@@ -174,26 +172,18 @@ static void BLE_CONNECTIVITY_TEST_UNUSED set_output(const struct gpio_dt_spec *g
     }
 }
 
+static bool reserve_status1_for_power_indicator(void)
+{
+    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST);
+}
+
 void status_leds_set(bool red, bool green, bool blue)
 {
-#if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
-    set_output(&status0_red, red);
-#endif
-#if DT_NODE_HAS_STATUS(STATUS0_GREEN_NODE, okay)
-    set_output(&status0_green, green);
-#endif
-#if DT_NODE_HAS_STATUS(STATUS0_BLUE_NODE, okay)
-    set_output(&status0_blue, blue);
-#endif
-#if DT_NODE_HAS_STATUS(STATUS1_RED_NODE, okay)
-    set_output(&status1_red, red);
-#endif
-#if DT_NODE_HAS_STATUS(STATUS1_GREEN_NODE, okay)
-    set_output(&status1_green, green);
-#endif
-#if DT_NODE_HAS_STATUS(STATUS1_BLUE_NODE, okay)
-    set_output(&status1_blue, blue);
-#endif
+    status_led0_set(red, green, blue);
+    if (reserve_status1_for_power_indicator()) {
+        return;
+    }
+    status_led1_set(red, green, blue);
 }
 
 void status_led0_set(bool red, bool green, bool blue)
@@ -220,6 +210,115 @@ void status_led1_set(bool red, bool green, bool blue)
 #if DT_NODE_HAS_STATUS(STATUS1_BLUE_NODE, okay)
     set_output(&status1_blue, blue);
 #endif
+}
+
+void status_power_indicator_set(bool enabled)
+{
+    status_led1_set(false, enabled, false);
+}
+
+static void status0_debug_pulse_off_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    status_led0_set(false, false, false);
+}
+
+static void status0_debug_pulse(bool red, bool green, bool blue)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        !status0_debug_pulse_work_ready) {
+        return;
+    }
+
+    status_led0_set(red, green, blue);
+    (void)k_work_reschedule(&status0_debug_pulse_off_work,
+                            K_MSEC(DEBUG_LED_PULSE_MS));
+}
+
+static void debug_rtt_write(const char *text)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        ARG_UNUSED(text);
+        return;
+    }
+#if defined(CONFIG_USE_SEGGER_RTT)
+    (void)SEGGER_RTT_WriteString(0, text);
+#else
+    ARG_UNUSED(text);
+#endif
+}
+
+void status_debug_note(const char *text)
+{
+    if (text == NULL) {
+        return;
+    }
+    debug_rtt_write(text);
+}
+
+void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY || !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+
+    if (uwb_channel == 9u) {
+        status0_debug_pulse(false, true, false);
+        debug_rtt_write("DBG_GATEWAY_UWB_RX_CH9\n");
+    } else if (uwb_channel == 5u) {
+        status0_debug_pulse(false, false, true);
+        debug_rtt_write("DBG_GATEWAY_UWB_RX_CH5\n");
+    } else {
+        status0_debug_pulse(true, false, false);
+        debug_rtt_write("DBG_GATEWAY_UWB_RX_UNKNOWN_CH\n");
+    }
+}
+
+void status_debug_tx_boot_test(void)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        return;
+    }
+
+    status_led0_set(true, false, false);
+    k_msleep(DEBUG_TX_BOOT_TEST_MS);
+    status_led0_set(false, false, false);
+}
+
+void status_debug_gateway_boot_test(void)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY || !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+
+    status_led0_set(false, false, true);
+    k_msleep(DEBUG_TX_BOOT_TEST_MS);
+    status_led0_set(false, false, false);
+}
+
+void status_debug_tx_packet_sent_pulse(void)
+{
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        status0_debug_pulse(true, false, false);
+        debug_rtt_write("DBG_TX_PACKET_SENT\n");
+    }
+}
+
+void status_debug_tx_wake_claim_sent_pulse(void)
+{
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        status0_debug_pulse(true, false, false);
+        debug_rtt_write("DBG_TX_WAKE_CLAIM_SENT\n");
+    }
+}
+
+void status_debug_tx_mesh_frame_sent_pulse(void)
+{
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        status0_debug_pulse(false, true, false);
+        debug_rtt_write("DBG_TX_MESH_FRAME_SENT\n");
+    }
 }
 
 static void BLE_CONNECTIVITY_TEST_UNUSED disconnect_gpio(const struct gpio_dt_spec *gpio)
@@ -290,6 +389,10 @@ int status_leds_init(void)
 {
     int ret = 0;
 
+    k_work_init_delayable(&status0_debug_pulse_off_work,
+                          status0_debug_pulse_off_handler);
+    status0_debug_pulse_work_ready = true;
+
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     ret |= configure_output(&status0_red);
 #endif
@@ -309,57 +412,31 @@ int status_leds_init(void)
     ret |= configure_output(&status1_blue);
 #endif
 
-    status_leds_set(false, false, false);
+    status_led0_set(false, false, false);
+    if (reserve_status1_for_power_indicator()) {
+        status_power_indicator_set(true);
+    } else {
+        status_led1_set(false, false, false);
+    }
     return ret;
 }
 
 int debug_serial_init(void)
 {
-    if (gateway_ble_transport_enabled()) {
-        return 0;
-    }
-#if HAS_SERIAL_CONSOLE
-    if (!device_is_ready(serial_console)) {
-        return -ENODEV;
-    }
-#endif
-#if defined(CONFIG_USB_DEVICE_STACK)
-    int ret = usb_enable(NULL);
-
-    if (ret < 0 && ret != -EALREADY) {
-        return ret;
-    }
-#endif
+    /* Runtime diagnostics are BLE or RTT only on current hardware. */
     return 0;
 }
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 bool debug_serial_dtr_ready(void)
 {
-#if HAS_SERIAL_CONSOLE && defined(CONFIG_UART_LINE_CTRL)
-    uint32_t dtr = 0u;
-
-    if (uart_line_ctrl_get(serial_console, UART_LINE_CTRL_DTR, &dtr) == 0) {
-        return dtr != 0u;
-    }
-#endif
-    return true;
+    return false;
 }
 
 int debug_serial_poll_in(unsigned char *byte)
 {
-#if HAS_SERIAL_CONSOLE
-    if (byte == NULL) {
-        return -EINVAL;
-    }
-    if (!device_is_ready(serial_console) || !debug_serial_dtr_ready()) {
-        return -ENODEV;
-    }
-    return uart_poll_in(serial_console, byte);
-#else
     ARG_UNUSED(byte);
     return -ENODEV;
-#endif
 }
 #endif
 

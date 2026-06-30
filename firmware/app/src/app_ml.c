@@ -11,6 +11,7 @@
 #include "protocol.h"
 #include "report.h"
 #include "serial_frame.h"
+#include "survey.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -2374,15 +2375,15 @@ void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
                                              0u);
         return;
     }
-	    if (command_id != CMD_ML_START_COLLECTION &&
-	        command_id != CMD_ML_START_FAST_RANGING &&
-	        command_id != CMD_ML_START_ANCHOR_PAIR_SURVEY &&
-	        command_id != CMD_ML_START_LIVE_TRACKING &&
-	        command_id != CMD_ML_LIVE_TRACKING_HEARTBEAT &&
-	        command_id != CMD_ML_STOP_LIVE_TRACKING) {
-	        request.command = packet;
-	        request.command_id = command_id;
-	        request.host_id = packet.src_id;
+    if (command_id != CMD_ML_START_COLLECTION &&
+        command_id != CMD_ML_START_FAST_RANGING &&
+        command_id != CMD_ML_START_ANCHOR_PAIR_SURVEY &&
+        command_id != CMD_ML_START_LIVE_TRACKING &&
+        command_id != CMD_ML_LIVE_TRACKING_HEARTBEAT &&
+        command_id != CMD_ML_STOP_LIVE_TRACKING) {
+        request.command = packet;
+        request.command_id = command_id;
+        request.host_id = packet.src_id;
         (void)ml_clicker_send_command_result(&request,
                                              COMMAND_UNSUPPORTED_COMMAND,
                                              0u);
@@ -2395,46 +2396,56 @@ void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
         request.command_id = command_id;
         request.host_id = packet.src_id;
         (void)ml_clicker_send_command_result(&request,
-	                                             COMMAND_DENIED,
-	                                             0u);
-	        return;
-	    }
+                                             COMMAND_DENIED,
+                                             0u);
+        return;
+    }
 
-	    request.command = packet;
-	    request.command_id = command_id;
-	    request.host_id = packet.src_id;
+    request.command = packet;
+    request.command_id = command_id;
+    request.host_id = packet.src_id;
 
-	    if (command_id == CMD_ML_LIVE_TRACKING_HEARTBEAT ||
-	        command_id == CMD_ML_STOP_LIVE_TRACKING) {
-	        enum command_status live_status = COMMAND_INVALID_STATE;
+    if (command_id == CMD_ML_LIVE_TRACKING_HEARTBEAT ||
+        command_id == CMD_ML_STOP_LIVE_TRACKING) {
+        enum command_status live_status = COMMAND_INVALID_STATE;
 
-	        if (ml_clicker_live_tracking_active()) {
-	            ml_clicker_live_tracking_touch();
-	            if (command_id == CMD_ML_STOP_LIVE_TRACKING) {
-	                atomic_set(&ml_clicker_live_stop_requested, 1);
-	            }
-	            live_status = COMMAND_OK;
-	        }
-	        (void)ml_clicker_send_command_result(&request, live_status, 0u);
-	        return;
-	    }
+        if (ml_clicker_live_tracking_active()) {
+            ml_clicker_live_tracking_touch();
+            if (command_id == CMD_ML_STOP_LIVE_TRACKING) {
+                atomic_set(&ml_clicker_live_stop_requested, 1);
+            }
+            live_status = COMMAND_OK;
+        }
+        (void)ml_clicker_send_command_result(&request, live_status, 0u);
+        return;
+    }
 
-	    request.samples_per_anchor = CONFIG_IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR;
-	    request.max_anchor_count = CONFIG_IMEC_ML_MAX_ANCHORS;
-	    request.discovery_slot_count = CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT;
-	    request.live_tracking = command_id == CMD_ML_START_LIVE_TRACKING;
-	    request.range_only = command_id == CMD_ML_START_FAST_RANGING ||
-	                         request.live_tracking;
-	    request.allow_cached_discovery = request.range_only;
-	    request.anchor_pair_survey = command_id == CMD_ML_START_ANCHOR_PAIR_SURVEY;
-	    request.live_watchdog_ms = ML_CLICKER_LIVE_DEFAULT_WATCHDOG_MS;
-	    if (request.live_tracking) {
-	        request.samples_per_anchor = UWB_RANGING_REQUESTS_MAX_PER_ANCHOR;
-	    }
+    request.samples_per_anchor = CONFIG_IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR;
+    request.max_anchor_count = CONFIG_IMEC_ML_MAX_ANCHORS;
+    request.discovery_slot_count = CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT;
+    request.live_tracking = command_id == CMD_ML_START_LIVE_TRACKING;
+    request.range_only = command_id == CMD_ML_START_FAST_RANGING ||
+                         request.live_tracking;
+    request.allow_cached_discovery = request.range_only;
+    request.anchor_pair_survey = command_id == CMD_ML_START_ANCHOR_PAIR_SURVEY;
+    request.live_watchdog_ms = ML_CLICKER_LIVE_DEFAULT_WATCHDOG_MS;
+    if (request.live_tracking) {
+        request.samples_per_anchor = UWB_RANGING_REQUESTS_MAX_PER_ANCHOR;
+    }
 
     if (request.anchor_pair_survey) {
+        struct survey_ml_anchor_pair_request survey_request = {0};
+
         request.samples_per_anchor = 1u;
-        ret = 0;
+        ret = survey_extract_ml_anchor_pair_request_tlvs(decoded_payload,
+                                                         payload_len,
+                                                         request.discovery_slot_count,
+                                                         &survey_request);
+        if (ret == PROTO_OK) {
+            request.discovery_slot_count = survey_request.discovery_slot_count;
+        } else {
+            ret = -EINVAL;
+        }
     } else {
         ret = ml_clicker_read_u8_tlv(decoded_payload,
                                      payload_len,
@@ -2443,22 +2454,21 @@ void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
                                      1u,
                                      UWB_RANGING_REQUESTS_MAX_PER_ANCHOR,
                                      &request.samples_per_anchor);
+        if (ret == 0) {
+            ret = ml_clicker_read_u8_tlv(decoded_payload,
+                                         payload_len,
+                                         TLV_DISCOVERY_SLOT_COUNT,
+                                         request.discovery_slot_count,
+                                         1u,
+                                         UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+                                         &request.discovery_slot_count);
+        }
     }
-	    if (ret == 0) {
-	        ret = ml_clicker_read_u8_tlv(decoded_payload,
-	                                     payload_len,
-                                     TLV_DISCOVERY_SLOT_COUNT,
-                                     request.discovery_slot_count,
-                                     request.anchor_pair_survey ?
-                                     UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS : 1u,
-	                                     UWB_RANGE_SCHEDULE_MAX_ANCHORS,
-	                                     &request.discovery_slot_count);
-	    }
-	    if (ret == 0 && request.live_tracking) {
-	        ret = ml_clicker_read_live_watchdog_ms(decoded_payload,
-	                                               payload_len,
-	                                               &request.live_watchdog_ms);
-	    }
+    if (ret == 0 && request.live_tracking) {
+        ret = ml_clicker_read_live_watchdog_ms(decoded_payload,
+                                               payload_len,
+                                               &request.live_watchdog_ms);
+    }
     if (ret < 0) {
         (void)ml_clicker_send_command_result(&request,
                                              COMMAND_MALFORMED_PAYLOAD,

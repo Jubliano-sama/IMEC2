@@ -4,14 +4,6 @@
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
 
 / {
-    chosen {
-        zephyr,console = &usb_cdc_console;
-        zephyr,shell-uart = &usb_cdc_console;
-        zephyr,uart-mcumgr = &usb_cdc_console;
-        zephyr,bt-mon-uart = &usb_cdc_console;
-        zephyr,bt-c2h-uart = &usb_cdc_console;
-    };
-
     aliases {
         /delete-property/ led0;
         /delete-property/ led1;
@@ -122,17 +114,15 @@
     };
 };
 
-&zephyr_udc0 {
-    usb_cdc_console: usb_cdc_console {
-        compatible = "zephyr,cdc-acm-uart";
-    };
-};
-
 &uart0 {
     status = "disabled";
     /delete-property/ pinctrl-0;
     /delete-property/ pinctrl-1;
     /delete-property/ pinctrl-names;
+};
+
+&zephyr_udc0 {
+    status = "disabled";
 };
 
 &i2c0 {

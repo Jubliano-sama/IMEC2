@@ -807,6 +807,52 @@ int survey_extract_discovery_slot_count_tlv(const uint8_t *payload,
     return PROTO_OK;
 }
 
+int survey_extract_ml_anchor_pair_request_tlvs(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint8_t default_slot_count,
+    struct survey_ml_anchor_pair_request *request)
+{
+    const uint8_t *slot_count_value = NULL;
+    uint8_t slot_count_len = 0u;
+    uint8_t slot_count = default_slot_count;
+    int ret;
+
+    if (payload == NULL || request == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (default_slot_count < SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT ||
+        default_slot_count > SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(request, 0, sizeof(*request));
+    ret = tlv_find(payload,
+                   payload_len,
+                   TLV_DISCOVERY_SLOT_COUNT,
+                   &slot_count_value,
+                   &slot_count_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        request->discovery_slot_count = slot_count;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (slot_count_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    slot_count = slot_count_value[0];
+    if (slot_count < SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT ||
+        slot_count > SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    request->discovery_slot_count = slot_count;
+    return PROTO_OK;
+}
+
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair)

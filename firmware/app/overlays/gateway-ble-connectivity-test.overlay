@@ -10,14 +10,6 @@
     };
 };
 
-&zephyr_udc0 {
-    status = "disabled";
-};
-
-&usb_cdc_console {
-    status = "disabled";
-};
-
 &spi3 {
     status = "disabled";
     /delete-property/ pinctrl-0;

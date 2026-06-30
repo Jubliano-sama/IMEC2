@@ -36,6 +36,13 @@ set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
     ml_anchor_6
     ml_anchor_7
     ml_anchor_8
+    mesh_gateway
+    mesh_transmitter
+    mesh_anchor_1
+    mesh_anchor_2
+    mesh_anchor_3
+    mesh_anchor_4
+    mesh_anchor_5
 )
 if(FIRMWARE_PRESET)
     if(IMEC_BUILD_PRESET AND NOT IMEC_BUILD_PRESET STREQUAL FIRMWARE_PRESET)
@@ -67,17 +74,26 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     ml_anchor_6
     ml_anchor_7
     ml_anchor_8
+    mesh_gateway
+    mesh_transmitter
+    mesh_anchor_1
+    mesh_anchor_2
+    mesh_anchor_3
+    mesh_anchor_4
+    mesh_anchor_5
 )
 set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile")
-set(IMEC_USB_BOOTLOADER ON CACHE BOOL "Add MCUboot USB-C recovery config for high-debug builds")
 set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test")
 set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant")
+set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant")
+set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
 set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
 set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
 set(IMEC_ML_ANCHOR_SLOT "" CACHE STRING "Override deterministic ML anchor discovery slot")
 set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
     "Override deterministic flashed high-debug anchor slot")
+set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "" CACHE STRING "BLE device name for mesh-route test builds")
 
 set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway")
 set_property(CACHE FIRMWARE_ROLE PROPERTY STRINGS clicker tag anchor gateway)
@@ -87,6 +103,8 @@ if(IMEC_BUILD_PRESET)
     set(IMEC_HIGH_DEBUG ON CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
     set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test" FORCE)
     set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
+    set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant" FORCE)
+    set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker" FORCE)
     set(IMEC_PRESET_ROLE_CONF "")
     if(IMEC_BUILD_PRESET STREQUAL "tag_stage0_highdebug")
         set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
@@ -145,6 +163,47 @@ if(IMEC_BUILD_PRESET)
             "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
         set(IMEC_ML_ANCHOR_SLOT "${IMEC_ML_ANCHOR_SLOT_VALUE}" CACHE STRING
             "Override deterministic ML anchor discovery slot" FORCE)
+    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_gateway")
+        set(FIRMWARE_ROLE "gateway" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
+            "Override deterministic flashed high-debug anchor slot" FORCE)
+        set(IMEC_BENCH_STAGE 3)
+        set(IMEC_PRESET_ROLE_CONF "role-gateway.conf")
+        set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
+            "Build the isolated mesh-routing test firmware variant" FORCE)
+        set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Test Gateway" CACHE STRING
+            "BLE device name for mesh-route test builds" FORCE)
+    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter")
+        set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
+            "Override deterministic flashed high-debug anchor slot" FORCE)
+        set(IMEC_BENCH_STAGE 3)
+        set(IMEC_PRESET_ROLE_CONF "role-anchor.conf")
+        set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
+            "Build the isolated mesh-routing test firmware variant" FORCE)
+        set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD ON CACHE BOOL
+            "Enable continuous synthetic mesh-route TX worker" FORCE)
+        set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Tx" CACHE STRING
+            "BLE device name for mesh-route test builds" FORCE)
+        set(IMEC_DEVICE_ID "0x3333333333333301ull" CACHE STRING
+            "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
+    elseif(IMEC_BUILD_PRESET MATCHES "^mesh_anchor_([1-5])$")
+        set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
+            "Override deterministic flashed high-debug anchor slot" FORCE)
+        set(IMEC_BENCH_STAGE 3)
+        set(IMEC_PRESET_ROLE_CONF "role-anchor.conf")
+        set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
+            "Build the isolated mesh-routing test firmware variant" FORCE)
+        set(IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX "${CMAKE_MATCH_1}")
+        math(EXPR IMEC_MESH_ROUTE_TEST_ANCHOR_SLOT_VALUE "${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX} - 1")
+        set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Anchor ${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX}" CACHE STRING
+            "BLE device name for mesh-route test builds" FORCE)
+        set(IMEC_DEVICE_ID "0x222222222222230${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX}ull" CACHE STRING
+            "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
     else()
         message(FATAL_ERROR "Unknown IMEC_BUILD_PRESET: ${IMEC_BUILD_PRESET}")
     endif()
@@ -191,14 +250,29 @@ if(IMEC_HIGH_DEBUG)
     if(IMEC_PRESET_EXTRA_CONF)
         list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/${IMEC_PRESET_EXTRA_CONF}")
     endif()
-    if(FIRMWARE_ROLE STREQUAL "gateway")
+    if(FIRMWARE_ROLE STREQUAL "gateway" AND NOT IMEC_MESH_ROUTE_TEST_BUILD)
         list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/gateway-rtt.conf")
     endif()
-    if(IMEC_USB_BOOTLOADER)
-        list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/usb-bootloader.conf")
-        list(APPEND EXTRA_DTC_OVERLAY_FILE
-            "${CMAKE_CURRENT_LIST_DIR}/overlays/bootloader-single-slot.overlay")
+endif()
+
+if(IMEC_MESH_ROUTE_TEST_BUILD)
+    if(NOT IMEC_MESH_ROUTE_TEST_DEVICE_NAME)
+        message(FATAL_ERROR "IMEC_MESH_ROUTE_TEST_DEVICE_NAME must be set for mesh-route test builds")
     endif()
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/mesh-route-test.conf")
+    set(IMEC_MESH_ROUTE_TEST_NAME_CONF
+        "${CMAKE_CURRENT_BINARY_DIR}/imec-mesh-route-test-name.conf")
+    file(WRITE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+        "CONFIG_BT_DEVICE_NAME=\"${IMEC_MESH_ROUTE_TEST_DEVICE_NAME}\"\n")
+    if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
+        file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER=y\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS=1000\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS=3000\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS=100\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US=20000\n")
+    endif()
+    list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
 endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
@@ -220,6 +294,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_ble.c
     src/app_clicker.c
     src/app_ml.c
+    src/app_mesh_test.c
     src/app_mesh_report.c
     src/app_anchor.c
     src/app_high_debug.c

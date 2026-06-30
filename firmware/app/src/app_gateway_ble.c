@@ -161,7 +161,8 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY &&
-        !(DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER))) {
+        !(DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER)) &&
+        !(DEVICE_ROLE == ROLE_ANCHOR && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST))) {
         return 0;
     }
     if (!gateway_ble_transport_enabled()) {
@@ -512,6 +513,11 @@ bool gateway_ble_uwb_quiet_active(void)
     return gateway_ble_uwb_quiet_depth > 0u;
 }
 
+static bool gateway_ble_keep_active_during_uwb(void)
+{
+    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST);
+}
+
 static void gateway_ble_buffer_quiet_log_bytes(const uint8_t *data, size_t len)
 {
     size_t room;
@@ -538,6 +544,9 @@ static void gateway_ble_buffer_quiet_log_bytes(const uint8_t *data, size_t len)
 void gateway_ble_enter_uwb_quiet(const char *reason)
 {
     if (!gateway_ble_transport_enabled()) {
+        return;
+    }
+    if (gateway_ble_keep_active_during_uwb()) {
         return;
     }
 
@@ -850,6 +859,9 @@ static int gateway_ble_start_advertising(void)
                           ARRAY_SIZE(gateway_ble_ad),
                           gateway_ble_sd,
                           ARRAY_SIZE(gateway_ble_sd));
+    LOG_INF("gateway BLE advertising start requested: ret=%d name=%s",
+            ret,
+            GATEWAY_BLE_DEVICE_NAME);
     if (ret == -EALREADY) {
         gateway_ble_advertising_active = true;
         return 0;
@@ -888,6 +900,8 @@ static int gateway_ble_stop_advertising(const char *reason)
 int gateway_ble_init(void)
 {
     int ret;
+    bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
+    size_t addr_count = ARRAY_SIZE(addrs);
 
     if (!gateway_ble_transport_enabled()) {
         return 0;
@@ -898,9 +912,19 @@ int gateway_ble_init(void)
     gateway_ble_rx_overflow = false;
 
     ret = bt_enable(NULL);
+    LOG_INF("gateway BLE bt_enable completed: ret=%d", ret);
     if (ret != 0 && ret != -EALREADY) {
         LOG_ERR("gateway BLE init failed: %d", ret);
         return ret;
+    }
+    bt_id_get(addrs, &addr_count);
+    for (size_t i = 0u; i < addr_count; i++) {
+        char addr[BT_ADDR_LE_STR_LEN];
+
+        bt_addr_le_to_str(&addrs[i], addr, sizeof(addr));
+        LOG_INF("gateway BLE identity: index=%u addr=%s",
+                (unsigned int)i,
+                addr);
     }
 
     ret = gateway_ble_start_advertising();
@@ -1066,7 +1090,7 @@ void gateway_ble_connectivity_test_run(void)
         }
     }
 
-    LOG_INF("gateway BLE connectivity test active; no UWB, mesh, DWM3000, USB CDC, ADC, LEDs, or buttons initialized");
+    LOG_INF("gateway BLE connectivity test active; no UWB, mesh, DWM3000, ADC, LEDs, or buttons initialized");
     for (;;) {
         struct gateway_ble_status status = {0};
         char line[128];

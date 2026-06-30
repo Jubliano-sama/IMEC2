@@ -2249,6 +2249,35 @@ static void test_channel9_timing_expires_idle_connection_state(void)
                                              &plan) == PROTO_ERR_STALE);
 }
 
+static void test_mesh_hop_ack_is_protocol_valid(void)
+{
+    struct proto_packet packet = {
+        .msg_type = MSG_MESH_HOP_ACK,
+        .src_id = ANCHOR_A,
+        .dst_id = ANCHOR_B,
+        .session_id = 901u,
+        .seq = 14u,
+        .ttl = MESH_GATEWAY_ACK_TTL,
+    };
+    uint8_t payload[8];
+    uint8_t encoded[PACKET_MAX_LEN];
+    size_t payload_len = 0u;
+    size_t written = 0u;
+
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     13u) == PROTO_OK);
+    packet.payload_len = (uint8_t)payload_len;
+
+    assert(proto_packet_encode(&packet,
+                               payload,
+                               encoded,
+                               sizeof(encoded),
+                               &written) == PROTO_OK);
+    assert(written == proto_packet_encoded_len(packet.payload_len));
+}
+
 int main(void)
 {
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
@@ -2294,5 +2323,6 @@ int main(void)
     test_channel9_sender_skips_channel5_preempted_event_without_refresh();
     test_channel9_receiver_miss_advances_timing_and_diagnostics();
     test_channel9_timing_expires_idle_connection_state();
+    test_mesh_hop_ack_is_protocol_valid();
     return 0;
 }

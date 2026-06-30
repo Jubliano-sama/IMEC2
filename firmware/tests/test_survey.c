@@ -299,6 +299,80 @@ static void test_discovery_slot_count_tlv_defaults_and_overrides(void)
                                                    &slot_count) == PROTO_ERR_MALFORMED);
 }
 
+static void test_ml_anchor_pair_request_accepts_optional_slots_and_ignores_sample_count(void)
+{
+    uint8_t payload[24];
+    size_t payload_len = 0u;
+    struct survey_ml_anchor_pair_request request = {0};
+
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_ID,
+                          CMD_ML_START_ANCHOR_PAIR_SURVEY) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_SAMPLE_COUNT,
+                          SURVEY_MAX_SAMPLE_COUNT) == PROTO_OK);
+
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len,
+                                                      6u,
+                                                      &request) == PROTO_OK);
+    assert(request.discovery_slot_count == 6u);
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_DISCOVERY_SLOT_COUNT,
+                         SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT) == PROTO_OK);
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len,
+                                                      6u,
+                                                      &request) == PROTO_OK);
+    assert(request.discovery_slot_count == SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT);
+
+    payload[payload_len - 1u] = SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT;
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len,
+                                                      6u,
+                                                      &request) == PROTO_OK);
+    assert(request.discovery_slot_count == SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT);
+}
+
+static void test_ml_anchor_pair_request_rejects_invalid_slot_counts(void)
+{
+    uint8_t payload[16];
+    size_t payload_len = 0u;
+    struct survey_ml_anchor_pair_request request = {0};
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_DISCOVERY_SLOT_COUNT,
+                         SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT - 1u) == PROTO_OK);
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len,
+                                                      6u,
+                                                      &request) == PROTO_ERR_MALFORMED);
+
+    payload[payload_len - 1u] = SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT + 1u;
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len,
+                                                      6u,
+                                                      &request) == PROTO_ERR_MALFORMED);
+
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len,
+                                                      SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT - 1u,
+                                                      &request) == PROTO_ERR_MALFORMED);
+    assert(survey_extract_ml_anchor_pair_request_tlvs(payload,
+                                                      payload_len - 1u,
+                                                      6u,
+                                                      &request) == PROTO_ERR_MALFORMED);
+}
+
 static void test_discovery_timing_uses_packet_age(void)
 {
     const struct survey_discovery_config config = {
@@ -1194,6 +1268,8 @@ int main(void)
     test_reach_request_parser_rejects_malformed_tlvs();
     test_discovery_start_tlvs_round_trip_timing_config();
     test_discovery_slot_count_tlv_defaults_and_overrides();
+    test_ml_anchor_pair_request_accepts_optional_slots_and_ignores_sample_count();
+    test_ml_anchor_pair_request_rejects_invalid_slot_counts();
     test_discovery_timing_uses_packet_age();
     test_discovery_report_delay_uses_deterministic_anchor_slot();
     test_discovery_report_delay_rejects_overflow();
