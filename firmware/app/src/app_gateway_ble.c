@@ -480,6 +480,7 @@ K_MSGQ_DEFINE(gateway_ble_rx_msgq,
               4);
 
 static struct k_work gateway_ble_rx_work;
+static struct k_work_delayable gateway_ble_quiet_flush_work;
 static struct bt_conn *gateway_ble_conn;
 static bool gateway_ble_advertising_active;
 static bool gateway_ble_packet_notify_enabled;
@@ -506,6 +507,7 @@ static void gateway_ble_rx_bytes(const uint8_t *data, size_t len);
 static int gateway_ble_start_advertising(void);
 static int gateway_ble_stop_advertising(const char *reason);
 static void gateway_ble_flush_quiet_logs(void);
+static void gateway_ble_quiet_flush_work_handler(struct k_work *work);
 static void gateway_ble_rx_work_handler(struct k_work *work);
 
 bool gateway_ble_uwb_quiet_active(void)
@@ -581,7 +583,8 @@ void gateway_ble_exit_uwb_quiet(const char *reason)
         (void)gateway_ble_start_advertising();
     }
     gateway_ble_quiet_stopped_advertising = false;
-    gateway_ble_flush_quiet_logs();
+    (void)k_work_reschedule(&gateway_ble_quiet_flush_work,
+                            K_MSEC(GATEWAY_BLE_QUIET_LOG_FLUSH_DELAY_MS));
     LOG_INF("gateway BLE resumed after UWB: reason=%s",
             reason == NULL ? "unknown" : reason);
 }
@@ -722,6 +725,16 @@ static void gateway_ble_flush_quiet_logs(void)
                                   dropped_line,
                                   (size_t)MIN(dropped_len, (int)sizeof(dropped_line)),
                                   gateway_ble_log_notify_enabled);
+}
+
+static void gateway_ble_quiet_flush_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (gateway_ble_uwb_quiet_active()) {
+        return;
+    }
+    gateway_ble_flush_quiet_logs();
 }
 
 int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
@@ -908,6 +921,8 @@ int gateway_ble_init(void)
     }
 
     k_work_init(&gateway_ble_rx_work, gateway_ble_rx_work_handler);
+    k_work_init_delayable(&gateway_ble_quiet_flush_work,
+                          gateway_ble_quiet_flush_work_handler);
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;
 

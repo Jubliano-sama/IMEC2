@@ -36,6 +36,13 @@ static struct k_work_delayable anchor_uwb_scan_work;
 static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
 
+#if DEVICE_ROLE == ROLE_ANCHOR
+K_THREAD_STACK_DEFINE(anchor_uwb_scan_work_q_stack, ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE);
+static struct k_work_q anchor_uwb_scan_work_q;
+static const struct k_work_queue_config anchor_uwb_scan_work_q_config = {
+    .name = "anchor_uwb_scan",
+};
+#endif
 K_THREAD_STACK_DEFINE(anchor_survey_work_q_stack, ANCHOR_SURVEY_WORKQUEUE_STACK_SIZE);
 
 static struct k_work_q anchor_survey_work_q;
@@ -56,6 +63,7 @@ static bool anchor_survey_start_pending;
 static bool anchor_survey_start_as_responder;
 static bool anchor_survey_running;
 static bool anchor_survey_discovery_pending;
+static bool anchor_scan_recovery_gap_requested;
 static atomic_t anchor_survey_abort_requested;
 static struct k_work_delayable anchor_survey_work;
 static struct survey_gateway_context gateway_survey_context;
@@ -70,6 +78,7 @@ static void anchor_note_uwb_awake_since(int64_t start_ms, uint32_t already_count
 static int anchor_start_uwb_scan(void);
 static void anchor_survey_work_handler(struct k_work *work);
 static void anchor_survey_schedule(k_timeout_t delay);
+static void anchor_uwb_scan_schedule(k_timeout_t delay);
 static bool anchor_survey_pair_queueable(const struct survey_pair *pair);
 static int anchor_run_survey_discovery(const struct survey_discovery_config *config,
                                        uint32_t start_ms);
@@ -563,8 +572,7 @@ static int anchor_set_scan_duty_from_command(const uint8_t *payload,
 
     anchor_uwb_scan_interval_ms = interval_ms;
     if (!anchor_uwb_window_active()) {
-        (void)k_work_reschedule(&anchor_uwb_scan_work,
-                                K_MSEC(anchor_uwb_scan_interval_ms));
+        anchor_uwb_scan_schedule(K_MSEC(anchor_uwb_scan_interval_ms));
     }
     LOG_INF("anchor UWB scan duty command applied: interval_ms=%u min_ms=%u max_ms=%u awake_us=%u",
             anchor_uwb_scan_interval_ms,
@@ -1833,6 +1841,17 @@ static void anchor_survey_schedule(k_timeout_t delay)
                                       delay);
 }
 
+static void anchor_uwb_scan_schedule(k_timeout_t delay)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    (void)k_work_reschedule_for_queue(&anchor_uwb_scan_work_q,
+                                      &anchor_uwb_scan_work,
+                                      delay);
+#else
+    ARG_UNUSED(delay);
+#endif
+}
+
 static int anchor_queue_survey_sample_result(const struct survey_pair *pair,
                                              uint16_t sample_index,
                                              uint64_t reporter_id,
@@ -2984,6 +3003,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     } else if (poll_received &&
                schedule->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED) {
 #if defined(CONFIG_IMEC_ML_ANCHOR)
+        anchor_scan_recovery_gap_requested = true;
         retained_sleep_us = u32_saturating_add(
             retained_sleep_us,
             ml_anchor_run_post_burst_diagnostics(schedule, schedule_rx_ms, total_samples));
@@ -2991,9 +3011,11 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     }
 
     anchor_range_window_finalize(&window_report);
+#if !defined(CONFIG_IMEC_ML_ANCHOR)
     build_uwb_schedule_report_if_relevant(&anchor_uwb_session,
                                           schedule->flags,
                                           &window_report);
+#endif
 #if defined(CONFIG_IMEC_ML_ANCHOR) && defined(CONFIG_IMEC_GATEWAY_BLE)
     gateway_ble_exit_uwb_quiet("ml-anchor-scheduled-uwb");
 #endif
@@ -3745,6 +3767,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool preamble_detected = false;
     bool focused_logs = stage1_anchor_focused_rx_logs_enabled();
     int64_t focused_spin_deadline_ms = -1;
+    bool handled_claim = false;
     int ret;
 
     ARG_UNUSED(work);
@@ -3755,15 +3778,13 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     if (anchor_uwb_window_active() ||
         anchor_survey_discovery_is_pending() ||
         mesh_relay_tx_active(&mesh_runtime)) {
-        (void)k_work_reschedule(&anchor_uwb_scan_work,
-                                K_MSEC(anchor_uwb_scan_interval_ms));
+        anchor_uwb_scan_schedule(K_MSEC(anchor_uwb_scan_interval_ms));
         return;
     }
 
     ret = radio_guard_uwb_start("anchor low-duty UWB wake scan");
     if (ret < 0) {
-        (void)k_work_reschedule(&anchor_uwb_scan_work,
-                                K_MSEC(anchor_uwb_scan_interval_ms));
+        anchor_uwb_scan_schedule(K_MSEC(anchor_uwb_scan_interval_ms));
         return;
     }
     anchor_set_uwb_busy(true);
@@ -3823,6 +3844,7 @@ focused_scan_attempt:
                                         quality,
                                         k_uptime_get(),
                                         &retained_sleep_us)) {
+                handled_claim = true;
                 uwb_anchor_abort_epoch(&anchor_uwb_session);
             }
         } else {
@@ -3928,7 +3950,15 @@ scan_complete:
         u32_saturating_add(ANCHOR_UWB_IDLE_SCAN_AWAKE_US, retained_sleep_us));
     radio_guard_uwb_stop();
     anchor_set_uwb_busy(false);
+#if !defined(CONFIG_IMEC_ML_ANCHOR)
     report_tx_schedule(0u);
+#endif
+    if (handled_claim &&
+        anchor_scan_recovery_gap_requested &&
+        next_scan_delay_ms < ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS) {
+        next_scan_delay_ms = ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS;
+    }
+    anchor_scan_recovery_gap_requested = false;
     if (focused_logs) {
         stage1_anchor_focused_log_diagnostics(ret,
                                               rx_failure_name(rx_failure),
@@ -3965,7 +3995,7 @@ scan_complete:
                              next_scan_delay_ms,
                              retained_sleep_us);
     }
-    (void)k_work_reschedule(&anchor_uwb_scan_work, K_MSEC(next_scan_delay_ms));
+    anchor_uwb_scan_schedule(K_MSEC(next_scan_delay_ms));
 }
 
 static int anchor_start_uwb_scan(void)
@@ -3982,7 +4012,7 @@ static int anchor_start_uwb_scan(void)
         return 0;
     }
 
-    (void)k_work_reschedule(&anchor_uwb_scan_work, K_MSEC(startup_delay_ms));
+    anchor_uwb_scan_schedule(K_MSEC(startup_delay_ms));
     LOG_INF("anchor low-duty UWB wake scan scheduled: startup_delay_ms=%u interval_ms=%u rx_window_ms=%u hash_slots=%u",
             startup_delay_ms,
             anchor_uwb_scan_interval_ms,
@@ -4037,17 +4067,28 @@ int app_anchor_start_anchor_role(void)
     k_work_init_delayable(&anchor_reboot_work, anchor_reboot_work_handler);
     k_work_init_delayable(&anchor_survey_work, anchor_survey_work_handler);
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-    status_debug_note("DBG_ANCHOR_BLE_INIT_BEGIN\n");
-    ret = gateway_ble_init();
-    status_debug_note("DBG_ANCHOR_BLE_INIT_DONE\n");
-    if (ret < 0) {
-        LOG_ERR("mesh-test anchor BLE debug log link unavailable: %d", ret);
+    if (gateway_ble_transport_enabled()) {
+        status_debug_note("DBG_ANCHOR_BLE_INIT_BEGIN\n");
+        ret = gateway_ble_init();
+        status_debug_note("DBG_ANCHOR_BLE_INIT_DONE\n");
+        if (ret < 0) {
+            LOG_ERR("mesh-test anchor BLE debug log link unavailable: %d", ret);
+        } else {
+            LOG_INF("mesh-test anchor BLE debug log link ready before UWB scan");
+        }
     } else {
-        LOG_INF("mesh-test anchor BLE debug log link ready before UWB scan");
+        status_debug_note("DBG_ANCHOR_BLE_DISABLED\n");
     }
 #endif
 #if defined(CONFIG_IMEC_ML_ANCHOR)
     (void)app_ml_init();
+#endif
+#if DEVICE_ROLE == ROLE_ANCHOR
+    k_work_queue_start(&anchor_uwb_scan_work_q,
+                       anchor_uwb_scan_work_q_stack,
+                       K_THREAD_STACK_SIZEOF(anchor_uwb_scan_work_q_stack),
+                       ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
+                       &anchor_uwb_scan_work_q_config);
 #endif
     k_work_queue_start(&anchor_survey_work_q,
                        anchor_survey_work_q_stack,
