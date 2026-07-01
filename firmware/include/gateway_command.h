@@ -124,6 +124,12 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
                                      const uint8_t *payload,
                                      size_t payload_len,
                                      bool *duplicate);
+int gateway_collection_record_bundle(struct gateway_collection_state *collection,
+                                     const struct proto_packet *bundle_packet,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     uint16_t *accepted_count,
+                                     uint16_t *duplicate_count);
 bool gateway_collection_contains_result(const struct gateway_collection_state *collection,
                                         const struct command_result_id *id);
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,

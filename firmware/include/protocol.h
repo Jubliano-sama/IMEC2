@@ -19,6 +19,8 @@ extern "C" {
 #define PACKET_MAX_LEN (PACKET_EXT_HEADER_LEN + PACKET_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
 #define PACKET_EXT_MAX_PAYLOAD_LEN 958u
 #define PACKET_EXT_MAX_LEN (PACKET_EXT_HEADER_LEN + PACKET_EXT_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
+#define RESULT_BUNDLE_RECORD_HEADER_LEN 32u
+#define RESULT_BUNDLE_RECORD_MAX_PAYLOAD_LEN (255u - RESULT_BUNDLE_RECORD_HEADER_LEN)
 #define UWB_CIR_SAMPLE_LEN 6u
 
 enum result {
@@ -242,6 +244,7 @@ enum tlv_type {
     TLV_RETRY_ROUND = 0x8A,
     TLV_NEXT_RETRY_SPREAD_MS = 0x8B,
     TLV_COLLECTION_OPEN = 0x8C,
+    TLV_RESULT_RECORD = 0x8D,
 };
 
 enum status_bit {
@@ -383,6 +386,13 @@ struct result_bundle_header {
     uint16_t bundle_crc;
 };
 
+struct result_bundle_record {
+    struct command_result_id result_id;
+    uint16_t payload_len;
+    uint16_t payload_crc;
+    const uint8_t *payload;
+};
+
 struct gateway_collection_eack {
     uint64_t gateway_id;
     uint16_t gateway_epoch;
@@ -465,6 +475,14 @@ int result_bundle_header_append_tlvs(uint8_t *payload,
 int result_bundle_header_from_tlvs(const uint8_t *payload,
                                    size_t payload_len,
                                    struct result_bundle_header *bundle);
+int result_bundle_record_append_tlv(uint8_t *payload,
+                                    size_t payload_cap,
+                                    size_t *offset,
+                                    const struct result_bundle_record *record);
+int result_bundle_record_next_from_tlvs(const uint8_t *payload,
+                                        size_t payload_len,
+                                        size_t *offset,
+                                        struct result_bundle_record *record);
 int gateway_collection_eack_append_tlvs(uint8_t *payload,
                                         size_t payload_cap,
                                         size_t *offset,

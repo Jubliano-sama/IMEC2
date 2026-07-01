@@ -451,9 +451,18 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
         .command_seq = 12u,
         .collection_epoch_id = 13u,
         .bundle_id = 14u,
-        .record_count = 8u,
+        .record_count = 1u,
         .bundle_crc = 0xCAFEu,
     };
+    const struct command_result_id result_id = {
+        .gateway_id = bundle.gateway_id,
+        .gateway_epoch = bundle.gateway_epoch,
+        .command_seq = bundle.command_seq,
+        .node_id = 0x2222333344445555ull,
+        .node_boot_counter = 3u,
+        .result_seq = 4u,
+    };
+    const uint8_t record_payload[] = {0x10u, 0x20u, 0x30u, 0x40u};
     const struct gateway_collection_eack eack = {
         .gateway_id = bundle.gateway_id,
         .gateway_epoch = bundle.gateway_epoch,
@@ -467,10 +476,18 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
         .next_retry_spread_ms = 30000u,
         .collection_open = true,
     };
+    const struct result_bundle_record record = {
+        .result_id = result_id,
+        .payload_len = sizeof(record_payload),
+        .payload_crc = proto_crc16_ccitt_false(record_payload, sizeof(record_payload)),
+        .payload = record_payload,
+    };
     struct result_bundle_header decoded_bundle = {0};
+    struct result_bundle_record decoded_record = {0};
     struct gateway_collection_eack decoded_eack = {0};
     uint8_t payload[160];
     size_t payload_len = 0u;
+    size_t cursor = 0u;
 
     assert(result_bundle_header_append_tlvs(payload,
                                             sizeof(payload),
@@ -486,6 +503,36 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
     assert(decoded_bundle.bundle_id == bundle.bundle_id);
     assert(decoded_bundle.record_count == bundle.record_count);
     assert(decoded_bundle.bundle_crc == bundle.bundle_crc);
+    assert(result_bundle_record_append_tlv(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           &record) == PROTO_OK);
+    assert(result_bundle_record_next_from_tlvs(payload,
+                                               payload_len,
+                                               &cursor,
+                                               &decoded_record) == PROTO_OK);
+    assert(decoded_record.result_id.gateway_id == result_id.gateway_id);
+    assert(decoded_record.result_id.gateway_epoch == result_id.gateway_epoch);
+    assert(decoded_record.result_id.command_seq == result_id.command_seq);
+    assert(decoded_record.result_id.node_id == result_id.node_id);
+    assert(decoded_record.result_id.node_boot_counter == result_id.node_boot_counter);
+    assert(decoded_record.result_id.result_seq == result_id.result_seq);
+    assert(decoded_record.payload_len == sizeof(record_payload));
+    assert(decoded_record.payload_crc == record.payload_crc);
+    assert(memcmp(decoded_record.payload,
+                  record_payload,
+                  sizeof(record_payload)) == 0);
+    assert(result_bundle_record_next_from_tlvs(payload,
+                                               payload_len,
+                                               &cursor,
+                                               &decoded_record) == PROTO_ERR_NOT_FOUND);
+
+    payload[payload_len - 1u] ^= 0x01u;
+    cursor = 0u;
+    assert(result_bundle_record_next_from_tlvs(payload,
+                                               payload_len,
+                                               &cursor,
+                                               &decoded_record) == PROTO_ERR_BAD_CRC);
 
     payload_len = 0u;
     assert(gateway_collection_eack_append_tlvs(payload,

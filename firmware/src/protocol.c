@@ -743,6 +743,111 @@ int result_bundle_header_from_tlvs(const uint8_t *payload,
     return tlv_require_u16(payload, payload_len, TLV_BUNDLE_CRC, &bundle->bundle_crc);
 }
 
+int result_bundle_record_append_tlv(uint8_t *payload,
+                                    size_t payload_cap,
+                                    size_t *offset,
+                                    const struct result_bundle_record *record)
+{
+    uint8_t *value;
+    size_t record_len;
+
+    if (payload == NULL || offset == NULL || record == NULL ||
+        (record->payload == NULL && record->payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+    if (record->payload_len > RESULT_BUNDLE_RECORD_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    record_len = RESULT_BUNDLE_RECORD_HEADER_LEN + (size_t)record->payload_len;
+    if (*offset > payload_cap || payload_cap - *offset < record_len + 2u) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    payload[*offset] = TLV_RESULT_RECORD;
+    payload[*offset + 1u] = (uint8_t)record_len;
+    value = &payload[*offset + 2u];
+    proto_put_u64_le(&value[0], record->result_id.gateway_id);
+    proto_put_u16_le(&value[8], record->result_id.gateway_epoch);
+    proto_put_u32_le(&value[10], record->result_id.command_seq);
+    proto_put_u64_le(&value[14], record->result_id.node_id);
+    proto_put_u32_le(&value[22], record->result_id.node_boot_counter);
+    proto_put_u16_le(&value[26], record->result_id.result_seq);
+    proto_put_u16_le(&value[28], record->payload_len);
+    proto_put_u16_le(&value[30], record->payload_crc);
+    if (record->payload_len > 0u) {
+        memcpy(&value[RESULT_BUNDLE_RECORD_HEADER_LEN],
+               record->payload,
+               record->payload_len);
+    }
+    *offset += record_len + 2u;
+    return PROTO_OK;
+}
+
+int result_bundle_record_next_from_tlvs(const uint8_t *payload,
+                                        size_t payload_len,
+                                        size_t *offset,
+                                        struct result_bundle_record *record)
+{
+    size_t cursor;
+    uint8_t record_len;
+    const uint8_t *value;
+
+    if (payload == NULL || offset == NULL || record == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    cursor = *offset;
+    while (cursor < payload_len) {
+        uint8_t type;
+        uint8_t len;
+
+        if (payload_len - cursor < 2u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = payload[cursor];
+        len = payload[cursor + 1u];
+        cursor += 2u;
+        if (payload_len - cursor < len) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (type != TLV_RESULT_RECORD) {
+            cursor += len;
+            continue;
+        }
+
+        record_len = len;
+        value = &payload[cursor];
+        if (record_len < RESULT_BUNDLE_RECORD_HEADER_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        memset(record, 0, sizeof(*record));
+        record->result_id.gateway_id = proto_get_u64_le(&value[0]);
+        record->result_id.gateway_epoch = proto_get_u16_le(&value[8]);
+        record->result_id.command_seq = proto_get_u32_le(&value[10]);
+        record->result_id.node_id = proto_get_u64_le(&value[14]);
+        record->result_id.node_boot_counter = proto_get_u32_le(&value[22]);
+        record->result_id.result_seq = proto_get_u16_le(&value[26]);
+        record->payload_len = proto_get_u16_le(&value[28]);
+        record->payload_crc = proto_get_u16_le(&value[30]);
+        if (record->payload_len != record_len - RESULT_BUNDLE_RECORD_HEADER_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+        record->payload = &value[RESULT_BUNDLE_RECORD_HEADER_LEN];
+        if (proto_crc16_ccitt_false(record->payload, record->payload_len) !=
+            record->payload_crc) {
+            return PROTO_ERR_BAD_CRC;
+        }
+
+        *offset = cursor + record_len;
+        return PROTO_OK;
+    }
+
+    *offset = cursor;
+    return PROTO_ERR_NOT_FOUND;
+}
+
 int gateway_collection_eack_append_tlvs(uint8_t *payload,
                                         size_t payload_cap,
                                         size_t *offset,

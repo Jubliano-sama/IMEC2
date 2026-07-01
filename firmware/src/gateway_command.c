@@ -609,6 +609,38 @@ static bool command_result_id_equal(const struct command_result_id *a,
            a->result_seq == b->result_seq;
 }
 
+static int result_bundle_first_record_offset(const uint8_t *payload,
+                                             size_t payload_len,
+                                             size_t *record_offset)
+{
+    size_t offset = 0u;
+
+    if (payload == NULL || record_offset == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    while (offset < payload_len) {
+        uint8_t type;
+        uint8_t len;
+
+        if (payload_len - offset < 2u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = payload[offset];
+        len = payload[offset + 1u];
+        if (payload_len - offset - 2u < len) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (type == TLV_RESULT_RECORD) {
+            *record_offset = offset;
+            return PROTO_OK;
+        }
+        offset += (size_t)len + 2u;
+    }
+
+    return PROTO_ERR_NOT_FOUND;
+}
+
 static void gateway_collection_refresh_open(struct gateway_collection_state *collection)
 {
     if (collection->expected_count != 0u &&
@@ -736,6 +768,118 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
     }
     gateway_collection_refresh_open(collection);
     return PROTO_OK;
+}
+
+int gateway_collection_record_bundle(struct gateway_collection_state *collection,
+                                     const struct proto_packet *bundle_packet,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     uint16_t *accepted_count,
+                                     uint16_t *duplicate_count)
+{
+    struct result_bundle_header bundle;
+    size_t cursor = 0u;
+    uint8_t parsed_count = 0u;
+    int ret;
+
+    if (accepted_count != NULL) {
+        *accepted_count = 0u;
+    }
+    if (duplicate_count != NULL) {
+        *duplicate_count = 0u;
+    }
+
+    if (collection == NULL || bundle_packet == NULL ||
+        (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+    if (bundle_packet->msg_type != MSG_RESULT_BUNDLE ||
+        bundle_packet->dst_id != collection->gateway_id ||
+        bundle_packet->payload_len != payload_len) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = result_bundle_header_from_tlvs(payload, payload_len, &bundle);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (bundle.gateway_id != collection->gateway_id ||
+        bundle.gateway_epoch != collection->gateway_epoch ||
+        bundle.command_seq != collection->command_seq ||
+        bundle.collection_epoch_id != collection->collection_epoch_id ||
+        bundle.record_count == 0u ||
+        bundle.record_count > COLLECTION_BUNDLE_MAX_RECORDS ||
+        bundle_packet->session_id != bundle.command_seq) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = result_bundle_first_record_offset(payload, payload_len, &cursor);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (proto_crc16_ccitt_false(&payload[cursor], payload_len - cursor) !=
+        bundle.bundle_crc) {
+        return PROTO_ERR_BAD_CRC;
+    }
+
+    while (cursor < payload_len) {
+        struct result_bundle_record record;
+        struct command_result_id payload_id;
+        struct proto_packet result = {0};
+        bool duplicate = false;
+        size_t before = cursor;
+
+        if (payload[cursor] != TLV_RESULT_RECORD) {
+            return PROTO_ERR_MALFORMED;
+        }
+        ret = result_bundle_record_next_from_tlvs(payload,
+                                                  payload_len,
+                                                  &cursor,
+                                                  &record);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (cursor == before || parsed_count >= bundle.record_count) {
+            return PROTO_ERR_MALFORMED;
+        }
+        parsed_count++;
+
+        if (record.result_id.gateway_id != bundle.gateway_id ||
+            record.result_id.gateway_epoch != bundle.gateway_epoch ||
+            record.result_id.command_seq != bundle.command_seq ||
+            record.result_id.node_id == 0u ||
+            command_result_id_from_tlvs(record.payload,
+                                        record.payload_len,
+                                        &payload_id) != PROTO_OK ||
+            !command_result_id_equal(&record.result_id, &payload_id)) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        result.msg_type = MSG_COMMAND_RESULT;
+        result.src_id = record.result_id.node_id;
+        result.dst_id = collection->gateway_id;
+        result.session_id = record.result_id.command_seq;
+        result.seq = record.result_id.result_seq;
+        result.ttl = 1u;
+        result.payload_len = record.payload_len;
+        ret = gateway_collection_record_result(collection,
+                                               &result,
+                                               record.payload,
+                                               record.payload_len,
+                                               &duplicate);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (duplicate) {
+            if (duplicate_count != NULL && *duplicate_count < UINT16_MAX) {
+                (*duplicate_count)++;
+            }
+        } else if (accepted_count != NULL && *accepted_count < UINT16_MAX) {
+            (*accepted_count)++;
+        }
+    }
+
+    return parsed_count == bundle.record_count ? PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,
