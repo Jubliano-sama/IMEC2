@@ -26,6 +26,7 @@
   - Gateway app now sends a startup advertisement after gateway RX starts and a low-rate maintenance advertisement, deferring while channel-9 connections are active.
   - Equivalent advertisement suppression now treats repeated `MSG_GATEWAY_ROUTE_ADV` packets with the same gateway route sequence/session as the same flood even if packet sequence differs; a newer gateway route sequence still forwards.
   - Gateway app now schedules an immediate advertisement after `CMD_FORCE_REDISCOVERY` succeeds or times out.
+  - Gateway app-level advertisements now defer while a mesh-route-test channel-5 route/contact preemption is active and already defer while channel-9 connections are active, preserving required channel-5 gap scans.
   - Remaining gap: profile-change-triggered advertisements are not wired yet.
   - Implement `gateway_route_adv` exactly as specified in `Documentation/MeshSpec.md` section 7.
   - Message fields: `gateway_id`, `gateway_epoch`, `gateway_route_seq`, `hop_count`, `path_quality_min`, `route_cost`, `gateway_capacity_state`, `flood_profile_version`, `flood_epoch_id`, and `slot_seed`.
@@ -40,7 +41,7 @@
     - [x] missing advertisements do not delete usable routes;
     - [x] equivalent advertisement suppression beyond exact duplicate identity;
     - [x] force rediscovery triggers a gateway route advertisement;
-    - active click service and required quick channel-5 wake scans preempt advertisement work.
+    - [x] active channel-5 route/contact work and required quick channel-5 wake scans preempt app-level gateway advertisement TX.
 - [x] Add relay capacity and explicit busy responses.
   - Route selection now stores and uses relay capacity hints as parent-candidate tie-breakers.
   - Added `MSG_RELAY_BUSY` and `MSG_RESULT_BUSY` with requested session/sequence, retry-after, capacity state, and optional alternate-parent TLVs.

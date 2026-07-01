@@ -1576,7 +1576,22 @@ static void gateway_route_adv_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
     }
+    if (mesh_gateway_route_test_preempt_active(now_ms)) {
+        uint32_t delay_ms = mesh_gateway_route_test_preempt_window_ms(now_ms) +
+                            MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS;
+
+        high_debug_log_event("GATEWAY_ROUTE_ADV",
+                             "phase=defer-c5-preempt delay_ms=%u",
+                             delay_ms);
+        status_debug_printf("DBG_GATEWAY_ROUTE_ADV_DEFER_C5 delay=%u\n",
+                            delay_ms);
+        gateway_route_adv_schedule(delay_ms);
+        return;
+    }
     if (mesh_channel9_connection_count() > 0u) {
+        high_debug_log_event("GATEWAY_ROUTE_ADV",
+                             "phase=defer-ch9-active active=%u",
+                             mesh_channel9_connection_count());
         gateway_route_adv_schedule(MESH_GATEWAY_ROUTE_ADV_DEFER_MS);
         return;
     }
