@@ -711,10 +711,82 @@ static int ack_payload_contains_seq(const uint8_t *payload,
     return PROTO_OK;
 }
 
-static void outbound_from_pending(const struct mesh_pending_tx *pending,
-                                  uint32_t now_ms,
-                                  struct mesh_outbound *out)
+static bool command_result_id_matches(const struct command_result_id *a,
+                                      const struct command_result_id *b)
 {
+    return a != NULL && b != NULL &&
+           a->gateway_id == b->gateway_id &&
+           a->gateway_epoch == b->gateway_epoch &&
+           a->command_seq == b->command_seq &&
+           a->node_id == b->node_id &&
+           a->node_boot_counter == b->node_boot_counter &&
+           a->result_seq == b->result_seq;
+}
+
+static int build_result_offer_from_pending(const struct mesh_relay *relay,
+                                           const struct mesh_pending_tx *pending,
+                                           uint32_t now_ms,
+                                           struct mesh_outbound *out)
+{
+    struct result_offer offer;
+    size_t payload_len = 0u;
+    int ret;
+
+    if (relay == NULL || pending == NULL || out == NULL ||
+        pending->packet.msg_type != MSG_COMMAND_RESULT ||
+        pending->payload_len == 0u ||
+        pending->payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
+        !id_is_unicast(pending->next_hop_id)) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(&offer, 0, sizeof(offer));
+    ret = command_result_id_from_tlvs(pending->payload, pending->payload_len, &offer.result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (offer.result_id.gateway_id != relay->gateway_id ||
+        offer.result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        offer.result_id.node_id != pending->packet.src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    offer.result_len = pending->payload_len;
+    offer.result_crc = proto_crc16_ccitt_false(pending->payload, pending->payload_len);
+    offer.priority = 0u;
+
+    memset(out, 0, sizeof(*out));
+    ret = result_offer_append_tlvs(out->payload, sizeof(out->payload), &payload_len, &offer);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_RESULT_OFFER;
+    out->packet.flags = 0u;
+    out->packet.src_id = relay->local_id;
+    out->packet.dst_id = pending->next_hop_id;
+    out->packet.session_id = pending->packet.session_id;
+    out->packet.seq = pending->packet.seq;
+    out->packet.ttl = 1u;
+    out->packet.message_age_ms = packet_age_add(pending->packet.message_age_ms,
+                                                now_ms - pending->queued_at_ms);
+    out->packet.payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)payload_len;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->next_hop_id = pending->next_hop_id;
+    out->queued_at_ms = now_ms;
+    return PROTO_OK;
+}
+
+static int outbound_from_pending(const struct mesh_relay *relay,
+                                 const struct mesh_pending_tx *pending,
+                                 uint32_t now_ms,
+                                 struct mesh_outbound *out)
+{
+    if (pending->result_offer_active) {
+        return build_result_offer_from_pending(relay, pending, now_ms, out);
+    }
+
     out->packet = pending->packet;
     out->packet.message_age_ms = packet_age_add(pending->packet.message_age_ms,
                                                 now_ms - pending->queued_at_ms);
@@ -725,6 +797,7 @@ static void outbound_from_pending(const struct mesh_pending_tx *pending,
     out->radio_channel = pending->radio_channel;
     out->next_hop_id = pending->next_hop_id;
     out->queued_at_ms = now_ms;
+    return PROTO_OK;
 }
 
 static void pending_refresh_age(struct mesh_pending_tx *pending, uint32_t now_ms)
@@ -1089,6 +1162,19 @@ static int build_result_offer_busy_response(struct mesh_relay *relay,
     busy.capacity_state = relay_current_capacity_state(relay);
     busy.capacity_validity_interval_ms = busy.retry_after_ms;
 
+    ret = tlv_append_u32(out->payload,
+                         sizeof(out->payload),
+                         &payload_len,
+                         TLV_REQUESTED_MSG_SESSION_ID,
+                         packet->session_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_requested_seq(out->payload, sizeof(out->payload), &payload_len, packet->seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
     alternate = route_selected(&relay->upstream);
     if (alternate != NULL &&
         alternate->next_hop_id != previous_hop_id &&
@@ -1219,6 +1305,68 @@ static int handle_result_offer(struct mesh_relay *relay,
         result->actions |= MESH_RELAY_ACTION_SEND_RESULT_GRANT;
     }
     return ret;
+}
+
+static int handle_result_grant(struct mesh_relay *relay,
+                               const struct proto_packet *packet,
+                               const uint8_t *payload,
+                               size_t payload_len,
+                               uint64_t previous_hop_id,
+                               uint32_t now_ms,
+                               struct mesh_relay_result *result)
+{
+    struct result_grant grant;
+    struct command_result_id pending_id;
+    int ret;
+
+    if (packet->dst_id != relay->local_id || packet->msg_type != MSG_RESULT_GRANT) {
+        return PROTO_OK;
+    }
+    if (!id_is_unicast(previous_hop_id) ||
+        previous_hop_id != packet->src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (relay->pending.state != MESH_RELAY_TX_WAIT_RESULT_GRANT ||
+        !relay->pending.result_offer_active ||
+        relay->pending.next_hop_id != previous_hop_id) {
+        return PROTO_OK;
+    }
+
+    ret = result_grant_from_tlvs(payload, payload_len, &grant);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = command_result_id_from_tlvs(relay->pending.payload,
+                                      relay->pending.payload_len,
+                                      &pending_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!command_result_id_matches(&grant.result_id, &pending_id) ||
+        grant.granted_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        grant.max_bytes == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (relay->pending.payload_len > grant.max_bytes) {
+        pending_refresh_age(&relay->pending, now_ms);
+        relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+        relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
+        result->status = PROTO_ERR_NO_SPACE;
+        return PROTO_OK;
+    }
+
+    pending_refresh_age(&relay->pending, now_ms);
+    relay->pending.result_offer_active = false;
+    relay->pending.radio_channel = grant.granted_channel;
+    relay->pending.next_hop_id = previous_hop_id;
+    relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
+    pending_set_deadlines(&relay->pending, now_ms);
+    ret = outbound_from_pending(relay, &relay->pending, now_ms, &result->retransmit);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    result->actions |= MESH_RELAY_ACTION_RETRANSMIT;
+    return PROTO_OK;
 }
 
 static int handle_local_busy(struct mesh_relay *relay,
@@ -3185,8 +3333,65 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
     relay->pending.next_hop_id = next_hop_id;
     relay->pending.queued_at_ms = now_ms;
     pending_set_deadlines(&relay->pending, now_ms);
-    outbound_from_pending(&relay->pending, now_ms, out);
-    return PROTO_OK;
+    return outbound_from_pending(relay, &relay->pending, now_ms, out);
+}
+
+int mesh_relay_start_result_offer(struct mesh_relay *relay,
+                                  const struct proto_packet *packet,
+                                  const uint8_t *payload,
+                                  size_t payload_len,
+                                  uint32_t now_ms,
+                                  struct mesh_outbound *out)
+{
+    struct command_result_id result_id;
+    uint64_t next_hop_id = 0u;
+    int ret;
+
+    if (relay == NULL || packet == NULL || out == NULL ||
+        (payload_len > 0u && payload == NULL) ||
+        packet->msg_type != MSG_COMMAND_RESULT ||
+        payload_len <= COLLECTION_RESULT_INLINE_C5_MAX_BYTES ||
+        payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
+        packet->payload_len != payload_len ||
+        packet->session_id == 0u ||
+        packet->seq == 0u ||
+        packet->ttl == 0u ||
+        !id_is_unicast(packet->src_id) ||
+        !id_is_unicast(packet->dst_id) ||
+        packet->dst_id != relay->gateway_id) {
+        return PROTO_ERR_ARG;
+    }
+    if (mesh_relay_tx_active(relay)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = command_result_id_from_tlvs(payload, payload_len, &result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (result_id.gateway_id != relay->gateway_id ||
+        result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        result_id.node_id != packet->src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    (void)mesh_relay_expire_routes(relay, now_ms);
+    ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(&relay->pending, 0, sizeof(relay->pending));
+    relay->pending.state = MESH_RELAY_TX_WAIT_RESULT_GRANT;
+    relay->pending.packet = *packet;
+    memcpy(relay->pending.payload, payload, payload_len);
+    relay->pending.payload_len = (uint16_t)payload_len;
+    relay->pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    relay->pending.next_hop_id = next_hop_id;
+    relay->pending.queued_at_ms = now_ms;
+    relay->pending.gateway_ack_deadline_ms = now_ms + RREP_ACK_TIMEOUT_MS;
+    relay->pending.result_offer_active = true;
+    return outbound_from_pending(relay, &relay->pending, now_ms, out);
 }
 
 int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
@@ -3356,6 +3561,7 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
     uint8_t failure_count;
     uint64_t next_hop_id = 0u;
     uint32_t delay_ms;
+    int ret;
 
     if (relay == NULL || result == NULL) {
         return PROTO_ERR_ARG;
@@ -3371,12 +3577,29 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
         if (!deadline_reached(now_ms, relay->pending.retry_after_ms)) {
             return PROTO_OK;
         }
-        outbound_from_pending(&relay->pending, now_ms, &result->retransmit);
+        ret = outbound_from_pending(relay, &relay->pending, now_ms, &result->retransmit);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            return ret;
+        }
         relay->pending.packet.message_age_ms = result->retransmit.packet.message_age_ms;
         relay->pending.queued_at_ms = now_ms;
-        relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
-        pending_set_deadlines(&relay->pending, now_ms);
+        if (relay->pending.result_offer_active) {
+            relay->pending.state = MESH_RELAY_TX_WAIT_RESULT_GRANT;
+            relay->pending.gateway_ack_deadline_ms = now_ms + RREP_ACK_TIMEOUT_MS;
+        } else {
+            relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
+            pending_set_deadlines(&relay->pending, now_ms);
+        }
         result->actions |= MESH_RELAY_ACTION_RETRANSMIT;
+        return PROTO_OK;
+    }
+
+    if (relay->pending.state == MESH_RELAY_TX_WAIT_RESULT_GRANT &&
+        deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
+        pending_refresh_age(&relay->pending, now_ms);
+        relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+        relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
         return PROTO_OK;
     }
 
@@ -3482,6 +3705,21 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                                   payload,
                                   payload_len,
                                   previous_hop_id,
+                                  result);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+        }
+        return PROTO_OK;
+    }
+
+    if (packet->msg_type == MSG_RESULT_GRANT && packet->dst_id == relay->local_id) {
+        ret = handle_result_grant(relay,
+                                  packet,
+                                  payload,
+                                  payload_len,
+                                  previous_hop_id,
+                                  now_ms,
                                   result);
         if (ret != PROTO_OK) {
             result->status = ret;

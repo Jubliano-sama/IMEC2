@@ -4153,6 +4153,16 @@ static bool mesh_packet_prefers_channel9(const struct proto_packet *packet)
     }
 }
 
+static bool mesh_outbound_needs_result_offer(const struct mesh_outbound *out)
+{
+    struct command_result_id result_id;
+
+    return out != NULL &&
+           out->packet.msg_type == MSG_COMMAND_RESULT &&
+           out->payload_len > COLLECTION_RESULT_INLINE_C5_MAX_BYTES &&
+           command_result_id_from_tlvs(out->payload, out->payload_len, &result_id) == PROTO_OK;
+}
+
 static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements)
 {
     uint32_t now_ms;
@@ -4861,6 +4871,35 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
     aged_out = *out;
     now_ms = k_uptime_get_32();
     mesh_outbound_refresh_age(&aged_out, now_ms);
+
+    if (mesh_outbound_needs_result_offer(&aged_out)) {
+        ret = mesh_relay_start_result_offer(&mesh_runtime,
+                                            &aged_out.packet,
+                                            aged_out.payload,
+                                            aged_out.payload_len,
+                                            now_ms,
+                                            &tx);
+        if (ret == PROTO_OK) {
+            mesh_c5_contact_exchange(tx.next_hop_id,
+                                     C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+                                     now_ms + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
+                                     "result-offer");
+            goto send_prepared;
+        }
+        if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
+            int route_ret;
+
+            mesh_store_route_waiting_tx(&aged_out);
+            route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
+            if (route_ret == -ETIMEDOUT) {
+                mesh_drop_route_waiting_tx("result-offer-route-exhausted");
+                return route_ret;
+            }
+            return -EHOSTUNREACH;
+        }
+        LOG_WRN("mesh result offer rejected for %s: ret=%d", reason, ret);
+        return mesh_errno_from_proto(ret);
+    }
 
     if (mesh_packet_prefers_channel9(&aged_out.packet)) {
         uint64_t debug_next_hop = 0u;

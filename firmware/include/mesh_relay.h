@@ -187,6 +187,7 @@ enum mesh_relay_tx_state {
     MESH_RELAY_TX_IDLE = 0,
     MESH_RELAY_TX_WAIT_GATEWAY_ACK = 1,
     MESH_RELAY_TX_WAIT_RETRY_BACKOFF = 2,
+    MESH_RELAY_TX_WAIT_RESULT_GRANT = 3,
 };
 
 struct mesh_outbound {
@@ -260,6 +261,7 @@ struct mesh_pending_tx {
     uint32_t gateway_ack_deadline_ms;
     uint32_t retry_after_ms;
     uint32_t queued_at_ms;
+    bool result_offer_active;
 };
 
 struct mesh_route_discovery_state {
@@ -367,6 +369,12 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
                         size_t payload_len,
                         uint32_t now_ms,
                         struct mesh_outbound *out);
+int mesh_relay_start_result_offer(struct mesh_relay *relay,
+                                  const struct proto_packet *packet,
+                                  const uint8_t *payload,
+                                  size_t payload_len,
+                                  uint32_t now_ms,
+                                  struct mesh_outbound *out);
 int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
                                  const struct proto_packet *packet,
                                  const uint8_t *payload,
