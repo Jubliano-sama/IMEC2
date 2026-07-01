@@ -2122,6 +2122,8 @@ static void test_reactive_gateway_route_request_and_reply(void)
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 1u);
     mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 1u);
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&gateway, ANCHOR_A, ANCHOR_C, 1u, 4u, 50u, 1005u);
+    seed_downlink(&relay, ANCHOR_A, ANCHOR_C, 1u, 4u, 50u, 1005u);
 
     assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 500u, 1u, sizeof(payload)) == PROTO_OK);
     assert(mesh_relay_start_tx(&anchor, &report, payload, sizeof(payload), 1000u, &report_tx) ==
@@ -2154,6 +2156,8 @@ static void test_reactive_gateway_route_request_and_reply(void)
     assert(gateway_result.status == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
     assert(gateway_result.route_reply.next_hop_id == ANCHOR_B);
+    assert(gateway_result.route_reply_backup_valid);
+    assert(gateway_result.route_reply_backup_next_hop_id == ANCHOR_C);
     gateway_reply_flood_epoch = require_tlv_u32(gateway_result.route_reply.payload,
                                                 gateway_result.route_reply.payload_len,
                                                 TLV_FLOOD_EPOCH_ID);
@@ -2199,6 +2203,8 @@ static void test_reactive_gateway_route_request_and_reply(void)
                            TLV_METRIC_CRC) == gateway_reply_metric_crc);
     assert(has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
     assert(relay_result.route_reply.next_hop_id == ANCHOR_A);
+    assert(relay_result.route_reply_backup_valid);
+    assert(relay_result.route_reply_backup_next_hop_id == ANCHOR_C);
     relay_reply_flood_epoch = require_tlv_u32(relay_result.route_reply.payload,
                                               relay_result.route_reply.payload_len,
                                               TLV_FLOOD_EPOCH_ID);

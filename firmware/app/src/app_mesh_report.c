@@ -2447,7 +2447,7 @@ static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
     return sent_count > 0u ? 0 : last_ret;
 }
 
-static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
+static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_reply)
 {
     int last_ret = -EINVAL;
 
@@ -2474,6 +2474,51 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
                          (unsigned int)(RREP_RETRY_COUNT_PER_HOP + 1u),
                          last_ret);
     return last_ret;
+}
+
+static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
+                                       bool backup_valid,
+                                       uint64_t backup_next_hop_id,
+                                       uint64_t *acked_next_hop_id)
+{
+    struct mesh_outbound backup_route_reply;
+    int ret;
+
+    if (acked_next_hop_id != NULL) {
+        *acked_next_hop_id = 0u;
+    }
+    if (route_reply == NULL) {
+        return -EINVAL;
+    }
+
+    ret = mesh_send_route_reply_train_to_hop(route_reply);
+    if (ret == 0) {
+        if (acked_next_hop_id != NULL) {
+            *acked_next_hop_id = route_reply->next_hop_id;
+        }
+        return 0;
+    }
+
+    if (!backup_valid ||
+        !mesh_id_is_unicast(backup_next_hop_id) ||
+        backup_next_hop_id == route_reply->next_hop_id) {
+        return ret;
+    }
+
+    backup_route_reply = *route_reply;
+    backup_route_reply.next_hop_id = backup_next_hop_id;
+    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                         "phase=backup primary=0x%016llx backup=0x%016llx seq=%u primary_ret=%d",
+                         (unsigned long long)route_reply->next_hop_id,
+                         (unsigned long long)backup_next_hop_id,
+                         route_reply->packet.seq,
+                         ret);
+
+    ret = mesh_send_route_reply_train_to_hop(&backup_route_reply);
+    if (ret == 0 && acked_next_hop_id != NULL) {
+        *acked_next_hop_id = backup_route_reply.next_hop_id;
+    }
+    return ret;
 }
 
 static bool mesh_payload_find_u32(const uint8_t *payload,
@@ -5248,14 +5293,19 @@ after_gateway_ack:
         }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
+        uint64_t route_reply_acked_next_hop = 0u;
+
         mesh_route_embedded_wait_before_reply(&result->route_reply);
-        if (mesh_send_route_reply_train(&result->route_reply) == 0 &&
-            mesh_id_is_unicast(result->route_reply.next_hop_id)) {
+        if (mesh_send_route_reply_train(&result->route_reply,
+                                        result->route_reply_backup_valid,
+                                        result->route_reply_backup_next_hop_id,
+                                        &route_reply_acked_next_hop) == 0 &&
+            mesh_id_is_unicast(route_reply_acked_next_hop)) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 LOG_INF("mesh route reply sent; waiting for route origin to propose channel-9 event: next=0x%016llx",
-                        (unsigned long long)result->route_reply.next_hop_id);
+                        (unsigned long long)route_reply_acked_next_hop);
             } else {
-                (void)mesh_propose_event_after_channel5_contact(result->route_reply.next_hop_id,
+                (void)mesh_propose_event_after_channel5_contact(route_reply_acked_next_hop,
                                                                 "route-reply-event-propose");
             }
         }

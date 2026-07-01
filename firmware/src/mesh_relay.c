@@ -430,6 +430,27 @@ static int downlink_index(const struct mesh_relay *relay, uint64_t target_id)
     return selected_index;
 }
 
+static const struct mesh_downlink_entry *downlink_backup_for(const struct mesh_relay *relay,
+                                                             uint64_t target_id,
+                                                             uint64_t primary_next_hop)
+{
+    const struct mesh_downlink_entry *selected = NULL;
+
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (!entry->valid ||
+            entry->target_id != target_id ||
+            entry->next_hop_id == primary_next_hop) {
+            continue;
+        }
+        if (downlink_is_better(entry, selected)) {
+            selected = entry;
+        }
+    }
+    return selected;
+}
+
 static int downlink_exact_index(const struct mesh_relay *relay,
                                 uint64_t target_id,
                                 uint64_t gateway_id,
@@ -1147,6 +1168,29 @@ static void add_hop_ack_action(struct mesh_relay *relay,
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_HOP_ACK;
     }
+}
+
+static void add_route_reply_backup(struct mesh_relay *relay,
+                                   uint64_t origin_id,
+                                   uint64_t primary_next_hop,
+                                   struct mesh_relay_result *result)
+{
+    const struct mesh_downlink_entry *backup;
+
+    if (relay == NULL ||
+        result == NULL ||
+        !id_is_unicast(origin_id) ||
+        !id_is_unicast(primary_next_hop)) {
+        return;
+    }
+
+    backup = downlink_backup_for(relay, origin_id, primary_next_hop);
+    if (backup == NULL || !id_is_unicast(backup->next_hop_id)) {
+        return;
+    }
+
+    result->route_reply_backup_next_hop_id = backup->next_hop_id;
+    result->route_reply_backup_valid = true;
 }
 
 static int upsert_reactive_route(struct mesh_relay *relay,
@@ -1894,6 +1938,7 @@ static int handle_route_request(struct mesh_relay *relay,
                                 reply_epoch,
                                 &result->route_reply);
         if (ret == PROTO_OK) {
+            add_route_reply_backup(relay, fields.origin_id, previous_hop_id, result);
             result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
         }
         if (fields.target_id == relay->local_id) {
@@ -1986,6 +2031,10 @@ static int handle_route_reply(struct mesh_relay *relay,
                                     link_quality,
                                     &result->route_reply);
     if (ret == PROTO_OK) {
+        add_route_reply_backup(relay,
+                               packet->dst_id,
+                               result->route_reply.next_hop_id,
+                               result);
         result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
     }
     return ret;

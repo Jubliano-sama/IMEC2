@@ -248,10 +248,12 @@ struct mesh_relay_result {
     struct mesh_outbound route_reply_ack;
     struct mesh_outbound gateway_route_adv;
     struct mesh_outbound retransmit;
+    uint64_t route_reply_backup_next_hop_id;
     union {
         struct mesh_outbound hop_ack;
         struct mesh_outbound busy;
     };
+    bool route_reply_backup_valid;
 };
 
 void mesh_relay_init(struct mesh_relay *relay,
