@@ -110,6 +110,26 @@ config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     default 1000
     range 100 60000
 
+config IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT
+    int "Synthetic mesh-test packets queued per interval"
+    depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    default 1
+    range 1 8
+    help
+      Number of synthetic MSG_MESH_DATA packets queued together by the
+      mesh-route transmitter. Values above one intentionally exercise the
+      channel-9 batch sender and one-ACK-for-many-packets path.
+
+config IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES
+    int "Synthetic mesh-test target payload size"
+    depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    default 0
+    range 0 958
+    help
+      Target TLV payload length for synthetic MSG_MESH_DATA packets. Values
+      above the metadata payload size are filled with TLV_MESH_TEST_PADDING
+      bytes to force large channel-9 frames and sustained queue backlog.
+
 config IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS
     int "Mesh-test channel-5 anchor scan idle interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST

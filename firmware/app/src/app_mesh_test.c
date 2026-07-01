@@ -27,6 +27,19 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
 #define CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS 1000
 #endif
 
+#ifndef CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT
+#define CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT 1
+#endif
+
+#ifndef CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES
+#define CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES 0
+#endif
+
+BUILD_ASSERT(CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT <= REPORT_TX_QUEUE_DEPTH,
+             "mesh-test TX burst must fit in the report TX queue");
+BUILD_ASSERT(CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES <= UWB_MESH_MAX_PAYLOAD_LEN,
+             "mesh-test payload must fit in the mesh payload buffer");
+
 K_THREAD_STACK_DEFINE(mesh_test_thread_stack, MESH_TEST_WORKQUEUE_STACK_SIZE);
 static struct k_thread mesh_test_thread;
 static bool mesh_test_thread_started;
@@ -36,6 +49,7 @@ static uint16_t mesh_test_seq;
 static uint32_t mesh_test_drop_count;
 static bool mesh_test_continuous_ch5_active;
 static uint8_t mesh_test_wait_log_ticks;
+static const uint8_t mesh_test_padding[UINT8_MAX];
 
 static uint16_t mesh_test_next_seq(void)
 {
@@ -60,6 +74,14 @@ static uint16_t mesh_test_next_attempt(void)
 static void mesh_test_reset_attempts(void)
 {
     mesh_test_attempt = 0u;
+}
+
+static void mesh_test_advance_packet_id(void)
+{
+    mesh_test_next_packet_id++;
+    if (mesh_test_next_packet_id == 0u) {
+        mesh_test_next_packet_id = 1u;
+    }
 }
 
 static int mesh_test_append_payload(uint8_t *payload,
@@ -123,8 +145,27 @@ static int mesh_test_append_payload(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return tlv_append_u8(payload, payload_cap, payload_len,
-                         TLV_MESH_CHANNEL, UWB_CHANNEL_MESH_PAYLOAD);
+    ret = tlv_append_u8(payload, payload_cap, payload_len,
+                        TLV_MESH_CHANNEL, UWB_CHANNEL_MESH_PAYLOAD);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    while (*payload_len + 2u < CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES) {
+        size_t remaining = CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES - *payload_len;
+        uint8_t chunk_len = (uint8_t)MIN(remaining - 2u, sizeof(mesh_test_padding));
+
+        ret = tlv_append_bytes(payload,
+                               payload_cap,
+                               payload_len,
+                               TLV_MESH_TEST_PADDING,
+                               mesh_test_padding,
+                               chunk_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    return PROTO_OK;
 }
 
 static int mesh_test_build_packet(struct mesh_outbound *outbound,
@@ -155,8 +196,8 @@ static int mesh_test_build_packet(struct mesh_outbound *outbound,
     outbound->packet.session_id = nonzero_uptime_session_id();
     outbound->packet.seq = mesh_test_next_seq();
     outbound->packet.ttl = MESH_DEFAULT_TTL;
-    outbound->packet.payload_len = (uint8_t)payload_len;
-    outbound->payload_len = (uint8_t)payload_len;
+    outbound->packet.payload_len = (uint16_t)payload_len;
+    outbound->payload_len = (uint16_t)payload_len;
     return 0;
 }
 
@@ -167,8 +208,10 @@ static uint32_t mesh_test_tx_once(void)
     uint16_t attempt;
     bool relay_tx_active;
     bool route_waiting_active;
-    bool report_backlog_active;
     bool ack_wait_active;
+    uint32_t queue_used;
+    uint32_t queue_headroom;
+    uint8_t burst_target;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR ||
@@ -177,10 +220,13 @@ static uint32_t mesh_test_tx_once(void)
     }
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
     route_waiting_active = mesh_route_waiting_tx_active();
-    report_backlog_active = mesh_report_tx_backlog_active();
     ack_wait_active = mesh_report_ch9_ack_wait_active();
-    if (relay_tx_active || route_waiting_active || report_backlog_active ||
-        ack_wait_active) {
+    queue_used = report_tx_queue_used();
+    queue_headroom = queue_used >= REPORT_TX_QUEUE_DEPTH ?
+                     0u :
+                     REPORT_TX_QUEUE_DEPTH - queue_used;
+    if (relay_tx_active || route_waiting_active || ack_wait_active ||
+        queue_headroom == 0u) {
         status_debug_note("DBG_MESH_TEST_WAIT\n");
         if (relay_tx_active) {
             status_debug_note("DBG_MESH_TEST_WAIT_RELAY\n");
@@ -188,22 +234,22 @@ static uint32_t mesh_test_tx_once(void)
         if (route_waiting_active) {
             status_debug_note("DBG_MESH_TEST_WAIT_ROUTE\n");
         }
-        if (report_backlog_active) {
+        if (queue_headroom == 0u) {
             status_debug_note("DBG_MESH_TEST_WAIT_BACKLOG\n");
         }
         if (ack_wait_active) {
             status_debug_note("DBG_MESH_TEST_WAIT_ACK\n");
         }
-        if (report_tx_queue_used() > 0u) {
+        if (queue_used > 0u) {
             status_debug_note("DBG_MESH_TEST_QUEUE_WAIT\n");
         }
         if (mesh_test_wait_log_ticks == 0u || mesh_test_wait_log_ticks >= 10u) {
-            status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=%u route=%u backlog=%u ack=%u q=%u id=%u att=%u\n",
+            status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=%u route=%u headroom=%u ack=%u q=%u id=%u att=%u\n",
                                 relay_tx_active ? 1u : 0u,
                                 route_waiting_active ? 1u : 0u,
-                                report_backlog_active ? 1u : 0u,
+                                queue_headroom,
                                 ack_wait_active ? 1u : 0u,
-                                report_tx_queue_used(),
+                                queue_used,
                                 mesh_test_next_packet_id,
                                 mesh_test_attempt);
             mesh_test_wait_log_ticks = 1u;
@@ -213,43 +259,51 @@ static uint32_t mesh_test_tx_once(void)
         return 100u;
     }
     mesh_test_wait_log_ticks = 0u;
+    burst_target = (uint8_t)MIN((uint32_t)CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT,
+                               queue_headroom);
 
-    packet_id = mesh_test_next_packet_id;
-    attempt = mesh_test_next_attempt();
-    ret = mesh_test_build_packet(&outbound, packet_id, attempt);
-    if (ret < 0) {
-        mesh_test_drop_count++;
-        LOG_WRN("mesh-test packet build failed: id=%u attempt=%u ret=%d drops=%u",
-                packet_id, attempt, ret, mesh_test_drop_count);
-        return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
-    }
-
-    ret = queue_anchor_report(&outbound);
-    status_debug_note(ret == 0 ? "DBG_MESH_TEST_SEND_OK\n" :
-                      "DBG_MESH_TEST_SEND_FAIL\n");
-    if (ret == 0) {
-        mesh_test_next_packet_id++;
-        if (mesh_test_next_packet_id == 0u) {
-            mesh_test_next_packet_id = 1u;
+    for (uint8_t queued_count = 0u;
+         queued_count < burst_target;
+         queued_count++) {
+        packet_id = mesh_test_next_packet_id;
+        attempt = mesh_test_next_attempt();
+        ret = mesh_test_build_packet(&outbound, packet_id, attempt);
+        if (ret < 0) {
+            mesh_test_drop_count++;
+            LOG_WRN("mesh-test packet build failed: id=%u attempt=%u ret=%d drops=%u",
+                    packet_id, attempt, ret, mesh_test_drop_count);
+            return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
         }
-        mesh_test_reset_attempts();
-        status_debug_printf("DBG_MESH_TEST_QUEUED id=%u att=%u q=%u\n",
-                            packet_id,
-                            attempt,
-                            report_tx_queue_used());
-        return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
+
+        ret = queue_anchor_report(&outbound);
+        status_debug_note(ret == 0 ? "DBG_MESH_TEST_SEND_OK\n" :
+                          "DBG_MESH_TEST_SEND_FAIL\n");
+        if (ret == 0) {
+            mesh_test_advance_packet_id();
+            mesh_test_reset_attempts();
+            status_debug_printf("DBG_MESH_TEST_QUEUED id=%u att=%u q=%u burst=%u/%u\n",
+                                packet_id,
+                                attempt,
+                                report_tx_queue_used(),
+                                (uint8_t)(queued_count + 1u),
+                                burst_target);
+            continue;
+        }
+
+        mesh_test_drop_count++;
+        high_debug_log_event("MESH_TEST_TX_RETRY",
+                             "id=%u attempt=%u ret=%d drops=%u queued=%u",
+                             packet_id,
+                             attempt,
+                             ret,
+                             mesh_test_drop_count,
+                             queued_count);
+        LOG_WRN("mesh-test synthetic packet not launched: id=%u attempt=%u ret=%d drops=%u queued=%u",
+                packet_id, attempt, ret, mesh_test_drop_count, queued_count);
+        return ret == -EBUSY ? 100u : 250u;
     }
 
-    mesh_test_drop_count++;
-    high_debug_log_event("MESH_TEST_TX_RETRY",
-                         "id=%u attempt=%u ret=%d drops=%u",
-                         packet_id,
-                         attempt,
-                         ret,
-                         mesh_test_drop_count);
-    LOG_WRN("mesh-test synthetic packet not launched: id=%u attempt=%u ret=%d drops=%u",
-            packet_id, attempt, ret, mesh_test_drop_count);
-    return ret == -EBUSY ? 100u : 250u;
+    return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
 }
 
 static void mesh_test_tx_thread_entry(void *arg0, void *arg1, void *arg2)
@@ -297,9 +351,11 @@ int app_mesh_test_start(void)
         k_thread_name_set(tid, "mesh_test");
         mesh_test_thread_started = true;
     }
-    LOG_INF("mesh-test synthetic transmitter enabled: dst=0x%016llx interval_ms=%u startup_delay_ms=%u",
+    LOG_INF("mesh-test synthetic transmitter enabled: dst=0x%016llx interval_ms=%u burst=%u payload_bytes=%u startup_delay_ms=%u",
             (unsigned long long)GATEWAY_ID,
             CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS,
+            CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT,
+            CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES,
             CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS);
     return 0;
 }

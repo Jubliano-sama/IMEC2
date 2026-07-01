@@ -8,6 +8,7 @@
 #include "app_mesh_report.h"
 #include "app_mesh_test.h"
 #include "app_state.h"
+#include "app_stack_diag.h"
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "gateway_command.h"
@@ -396,6 +397,7 @@ int main(void)
         if (ret < 0) {
             LOG_ERR("mesh-test runtime unavailable: %d", ret);
         }
+        app_stack_diag_start();
     } else if (DEVICE_ROLE == ROLE_GATEWAY) {
         ret = app_anchor_start_gateway_role();
         if (ret < 0) {
@@ -409,6 +411,7 @@ int main(void)
         if (ret < 0) {
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
         }
+        app_stack_diag_start();
         LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",
                 gateway_ble_transport_enabled() ? "advertising" : "disabled");
     }

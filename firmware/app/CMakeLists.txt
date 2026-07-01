@@ -285,6 +285,8 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER=y\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS=1000\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT=8\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES=900\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS=3000\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS=100\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US=20000\n"
@@ -315,6 +317,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_ml.c
     src/app_mesh_test.c
     src/app_mesh_report.c
+    src/app_stack_diag.c
     src/app_anchor.c
     src/app_high_debug.c
 )

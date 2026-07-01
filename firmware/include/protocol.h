@@ -190,6 +190,8 @@ enum tlv_type {
     TLV_MESH_TEST_FLAGS = 0x5E,
     TLV_MESH_ACK_SEQ_LIST = 0x5F,
     TLV_MESH_ACK_PACKET_ID_LIST = 0x60,
+    TLV_MESH_TEST_PADDING = 0x61,
+    TLV_MESH_ACK_SESSION_LIST = 0x62,
 };
 
 enum status_bit {
