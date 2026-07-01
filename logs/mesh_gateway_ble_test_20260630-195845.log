@@ -1,0 +1,1539 @@
+connected gateway=IMEC Mesh Test Gateway address=C2:DE:71:0B:19:55
+log[gateway] [00:06:25.019,805] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+connected log[gateway] via primary connection
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.019,958] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.019,958] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.025,604] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.025,726] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.025,756] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.032,104] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.032,226] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.032,257] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.037,536] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.037,689] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.037,719] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.043,548] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.043,670] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.043,701] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.049,346] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.049,499] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.049,530] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.055,297] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.055,450] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.055,480] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.061,065] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.061,218] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.061,248] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.066,833] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.066,986] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.067,016] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.072,967] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.073,120] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.073,150] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.079,223] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.079,345] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.079,376] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.084,777] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:25.084,930] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=600532 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:25.084,960] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:25.090,881] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 20
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:25.179,473] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 39
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:25.233,215] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 24
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:26.477,142] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 53
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:26.519,195] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 41
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:26.650,390] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 71
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:26.825,347] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 54
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.296,081] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 45
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.342,834] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 10
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.373,382] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.378,265] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.396,545] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=602945 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.396,575] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:27.402,191] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:27.402,343] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=602945 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.414,337] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 7
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.485,687] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 56
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.623,168] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 65
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:27.688,690] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 24
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.896,057] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 34
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.896,087] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.902,191] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.902,374] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:28.902,404] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.907,623] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.907,775] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.925,720] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.925,750] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.931,335] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.931,518] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:28.931,549] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.937,164] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.937,316] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.949,035] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.949,066] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.954,864] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.955,017] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:28.955,047] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.960,662] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.960,815] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:28.960,845] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 1
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.966,613] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:28.966,644] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.972,259] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.972,412] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.984,222] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:28.989,837] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:28.989,990] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:28.990,020] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:28.995,666] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.007,781] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.007,812] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:29.013,793] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:29.013,946] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:29.013,977] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:29.019,592] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.025,756] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:29.031,555] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:29.031,707] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:29.031,738] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:29.037,658] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.049,102] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.049,133] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:29.054,748] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:29.054,901] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.067,077] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.072,875] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:29.073,028] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=604539 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 11
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.115,081] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:29.118,011] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:29.393,371] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 72
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:30.735,321] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 47
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:33.511,260] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 49
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:33.524,353] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 19
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:33.848,266] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=609449 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 32
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:33.907,714] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=609449 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 33
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.043,792] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=609449 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 69
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.132,934] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=609449 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 43
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.634,674] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 58
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.664,245] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=610265 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 11
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.693,603] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.699,218] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:34.699,371] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=610265 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:34.699,401] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.716,796] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.716,949] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=610265 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:34.716,979] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:34.722,961] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 6
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.740,692] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=610265 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 41
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.908,264] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 61
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:34.985,565] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 44
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:35.274,383] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:35.567,047] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:35.690,216] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:35.690,307] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:35.700,195] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:35.700,317] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:35.708,801] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:35.973,022] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.107,055] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.107,177] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:36.117,065] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:36.117,218] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:36.125,671] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.216,033] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=611859 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 17
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.286,956] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=611859 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 34
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.346,649] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 28
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.405,731] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 18
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.436,859] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 11
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.473,693] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.473,846] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.510,192] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.511,566] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:36.521,484] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:36.521,636] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.554,595] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:36.558,105] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:36.558,166] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:37.817,382] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 50
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:37.864,837] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 11
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:37.902,862] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 14
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:37.998,352] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 27
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.093,688] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 38
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.152,465] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.176,055] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.297,302] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.297,363] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:38.298,767] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.339,141] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.339,263] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:38.348,022] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:38.449,279] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:38.449,371] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.782,379] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 11
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:38.790,863] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:39.055,053] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.064,971] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.065,093] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.074,432] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.175,292] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.175,384] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:39.188,293] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:39.188,385] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.198,272] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.198,425] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.207,275] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:39.393,371] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.393,554] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.393,585] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.399,017] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.399,169] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.399,230] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.404,846] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.404,998] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.405,029] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.410,827] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.410,980] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.411,010] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.416,992] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.417,144] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.417,175] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.422,973] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.423,126] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.423,187] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.428,802] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.428,985] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.428,985] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.434,692] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.434,844] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.434,875] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.440,521] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.440,673] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.440,704] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.446,502] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.446,685] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.446,685] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.452,484] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.452,636] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.452,667] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.458,465] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.458,618] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.458,648] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.464,630] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.464,782] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.464,813] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.470,611] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.470,764] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.470,794] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.476,501] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:39.476,684] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=615048 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:39.476,745] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:39.478,088] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.488,006] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.488,128] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.496,276] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.499,053] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.499,114] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.499,176] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.500,549] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.510,467] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.510,589] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.518,737] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.522,003] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.522,064] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.522,125] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.523,956] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.533,905] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.534,057] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.542,205] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.544,982] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.545,043] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.545,104] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.546,478] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.556,365] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.556,518] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.565,277] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.568,603] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.568,664] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.568,725] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.570,098] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.580,017] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.580,139] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.588,897] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.591,827] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.591,888] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.591,949] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.593,353] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.603,240] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.603,363] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.612,792] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.615,722] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.615,783] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.615,844] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.617,248] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.627,136] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.627,258] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.636,016] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.639,129] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.639,190] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.639,251] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.640,625] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.650,512] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.650,665] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.659,851] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.663,360] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.663,421] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.663,482] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.664,855] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.674,774] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.674,896] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.683,654] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.686,950] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.687,042] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.687,103] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.688,476] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.698,364] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.698,486] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.707,885] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.710,815] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.710,876] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.710,937] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.712,341] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.722,229] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.722,351] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.731,109] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.734,039] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.734,100] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.734,161] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.735,565] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.745,452] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.745,574] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.754,974] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.758,087] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.758,148] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.758,178] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.759,582] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.769,470] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.769,622] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.778,350] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.781,280] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.781,372] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:39.781,402] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:39.782,806] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.792,694] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.792,846] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.801,574] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:39.903,228] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:39.903,289] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:39.916,198] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:39.916,320] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.926,269] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.926,483] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:39.935,546] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:39.987,091] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.996,978] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:39.997,131] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:40.005,889] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:40.107,452] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:40.107,513] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:40.120,391] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:40.120,513] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.130,401] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.130,554] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:40.139,038] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:40.403,106] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.413,024] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.413,146] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:40.422,271] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:40.523,223] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:40.523,315] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:40.536,224] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:40.536,315] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.546,203] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.546,325] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:40.554,840] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:40.819,061] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.828,979] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.829,101] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:40.837,829] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:40.939,270] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:40.939,331] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:40.952,209] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:40.952,331] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.962,249] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:40.962,432] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:40.971,405] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:40.988,739] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=103 quality=100 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:40.989,440] [0m<inf> app_mesh_report: mesh UWB RX queued: msg=0x38 src=0x3333333333333301 dst=0x9999888877776666 prev=0x
+log[gateway] 3333333333333301 quality=100 queue_depth=1 role=gateway[0m
+log[gateway] [00:06:40.989,471] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX frame accepted: len=103[0m
+log[gateway] [00:06:40.991,119] [0m<inf> app_mesh_report: mesh RX handled: msg=0x38 src=0x3333333333333301 dst=0x9999888877776666 prev=0x333
+log[gateway] 3333333333301 actions=0x00000002 status=0[0m
+log[gateway] [00:06:40.991,180] [0m<inf> app_mesh_report: mesh channel-9 event timing installed: next=0x3333333333333301 interval_ms=440 win
+log[gateway] dow_ms=100 next_ms=401491[0m
+log[gateway] [00:06:40.991,210] [0m<inf> app_mesh_report: mesh local delivery ready[0m
+log[gateway] [00:06:41.491,516] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:41.501,403] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:41.501,617] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:41.510,864] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:41.515,197] [0m<inf> app_mesh_report: mesh UWB RX queued: msg=0x30 src=0x3333333333333301 dst=0x9999888877776666 prev=0x
+log[gateway] 3333333333333301 quality=100 queue_depth=1 role=gateway[0m
+log[gateway] [00:06:41.515,228] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX frame accepted: len=124[0m
+log[gateway] [00:06:41.611,206] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:41.611,267] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=1[0m
+log[gateway] [00:06:41.612,884] [0m<inf> app_mesh_report: mesh RX handled: msg=0x30 src=0x3333333333333301 dst=0x9999888877776666 prev=0x333
+log[gateway] 3333333333301 actions=0x00000048 status=-9[0m
+log[gateway] [00:06:41.613,220] [0m<inf> app_mesh_report: mesh channel-9 ACK queued for later send slot: dst=0x3333333333333301 seq=1 packet
+log[gateway] _id=1 count=1[0m
+log[gateway] [00:06:41.624,298] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:41.624,389] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:41.634,277] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:41.634,399] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:41.643,341] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:41.960,479] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:42.987,976] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 29
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.025,085] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 69
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.060,516] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 27
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.161,468] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=620661 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 45
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.250,579] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 44
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.298,187] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 24
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.387,084] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 42
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.876,037] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 42
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.894,165] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 13
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.906,097] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:45.906,127] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:45.912,292] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:45.912,445] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.923,706] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.929,687] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:45.929,840] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:45.929,870] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:45.935,485] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.947,784] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 7
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:45.983,551] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 34
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:46.072,235] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 45
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:46.155,303] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=621477 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 33
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:46.337,890] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 35
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:46.779,144] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:46.787,872] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.196,044] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.204,772] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:47.306,427] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:47.306,579] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:47.319,488] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:47.319,549] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:47.329,467] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:47.329,620] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:47.338,104] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:47.416,412] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:47.416,564] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=623071 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:47.416,595] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:47.422,393] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:47.422,546] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=623071 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:47.422,576] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:47.428,375] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 6
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.482,330] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 32
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.535,949] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [1;31m--- 
+log[gateway] 26
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.583,374] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=623071 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 25
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.649,963] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 12
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.673,065] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 9
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.687,347] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:47.696,105] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:47.699,584] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.724,884] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.734,771] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:47.734,924] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:47.743,652] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:47.747,528] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 1
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.771,270] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 5
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:47.771,362] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 2
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:48.174,255] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [1;31m--- 
+log[gateway] 47
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.063,842] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 16
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.159,271] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 27
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.254,699] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 27
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.339,691] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 23
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.361,877] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [1;31m--- 
+log[gateway] 11
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.405,853] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [1;31m--- 
+log[gateway] 4
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.507,324] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:49.507,415] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 6
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.548,492] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:49.557,891] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:49.659,301] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:49.659,362] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [1;31m--- 
+log[gateway] 3
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:50.265,106] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [1;31m--- 
+log[gateway] 13
+log[gateway]  messages dropped ---
+log[gateway] [0m
+log[gateway] [00:06:50.275,024] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.275,146] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.284,515] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.385,192] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.385,253] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-116 frame_len=0 quality=0 rx_f
+log[gateway] ailure=0 frames=0[0m
+log[gateway] [00:06:50.398,162] [1;33m<wrn> dwm3000_driver: DWM3000 PHY configure failed after retained sleep restore: phy=2 ret=-5; forcing
+log[gateway]  full reinit[0m
+log[gateway] [00:06:50.398,254] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.408,172] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.408,325] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.417,449] [0m<inf> dwm3000_driver: DWM3000 PHY mode 2 configured directly after full reinit[0m
+log[gateway] [00:06:50.602,386] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.602,539] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.602,569] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.608,367] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.608,520] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.608,551] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.614,349] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.614,501] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.614,532] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.620,147] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.620,300] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.620,330] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.626,129] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.626,281] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.626,312] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.632,293] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.632,446] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.632,476] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.638,671] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.638,824] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.638,854] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.644,470] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.644,653] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.644,683] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.650,268] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.650,421] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.650,451] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.656,066] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.656,219] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.656,280] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.662,078] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.662,231] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.662,261] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.668,060] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.668,212] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.668,243] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.674,041] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.674,194] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.674,224] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.680,206] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.680,389] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.680,419] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.686,035] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch5 window_ms=50 ret=0 frame_len=49 quality=100 rx_fa
+log[gateway] ilure=0 frames=0[0m
+log[gateway] [00:06:50.686,187] [0m<inf> app_mesh_report: mesh channel-5 wake claim RX: src=0x3333333333333301 event_seq=626257 attempt=1 qu
+log[gateway] ality=100 role=gateway[0m
+log[gateway] [00:06:50.686,218] [0m<dbg> app_mesh_report: mesh_process_received_frame: mesh UWB RX accepted channel-5 wake claim: len=49[0m
+log[gateway] 
+log[gateway] [00:06:50.687,591] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.697,479] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.697,631] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.705,780] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.708,526] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.708,618] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.708,679] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.710,052] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.719,940] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.720,092] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.728,912] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.731,658] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.731,750] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.731,811] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.733,154] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.743,072] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.743,194] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.751,342] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.754,119] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.754,180] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.754,241] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.755,645] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.765,533] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.765,655] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.775,024] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.778,350] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.778,411] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.778,472] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.779,876] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.789,764] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.789,886] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.798,645] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.801,757] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.801,818] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.801,879] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.803,253] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.813,140] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.813,293] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.822,601] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.825,531] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.825,592] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.825,653] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.827,026] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.836,944] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.837,066] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.845,825] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.848,754] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.848,815] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.848,876] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.850,280] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.860,168] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.860,290] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.869,689] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.872,833] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.872,894] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.872,955] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.874,359] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.884,246] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.884,399] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.893,157] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.896,820] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.896,911] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.896,972] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.898,345] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.908,233] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.908,386] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.917,114] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.920,806] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.920,867] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.920,928] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.922,302] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.932,220] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.932,342] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.941,101] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.944,213] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.944,274] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.944,335] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.945,739] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.955,627] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.955,749] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.964,508] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.967,620] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win
+log[gateway] dow[0m
+log[gateway] [00:06:50.967,681] [0m<inf> app_mesh_report: mesh gateway RX window: mode=ch9 window_ms=100 ret=-5 frame_len=0 quality=0 rx_fai
+log[gateway] lure=2 frames=0[0m
+log[gateway] [00:06:50.967,742] [1;33m<wrn> app_mesh_report: mesh UWB RX failed: ret=-5 role=gateway[0m
+log[gateway] [00:06:50.969,146] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.979,034] [0m<inf> dwm3000_port: DWM3000 port ready on spi@4002f000: slow=2000000 Hz fast=32000000 Hz status polling[
+log[gateway] 0m
+log[gateway] [00:06:50.979,156] [0m<inf> deca_device: dev_id "deca0302"[0m
+log[gateway] [00:06:50.987,915] [0m<inf> dwm3000_driver: DWM3000 configured for channel 9 1024-symbol no-STS mesh payload at 850 kbps[0m
+log[gateway] [00:06:50.991,241] [0m<inf> dwm3000_driver: DWM3000 entered sleep with retained config; wakeup pin required before next UWB win

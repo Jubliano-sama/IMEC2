@@ -23,11 +23,6 @@ static bool time_reached(uint32_t now_ms, uint32_t deadline_ms)
     return (int32_t)(now_ms - deadline_ms) >= 0;
 }
 
-static uint32_t time_max(uint32_t left_ms, uint32_t right_ms)
-{
-    return time_reached(left_ms, right_ms) ? left_ms : right_ms;
-}
-
 static uint32_t time_until_deadline(uint32_t now_ms, uint32_t deadline_ms)
 {
     if (time_reached(now_ms, deadline_ms)) {
@@ -141,7 +136,8 @@ int mesh_event_timing_negotiate(struct mesh_event_timing *timing,
     timing->max_missed_events = params->max_missed_events;
     timing->missed_event_count = 0u;
     timing->supervision_timeout_ms = params->supervision_timeout_ms;
-    timing->last_successful_ch9_event_ms = 0u;
+    timing->last_successful_ch9_event_ms = params->first_event_time_ms;
+    timing->local_tx_on_even_events = true;
     timing->route_fresh = true;
     timing->timing_fresh = true;
     timing->fallback_required = false;
@@ -151,8 +147,6 @@ int mesh_event_timing_negotiate(struct mesh_event_timing *timing,
 bool mesh_event_timing_usable(const struct mesh_event_timing *timing,
                               uint32_t now_ms)
 {
-    uint32_t freshness_base_ms;
-
     if (timing == NULL ||
         timing->mesh_channel != MESH_EVENT_CHANNEL ||
         timing->event_interval_ms == 0u ||
@@ -165,10 +159,51 @@ bool mesh_event_timing_usable(const struct mesh_event_timing *timing,
         return false;
     }
 
-    freshness_base_ms = timing->last_successful_ch9_event_ms != 0u ?
-                        timing->last_successful_ch9_event_ms :
-                        timing->next_event_time_ms;
-    return !time_reached(now_ms, freshness_base_ms + timing->supervision_timeout_ms);
+    return !time_reached(now_ms,
+                         timing->last_successful_ch9_event_ms +
+                         timing->supervision_timeout_ms);
+}
+
+void mesh_event_timing_set_local_first_slot_tx(struct mesh_event_timing *timing,
+                                               bool local_first_slot_tx)
+{
+    if (timing == NULL) {
+        return;
+    }
+
+    timing->local_tx_on_even_events = local_first_slot_tx;
+}
+
+bool mesh_event_timing_local_tx_slot(const struct mesh_event_timing *timing)
+{
+    bool even_event;
+
+    if (timing == NULL) {
+        return false;
+    }
+
+    even_event = (timing->event_counter & 1u) == 0u;
+    return timing->local_tx_on_even_events == even_event;
+}
+
+bool mesh_event_timing_local_rx_slot(const struct mesh_event_timing *timing)
+{
+    return timing != NULL && !mesh_event_timing_local_tx_slot(timing);
+}
+
+uint32_t mesh_event_guard_start_ms(const struct mesh_event_timing *timing)
+{
+    uint16_t guard_ms;
+
+    if (timing == NULL) {
+        return 0u;
+    }
+
+    guard_ms = timing->guard_ms;
+    if (timing->next_event_time_ms <= guard_ms) {
+        return 1u;
+    }
+    return timing->next_event_time_ms - guard_ms;
 }
 
 int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
@@ -180,6 +215,7 @@ int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
     uint32_t end_ms;
     uint32_t latest_end_ms = 0u;
     uint16_t retune_guard_ms;
+    uint32_t guard_start_ms;
 
     if (timing == NULL || requirements == NULL || plan == NULL) {
         return PROTO_ERR_ARG;
@@ -193,12 +229,17 @@ int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
         return PROTO_OK;
     }
 
-    start_ms = time_max(now_ms, timing->next_event_time_ms);
+    retune_guard_ms = requirements->retune_guard_ms > timing->guard_ms ?
+                      requirements->retune_guard_ms : timing->guard_ms;
+    start_ms = timing->next_event_time_ms;
+    guard_start_ms = timing->next_event_time_ms <= retune_guard_ms ?
+                     1u :
+                     timing->next_event_time_ms - retune_guard_ms;
     plan->start_ms = start_ms;
     plan->window_ms = timing->event_window_ms;
     plan->end_ms = start_ms + timing->event_window_ms;
 
-    if (!time_reached(now_ms, timing->next_event_time_ms)) {
+    if (!time_reached(now_ms, guard_start_ms)) {
         plan->action = MESH_EVENT_PLAN_WAIT;
         return PROTO_OK;
     }
@@ -212,8 +253,6 @@ int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
         return PROTO_OK;
     }
 
-    retune_guard_ms = requirements->retune_guard_ms > timing->guard_ms ?
-                      requirements->retune_guard_ms : timing->guard_ms;
     if (requirements->next_required_scan_start_ms != 0u &&
         !time_reached(requirements->next_required_scan_start_ms,
                       start_ms + retune_guard_ms)) {
@@ -258,25 +297,33 @@ void mesh_event_note_success(struct mesh_event_timing *timing,
     timing->fallback_required = false;
 }
 
-void mesh_event_note_observed_packet(struct mesh_event_timing *timing,
-                                     uint32_t planned_event_start_ms,
-                                     uint32_t observed_packet_ms)
+void mesh_event_note_local_tx(struct mesh_event_timing *timing,
+                              uint32_t event_start_ms)
 {
-    uint32_t inferred_event_start_ms;
-    uint16_t half_window_ms;
-
     if (timing == NULL) {
         return;
     }
 
-    inferred_event_start_ms = planned_event_start_ms;
-    half_window_ms = timing->event_window_ms / 2u;
-    if (half_window_ms > 0u &&
-        time_reached(observed_packet_ms, planned_event_start_ms + half_window_ms)) {
-        inferred_event_start_ms = observed_packet_ms - half_window_ms;
+    timing->next_event_time_ms = event_start_ms + timing->event_interval_ms;
+    timing->event_counter++;
+    timing->timing_fresh = true;
+    timing->fallback_required = false;
+}
+
+void mesh_event_note_observed_packet(struct mesh_event_timing *timing,
+                                     uint32_t planned_event_start_ms,
+                                     uint32_t observed_packet_ms)
+{
+    if (timing == NULL) {
+        return;
     }
 
-    mesh_event_note_success(timing, inferred_event_start_ms);
+    (void)observed_packet_ms;
+    if (timing->event_counter > 0u &&
+        timing->last_successful_ch9_event_ms == planned_event_start_ms) {
+        return;
+    }
+    mesh_event_note_success(timing, planned_event_start_ms);
 }
 
 void mesh_event_note_missed(struct mesh_event_timing *timing,
@@ -290,7 +337,33 @@ void mesh_event_note_missed(struct mesh_event_timing *timing,
         timing->missed_event_count++;
     }
     timing->next_event_time_ms += timing->event_interval_ms;
+    timing->event_counter++;
     counter_add(diagnostics == NULL ? NULL : &diagnostics->ch9_event_misses, 1u);
+}
+
+uint8_t mesh_event_skip_elapsed(struct mesh_event_timing *timing,
+                                uint32_t now_ms,
+                                struct mesh_event_diagnostics *diagnostics)
+{
+    uint8_t skipped = 0u;
+
+    if (timing == NULL ||
+        timing->event_interval_ms == 0u ||
+        timing->event_window_ms == 0u) {
+        return 0u;
+    }
+
+    while (skipped < UINT8_MAX) {
+        uint32_t event_end_ms = timing->next_event_time_ms + timing->event_window_ms;
+
+        if (!time_reached(now_ms, event_end_ms)) {
+            break;
+        }
+        mesh_event_note_missed(timing, diagnostics);
+        skipped++;
+    }
+
+    return skipped;
 }
 
 void mesh_event_note_channel_switch(struct mesh_event_diagnostics *diagnostics,

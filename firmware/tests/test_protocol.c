@@ -86,6 +86,58 @@ static void test_decode_rejects_bad_crc(void)
     assert(proto_packet_decode(encoded, encoded_len, &decoded, &decoded_payload, &decoded_payload_len) == PROTO_ERR_BAD_CRC);
 }
 
+static void test_extended_packet_round_trip(void)
+{
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    uint8_t encoded[PACKET_EXT_MAX_LEN];
+    size_t encoded_len = 0u;
+    struct proto_packet decoded = {0};
+    const uint8_t *decoded_payload = NULL;
+    size_t decoded_payload_len = 0u;
+
+    for (size_t i = 0u; i < sizeof(payload); i++) {
+        payload[i] = (uint8_t)(i ^ (i >> 3));
+    }
+
+    const struct proto_packet packet = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = 0x1122334455667788ull,
+        .dst_id = 0x9999888877776666ull,
+        .session_id = 0xABCDEF01u,
+        .seq = 0x1234u,
+        .ttl = 7u,
+        .payload_len = sizeof(payload),
+        .message_age_ms = 0x01020304u,
+    };
+
+    assert(proto_packet_header_len(254u) == PACKET_HEADER_LEN);
+    assert(proto_packet_header_len(255u) == PACKET_EXT_HEADER_LEN);
+    assert(proto_packet_encoded_len(packet.payload_len) == PACKET_EXT_MAX_LEN);
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_OK);
+    assert(encoded_len == PACKET_EXT_MAX_LEN);
+    assert(encoded[27] == PACKET_EXT_LENGTH_SENTINEL);
+    assert(proto_get_u16_le(&encoded[28]) == packet.payload_len);
+    assert(proto_get_u32_le(&encoded[30]) == packet.message_age_ms);
+
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_OK);
+    assert(decoded.msg_type == packet.msg_type);
+    assert(decoded.flags == packet.flags);
+    assert(decoded.src_id == packet.src_id);
+    assert(decoded.dst_id == packet.dst_id);
+    assert(decoded.session_id == packet.session_id);
+    assert(decoded.seq == packet.seq);
+    assert(decoded.ttl == packet.ttl);
+    assert(decoded.payload_len == packet.payload_len);
+    assert(decoded.message_age_ms == packet.message_age_ms);
+    assert(decoded_payload_len == sizeof(payload));
+    assert(memcmp(decoded_payload, payload, sizeof(payload)) == 0);
+}
+
 static void set_packet_type_and_refresh_crc(uint8_t *encoded, size_t encoded_len, uint8_t msg_type)
 {
     encoded[2] = msg_type;
@@ -234,6 +286,7 @@ int main(void)
     test_crc_known_vector();
     test_tlv_and_packet_round_trip();
     test_decode_rejects_bad_crc();
+    test_extended_packet_round_trip();
     test_packet_rejects_retired_and_compact_only_message_types();
     test_mesh_event_packet_types_round_trip();
     test_cobs_round_trip();

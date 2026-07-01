@@ -17,11 +17,39 @@
 #include "uwb_ble_courtesy.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/fatal.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
 LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
+{
+    static char line[192];
+    k_tid_t thread = k_current_get();
+    const char *name = k_thread_name_get(thread);
+
+    ARG_UNUSED(esf);
+
+    if (name == NULL || name[0] == '\0') {
+        name = "unknown";
+    }
+
+    (void)snprintk(line,
+                   sizeof(line),
+                   "DBG_FATAL reason=%u thread=%s tid=%p stack_start=0x%08x stack_size=%u\n",
+                   reason,
+                   name,
+                   thread,
+                   (uint32_t)thread->stack_info.start,
+                   (uint32_t)thread->stack_info.size);
+    status_debug_note(line);
+
+    k_fatal_halt(reason);
+}
+#endif
 
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
 static const struct app_clicker_wake_train_config clicker_wake_train_config = {
@@ -338,18 +366,22 @@ int main(void)
         if (ret < 0) {
             return 0;
         }
-        high_debug_log_event("MESH_BOOT_STAGE",
-                             "stage=mesh_rx_start_begin role=%s",
-                             role_name());
-        status_debug_note("DBG_BOOT_MESH_RX_BEGIN\n");
-        ret = mesh_start_uwb_rx("anchor startup");
-        status_debug_note("DBG_BOOT_MESH_RX_DONE\n");
-        high_debug_log_event("MESH_BOOT_STAGE",
-                             "stage=mesh_rx_start_done role=%s ret=%d",
-                             role_name(),
-                             ret);
-        if (ret < 0) {
-            LOG_ERR("anchor UWB mesh RX unavailable: %d", ret);
+        if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+            high_debug_log_event("MESH_BOOT_STAGE",
+                                 "stage=mesh_rx_start_begin role=%s",
+                                 role_name());
+            status_debug_note("DBG_BOOT_MESH_RX_BEGIN\n");
+            ret = mesh_start_uwb_rx("anchor startup");
+            status_debug_note("DBG_BOOT_MESH_RX_DONE\n");
+            high_debug_log_event("MESH_BOOT_STAGE",
+                                 "stage=mesh_rx_start_done role=%s ret=%d",
+                                 role_name(),
+                                 ret);
+            if (ret < 0) {
+                LOG_ERR("anchor UWB mesh RX unavailable: %d", ret);
+            }
+        } else {
+            status_debug_note("DBG_BOOT_MESH_RX_SKIPPED_TX\n");
         }
         high_debug_log_event("MESH_BOOT_STAGE",
                              "stage=mesh_test_start_begin role=%s",

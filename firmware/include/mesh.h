@@ -47,6 +47,7 @@ struct mesh_event_timing {
     uint8_t missed_event_count;
     uint32_t supervision_timeout_ms;
     uint32_t last_successful_ch9_event_ms;
+    bool local_tx_on_even_events;
     bool route_fresh;
     bool timing_fresh;
     bool fallback_required;
@@ -83,17 +84,27 @@ int mesh_event_timing_negotiate(struct mesh_event_timing *timing,
                                 bool channel5_contact_refreshed);
 bool mesh_event_timing_usable(const struct mesh_event_timing *timing,
                               uint32_t now_ms);
+void mesh_event_timing_set_local_first_slot_tx(struct mesh_event_timing *timing,
+                                               bool local_first_slot_tx);
+bool mesh_event_timing_local_tx_slot(const struct mesh_event_timing *timing);
+bool mesh_event_timing_local_rx_slot(const struct mesh_event_timing *timing);
+uint32_t mesh_event_guard_start_ms(const struct mesh_event_timing *timing);
 int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
                              const struct mesh_channel5_requirements *requirements,
                              uint32_t now_ms,
                              struct mesh_event_plan *plan);
 void mesh_event_note_success(struct mesh_event_timing *timing,
                              uint32_t event_start_ms);
+void mesh_event_note_local_tx(struct mesh_event_timing *timing,
+                              uint32_t event_start_ms);
 void mesh_event_note_observed_packet(struct mesh_event_timing *timing,
                                      uint32_t planned_event_start_ms,
                                      uint32_t observed_packet_ms);
 void mesh_event_note_missed(struct mesh_event_timing *timing,
                             struct mesh_event_diagnostics *diagnostics);
+uint8_t mesh_event_skip_elapsed(struct mesh_event_timing *timing,
+                                uint32_t now_ms,
+                                struct mesh_event_diagnostics *diagnostics);
 void mesh_event_note_channel_switch(struct mesh_event_diagnostics *diagnostics,
                                     bool pll_ready,
                                     bool late_channel5_return);

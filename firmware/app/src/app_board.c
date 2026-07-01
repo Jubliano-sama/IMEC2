@@ -7,12 +7,14 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 #if defined(CONFIG_USE_SEGGER_RTT)
 #include <SEGGER_RTT.h>
 #endif
 
 #include <errno.h>
+#include <stdarg.h>
 
 LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
 
@@ -255,6 +257,32 @@ void status_debug_note(const char *text)
         return;
     }
     debug_rtt_write(text);
+}
+
+void status_debug_printf(const char *fmt, ...)
+{
+#if defined(CONFIG_USE_SEGGER_RTT)
+    char line[128];
+    va_list args;
+    int ret;
+    size_t len;
+
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) || fmt == NULL) {
+        return;
+    }
+
+    va_start(args, fmt);
+    ret = vsnprintk(line, sizeof(line), fmt, args);
+    va_end(args);
+    if (ret <= 0) {
+        return;
+    }
+
+    len = MIN((size_t)ret, sizeof(line) - 1u);
+    (void)SEGGER_RTT_Write(0, line, len);
+#else
+    ARG_UNUSED(fmt);
+#endif
 }
 
 void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)

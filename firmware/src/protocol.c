@@ -63,9 +63,14 @@ void proto_put_u64_le(uint8_t *data, uint64_t value)
     proto_put_u32_le(data + 4, (uint32_t)(value >> 32));
 }
 
-size_t proto_packet_encoded_len(uint8_t payload_len)
+size_t proto_packet_header_len(uint16_t payload_len)
 {
-    return PACKET_HEADER_LEN + (size_t)payload_len + PACKET_CRC_LEN;
+    return payload_len < PACKET_EXT_LENGTH_SENTINEL ? PACKET_HEADER_LEN : PACKET_EXT_HEADER_LEN;
+}
+
+size_t proto_packet_encoded_len(uint16_t payload_len)
+{
+    return proto_packet_header_len(payload_len) + (size_t)payload_len + PACKET_CRC_LEN;
 }
 
 static bool proto_packet_msg_type_valid(uint8_t msg_type)
@@ -109,6 +114,9 @@ int proto_packet_encode(const struct proto_packet *packet,
     if (packet == NULL || out == NULL || written == NULL) {
         return PROTO_ERR_ARG;
     }
+    if (packet->payload_len > PACKET_EXT_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
     if (packet->payload_len > 0u && payload == NULL) {
         return PROTO_ERR_ARG;
     }
@@ -128,11 +136,17 @@ int proto_packet_encode(const struct proto_packet *packet,
     proto_put_u32_le(&out[20], packet->session_id);
     proto_put_u16_le(&out[24], packet->seq);
     out[26] = packet->ttl;
-    out[27] = packet->payload_len;
-    proto_put_u32_le(&out[28], packet->message_age_ms);
+    if (packet->payload_len < PACKET_EXT_LENGTH_SENTINEL) {
+        out[27] = (uint8_t)packet->payload_len;
+        proto_put_u32_le(&out[28], packet->message_age_ms);
+    } else {
+        out[27] = PACKET_EXT_LENGTH_SENTINEL;
+        proto_put_u16_le(&out[28], packet->payload_len);
+        proto_put_u32_le(&out[30], packet->message_age_ms);
+    }
 
     if (packet->payload_len > 0u) {
-        memcpy(&out[PACKET_HEADER_LEN], payload, packet->payload_len);
+        memcpy(&out[proto_packet_header_len(packet->payload_len)], payload, packet->payload_len);
     }
 
     const uint16_t crc = proto_crc16_ccitt_false(out, total_len - PACKET_CRC_LEN);
@@ -161,7 +175,26 @@ int proto_packet_decode(const uint8_t *data,
         return PROTO_ERR_BAD_VERSION;
     }
 
-    const uint8_t declared_payload_len = data[27];
+    const bool extended = data[27] == PACKET_EXT_LENGTH_SENTINEL;
+    uint16_t declared_payload_len;
+    size_t header_len;
+
+    if (extended) {
+        if (len < PACKET_EXT_HEADER_LEN + PACKET_CRC_LEN) {
+            return PROTO_ERR_BAD_LENGTH;
+        }
+        declared_payload_len = proto_get_u16_le(&data[28]);
+        header_len = PACKET_EXT_HEADER_LEN;
+        if (declared_payload_len < PACKET_EXT_LENGTH_SENTINEL) {
+            return PROTO_ERR_MALFORMED;
+        }
+    } else {
+        declared_payload_len = data[27];
+        header_len = PACKET_HEADER_LEN;
+    }
+    if (declared_payload_len > PACKET_EXT_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
     const size_t expected_len = proto_packet_encoded_len(declared_payload_len);
     if (len != expected_len) {
         return PROTO_ERR_BAD_LENGTH;
@@ -184,8 +217,8 @@ int proto_packet_decode(const uint8_t *data,
     packet->seq = proto_get_u16_le(&data[24]);
     packet->ttl = data[26];
     packet->payload_len = declared_payload_len;
-    packet->message_age_ms = proto_get_u32_le(&data[28]);
-    *payload = &data[PACKET_HEADER_LEN];
+    packet->message_age_ms = proto_get_u32_le(&data[extended ? 30u : 28u]);
+    *payload = &data[header_len];
     *payload_len = declared_payload_len;
 
     return PROTO_OK;

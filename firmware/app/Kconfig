@@ -90,11 +90,11 @@ menu "IMEC mesh route test"
 
 config IMEC_MESH_ROUTE_TEST
     bool "Build the isolated mesh-routing test firmware"
-    depends on BT && IMEC_GATEWAY_BLE
     help
-      Enables the isolated mesh-routing test profile. Devices expose the
-      existing connected BLE packet/log service for debug and keep the normal
-      production roles untouched unless a mesh_* build preset selects this
+      Enables the isolated mesh-routing test profile. Mesh gateway and anchor
+      presets may expose the connected BLE packet/log service for debug, while
+      the transmitter preset can run without the Bluetooth stack. Normal
+      production roles are untouched unless a mesh_* build preset selects this
       option.
 
 config IMEC_MESH_ROUTE_TEST_TRANSMITTER

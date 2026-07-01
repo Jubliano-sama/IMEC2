@@ -128,7 +128,8 @@ bool gateway_ble_transport_enabled(void)
             (DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER)) ||
             (DEVICE_ROLE == ROLE_ANCHOR &&
              (IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) ||
-              IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST))));
+              (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+               !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)))));
 #else
     return false;
 #endif

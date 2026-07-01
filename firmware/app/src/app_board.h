@@ -18,6 +18,7 @@ void status_debug_tx_packet_sent_pulse(void);
 void status_debug_tx_wake_claim_sent_pulse(void);
 void status_debug_tx_mesh_frame_sent_pulse(void);
 void status_debug_note(const char *text);
+void status_debug_printf(const char *fmt, ...);
 void status_leds_disconnect(void);
 void status_apply(const struct status_inputs *inputs);
 int battery_adc_divider_disable(void);

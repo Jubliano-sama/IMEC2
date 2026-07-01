@@ -13,6 +13,14 @@ import time
 from typing import Callable
 
 from bleak import BleakClient, BleakScanner
+from bleak.backends.device import BLEDevice
+
+try:
+    from bleak.backends.bluezdbus import defs as bluez_defs
+    from bleak.backends.bluezdbus.manager import get_global_bluez_manager
+except Exception:  # pragma: no cover - host tool fallback for non-BlueZ systems.
+    bluez_defs = None
+    get_global_bluez_manager = None
 
 
 # Duplicated from firmware/app/src/app_gateway_ble.c. Keep these local so this
@@ -56,6 +64,19 @@ MSG_NAMES = {
 class TlvSpec:
     name: str
     decoder: Callable[[bytes], object]
+
+
+@dataclasses.dataclass(frozen=True)
+class ResolvedDevice:
+    address: str
+    name: str = ""
+    source: str = "unknown"
+    connected: bool = False
+    ble_device: BLEDevice | None = None
+
+    @property
+    def client_target(self) -> BLEDevice | str:
+        return self.ble_device if self.ble_device is not None else self.address
 
 
 def _uint(width: int) -> Callable[[bytes], int | None]:
@@ -327,16 +348,110 @@ def format_packet_line(packet: ProtoPacket, stats: MonitorStats, now_s: float) -
     return " ".join(fields)
 
 
-async def find_device(name_or_address: str, timeout_s: float, require_service: bool) -> object:
-    devices = await BleakScanner.discover(timeout=timeout_s, return_adv=True)
+def device_matches(name_or_address: str, address: str, name: str) -> bool:
     lowered = name_or_address.lower()
+    return name_or_address in {address, name} or lowered in {address.lower(), name.lower()}
+
+
+async def bluez_known_devices() -> list[ResolvedDevice]:
+    if get_global_bluez_manager is None or bluez_defs is None:
+        return []
+    try:
+        manager = await get_global_bluez_manager()
+    except Exception:
+        return []
+
+    devices: list[ResolvedDevice] = []
+    for path, ifaces in getattr(manager, "_properties", {}).items():
+        props = ifaces.get(bluez_defs.DEVICE_INTERFACE)
+        if not props:
+            continue
+        address = props.get("Address")
+        if not address:
+            continue
+        name = props.get("Name") or props.get("Alias") or ""
+        connected = bool(props.get("Connected"))
+        ble_device = BLEDevice(address, name or None, {"path": path, "props": props})
+        devices.append(ResolvedDevice(
+            address=address,
+            name=name,
+            source="bluez-connected" if connected else "bluez-cache",
+            connected=connected,
+            ble_device=ble_device,
+        ))
+    return devices
+
+
+async def bluetoothctl_devices(filter_arg: str | None = None) -> list[ResolvedDevice]:
+    command = ["bluetoothctl", "devices"]
+    if filter_arg:
+        command.append(filter_arg)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return []
+    stdout, _ = await proc.communicate()
+    devices: list[ResolvedDevice] = []
+    for raw_line in stdout.decode("utf-8", errors="replace").splitlines():
+        parts = raw_line.strip().split(maxsplit=2)
+        if len(parts) >= 2 and parts[0] == "Device":
+            devices.append(ResolvedDevice(
+                parts[1],
+                parts[2] if len(parts) > 2 else "",
+                source=f"bluetoothctl-{filter_arg.lower()}" if filter_arg else "bluetoothctl-cache",
+                connected=filter_arg == "Connected",
+            ))
+    return devices
+
+
+def cached_device_has_service(device: ResolvedDevice) -> bool | None:
+    if device.ble_device is None:
+        return None
+    props = device.ble_device.details.get("props", {})
+    uuids = {uuid.lower() for uuid in props.get("UUIDs", [])}
+    return SERVICE_UUID in uuids
+
+
+async def find_cached_device(name_or_address: str, require_service: bool, only_connected: bool) -> ResolvedDevice | None:
+    for device in await bluez_known_devices():
+        if only_connected and not device.connected:
+            continue
+        if not device_matches(name_or_address, device.address, device.name):
+            continue
+        has_service = cached_device_has_service(device)
+        if require_service and has_service is False:
+            raise RuntimeError(f"{name_or_address!r} found in BlueZ cache but has no IMEC gateway service")
+        return device
+
+    for filter_arg in ("Connected", None):
+        for device in await bluetoothctl_devices(filter_arg):
+            if only_connected and not device.connected:
+                continue
+            if device_matches(name_or_address, device.address, device.name):
+                return device
+    return None
+
+
+async def find_device(name_or_address: str, timeout_s: float, require_service: bool) -> ResolvedDevice:
+    connected = await find_cached_device(name_or_address, require_service, only_connected=True)
+    if connected is not None:
+        return connected
+
+    devices = await BleakScanner.discover(timeout=timeout_s, return_adv=True)
     for _, (device, adv) in devices.items():
         name = adv.local_name or device.name or ""
         uuids = {uuid.lower() for uuid in (adv.service_uuids or [])}
-        if name_or_address in {device.address, name} or lowered in {device.address.lower(), name.lower()}:
+        if device_matches(name_or_address, device.address, name):
             if require_service and SERVICE_UUID not in uuids:
                 raise RuntimeError(f"{name_or_address!r} found but did not advertise IMEC gateway service")
-            return device
+            return ResolvedDevice(device.address, name, source="scan", connected=False, ble_device=device)
+    cached = await find_cached_device(name_or_address, require_service, only_connected=False)
+    if cached is not None:
+        return cached
     seen = sorted(
         format_scan_device(device, adv)
         for _, (device, adv) in devices.items()
@@ -364,18 +479,43 @@ async def list_devices(timeout_s: float) -> int:
     return 0
 
 
+async def start_notify_bounded(
+    client: BleakClient,
+    char_uuid: str,
+    callback: Callable[[object, bytearray], None],
+    timeout_s: float,
+    label: str,
+) -> None:
+    try:
+        await asyncio.wait_for(client.start_notify(char_uuid, callback), timeout=timeout_s)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(f"{label} notify setup timed out after {timeout_s:.1f}s") from exc
+
+
+async def disconnect_bounded(client: BleakClient, timeout_s: float) -> None:
+    await asyncio.wait_for(client.disconnect(), timeout=timeout_s)
+
+
 async def connect_log_device(name_or_address: str, args: argparse.Namespace) -> BleakClient:
     device = await find_device(name_or_address, args.scan_timeout, require_service=False)
-    client = BleakClient(device.address)
-    await client.connect()
+    client = BleakClient(device.client_target, timeout=args.connect_timeout)
+    print(
+        f"resolved log[{name_or_address}] address={device.address} "
+        f"source={device.source} preconnected={int(device.connected)}",
+        flush=True,
+    )
+    await asyncio.wait_for(
+        client.connect(timeout=args.connect_timeout, dangerous_use_bleak_cache=True),
+        timeout=args.connect_timeout + 1.0,
+    )
 
     def on_log(_sender: object, data: bytearray) -> None:
         text = bytes(data).decode("utf-8", errors="replace")
         for line in text.splitlines():
             print(f"log[{name_or_address}] {line}", flush=True)
 
-    await client.start_notify(LOG_TX_UUID, on_log)
-    print(f"connected log[{name_or_address}] address={device.address}", flush=True)
+    await start_notify_bounded(client, LOG_TX_UUID, on_log, args.connect_timeout, f"log[{name_or_address}]")
+    print(f"attached log[{name_or_address}] address={device.address}", flush=True)
     return client
 
 
@@ -385,6 +525,8 @@ async def run(args: argparse.Namespace) -> int:
 
     gateway = await find_device(args.gateway, args.scan_timeout, require_service=not args.no_service_filter)
     log_clients: list[BleakClient] = []
+    gateway_client: BleakClient | None = None
+    gateway_preconnected = gateway.connected
     stats = MonitorStats()
     start_s = time.monotonic()
     done = asyncio.Event()
@@ -441,30 +583,48 @@ async def run(args: argparse.Namespace) -> int:
             print(f"log[gateway] {line}", flush=True)
 
     try:
-        async with BleakClient(gateway.address) as gateway_client:
-            print(f"connected gateway={args.gateway} address={gateway.address}", flush=True)
-            await gateway_client.start_notify(PACKET_TX_UUID, on_packet)
-            if args.gateway_logs:
-                await gateway_client.start_notify(LOG_TX_UUID, on_gateway_log)
-                print("connected log[gateway] via primary connection", flush=True)
-            for log_name in args.log_device:
-                try:
-                    log_clients.append(await connect_log_device(log_name, args))
-                except Exception as exc:
-                    print(f"log[{log_name}] connect_error {exc}", file=sys.stderr, flush=True)
+        gateway_client = BleakClient(gateway.client_target, timeout=args.connect_timeout)
+        print(
+            f"resolved gateway={args.gateway} address={gateway.address} "
+            f"source={gateway.source} preconnected={int(gateway.connected)}",
+            flush=True,
+        )
+        await asyncio.wait_for(
+            gateway_client.connect(timeout=args.connect_timeout, dangerous_use_bleak_cache=True),
+            timeout=args.connect_timeout + 1.0,
+        )
+        print(f"attached gateway={args.gateway} address={gateway.address}", flush=True)
+        await start_notify_bounded(gateway_client, PACKET_TX_UUID, on_packet, args.connect_timeout, "gateway packet")
+        if args.gateway_logs:
+            await start_notify_bounded(gateway_client, LOG_TX_UUID, on_gateway_log, args.connect_timeout, "gateway log")
+            print("attached log[gateway] via primary connection", flush=True)
+        for log_name in args.log_device:
+            try:
+                log_clients.append(await connect_log_device(log_name, args))
+            except Exception as exc:
+                print(f"log[{log_name}] connect_error {exc}", file=sys.stderr, flush=True)
 
-            if args.duration_s is None and args.count is None:
-                while True:
-                    await asyncio.sleep(3600)
-            elif args.duration_s is None:
-                await done.wait()
-            else:
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(done.wait(), timeout=args.duration_s)
+        if args.duration_s is None and args.count is None:
+            while True:
+                await asyncio.sleep(3600)
+        elif args.duration_s is None:
+            await done.wait()
+        else:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(done.wait(), timeout=args.duration_s)
     finally:
         for client in log_clients:
             with contextlib.suppress(Exception):
-                await client.disconnect()
+                await disconnect_bounded(client, args.connect_timeout)
+        if gateway_client is not None:
+            with contextlib.suppress(Exception):
+                if gateway_preconnected:
+                    backend = getattr(gateway_client, "_backend", None)
+                    cleanup = getattr(backend, "_cleanup_all", None)
+                    if callable(cleanup):
+                        cleanup()
+                else:
+                    await disconnect_bounded(gateway_client, args.connect_timeout)
 
     print(
         "summary "
@@ -492,6 +652,8 @@ def main() -> int:
                         help="subscribe to gateway LOG_TX on the primary gateway connection")
     parser.add_argument("--scan-timeout", type=float, default=6.0,
                         help="BLE scan timeout per lookup")
+    parser.add_argument("--connect-timeout", type=float, default=8.0,
+                        help="BLE GATT attach/connect timeout")
     parser.add_argument("--list-devices", action="store_true",
                         help="scan once, print address/name/RSSI/service UUIDs, and exit")
     parser.add_argument("--duration-s", type=float,
@@ -511,6 +673,8 @@ def main() -> int:
         parser.error("--duration-s must be positive")
     if args.count is not None and args.count <= 0:
         parser.error("--count must be positive")
+    if args.connect_timeout <= 0:
+        parser.error("--connect-timeout must be positive")
     return asyncio.run(run(args))
 
 

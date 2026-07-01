@@ -165,29 +165,47 @@ static uint32_t mesh_test_tx_once(void)
     struct mesh_outbound outbound;
     uint32_t packet_id;
     uint16_t attempt;
+    bool relay_tx_active;
+    bool route_waiting_active;
+    bool report_backlog_active;
+    bool ack_wait_active;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR ||
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
         return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
     }
-    status_debug_note("DBG_MESH_TEST_WORK\n");
-    if (mesh_relay_tx_active(&mesh_runtime) || mesh_route_waiting_tx_active()) {
+    relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
+    route_waiting_active = mesh_route_waiting_tx_active();
+    report_backlog_active = mesh_report_tx_backlog_active();
+    ack_wait_active = mesh_report_ch9_ack_wait_active();
+    if (relay_tx_active || route_waiting_active || report_backlog_active ||
+        ack_wait_active) {
         status_debug_note("DBG_MESH_TEST_WAIT\n");
+        if (relay_tx_active) {
+            status_debug_note("DBG_MESH_TEST_WAIT_RELAY\n");
+        }
+        if (route_waiting_active) {
+            status_debug_note("DBG_MESH_TEST_WAIT_ROUTE\n");
+        }
+        if (report_backlog_active) {
+            status_debug_note("DBG_MESH_TEST_WAIT_BACKLOG\n");
+        }
+        if (ack_wait_active) {
+            status_debug_note("DBG_MESH_TEST_WAIT_ACK\n");
+        }
+        if (report_tx_queue_used() > 0u) {
+            status_debug_note("DBG_MESH_TEST_QUEUE_WAIT\n");
+        }
         if (mesh_test_wait_log_ticks == 0u || mesh_test_wait_log_ticks >= 10u) {
-            high_debug_log_event("MESH_TEST_WAIT",
-                                 "tx_active=%u route_waiting=%u next_id=%u current_attempt=%u drops=%u",
-                                 mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
-                                 mesh_route_waiting_tx_active() ? 1u : 0u,
-                                 mesh_test_next_packet_id,
-                                 mesh_test_attempt,
-                                 mesh_test_drop_count);
-            LOG_INF("mesh-test synthetic wait: tx_active=%u route_waiting=%u next_id=%u current_attempt=%u drops=%u",
-                    mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
-                    mesh_route_waiting_tx_active() ? 1u : 0u,
-                    mesh_test_next_packet_id,
-                    mesh_test_attempt,
-                    mesh_test_drop_count);
+            status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=%u route=%u backlog=%u ack=%u q=%u id=%u att=%u\n",
+                                relay_tx_active ? 1u : 0u,
+                                route_waiting_active ? 1u : 0u,
+                                report_backlog_active ? 1u : 0u,
+                                ack_wait_active ? 1u : 0u,
+                                report_tx_queue_used(),
+                                mesh_test_next_packet_id,
+                                mesh_test_attempt);
             mesh_test_wait_log_ticks = 1u;
         } else {
             mesh_test_wait_log_ticks++;
@@ -198,7 +216,6 @@ static uint32_t mesh_test_tx_once(void)
 
     packet_id = mesh_test_next_packet_id;
     attempt = mesh_test_next_attempt();
-    status_debug_note("DBG_MESH_TEST_BUILD\n");
     ret = mesh_test_build_packet(&outbound, packet_id, attempt);
     if (ret < 0) {
         mesh_test_drop_count++;
@@ -207,29 +224,19 @@ static uint32_t mesh_test_tx_once(void)
         return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
     }
 
-    status_debug_note("DBG_MESH_TEST_SEND_BEGIN\n");
-    ret = mesh_start_tracked_tx(&outbound, "mesh-test-synthetic");
+    ret = queue_anchor_report(&outbound);
     status_debug_note(ret == 0 ? "DBG_MESH_TEST_SEND_OK\n" :
-                      ret == -EHOSTUNREACH ? "DBG_MESH_TEST_SEND_ROUTE_WAIT\n" :
                       "DBG_MESH_TEST_SEND_FAIL\n");
-    if (ret == 0 || ret == -EHOSTUNREACH) {
-        high_debug_log_event("MESH_TEST_TX",
-                             "id=%u attempt=%u ret=%d route_waiting=%u drops=%u",
-                             packet_id,
-                             attempt,
-                             ret,
-                             mesh_route_waiting_tx_active() ? 1u : 0u,
-                             mesh_test_drop_count);
-        LOG_INF("mesh-test synthetic packet queued/launched: id=%u attempt=%u ret=%d route_waiting=%u",
-                packet_id,
-                attempt,
-                ret,
-                mesh_route_waiting_tx_active() ? 1u : 0u);
+    if (ret == 0) {
         mesh_test_next_packet_id++;
         if (mesh_test_next_packet_id == 0u) {
             mesh_test_next_packet_id = 1u;
         }
         mesh_test_reset_attempts();
+        status_debug_printf("DBG_MESH_TEST_QUEUED id=%u att=%u q=%u\n",
+                            packet_id,
+                            attempt,
+                            report_tx_queue_used());
         return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
     }
 

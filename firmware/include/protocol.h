@@ -12,9 +12,13 @@ extern "C" {
 #define PROTO_MAGIC 0xC1u
 #define PROTO_VERSION 0x01u
 #define PACKET_HEADER_LEN 32u
+#define PACKET_EXT_HEADER_LEN 34u
 #define PACKET_CRC_LEN 2u
+#define PACKET_EXT_LENGTH_SENTINEL 0xFFu
 #define PACKET_MAX_PAYLOAD_LEN 255u
-#define PACKET_MAX_LEN (PACKET_HEADER_LEN + PACKET_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
+#define PACKET_MAX_LEN (PACKET_EXT_HEADER_LEN + PACKET_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
+#define PACKET_EXT_MAX_PAYLOAD_LEN 958u
+#define PACKET_EXT_MAX_LEN (PACKET_EXT_HEADER_LEN + PACKET_EXT_MAX_PAYLOAD_LEN + PACKET_CRC_LEN)
 #define UWB_CIR_SAMPLE_LEN 6u
 
 enum result {
@@ -184,6 +188,8 @@ enum tlv_type {
     TLV_MESH_TEST_ORIGIN_ID = 0x5C,
     TLV_MESH_TEST_TARGET_ID = 0x5D,
     TLV_MESH_TEST_FLAGS = 0x5E,
+    TLV_MESH_ACK_SEQ_LIST = 0x5F,
+    TLV_MESH_ACK_PACKET_ID_LIST = 0x60,
 };
 
 enum status_bit {
@@ -259,13 +265,14 @@ struct proto_packet {
     uint32_t session_id;
     uint16_t seq;
     uint8_t ttl;
-    uint8_t payload_len;
+    uint16_t payload_len;
     uint32_t message_age_ms;
 };
 
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);
 
-size_t proto_packet_encoded_len(uint8_t payload_len);
+size_t proto_packet_header_len(uint16_t payload_len);
+size_t proto_packet_encoded_len(uint16_t payload_len);
 int proto_packet_encode(const struct proto_packet *packet,
                        const uint8_t *payload,
                        uint8_t *out,

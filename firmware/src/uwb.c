@@ -1784,7 +1784,7 @@ int uwb_mesh_frame_encode(uint32_t network_id,
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (packet_len > PACKET_MAX_LEN) {
+    if (packet_len > UWB_MESH_MAX_PACKET_LEN) {
         return PROTO_ERR_NO_SPACE;
     }
 

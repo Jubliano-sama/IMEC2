@@ -72,6 +72,8 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 void mesh_preempt_for_click_event(void);
 void report_tx_schedule(uint32_t delay_ms);
 uint32_t report_tx_queue_used(void);
+bool mesh_report_tx_backlog_active(void);
+bool mesh_report_ch9_ack_wait_active(void);
 int queue_anchor_report(const struct mesh_outbound *outbound);
 bool mesh_queue_from_frame(const uint8_t *frame,
                            size_t frame_len,

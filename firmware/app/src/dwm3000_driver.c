@@ -1,5 +1,6 @@
 #include "dwm3000_driver.h"
 
+#include "app_board.h"
 #include "debug_log.h"
 #include "dwm3000_port.h"
 #include "uwb.h"
@@ -275,6 +276,12 @@ static bool focused_anchor_rx_logs_enabled(void)
 #ifndef DWM3000_MESH_PHY_SFD_TIMEOUT
 #define DWM3000_MESH_PHY_SFD_TIMEOUT (1024 + 1 + 8 - 8)
 #endif
+#ifndef DWM3000_MESH_PHY_PHR_MODE
+#define DWM3000_MESH_PHY_PHR_MODE DWT_PHRMODE_EXT
+#endif
+#ifndef DWM3000_MESH_PHY_PHR_RATE
+#define DWM3000_MESH_PHY_PHR_RATE DWT_PHRRATE_STD
+#endif
 #ifndef DWM3000_MESH_PHY_STS_MODE
 #define DWM3000_MESH_PHY_STS_MODE DWT_STS_MODE_OFF
 #endif
@@ -359,6 +366,8 @@ BUILD_ASSERT(FINAL_RX_TIMEOUT_MS >=
              "responder final wait timeout must cover delayed RX");
 BUILD_ASSERT(REPORT_RX_TIMEOUT_MS >= DS_TWR_UUS_TO_MS_CEIL(REPORT_RX_TIMEOUT_UUS),
              "initiator report wait timeout must cover report RX timeout");
+BUILD_ASSERT((UWB_MESH_MAX_FRAME_LEN + UWB_PHY_FCS_LEN) <= UWB_PHY_EXTENDED_FRAME_MAX_LEN,
+             "channel-9 mesh frames must fit the DW3000 extended PHR frame limit");
 
 static dwt_config_t default_config = {
     DWM3000_PHY_CHANNEL,
@@ -400,8 +409,8 @@ static dwt_config_t mesh_payload_config = {
     DWM3000_MESH_PHY_RX_CODE,
     DWM3000_MESH_PHY_SFD_TYPE,
     DWM3000_PHY_DATA_RATE,
-    DWM3000_PHY_PHR_MODE,
-    DWM3000_PHY_PHR_RATE,
+    DWM3000_MESH_PHY_PHR_MODE,
+    DWM3000_MESH_PHY_PHR_RATE,
     DWM3000_MESH_PHY_SFD_TIMEOUT,
     DWM3000_MESH_PHY_STS_MODE,
     DWM3000_MESH_PHY_STS_LENGTH,
@@ -888,10 +897,16 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
     LOG_WRN("DWM3000 PHY configure failed after retained sleep restore: phy=%d ret=%d; forcing full reinit",
             phy_mode,
             ret);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_DWM_RETAIN_REINIT phy=%d ret=%d\n", phy_mode, ret);
+    }
     ret = configure_radio_from_reset(phy_mode);
     if (ret < 0) {
         LOG_WRN("DWM3000 full reinit after retained sleep configure failure failed: ret=%d",
                 ret);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_REINIT_FAIL ret=%d\n", ret);
+        }
         return ret;
     }
     LOG_INF("DWM3000 PHY mode %d configured directly after full reinit",

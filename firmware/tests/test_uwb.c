@@ -1723,6 +1723,64 @@ static void test_uwb_mesh_frame_round_trip_and_filters(void)
     assert(decoded_packet.dst_id == 0u);
 }
 
+static void test_uwb_mesh_frame_max_extended_packet(void)
+{
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t decoded_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    struct proto_packet decoded_packet = {0};
+    uint64_t previous_hop_id = 0u;
+    size_t payload_len = 0u;
+    size_t written = 0u;
+
+    for (size_t i = 0u; i < sizeof(payload); i++) {
+        payload[i] = (uint8_t)(0xA5u ^ i);
+    }
+
+    const struct proto_packet packet = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = 0x10u,
+        .dst_id = 0x20u,
+        .session_id = 0x30u,
+        .seq = 0x40u,
+        .ttl = 3u,
+        .payload_len = sizeof(payload),
+        .message_age_ms = 0x10203040u,
+    };
+
+    assert(PACKET_EXT_MAX_LEN == UWB_MESH_MAX_PACKET_LEN);
+    assert((UWB_MESH_MAX_FRAME_LEN + UWB_PHY_FCS_LEN) == UWB_PHY_EXTENDED_FRAME_MAX_LEN);
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 0x10u,
+                                 0x20u,
+                                 &packet,
+                                 payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    assert(written == UWB_MESH_MAX_FRAME_LEN);
+    assert(proto_get_u16_le(&frame[23]) == PACKET_EXT_MAX_LEN);
+    assert(uwb_mesh_frame_decode(frame,
+                                 written,
+                                 0xAA55u,
+                                 0x20u,
+                                 &previous_hop_id,
+                                 &decoded_packet,
+                                 decoded_payload,
+                                 sizeof(decoded_payload),
+                                 &payload_len) == PROTO_OK);
+    assert(previous_hop_id == 0x10u);
+    assert(decoded_packet.msg_type == packet.msg_type);
+    assert(decoded_packet.flags == packet.flags);
+    assert(decoded_packet.src_id == packet.src_id);
+    assert(decoded_packet.dst_id == packet.dst_id);
+    assert(decoded_packet.payload_len == packet.payload_len);
+    assert(decoded_packet.message_age_ms == packet.message_age_ms);
+    assert(payload_len == sizeof(payload));
+    assert(memcmp(decoded_payload, payload, sizeof(payload)) == 0);
+}
+
 static void test_anchor_pair_schedule_and_result_round_trip(void)
 {
     const struct uwb_anchor_pair_schedule_frame schedule = {
@@ -1849,6 +1907,7 @@ int main(void)
     test_anchor_epoch_rejects_same_event_wrong_session_identity();
     test_claim_precedence_compare_uses_canonical_tuple();
     test_uwb_mesh_frame_round_trip_and_filters();
+    test_uwb_mesh_frame_max_extended_packet();
     test_anchor_pair_schedule_and_result_round_trip();
     return 0;
 }

@@ -149,6 +149,8 @@ static void test_channel9_timing_requires_channel5_contact(void)
     assert(parsed.peer_clock_skew_estimate_ppm == timing.peer_clock_skew_estimate_ppm);
     assert(parsed.max_missed_events == timing.max_missed_events);
     assert(parsed.supervision_timeout_ms == timing.supervision_timeout_ms);
+    assert(mesh_event_timing_local_tx_slot(&timing));
+    assert(!mesh_event_timing_local_rx_slot(&timing));
 
     assert(mesh_init_event_control(&packet,
                                    MSG_MESH_EVENT_PROPOSE,
@@ -167,6 +169,31 @@ static void test_channel9_timing_requires_channel5_contact(void)
                                    0x1234u,
                                    1u,
                                    0u) == PROTO_ERR_MALFORMED);
+}
+
+static void test_channel9_first_slot_direction_follows_initiator(void)
+{
+    struct mesh_event_timing initiator = {0};
+    struct mesh_event_timing downstream = {0};
+    struct mesh_event_params params = event_params();
+
+    assert(mesh_event_timing_negotiate(&initiator, &params, true) == PROTO_OK);
+    assert(mesh_event_timing_negotiate(&downstream, &params, true) == PROTO_OK);
+    mesh_event_timing_set_local_first_slot_tx(&initiator, true);
+    mesh_event_timing_set_local_first_slot_tx(&downstream, false);
+
+    assert(mesh_event_timing_local_tx_slot(&initiator));
+    assert(mesh_event_timing_local_rx_slot(&downstream));
+    assert(!mesh_event_timing_local_rx_slot(&initiator));
+    assert(!mesh_event_timing_local_tx_slot(&downstream));
+
+    mesh_event_note_success(&initiator, params.first_event_time_ms);
+    mesh_event_note_observed_packet(&downstream,
+                                    params.first_event_time_ms,
+                                    params.first_event_time_ms + 1u);
+
+    assert(mesh_event_timing_local_rx_slot(&initiator));
+    assert(mesh_event_timing_local_tx_slot(&downstream));
 }
 
 static void test_channel9_timing_crosses_uptime_domains_as_relative_delay(void)
@@ -228,7 +255,25 @@ static void test_channel9_event_planner_reserves_channel5_scan(void)
     assert(diagnostics.channel5_preemptions == 1u);
 }
 
-static void test_channel9_observed_rx_shifts_late_window_without_channel5(void)
+static void test_channel9_event_planner_keeps_negotiated_window_when_late(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    const struct mesh_channel5_requirements requirements = {
+        .next_required_scan_start_ms = 0u,
+        .retune_guard_ms = 5u,
+    };
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_plan_channel9(&timing, &requirements, 1012u, &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(plan.start_ms == 1000u);
+    assert(plan.end_ms == 1020u);
+    assert(plan.window_ms == 20u);
+}
+
+static void test_channel9_observed_rx_keeps_negotiated_cadence(void)
 {
     struct mesh_event_timing timing = {0};
     struct mesh_event_params params = event_params();
@@ -240,8 +285,13 @@ static void test_channel9_observed_rx_shifts_late_window_without_channel5(void)
     assert(timing.missed_event_count == 0u);
     assert(mesh_event_timing_usable(&timing, 1005u));
 
+    mesh_event_note_observed_packet(&timing, 1000u, 1010u);
+    assert(timing.next_event_time_ms == 1100u);
+    assert(timing.event_counter == 1u);
+    assert(timing.missed_event_count == 0u);
+
     mesh_event_note_observed_packet(&timing, 1100u, 1118u);
-    assert(timing.next_event_time_ms == 1208u);
+    assert(timing.next_event_time_ms == 1200u);
     assert(timing.event_counter == 2u);
     assert(!timing.fallback_required);
     assert(mesh_event_timing_usable(&timing, 1118u));
@@ -332,6 +382,61 @@ static void test_channel9_missed_events_stay_channel9_until_supervision_timeout(
     assert(diagnostics.ch9_report_latency_ms == 50u);
 }
 
+static void test_channel9_skip_elapsed_advances_to_next_live_slot(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_diagnostics diagnostics = {0};
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+
+    assert(mesh_event_skip_elapsed(&timing, 1019u, &diagnostics) == 0u);
+    assert(timing.next_event_time_ms == 1000u);
+    assert(timing.event_counter == 0u);
+    assert(diagnostics.ch9_event_misses == 0u);
+
+    assert(mesh_event_skip_elapsed(&timing, 1319u, &diagnostics) == 3u);
+    assert(timing.next_event_time_ms == 1300u);
+    assert(timing.event_counter == 3u);
+    assert(timing.missed_event_count == 3u);
+    assert(diagnostics.ch9_event_misses == 3u);
+}
+
+static void test_channel9_traffic_refreshes_supervision_timeout(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+
+    params.supervision_timeout_ms = 500u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_timing_usable(&timing, 1499u));
+    assert(!mesh_event_timing_usable(&timing, 1500u));
+
+    mesh_event_note_success(&timing, 1400u);
+    assert(mesh_event_timing_usable(&timing, 1899u));
+    assert(!mesh_event_timing_usable(&timing, 1900u));
+
+    mesh_event_note_observed_packet(&timing, 1800u, 1805u);
+    assert(mesh_event_timing_usable(&timing, 2299u));
+    assert(!mesh_event_timing_usable(&timing, 2300u));
+}
+
+static void test_channel9_local_tx_does_not_refresh_supervision_timeout(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+
+    params.supervision_timeout_ms = 500u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_timing_local_tx_slot(&timing));
+
+    mesh_event_note_local_tx(&timing, 1400u);
+    assert(mesh_event_timing_local_rx_slot(&timing));
+    assert(timing.next_event_time_ms == 1500u);
+    assert(mesh_event_timing_usable(&timing, 1499u));
+    assert(!mesh_event_timing_usable(&timing, 1500u));
+}
+
 int main(void)
 {
     test_gateway_ack_is_end_to_end();
@@ -339,11 +444,16 @@ int main(void)
     test_rejects_invalid_ids();
     test_rejects_zero_sequence_numbers();
     test_channel9_timing_requires_channel5_contact();
+    test_channel9_first_slot_direction_follows_initiator();
     test_channel9_timing_crosses_uptime_domains_as_relative_delay();
     test_channel9_event_planner_reserves_channel5_scan();
-    test_channel9_observed_rx_shifts_late_window_without_channel5();
+    test_channel9_event_planner_keeps_negotiated_window_when_late();
+    test_channel9_observed_rx_keeps_negotiated_cadence();
     test_channel5_activity_preempts_channel9_mesh();
     test_channel5_active_until_zero_is_idle_across_uptime_wrap();
     test_channel9_missed_events_stay_channel9_until_supervision_timeout();
+    test_channel9_skip_elapsed_advances_to_next_live_slot();
+    test_channel9_traffic_refreshes_supervision_timeout();
+    test_channel9_local_tx_does_not_refresh_supervision_timeout();
     return 0;
 }
