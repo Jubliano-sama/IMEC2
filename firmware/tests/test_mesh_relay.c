@@ -142,6 +142,17 @@ static uint64_t require_tlv_u64(const uint8_t *payload, size_t payload_len, uint
     return proto_get_u64_le(value);
 }
 
+static void assert_command_result_id_equal(const struct command_result_id *actual,
+                                           const struct command_result_id *expected)
+{
+    assert(actual->gateway_id == expected->gateway_id);
+    assert(actual->gateway_epoch == expected->gateway_epoch);
+    assert(actual->command_seq == expected->command_seq);
+    assert(actual->node_id == expected->node_id);
+    assert(actual->node_boot_counter == expected->node_boot_counter);
+    assert(actual->result_seq == expected->result_seq);
+}
+
 static void decode_outbound_over_uwb(const struct mesh_outbound *out,
                                      uint64_t sender_id,
                                      uint64_t receiver_id,
@@ -1067,6 +1078,75 @@ static void test_busy_relay_sends_result_busy_for_command_result(void)
     assert(result.busy.packet.msg_type == MSG_RESULT_BUSY);
     assert(result.busy.packet.dst_id == ANCHOR_A);
     assert(result.busy.next_hop_id == ANCHOR_A);
+}
+
+static void test_result_busy_preserves_command_result_identity(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 3u,
+        .command_seq = 0x12345678u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 11u,
+        .result_seq = 12u,
+    };
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
+    struct proto_packet incoming_result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_A,
+        .dst_id = GATEWAY,
+        .session_id = 90u,
+        .seq = 6u,
+        .ttl = 4u,
+    };
+    struct proto_packet local_report;
+    struct mesh_outbound tracked_report;
+    struct mesh_relay_result result;
+    struct result_busy decoded_busy = {0};
+    uint8_t incoming_payload[96];
+    uint8_t local_payload[1] = {0x46u};
+    size_t incoming_payload_len = 0u;
+
+    assert(command_result_id_append_tlvs(incoming_payload,
+                                         sizeof(incoming_payload),
+                                         &incoming_payload_len,
+                                         &result_id) == PROTO_OK);
+    incoming_result.payload_len = (uint16_t)incoming_payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&local_report,
+                                    ANCHOR_B,
+                                    GATEWAY,
+                                    81u,
+                                    5u,
+                                    sizeof(local_payload)) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &local_report,
+                               local_payload,
+                               sizeof(local_payload),
+                               4201u,
+                               &tracked_report) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &incoming_result,
+                                incoming_payload,
+                                incoming_payload_len,
+                                ANCHOR_A,
+                                80u,
+                                4202u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_BUSY);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+    assert(result.busy.packet.msg_type == MSG_RESULT_BUSY);
+    assert(result_busy_from_tlvs(result.busy.payload,
+                                 result.busy.payload_len,
+                                 &decoded_busy) == PROTO_OK);
+    assert_command_result_id_equal(&decoded_busy.result_id, &result_id);
+    assert(decoded_busy.retry_after_ms == RELAY_BUSY_RETRY_MIN_MS);
+    assert(decoded_busy.capacity_validity_interval_ms == RELAY_BUSY_RETRY_MIN_MS);
 }
 
 static void test_relay_busy_defers_matching_pending_tx(void)
@@ -3236,6 +3316,7 @@ int main(void)
     test_busy_relay_does_not_ack_or_cache_new_forward();
     test_busy_relay_drops_duplicate_forward();
     test_busy_relay_sends_result_busy_for_command_result();
+    test_result_busy_preserves_command_result_identity();
     test_relay_busy_defers_matching_pending_tx();
     test_local_gateway_bound_tx_waits_for_gateway_ack();
     test_local_gateway_bound_tx_accepts_batched_gateway_ack();

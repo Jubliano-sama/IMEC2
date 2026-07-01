@@ -368,6 +368,7 @@ struct result_busy {
     struct command_result_id result_id;
     uint16_t retry_after_ms;
     uint8_t capacity_state;
+    uint16_t capacity_validity_interval_ms;
     uint64_t optional_alternate_parent;
     bool has_optional_alternate_parent;
 };

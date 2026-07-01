@@ -910,6 +910,8 @@ static int parse_relay_busy_tlvs(const uint8_t *payload,
 
 static int build_busy_response(struct mesh_relay *relay,
                                const struct proto_packet *packet,
+                               const uint8_t *payload,
+                               size_t incoming_payload_len,
                                uint64_t previous_hop_id,
                                uint8_t msg_type,
                                struct mesh_outbound *out)
@@ -917,6 +919,10 @@ static int build_busy_response(struct mesh_relay *relay,
     const struct route_candidate *alternate;
     size_t payload_len = 0u;
     uint16_t retry_after_ms;
+    uint8_t capacity_state;
+    uint64_t alternate_parent_id = 0u;
+    bool has_alternate_parent = false;
+    bool appended_busy_fields = false;
     int ret;
 
     if (relay == NULL ||
@@ -930,6 +936,7 @@ static int build_busy_response(struct mesh_relay *relay,
 
     memset(out, 0, sizeof(*out));
     retry_after_ms = relay_busy_retry_after_ms(relay);
+    capacity_state = relay_current_capacity_state(relay);
 
     ret = tlv_append_u32(out->payload,
                          sizeof(out->payload),
@@ -943,42 +950,73 @@ static int build_busy_response(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_u16(out->payload,
-                         sizeof(out->payload),
-                         &payload_len,
-                         TLV_RETRY_AFTER_MS,
-                         retry_after_ms);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u8(out->payload,
-                        sizeof(out->payload),
-                        &payload_len,
-                        TLV_RELAY_CAPACITY_STATE,
-                        relay_current_capacity_state(relay));
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u16(out->payload,
-                         sizeof(out->payload),
-                         &payload_len,
-                         TLV_CAPACITY_VALIDITY_INTERVAL_MS,
-                         retry_after_ms);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
 
     alternate = route_selected(&relay->upstream);
     if (alternate != NULL &&
         alternate->next_hop_id != previous_hop_id &&
         alternate->next_hop_id != packet->src_id) {
-        ret = tlv_append_u64(out->payload,
+        alternate_parent_id = alternate->next_hop_id;
+        has_alternate_parent = true;
+    }
+
+    if (msg_type == MSG_RESULT_BUSY && payload != NULL && incoming_payload_len > 0u) {
+        struct command_result_id result_id;
+        ret = command_result_id_from_tlvs(payload, incoming_payload_len, &result_id);
+        if (ret == PROTO_OK) {
+            const struct result_busy busy = {
+                .result_id = result_id,
+                .retry_after_ms = retry_after_ms,
+                .capacity_state = capacity_state,
+                .capacity_validity_interval_ms = retry_after_ms,
+                .optional_alternate_parent = alternate_parent_id,
+                .has_optional_alternate_parent = has_alternate_parent,
+            };
+
+            ret = result_busy_append_tlvs(out->payload,
+                                          sizeof(out->payload),
+                                          &payload_len,
+                                          &busy);
+            if (ret != PROTO_OK) {
+                return ret;
+            }
+            appended_busy_fields = true;
+        }
+    }
+
+    if (!appended_busy_fields) {
+        ret = tlv_append_u16(out->payload,
                              sizeof(out->payload),
                              &payload_len,
-                             TLV_ALTERNATE_PARENT_ID,
-                             alternate->next_hop_id);
+                             TLV_RETRY_AFTER_MS,
+                             retry_after_ms);
         if (ret != PROTO_OK) {
             return ret;
+        }
+        ret = tlv_append_u8(out->payload,
+                            sizeof(out->payload),
+                            &payload_len,
+                            TLV_RELAY_CAPACITY_STATE,
+                            capacity_state);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = tlv_append_u16(out->payload,
+                             sizeof(out->payload),
+                             &payload_len,
+                             TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                             retry_after_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (has_alternate_parent) {
+            ret = tlv_append_u64(out->payload,
+                                 sizeof(out->payload),
+                                 &payload_len,
+                                 TLV_ALTERNATE_PARENT_ID,
+                                 alternate_parent_id);
+            if (ret != PROTO_OK) {
+                return ret;
+            }
         }
     }
 
@@ -998,6 +1036,8 @@ static int build_busy_response(struct mesh_relay *relay,
 
 static void add_busy_action(struct mesh_relay *relay,
                             const struct proto_packet *packet,
+                            const uint8_t *payload,
+                            size_t payload_len,
                             uint64_t previous_hop_id,
                             struct mesh_relay_result *result)
 {
@@ -1006,7 +1046,13 @@ static void add_busy_action(struct mesh_relay *relay,
                             MSG_RELAY_BUSY;
     struct mesh_outbound *out = &result->busy;
 
-    if (build_busy_response(relay, packet, previous_hop_id, busy_msg_type, out) != PROTO_OK) {
+    if (build_busy_response(relay,
+                            packet,
+                            payload,
+                            payload_len,
+                            previous_hop_id,
+                            busy_msg_type,
+                            out) != PROTO_OK) {
         return;
     }
     result->actions |= busy_msg_type == MSG_RESULT_BUSY ?
@@ -2149,7 +2195,7 @@ static int handle_route_request(struct mesh_relay *relay,
         if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u) {
             return PROTO_OK;
         }
-        add_busy_action(relay, packet, previous_hop_id, result);
+        add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
         return PROTO_ERR_BUSY;
     }
 
@@ -2220,7 +2266,7 @@ static int handle_route_reply(struct mesh_relay *relay,
         return PROTO_OK;
     }
     if (mesh_relay_tx_active(relay)) {
-        add_busy_action(relay, packet, previous_hop_id, result);
+        add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
         return PROTO_ERR_BUSY;
     }
 
@@ -3262,7 +3308,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         }
 
         if (mesh_relay_tx_active(relay)) {
-            add_busy_action(relay, packet, previous_hop_id, result);
+            add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_BUSY;
             return PROTO_OK;
@@ -3285,7 +3331,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         packet->msg_type != MSG_ROUTE_REPLY &&
         (packet_needs_forward(relay, packet) || local_delivery_needs_response(relay, packet)) &&
         mesh_relay_tx_active(relay)) {
-        add_busy_action(relay, packet, previous_hop_id, result);
+        add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
         result->status = PROTO_ERR_BUSY;
         result->actions |= MESH_RELAY_ACTION_DROP;
         return PROTO_OK;

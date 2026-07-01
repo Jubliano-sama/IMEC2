@@ -602,6 +602,14 @@ int result_busy_append_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = tlv_append_u16(payload,
+                         payload_cap,
+                         offset,
+                         TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                         busy->capacity_validity_interval_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     if (!busy->has_optional_alternate_parent) {
         return PROTO_OK;
     }
@@ -632,6 +640,13 @@ int result_busy_from_tlvs(const uint8_t *payload,
         return ret;
     }
     ret = tlv_require_u8(payload, payload_len, TLV_RELAY_CAPACITY_STATE, &busy->capacity_state);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload,
+                          payload_len,
+                          TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                          &busy->capacity_validity_interval_ms);
     if (ret != PROTO_OK) {
         return ret;
     }

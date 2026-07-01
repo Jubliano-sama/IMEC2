@@ -398,6 +398,7 @@ static void test_result_offer_grant_busy_tlvs_round_trip(void)
         .result_id = id,
         .retry_after_ms = 750u,
         .capacity_state = 2u,
+        .capacity_validity_interval_ms = 1250u,
         .optional_alternate_parent = 0xCC00000000000003ull,
         .has_optional_alternate_parent = true,
     };
@@ -437,6 +438,7 @@ static void test_result_offer_grant_busy_tlvs_round_trip(void)
     assert_command_result_id_equal(&decoded_busy.result_id, &id);
     assert(decoded_busy.retry_after_ms == busy.retry_after_ms);
     assert(decoded_busy.capacity_state == busy.capacity_state);
+    assert(decoded_busy.capacity_validity_interval_ms == busy.capacity_validity_interval_ms);
     assert(decoded_busy.has_optional_alternate_parent);
     assert(decoded_busy.optional_alternate_parent == busy.optional_alternate_parent);
 }
