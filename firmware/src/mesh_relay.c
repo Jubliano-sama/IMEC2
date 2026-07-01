@@ -32,6 +32,15 @@ struct route_reply_ack_fields {
     uint16_t metric_crc;
 };
 
+struct relay_busy_fields {
+    uint32_t requested_session_id;
+    uint16_t requested_seq;
+    uint16_t retry_after_ms;
+    uint8_t capacity_state;
+    uint64_t alternate_parent_id;
+    bool has_alternate_parent;
+};
+
 struct gateway_route_adv_fields {
     uint64_t gateway_id;
     uint32_t gateway_route_seq;
@@ -151,6 +160,22 @@ static uint8_t relay_current_capacity_state(const struct mesh_relay *relay)
 static uint16_t relay_current_queue_free_hint(const struct mesh_relay *relay)
 {
     return relay_current_capacity_state(relay) == RELAY_CAP_GREEN ? 1u : 0u;
+}
+
+static uint16_t relay_busy_retry_after_ms(const struct mesh_relay *relay)
+{
+    uint16_t retry_after_ms = RELAY_BUSY_RETRY_MIN_MS;
+
+    if (relay_current_capacity_state(relay) >= RELAY_CAP_RED) {
+        retry_after_ms = RELAY_BUSY_RETRY_MAX_MS;
+    }
+    if (retry_after_ms < RELAY_BUSY_RETRY_MIN_MS) {
+        return RELAY_BUSY_RETRY_MIN_MS;
+    }
+    if (retry_after_ms > RELAY_BUSY_RETRY_MAX_MS) {
+        return RELAY_BUSY_RETRY_MAX_MS;
+    }
+    return retry_after_ms;
 }
 
 static uint16_t route_reply_nonce(uint64_t origin_id,
@@ -747,7 +772,7 @@ static int build_hop_ack(struct mesh_relay *relay,
     out->packet.msg_type = MSG_MESH_HOP_ACK;
     out->packet.flags = 0u;
     out->packet.src_id = relay->local_id;
-    out->packet.dst_id = packet->src_id;
+    out->packet.dst_id = previous_hop_id;
     out->packet.session_id = packet->session_id;
     out->packet.seq = relay_next_seq(relay);
     out->packet.ttl = MESH_GATEWAY_ACK_TTL;
@@ -755,6 +780,192 @@ static int build_hop_ack(struct mesh_relay *relay,
     out->payload_len = (uint16_t)payload_len;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = previous_hop_id;
+    return PROTO_OK;
+}
+
+static int parse_relay_busy_tlvs(const uint8_t *payload,
+                                 size_t payload_len,
+                                 struct relay_busy_fields *fields)
+{
+    int ret;
+
+    ret = find_u32_tlv(payload,
+                       payload_len,
+                       TLV_REQUESTED_MSG_SESSION_ID,
+                       &fields->requested_session_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = find_u16_tlv(payload, payload_len, TLV_REQUESTED_MSG_SEQ, &fields->requested_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = find_u16_tlv(payload, payload_len, TLV_RETRY_AFTER_MS, &fields->retry_after_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = find_u8_tlv(payload, payload_len, TLV_RELAY_CAPACITY_STATE, &fields->capacity_state);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (fields->capacity_state > RELAY_CAP_BLACK) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = find_u64_tlv(payload,
+                       payload_len,
+                       TLV_ALTERNATE_PARENT_ID,
+                       &fields->alternate_parent_id);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        fields->has_alternate_parent = false;
+        fields->alternate_parent_id = 0u;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    fields->has_alternate_parent = id_is_unicast(fields->alternate_parent_id);
+    return fields->has_alternate_parent ? PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+static int build_busy_response(struct mesh_relay *relay,
+                               const struct proto_packet *packet,
+                               uint64_t previous_hop_id,
+                               uint8_t msg_type,
+                               struct mesh_outbound *out)
+{
+    const struct route_candidate *alternate;
+    size_t payload_len = 0u;
+    uint16_t retry_after_ms;
+    int ret;
+
+    if (relay == NULL ||
+        packet == NULL ||
+        out == NULL ||
+        (msg_type != MSG_RELAY_BUSY && msg_type != MSG_RESULT_BUSY) ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(out, 0, sizeof(*out));
+    retry_after_ms = relay_busy_retry_after_ms(relay);
+
+    ret = tlv_append_u32(out->payload,
+                         sizeof(out->payload),
+                         &payload_len,
+                         TLV_REQUESTED_MSG_SESSION_ID,
+                         packet->session_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_requested_seq(out->payload, sizeof(out->payload), &payload_len, packet->seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(out->payload,
+                         sizeof(out->payload),
+                         &payload_len,
+                         TLV_RETRY_AFTER_MS,
+                         retry_after_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(out->payload,
+                        sizeof(out->payload),
+                        &payload_len,
+                        TLV_RELAY_CAPACITY_STATE,
+                        relay_current_capacity_state(relay));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    alternate = route_selected(&relay->upstream);
+    if (alternate != NULL &&
+        alternate->next_hop_id != previous_hop_id &&
+        alternate->next_hop_id != packet->src_id) {
+        ret = tlv_append_u64(out->payload,
+                             sizeof(out->payload),
+                             &payload_len,
+                             TLV_ALTERNATE_PARENT_ID,
+                             alternate->next_hop_id);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+
+    out->packet.msg_type = msg_type;
+    out->packet.flags = 0u;
+    out->packet.src_id = relay->local_id;
+    out->packet.dst_id = packet->src_id;
+    out->packet.session_id = packet->session_id;
+    out->packet.seq = relay_next_seq(relay);
+    out->packet.ttl = 1u;
+    out->packet.payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)payload_len;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->next_hop_id = previous_hop_id;
+    return PROTO_OK;
+}
+
+static void add_busy_action(struct mesh_relay *relay,
+                            const struct proto_packet *packet,
+                            uint64_t previous_hop_id,
+                            struct mesh_relay_result *result)
+{
+    uint8_t busy_msg_type = packet->msg_type == MSG_COMMAND_RESULT ?
+                            MSG_RESULT_BUSY :
+                            MSG_RELAY_BUSY;
+    struct mesh_outbound *out = &result->busy;
+
+    if (build_busy_response(relay, packet, previous_hop_id, busy_msg_type, out) != PROTO_OK) {
+        return;
+    }
+    result->actions |= busy_msg_type == MSG_RESULT_BUSY ?
+                       MESH_RELAY_ACTION_SEND_RESULT_BUSY :
+                       MESH_RELAY_ACTION_SEND_RELAY_BUSY;
+}
+
+static int handle_local_busy(struct mesh_relay *relay,
+                             const struct proto_packet *packet,
+                             const uint8_t *payload,
+                             size_t payload_len,
+                             uint64_t previous_hop_id,
+                             uint32_t now_ms,
+                             struct mesh_relay_result *result)
+{
+    struct relay_busy_fields fields = {0};
+    uint32_t retry_after_ms;
+    int ret;
+
+    if (packet->dst_id != relay->local_id ||
+        (packet->msg_type != MSG_RELAY_BUSY && packet->msg_type != MSG_RESULT_BUSY)) {
+        return PROTO_OK;
+    }
+    if (!id_is_unicast(previous_hop_id) ||
+        previous_hop_id != packet->src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = parse_relay_busy_tlvs(payload, payload_len, &fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (relay->pending.state == MESH_RELAY_TX_IDLE ||
+        fields.requested_session_id != relay->pending.packet.session_id ||
+        fields.requested_seq != relay->pending.packet.seq) {
+        return PROTO_OK;
+    }
+
+    retry_after_ms = fields.retry_after_ms;
+    if (retry_after_ms < RELAY_BUSY_RETRY_MIN_MS) {
+        retry_after_ms = RELAY_BUSY_RETRY_MIN_MS;
+    } else if (retry_after_ms > RELAY_BUSY_RETRY_MAX_MS) {
+        retry_after_ms = RELAY_BUSY_RETRY_MAX_MS;
+    }
+    pending_refresh_age(&relay->pending, now_ms);
+    relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    relay->pending.retry_after_ms = now_ms + retry_after_ms;
+    result->actions |= MESH_RELAY_ACTION_TX_RELAY_BUSY;
     return PROTO_OK;
 }
 
@@ -1691,8 +1902,11 @@ static int handle_route_request(struct mesh_relay *relay,
     }
 
     if (mesh_relay_tx_active(relay)) {
-        return (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u ?
-               PROTO_OK : PROTO_ERR_BUSY;
+        if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u) {
+            return PROTO_OK;
+        }
+        add_busy_action(relay, packet, previous_hop_id, result);
+        return PROTO_ERR_BUSY;
     }
 
     ret = build_route_request_forward(packet,
@@ -1761,6 +1975,7 @@ static int handle_route_reply(struct mesh_relay *relay,
         return PROTO_OK;
     }
     if (mesh_relay_tx_active(relay)) {
+        add_busy_action(relay, packet, previous_hop_id, result);
         return PROTO_ERR_BUSY;
     }
 
@@ -2758,6 +2973,22 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
+    if ((packet->msg_type == MSG_RELAY_BUSY || packet->msg_type == MSG_RESULT_BUSY) &&
+        packet->dst_id == relay->local_id) {
+        ret = handle_local_busy(relay,
+                                packet,
+                                payload,
+                                payload_len,
+                                previous_hop_id,
+                                now_ms,
+                                result);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+        }
+        return PROTO_OK;
+    }
+
     duplicate = duplicate_seen(relay, packet, now_ms);
     if (duplicate) {
         if (packet->msg_type == MSG_ROUTE_REPLY && packet->dst_id != MESH_BROADCAST_ID) {
@@ -2779,6 +3010,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         }
 
         if (mesh_relay_tx_active(relay)) {
+            add_busy_action(relay, packet, previous_hop_id, result);
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_BUSY;
             return PROTO_OK;
@@ -2801,6 +3033,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         packet->msg_type != MSG_ROUTE_REPLY &&
         (packet_needs_forward(relay, packet) || local_delivery_needs_response(relay, packet)) &&
         mesh_relay_tx_active(relay)) {
+        add_busy_action(relay, packet, previous_hop_id, result);
         result->status = PROTO_ERR_BUSY;
         result->actions |= MESH_RELAY_ACTION_DROP;
         return PROTO_OK;

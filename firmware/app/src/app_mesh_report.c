@@ -5237,6 +5237,16 @@ after_gateway_ack:
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
         (void)mesh_send_outbound(&result->gateway_route_adv, "gateway-route-adv-forward");
     }
+    if (result->actions & MESH_RELAY_ACTION_SEND_RELAY_BUSY) {
+        if (mesh_send_outbound(&result->busy, "relay-busy") == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
+        }
+    }
+    if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_BUSY) {
+        if (mesh_send_outbound(&result->busy, "result-busy") == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
+        }
+    }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
         mesh_route_embedded_wait_before_reply(&result->route_reply);
         if (mesh_send_route_reply_train(&result->route_reply) == 0 &&
@@ -5373,6 +5383,10 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_TX_HOP_PROGRESS) {
         LOG_INF("mesh pending TX hop progress acknowledged");
+        mesh_schedule_tx_timeout();
+    }
+    if (result->actions & MESH_RELAY_ACTION_TX_RELAY_BUSY) {
+        LOG_INF("mesh pending TX deferred by relay busy hint");
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) {

@@ -37,11 +37,13 @@
     - [x] missing advertisements do not delete usable routes;
     - [ ] equivalent advertisement suppression beyond exact duplicate identity;
     - active click service and required quick channel-5 wake scans preempt advertisement work.
-- [ ] Add relay capacity and explicit busy responses.
+- [x] Add relay capacity and explicit busy responses.
   - Route selection now stores and uses relay capacity hints as parent-candidate tie-breakers.
-  - Implement GREEN/YELLOW/RED/BLACK behavior plus `RELAY_BUSY` / `RESULT_BUSY` retry hints where packet identity is known.
+  - Added `MSG_RELAY_BUSY` and `MSG_RESULT_BUSY` with requested session/sequence, retry-after, capacity state, and optional alternate-parent TLVs.
+  - Busy relays now emit hop-local busy responses when packet identity is known instead of silently dropping; senders that receive a matching busy response preserve the pending packet and move to retry-backoff.
+  - Native tests cover relay-busy packet contents, result-busy selection for `COMMAND_RESULT`, and sender-side retry deferral.
 - [ ] Add collection_epoch command-result flow.
-  - Add all-node command scopes, hashed result spread, persistent result state, gateway EACK/missing reports, and relay result bundling.
+  - Add all-node command scopes, hashed result spread, persistent result state, gateway EACK/missing reports, result offer/grant, and relay result bundling.
 - [ ] Optimize channel-9 RX arrival time immediately after event negotiation.
   - Current RTT evidence shows expected packets are observed about 44 ms after RX slot start.
   - Verify whether this is true packet start time or receive-complete/host-processing timestamp.

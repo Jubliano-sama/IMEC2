@@ -133,6 +133,9 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK = 1u << 16,
     MESH_RELAY_ACTION_ROUTE_REPLY_ACKED = 1u << 17,
     MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV = 1u << 18,
+    MESH_RELAY_ACTION_SEND_RELAY_BUSY = 1u << 19,
+    MESH_RELAY_ACTION_SEND_RESULT_BUSY = 1u << 20,
+    MESH_RELAY_ACTION_TX_RELAY_BUSY = 1u << 21,
 };
 
 enum mesh_relay_tx_state {
@@ -245,7 +248,10 @@ struct mesh_relay_result {
     struct mesh_outbound route_reply_ack;
     struct mesh_outbound gateway_route_adv;
     struct mesh_outbound retransmit;
-    struct mesh_outbound hop_ack;
+    union {
+        struct mesh_outbound hop_ack;
+        struct mesh_outbound busy;
+    };
 };
 
 void mesh_relay_init(struct mesh_relay *relay,

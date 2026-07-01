@@ -72,6 +72,8 @@ enum msg_type {
     MSG_MESH_EVENT_END = 0x3A,
     MSG_ROUTE_REPLY_ACK = 0x3B,
     MSG_GATEWAY_ROUTE_ADV = 0x3C,
+    MSG_RELAY_BUSY = 0x3D,
+    MSG_RESULT_BUSY = 0x3E,
 
     MSG_COMMAND = 0x40,
     MSG_COMMAND_RESULT = 0x41,
@@ -209,6 +211,9 @@ enum tlv_type {
     TLV_REPLY_NONCE = 0x6F,
     TLV_METRIC_CRC = 0x70,
     TLV_GATEWAY_ROUTE_SEQ = 0x71,
+    TLV_RETRY_AFTER_MS = 0x72,
+    TLV_REQUESTED_MSG_SESSION_ID = 0x73,
+    TLV_ALTERNATE_PARENT_ID = 0x74,
 };
 
 enum status_bit {
