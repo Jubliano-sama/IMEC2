@@ -86,12 +86,18 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_ROUTE_REPLY:
     case MSG_ROUTE_REPLY_ACK:
     case MSG_GATEWAY_ROUTE_ADV:
+    case MSG_RELAY_BUSY:
+    case MSG_RESULT_BUSY:
     case MSG_MESH_EVENT_PROPOSE:
     case MSG_MESH_EVENT_ACCEPT:
     case MSG_MESH_EVENT_UPDATE:
     case MSG_MESH_EVENT_END:
     case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
+    case MSG_RESULT_OFFER:
+    case MSG_RESULT_GRANT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_SURVEY_REACH_REQ:
     case MSG_SURVEY_REACH_REPORT:
     case MSG_SURVEY_PAIR_PREPARE:
@@ -322,6 +328,540 @@ int tlv_find(const uint8_t *payload,
     }
 
     return PROTO_ERR_NOT_FOUND;
+}
+
+static int tlv_require_u8(const uint8_t *payload, size_t payload_len, uint8_t type, uint8_t *value)
+{
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (raw_len != 1u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *value = raw[0];
+    return PROTO_OK;
+}
+
+static int tlv_require_u16(const uint8_t *payload, size_t payload_len, uint8_t type, uint16_t *value)
+{
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (raw_len != 2u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *value = proto_get_u16_le(raw);
+    return PROTO_OK;
+}
+
+static int tlv_require_u32(const uint8_t *payload, size_t payload_len, uint8_t type, uint32_t *value)
+{
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (raw_len != 4u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *value = proto_get_u32_le(raw);
+    return PROTO_OK;
+}
+
+static int tlv_require_u64(const uint8_t *payload, size_t payload_len, uint8_t type, uint64_t *value)
+{
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (raw_len != 8u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *value = proto_get_u64_le(raw);
+    return PROTO_OK;
+}
+
+int command_result_id_append_tlvs(uint8_t *payload,
+                                  size_t payload_cap,
+                                  size_t *offset,
+                                  const struct command_result_id *id)
+{
+    int ret;
+
+    if (id == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_GATEWAY_ID, id->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_GATEWAY_EPOCH, id->gateway_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_COMMAND_SEQ, id->command_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_NODE_ID, id->node_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_NODE_BOOT_COUNTER, id->node_boot_counter);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u16(payload, payload_cap, offset, TLV_RESULT_SEQ, id->result_seq);
+}
+
+int command_result_id_from_tlvs(const uint8_t *payload,
+                                size_t payload_len,
+                                struct command_result_id *id)
+{
+    int ret;
+
+    if (id == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(id, 0, sizeof(*id));
+    ret = tlv_require_u64(payload, payload_len, TLV_GATEWAY_ID, &id->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_GATEWAY_EPOCH, &id->gateway_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload, payload_len, TLV_COMMAND_SEQ, &id->command_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u64(payload, payload_len, TLV_NODE_ID, &id->node_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload, payload_len, TLV_NODE_BOOT_COUNTER, &id->node_boot_counter);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_require_u16(payload, payload_len, TLV_RESULT_SEQ, &id->result_seq);
+}
+
+int result_offer_append_tlvs(uint8_t *payload,
+                             size_t payload_cap,
+                             size_t *offset,
+                             const struct result_offer *offer)
+{
+    int ret;
+
+    if (offer == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = command_result_id_append_tlvs(payload, payload_cap, offset, &offer->result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_PAYLOAD_LEN, offer->result_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_PAYLOAD_CRC, offer->result_crc);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u8(payload, payload_cap, offset, TLV_PRIORITY, offer->priority);
+}
+
+int result_offer_from_tlvs(const uint8_t *payload,
+                           size_t payload_len,
+                           struct result_offer *offer)
+{
+    int ret;
+
+    if (offer == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(offer, 0, sizeof(*offer));
+    ret = command_result_id_from_tlvs(payload, payload_len, &offer->result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_PAYLOAD_LEN, &offer->result_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_PAYLOAD_CRC, &offer->result_crc);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_require_u8(payload, payload_len, TLV_PRIORITY, &offer->priority);
+}
+
+int result_grant_append_tlvs(uint8_t *payload,
+                             size_t payload_cap,
+                             size_t *offset,
+                             const struct result_grant *grant)
+{
+    int ret;
+
+    if (grant == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = command_result_id_append_tlvs(payload, payload_cap, offset, &grant->result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_GRANTED_CHANNEL, grant->granted_channel);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_MAX_BYTES, grant->max_bytes);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload,
+                          payload_cap,
+                          offset,
+                          TLV_EVENT_OFFSET_HINT,
+                          grant->event_offset_hint);
+}
+
+int result_grant_from_tlvs(const uint8_t *payload,
+                           size_t payload_len,
+                           struct result_grant *grant)
+{
+    int ret;
+
+    if (grant == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(grant, 0, sizeof(*grant));
+    ret = command_result_id_from_tlvs(payload, payload_len, &grant->result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u8(payload, payload_len, TLV_GRANTED_CHANNEL, &grant->granted_channel);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_MAX_BYTES, &grant->max_bytes);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_require_u32(payload, payload_len, TLV_EVENT_OFFSET_HINT, &grant->event_offset_hint);
+}
+
+int result_busy_append_tlvs(uint8_t *payload,
+                            size_t payload_cap,
+                            size_t *offset,
+                            const struct result_busy *busy)
+{
+    int ret;
+
+    if (busy == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = command_result_id_append_tlvs(payload, payload_cap, offset, &busy->result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_RETRY_AFTER_MS, busy->retry_after_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_RELAY_CAPACITY_STATE, busy->capacity_state);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!busy->has_optional_alternate_parent) {
+        return PROTO_OK;
+    }
+    return tlv_append_u64(payload,
+                          payload_cap,
+                          offset,
+                          TLV_ALTERNATE_PARENT_ID,
+                          busy->optional_alternate_parent);
+}
+
+int result_busy_from_tlvs(const uint8_t *payload,
+                          size_t payload_len,
+                          struct result_busy *busy)
+{
+    uint64_t alternate_parent = 0u;
+    int ret;
+
+    if (busy == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(busy, 0, sizeof(*busy));
+    ret = command_result_id_from_tlvs(payload, payload_len, &busy->result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_RETRY_AFTER_MS, &busy->retry_after_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u8(payload, payload_len, TLV_RELAY_CAPACITY_STATE, &busy->capacity_state);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u64(payload, payload_len, TLV_ALTERNATE_PARENT_ID, &alternate_parent);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    busy->has_optional_alternate_parent = true;
+    busy->optional_alternate_parent = alternate_parent;
+    return PROTO_OK;
+}
+
+int result_bundle_header_append_tlvs(uint8_t *payload,
+                                     size_t payload_cap,
+                                     size_t *offset,
+                                     const struct result_bundle_header *bundle)
+{
+    int ret;
+
+    if (bundle == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_GATEWAY_ID, bundle->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_GATEWAY_EPOCH, bundle->gateway_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_COMMAND_SEQ, bundle->command_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         offset,
+                         TLV_COLLECTION_EPOCH_ID,
+                         bundle->collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_BUNDLE_ID, bundle->bundle_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_RECORD_COUNT, bundle->record_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u16(payload, payload_cap, offset, TLV_BUNDLE_CRC, bundle->bundle_crc);
+}
+
+int result_bundle_header_from_tlvs(const uint8_t *payload,
+                                   size_t payload_len,
+                                   struct result_bundle_header *bundle)
+{
+    int ret;
+
+    if (bundle == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(bundle, 0, sizeof(*bundle));
+    ret = tlv_require_u64(payload, payload_len, TLV_GATEWAY_ID, &bundle->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_GATEWAY_EPOCH, &bundle->gateway_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload, payload_len, TLV_COMMAND_SEQ, &bundle->command_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload,
+                          payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          &bundle->collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_BUNDLE_ID, &bundle->bundle_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u8(payload, payload_len, TLV_RECORD_COUNT, &bundle->record_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_require_u16(payload, payload_len, TLV_BUNDLE_CRC, &bundle->bundle_crc);
+}
+
+int gateway_collection_eack_append_tlvs(uint8_t *payload,
+                                        size_t payload_cap,
+                                        size_t *offset,
+                                        const struct gateway_collection_eack *eack)
+{
+    int ret;
+
+    if (eack == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset, TLV_GATEWAY_ID, eack->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_GATEWAY_EPOCH, eack->gateway_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset, TLV_COMMAND_SEQ, eack->command_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         offset,
+                         TLV_COLLECTION_EPOCH_ID,
+                         eack->collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_MEMBERSHIP_EPOCH, eack->membership_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_EXPECTED_NODE_COUNT, eack->expected_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset, TLV_RECEIVED_COUNT, eack->received_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_EACK_FORMAT, eack->eack_format);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_RETRY_ROUND, eack->retry_round);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         offset,
+                         TLV_NEXT_RETRY_SPREAD_MS,
+                         eack->next_retry_spread_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u8(payload,
+                         payload_cap,
+                         offset,
+                         TLV_COLLECTION_OPEN,
+                         eack->collection_open ? 1u : 0u);
+}
+
+int gateway_collection_eack_from_tlvs(const uint8_t *payload,
+                                      size_t payload_len,
+                                      struct gateway_collection_eack *eack)
+{
+    uint8_t collection_open = 0u;
+    int ret;
+
+    if (eack == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(eack, 0, sizeof(*eack));
+    ret = tlv_require_u64(payload, payload_len, TLV_GATEWAY_ID, &eack->gateway_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_GATEWAY_EPOCH, &eack->gateway_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload, payload_len, TLV_COMMAND_SEQ, &eack->command_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload,
+                          payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          &eack->collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_MEMBERSHIP_EPOCH, &eack->membership_epoch);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_EXPECTED_NODE_COUNT, &eack->expected_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u16(payload, payload_len, TLV_RECEIVED_COUNT, &eack->received_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u8(payload, payload_len, TLV_EACK_FORMAT, &eack->eack_format);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (eack->eack_format > EACK_FORMAT_EXPLICIT_MISSING_LIST) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = tlv_require_u8(payload, payload_len, TLV_RETRY_ROUND, &eack->retry_round);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u32(payload,
+                          payload_len,
+                          TLV_NEXT_RETRY_SPREAD_MS,
+                          &eack->next_retry_spread_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_require_u8(payload, payload_len, TLV_COLLECTION_OPEN, &collection_open);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (collection_open > 1u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    eack->collection_open = collection_open != 0u;
+    return PROTO_OK;
 }
 
 int proto_cobs_encode(const uint8_t *input, size_t input_len, uint8_t *out, size_t out_cap, size_t *written)

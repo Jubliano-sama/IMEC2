@@ -77,6 +77,10 @@ enum msg_type {
 
     MSG_COMMAND = 0x40,
     MSG_COMMAND_RESULT = 0x41,
+    MSG_RESULT_OFFER = 0x42,
+    MSG_RESULT_GRANT = 0x43,
+    MSG_RESULT_BUNDLE = 0x44,
+    MSG_GATEWAY_COLLECTION_EACK = 0x45,
 
     MSG_SURVEY_REACH_REQ = 0x50,
     MSG_SURVEY_REACH_REPORT = 0x51,
@@ -225,6 +229,19 @@ enum tlv_type {
     TLV_PAYLOAD_LEN = 0x7D,
     TLV_PAYLOAD_CRC = 0x7E,
     TLV_CAPACITY_VALIDITY_INTERVAL_MS = 0x7F,
+    TLV_NODE_ID = 0x80,
+    TLV_PRIORITY = 0x81,
+    TLV_GRANTED_CHANNEL = 0x82,
+    TLV_MAX_BYTES = 0x83,
+    TLV_EVENT_OFFSET_HINT = 0x84,
+    TLV_BUNDLE_ID = 0x85,
+    TLV_RECORD_COUNT = 0x86,
+    TLV_BUNDLE_CRC = 0x87,
+    TLV_EACK_FORMAT = 0x88,
+    TLV_RECEIVED_COUNT = 0x89,
+    TLV_RETRY_ROUND = 0x8A,
+    TLV_NEXT_RETRY_SPREAD_MS = 0x8B,
+    TLV_COLLECTION_OPEN = 0x8C,
 };
 
 enum status_bit {
@@ -324,6 +341,61 @@ struct proto_packet {
     uint32_t message_age_ms;
 };
 
+struct command_result_id {
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t command_seq;
+    uint64_t node_id;
+    uint32_t node_boot_counter;
+    uint16_t result_seq;
+};
+
+struct result_offer {
+    struct command_result_id result_id;
+    uint16_t result_len;
+    uint16_t result_crc;
+    uint8_t priority;
+};
+
+struct result_grant {
+    struct command_result_id result_id;
+    uint8_t granted_channel;
+    uint16_t max_bytes;
+    uint32_t event_offset_hint;
+};
+
+struct result_busy {
+    struct command_result_id result_id;
+    uint16_t retry_after_ms;
+    uint8_t capacity_state;
+    uint64_t optional_alternate_parent;
+    bool has_optional_alternate_parent;
+};
+
+struct result_bundle_header {
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t command_seq;
+    uint32_t collection_epoch_id;
+    uint16_t bundle_id;
+    uint8_t record_count;
+    uint16_t bundle_crc;
+};
+
+struct gateway_collection_eack {
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t command_seq;
+    uint32_t collection_epoch_id;
+    uint16_t membership_epoch;
+    uint16_t expected_count;
+    uint16_t received_count;
+    uint8_t eack_format;
+    uint8_t retry_round;
+    uint32_t next_retry_spread_ms;
+    bool collection_open;
+};
+
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);
 
 size_t proto_packet_header_len(uint16_t payload_len);
@@ -356,6 +428,49 @@ int tlv_find(const uint8_t *payload,
                   uint8_t type,
                   const uint8_t **value,
                   uint8_t *len);
+
+int command_result_id_append_tlvs(uint8_t *payload,
+                                  size_t payload_cap,
+                                  size_t *offset,
+                                  const struct command_result_id *id);
+int command_result_id_from_tlvs(const uint8_t *payload,
+                                size_t payload_len,
+                                struct command_result_id *id);
+int result_offer_append_tlvs(uint8_t *payload,
+                             size_t payload_cap,
+                             size_t *offset,
+                             const struct result_offer *offer);
+int result_offer_from_tlvs(const uint8_t *payload,
+                           size_t payload_len,
+                           struct result_offer *offer);
+int result_grant_append_tlvs(uint8_t *payload,
+                             size_t payload_cap,
+                             size_t *offset,
+                             const struct result_grant *grant);
+int result_grant_from_tlvs(const uint8_t *payload,
+                           size_t payload_len,
+                           struct result_grant *grant);
+int result_busy_append_tlvs(uint8_t *payload,
+                            size_t payload_cap,
+                            size_t *offset,
+                            const struct result_busy *busy);
+int result_busy_from_tlvs(const uint8_t *payload,
+                          size_t payload_len,
+                          struct result_busy *busy);
+int result_bundle_header_append_tlvs(uint8_t *payload,
+                                     size_t payload_cap,
+                                     size_t *offset,
+                                     const struct result_bundle_header *bundle);
+int result_bundle_header_from_tlvs(const uint8_t *payload,
+                                   size_t payload_len,
+                                   struct result_bundle_header *bundle);
+int gateway_collection_eack_append_tlvs(uint8_t *payload,
+                                        size_t payload_cap,
+                                        size_t *offset,
+                                        const struct gateway_collection_eack *eack);
+int gateway_collection_eack_from_tlvs(const uint8_t *payload,
+                                      size_t payload_len,
+                                      struct gateway_collection_eack *eack);
 
 uint16_t proto_get_u16_le(const uint8_t *data);
 uint32_t proto_get_u32_le(const uint8_t *data);
