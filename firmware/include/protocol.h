@@ -71,6 +71,7 @@ enum msg_type {
     MSG_MESH_EVENT_UPDATE = 0x39,
     MSG_MESH_EVENT_END = 0x3A,
     MSG_ROUTE_REPLY_ACK = 0x3B,
+    MSG_GATEWAY_ROUTE_ADV = 0x3C,
 
     MSG_COMMAND = 0x40,
     MSG_COMMAND_RESULT = 0x41,
@@ -207,6 +208,7 @@ enum tlv_type {
     TLV_NODE_BOOT_COUNTER = 0x6E,
     TLV_REPLY_NONCE = 0x6F,
     TLV_METRIC_CRC = 0x70,
+    TLV_GATEWAY_ROUTE_SEQ = 0x71,
 };
 
 enum status_bit {

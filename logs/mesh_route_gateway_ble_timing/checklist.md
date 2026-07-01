@@ -18,7 +18,9 @@
   - Keep hop-first cost selection and use capacity only as a tie-breaker or penalty.
   - Add hold-down behavior after selected-parent failures without age-only route expiry.
 - [ ] Add bounded gateway route advertisement flood.
-  - Current state: not implemented. The gateway only answers solicited `MSG_ROUTE_REQ` with `MSG_ROUTE_REPLY`; it does not periodically announce a route.
+  - Implemented shared protocol/relay support for `MSG_GATEWAY_ROUTE_ADV`: gateway-origin builder, `gateway_id`/`gateway_epoch`/`gateway_route_seq`/hop/quality/cost/capacity/flood TLVs, parent candidate update through the existing upstream route table, bounded duplicate suppression, and channel-5 broadcast forwarding with TTL decrement and updated hop/quality/cost.
+  - Native test covers startup-style advertisement seeding a direct parent, relay forwarding preserving flood identity, duplicate suppression, second-hop candidate install, and no age-only route deletion.
+  - Remaining gap: app-level gateway startup/profile-change/force-rediscovery/low-rate periodic scheduling is not wired yet.
   - Implement `gateway_route_adv` exactly as specified in `Documentation/MeshSpec.md` section 7.
   - Message fields: `gateway_id`, `gateway_epoch`, `gateway_route_seq`, `hop_count`, `path_quality_min`, `route_cost`, `gateway_capacity_state`, `flood_profile_version`, `flood_epoch_id`, and `slot_seed`.
   - Gateway behavior: send during startup, after route/profile changes, after force rediscovery, and periodically at a low maintenance rate.
@@ -26,10 +28,11 @@
   - Anchor behavior: valid advertisements update parent candidates, compute cost with existing route-cost semantics, forward only if TTL remains and duplicate suppression allows, suppress enough-heard equivalent advertisements, and do not clear old routes just because an advertisement was missed.
   - Preserve route freshness policy: routes are usable until replaced, explicitly cleared, or proven stale by delivery failure; do not add age-only expiry.
   - Tests from MeshSpec intent:
-    - startup advertisement seeds a parent candidate;
-    - relay forwarding preserves the same `flood_epoch_id` and decrements TTL;
-    - duplicate or equivalent advertisements are suppressed within configured bounds;
-    - missing advertisements do not delete usable routes;
+    - [x] startup advertisement seeds a parent candidate;
+    - [x] relay forwarding preserves the same `flood_epoch_id` and decrements TTL;
+    - [x] duplicate advertisements are suppressed within configured bounds;
+    - [x] missing advertisements do not delete usable routes;
+    - [ ] equivalent advertisement suppression beyond exact duplicate identity;
     - active click service and required quick channel-5 wake scans preempt advertisement work.
 - [ ] Add relay capacity and explicit busy responses.
   - Implement GREEN/YELLOW/RED/BLACK behavior plus `RELAY_BUSY` / `RESULT_BUSY` retry hints where packet identity is known.

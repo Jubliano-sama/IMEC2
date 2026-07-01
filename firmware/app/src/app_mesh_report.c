@@ -5160,6 +5160,9 @@ after_gateway_ack:
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
         (void)mesh_send_outbound(&result->route_request, "route-request-forward");
     }
+    if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
+        (void)mesh_send_outbound(&result->gateway_route_adv, "gateway-route-adv-forward");
+    }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
         mesh_route_embedded_wait_before_reply(&result->route_reply);
         if (mesh_send_route_reply_train(&result->route_reply) == 0 &&
