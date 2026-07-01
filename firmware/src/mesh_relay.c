@@ -1516,6 +1516,7 @@ static bool packet_requires_channel9_payload_event(const struct proto_packet *pa
     case MSG_GATEWAY_ACK:
     case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
     case MSG_SURVEY_REACH_REPORT:
     case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_PAIR_RESULT:

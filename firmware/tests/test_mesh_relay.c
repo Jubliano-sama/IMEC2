@@ -3717,6 +3717,99 @@ static void test_channel9_report_tx_requires_negotiated_event(void)
     assert(mesh_relay_tx_active(&relay));
 }
 
+static void test_channel9_result_bundle_tx_requires_negotiated_event(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 72u, 90u);
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 72u,
+        .command_seq = 720u,
+        .node_id = ANCHOR_B,
+        .node_boot_counter = 4u,
+        .result_seq = 1u,
+    };
+    struct result_bundle_header bundle = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 72u,
+        .command_seq = 720u,
+        .collection_epoch_id = 721u,
+        .bundle_id = 9u,
+        .record_count = 1u,
+    };
+    struct result_bundle_record record = {0};
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_BUNDLE,
+        .src_id = ANCHOR_A,
+        .dst_id = GATEWAY,
+        .session_id = 720u,
+        .seq = 9u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    struct mesh_outbound tx;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_plan plan = {0};
+    struct mesh_channel5_requirements requirements = clear_channel5_requirements();
+    struct mesh_event_params params = channel9_params(2200u);
+    uint8_t result_payload[96];
+    uint8_t records[160];
+    uint8_t payload[256];
+    size_t result_payload_len = 0u;
+    size_t records_len = 0u;
+    size_t payload_len = 0u;
+
+    build_identity_command_result_payload(result_payload,
+                                          sizeof(result_payload),
+                                          64u,
+                                          &result_id,
+                                          &result_payload_len);
+    record.result_id = result_id;
+    record.payload_len = (uint16_t)result_payload_len;
+    record.payload_crc = proto_crc16_ccitt_false(result_payload, result_payload_len);
+    record.payload = result_payload;
+    assert(result_bundle_record_append_tlv(records,
+                                           sizeof(records),
+                                           &records_len,
+                                           &record) == PROTO_OK);
+    bundle.bundle_crc = proto_crc16_ccitt_false(records, records_len);
+    assert(result_bundle_header_append_tlvs(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &bundle) == PROTO_OK);
+    assert(sizeof(payload) - payload_len >= records_len);
+    memcpy(&payload[payload_len], records, records_len);
+    payload_len += records_len;
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 72u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &packet,
+                                        payload,
+                                        payload_len,
+                                        &requirements,
+                                        2200u,
+                                        &plan,
+                                        &tx) == PROTO_ERR_STALE);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+    assert(mesh_relay_start_channel9_tx(&relay,
+                                        &packet,
+                                        payload,
+                                        payload_len,
+                                        &requirements,
+                                        2195u,
+                                        &plan,
+                                        &tx) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(tx.packet.msg_type == MSG_RESULT_BUNDLE);
+    assert(tx.next_hop_id == GATEWAY);
+    assert(tx.radio_channel == MESH_EVENT_CHANNEL);
+    assert(tx.payload_len == payload_len);
+}
+
 static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
 {
     struct mesh_relay origin;
@@ -4025,6 +4118,7 @@ int main(void)
     test_channel9_guard_rejects_third_peer();
     test_channel9_guard_rejects_ambiguous_or_unknown_direction();
     test_channel9_report_tx_requires_negotiated_event();
+    test_channel9_result_bundle_tx_requires_negotiated_event();
     test_channel9_report_delivery_and_gateway_ack_require_events();
     test_channel9_rx_observation_keeps_negotiated_event_timing();
     test_channel9_sender_skips_channel5_preempted_event_without_refresh();
