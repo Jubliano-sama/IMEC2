@@ -48,7 +48,10 @@
   - Busy relays now emit hop-local busy responses when packet identity is known instead of silently dropping; senders that receive a matching busy response preserve the pending packet and move to retry-backoff.
   - Native tests cover relay-busy packet contents, result-busy selection for `COMMAND_RESULT`, and sender-side retry deferral.
 - [ ] Add collection_epoch command-result flow.
-  - Add all-node command scopes, hashed result spread, persistent result state, gateway EACK/missing reports, result offer/grant, and relay result bundling.
+  - Added MeshSpec command scope, response mode, and collection EACK format enums plus TLVs for command scope, response mode, membership/expected count, execute delay, command expiry, collection slot seed, result sequence, payload length, and payload CRC.
+  - Gateway command parsing now defaults old commands to single-node/small-result behavior, accepts explicit all-node command floods only with command/flood identity, and requires collection identity when responses are expected.
+  - Native gateway-command tests cover default single-node behavior, rejection of unscoped broadcast commands, acceptance of all-registered command-flood metadata, and rejection of response floods missing collection identity.
+  - Remaining gap: hashed result spread, persistent result state, gateway EACK/missing reports, result offer/grant, command flood forwarding/execution, and relay result bundling.
 - [ ] Optimize channel-9 RX arrival time immediately after event negotiation.
   - Current RTT evidence shows expected packets are observed about 44 ms after RX slot start.
   - Verify whether this is true packet start time or receive-complete/host-processing timestamp.

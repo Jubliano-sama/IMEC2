@@ -21,9 +21,27 @@ struct gateway_command_pending {
     bool active;
 };
 
+struct gateway_command_options {
+    enum command_scope scope;
+    enum command_response_mode response_mode;
+    uint32_t command_seq;
+    uint32_t flood_epoch_id;
+    uint32_t collection_epoch_id;
+    uint32_t collection_slot_seed;
+    uint32_t execute_delay_ms;
+    uint32_t command_expiry_s;
+    uint16_t membership_epoch;
+    uint16_t expected_node_count;
+    bool collection_required;
+    bool flood_required;
+};
+
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id);
+int gateway_command_extract_options(const uint8_t *payload,
+                                    size_t payload_len,
+                                    struct gateway_command_options *options);
 int gateway_command_extract_role(const uint8_t *payload,
                                  size_t payload_len,
                                  enum device_role *role);

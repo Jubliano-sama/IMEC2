@@ -15,6 +15,110 @@ static bool command_wait_packet_type(uint8_t msg_type)
            msg_type == MSG_SURVEY_PAIR_PREPARE;
 }
 
+static bool command_scope_valid(uint8_t scope)
+{
+    return scope == CMD_SCOPE_SINGLE_NODE ||
+           scope == CMD_SCOPE_GROUP ||
+           scope == CMD_SCOPE_ALL_REGISTERED ||
+           scope == CMD_SCOPE_ALL_HEARD;
+}
+
+static bool command_response_mode_valid(uint8_t response_mode)
+{
+    return response_mode == CMD_RESPONSE_NONE ||
+           response_mode == CMD_RESPONSE_ACK_ONLY ||
+           response_mode == CMD_RESPONSE_SMALL_RESULT ||
+           response_mode == CMD_RESPONSE_LARGE_RESULT;
+}
+
+static bool command_response_requires_collection(enum command_response_mode response_mode)
+{
+    return response_mode == CMD_RESPONSE_ACK_ONLY ||
+           response_mode == CMD_RESPONSE_SMALL_RESULT ||
+           response_mode == CMD_RESPONSE_LARGE_RESULT;
+}
+
+static int extract_optional_u8(const uint8_t *payload,
+                               size_t payload_len,
+                               uint8_t type,
+                               uint8_t *out,
+                               bool *present)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, payload_len, type, &value, &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *present = false;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *out = value[0];
+    *present = true;
+    return PROTO_OK;
+}
+
+static int extract_optional_u16(const uint8_t *payload,
+                                size_t payload_len,
+                                uint8_t type,
+                                uint16_t *out,
+                                bool *present)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, payload_len, type, &value, &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *present = false;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint16_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *out = proto_get_u16_le(value);
+    *present = true;
+    return PROTO_OK;
+}
+
+static int extract_optional_u32(const uint8_t *payload,
+                                size_t payload_len,
+                                uint8_t type,
+                                uint32_t *out,
+                                bool *present)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, payload_len, type, &value, &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *present = false;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *out = proto_get_u32_le(value);
+    *present = true;
+    return PROTO_OK;
+}
+
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id)
@@ -36,6 +140,161 @@ int gateway_command_extract_id(const uint8_t *payload,
     }
 
     *command_id = (enum command_id)proto_get_u16_le(value);
+    return PROTO_OK;
+}
+
+int gateway_command_extract_options(const uint8_t *payload,
+                                    size_t payload_len,
+                                    struct gateway_command_options *options)
+{
+    bool present = false;
+    uint8_t value_u8 = 0u;
+    uint16_t value_u16 = 0u;
+    uint32_t value_u32 = 0u;
+    int ret;
+
+    if (options == NULL || (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(options, 0, sizeof(*options));
+    options->scope = CMD_SCOPE_SINGLE_NODE;
+    options->response_mode = CMD_RESPONSE_SMALL_RESULT;
+    options->command_expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S;
+
+    ret = extract_optional_u8(payload,
+                              payload_len,
+                              TLV_COMMAND_SCOPE,
+                              &value_u8,
+                              &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (present) {
+        if (!command_scope_valid(value_u8)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        options->scope = (enum command_scope)value_u8;
+    }
+
+    ret = extract_optional_u8(payload,
+                              payload_len,
+                              TLV_COMMAND_RESPONSE_MODE,
+                              &value_u8,
+                              &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (present) {
+        if (!command_response_mode_valid(value_u8)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        options->response_mode = (enum command_response_mode)value_u8;
+    }
+
+    ret = extract_optional_u32(payload,
+                               payload_len,
+                               TLV_COMMAND_SEQ,
+                               &value_u32,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->command_seq = present ? value_u32 : 0u;
+
+    ret = extract_optional_u32(payload,
+                               payload_len,
+                               TLV_FLOOD_EPOCH_ID,
+                               &value_u32,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->flood_epoch_id = present ? value_u32 : 0u;
+
+    ret = extract_optional_u32(payload,
+                               payload_len,
+                               TLV_COLLECTION_EPOCH_ID,
+                               &value_u32,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->collection_epoch_id = present ? value_u32 : 0u;
+
+    ret = extract_optional_u32(payload,
+                               payload_len,
+                               TLV_COLLECTION_SLOT_SEED,
+                               &value_u32,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->collection_slot_seed = present ? value_u32 : 0u;
+
+    ret = extract_optional_u32(payload,
+                               payload_len,
+                               TLV_EXECUTE_DELAY_MS,
+                               &value_u32,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->execute_delay_ms = present ? value_u32 : 0u;
+
+    ret = extract_optional_u32(payload,
+                               payload_len,
+                               TLV_COMMAND_EXPIRY_S,
+                               &value_u32,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (present) {
+        if (value_u32 == 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        options->command_expiry_s = value_u32;
+    }
+
+    ret = extract_optional_u16(payload,
+                               payload_len,
+                               TLV_MEMBERSHIP_EPOCH,
+                               &value_u16,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->membership_epoch = present ? value_u16 : 0u;
+
+    ret = extract_optional_u16(payload,
+                               payload_len,
+                               TLV_EXPECTED_NODE_COUNT,
+                               &value_u16,
+                               &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    options->expected_node_count = present ? value_u16 : 0u;
+
+    options->flood_required = options->scope != CMD_SCOPE_SINGLE_NODE;
+    options->collection_required =
+        options->flood_required &&
+        command_response_requires_collection(options->response_mode);
+
+    if (options->flood_required &&
+        (options->command_seq == 0u || options->flood_epoch_id == 0u)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (options->scope == CMD_SCOPE_ALL_REGISTERED &&
+        (options->membership_epoch == 0u || options->expected_node_count == 0u)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (options->collection_required &&
+        (options->collection_epoch_id == 0u || options->collection_slot_seed == 0u)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
     return PROTO_OK;
 }
 
@@ -109,6 +368,7 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      struct mesh_outbound *out,
                                      enum command_id *command_id)
 {
+    struct gateway_command_options options;
     uint32_t session_id;
     int ret;
 
@@ -117,7 +377,6 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
         payload_len > PACKET_MAX_PAYLOAD_LEN ||
         gateway_id == 0u ||
         host_packet->msg_type != MSG_COMMAND ||
-        host_packet->dst_id == 0u ||
         host_packet->dst_id == gateway_id ||
         host_packet->payload_len != payload_len) {
         return PROTO_ERR_ARG;
@@ -126,6 +385,18 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
     ret = gateway_command_extract_id(payload, payload_len, command_id);
     if (ret != PROTO_OK) {
         return ret;
+    }
+
+    ret = gateway_command_extract_options(payload, payload_len, &options);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (options.scope == CMD_SCOPE_SINGLE_NODE) {
+        if (host_packet->dst_id == MESH_BROADCAST_ID) {
+            return PROTO_ERR_ARG;
+        }
+    } else if (host_packet->dst_id != MESH_BROADCAST_ID) {
+        return PROTO_ERR_ARG;
     }
 
     session_id = host_packet->session_id;
@@ -141,7 +412,8 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
     if (out->packet.seq == 0u) {
         out->packet.seq = 1u;
     }
-    out->packet.ttl = host_packet->ttl == 0u ? MESH_DEFAULT_TTL : host_packet->ttl;
+    out->packet.ttl = host_packet->ttl != 0u ? host_packet->ttl :
+        options.flood_required ? FLOOD_EPOCH_GLOBAL_TTL : MESH_DEFAULT_TTL;
     out->packet.flags = 0u;
     if ((host_packet->flags & FLAG_DIAGNOSTIC) != 0u) {
         out->packet.flags |= FLAG_DIAGNOSTIC;

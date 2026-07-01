@@ -123,6 +123,16 @@ static void test_prepare_outbound_rejects_invalid_host_packets(void)
                                             1u,
                                             &out,
                                             &command_id) == PROTO_ERR_ARG);
+
+    host.dst_id = MESH_BROADCAST_ID;
+    assert(gateway_command_prepare_outbound(&host,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY_ID_TEST,
+                                            1u,
+                                            1u,
+                                            &out,
+                                            &command_id) == PROTO_ERR_ARG);
 }
 
 static void test_prepare_outbound_rejects_malformed_command_id(void)
@@ -144,6 +154,177 @@ static void test_prepare_outbound_rejects_malformed_command_id(void)
                                             1u,
                                             &out,
                                             &command_id) == PROTO_ERR_MALFORMED);
+}
+
+static void test_extract_options_defaults_to_single_node_small_result(void)
+{
+    uint8_t payload[16];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_PING);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.scope == CMD_SCOPE_SINGLE_NODE);
+    assert(options.response_mode == CMD_RESPONSE_SMALL_RESULT);
+    assert(options.command_expiry_s == COMMAND_RESULT_EXPIRY_DEFAULT_S);
+    assert(!options.flood_required);
+    assert(!options.collection_required);
+}
+
+static void test_prepare_outbound_accepts_all_registered_command_flood(void)
+{
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    struct proto_packet host = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_DIAGNOSTIC | FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = 0xAABBCCDDu,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 0u,
+        .seq = 0u,
+        .ttl = 0u,
+    };
+    struct mesh_outbound out = {0};
+    struct gateway_command_options options = {0};
+    enum command_id command_id = CMD_VENDOR_BASE;
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_GET_STATUS);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_SMALL_RESULT) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MEMBERSHIP_EPOCH,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_COUNT,
+                          12u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          3003u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_SLOT_SEED,
+                          4004u) == PROTO_OK);
+    host.payload_len = (uint8_t)payload_len;
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.scope == CMD_SCOPE_ALL_REGISTERED);
+    assert(options.response_mode == CMD_RESPONSE_SMALL_RESULT);
+    assert(options.command_seq == 1001u);
+    assert(options.flood_epoch_id == 2002u);
+    assert(options.membership_epoch == 3u);
+    assert(options.expected_node_count == 12u);
+    assert(options.collection_epoch_id == 3003u);
+    assert(options.collection_slot_seed == 4004u);
+    assert(options.flood_required);
+    assert(options.collection_required);
+
+    assert(gateway_command_prepare_outbound(&host,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY_ID_TEST,
+                                            1234u,
+                                            9u,
+                                            &out,
+                                            &command_id) == PROTO_OK);
+    assert(command_id == CMD_GET_STATUS);
+    assert(out.packet.src_id == GATEWAY_ID_TEST);
+    assert(out.packet.dst_id == MESH_BROADCAST_ID);
+    assert(out.packet.session_id == 1234u);
+    assert(out.packet.seq == 9u);
+    assert(out.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
+    assert(out.packet.flags == FLAG_DIAGNOSTIC);
+    assert(out.payload_len == payload_len);
+    assert(memcmp(out.payload, payload, payload_len) == 0);
+}
+
+static void test_command_flood_requires_collection_identity_for_responses(void)
+{
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+    const uint8_t *response_mode_value = NULL;
+    uint8_t response_mode_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_GET_STATUS);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_SMALL_RESULT) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MEMBERSHIP_EPOCH,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_COUNT,
+                          12u) == PROTO_OK);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_ERR_MALFORMED);
+
+    assert(tlv_find(payload,
+                    payload_len,
+                    TLV_COMMAND_RESPONSE_MODE,
+                    &response_mode_value,
+                    &response_mode_len) == PROTO_OK);
+    assert(response_mode_len == 1u);
+    payload[(size_t)(response_mode_value - payload)] = CMD_RESPONSE_NONE;
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.scope == CMD_SCOPE_ALL_REGISTERED);
+    assert(options.response_mode == CMD_RESPONSE_NONE);
+    assert(options.flood_required);
+    assert(!options.collection_required);
 }
 
 static void test_extract_duration_uses_optional_tlv(void)
@@ -436,6 +617,9 @@ int main(void)
     test_prepare_outbound_preserves_host_session_sequence_and_ttl();
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
+    test_extract_options_defaults_to_single_node_small_result();
+    test_prepare_outbound_accepts_all_registered_command_flood();
+    test_command_flood_requires_collection_identity_for_responses();
     test_extract_duration_uses_optional_tlv();
     test_extract_role_requires_valid_device_role_tlv();
     test_build_failure_result_is_host_visible();
