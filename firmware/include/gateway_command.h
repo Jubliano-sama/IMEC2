@@ -129,6 +129,9 @@ bool gateway_collection_contains_result(const struct gateway_collection_state *c
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,
                                   uint8_t eack_format,
                                   struct gateway_collection_eack *eack);
+int gateway_collection_prepare_eack_outbound(const struct gateway_collection_state *collection,
+                                             uint8_t eack_format,
+                                             struct mesh_outbound *out);
 
 #ifdef __cplusplus
 }

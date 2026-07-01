@@ -767,3 +767,42 @@ int gateway_collection_build_eack(const struct gateway_collection_state *collect
     eack->collection_open = collection->collection_open;
     return PROTO_OK;
 }
+
+int gateway_collection_prepare_eack_outbound(const struct gateway_collection_state *collection,
+                                             uint8_t eack_format,
+                                             struct mesh_outbound *out)
+{
+    struct gateway_collection_eack eack;
+    size_t payload_len = 0u;
+    int ret;
+
+    if (out == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = gateway_collection_build_eack(collection, eack_format, &eack);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(out, 0, sizeof(*out));
+    ret = gateway_collection_eack_append_tlvs(out->payload,
+                                              sizeof(out->payload),
+                                              &payload_len,
+                                              &eack);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_GATEWAY_COLLECTION_EACK;
+    out->packet.src_id = collection->gateway_id;
+    out->packet.dst_id = MESH_BROADCAST_ID;
+    out->packet.session_id = collection->command_seq;
+    out->packet.seq = collection->retry_round == 0u ? 1u : collection->retry_round;
+    out->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
+    out->packet.payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)payload_len;
+    out->next_hop_id = MESH_BROADCAST_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    return PROTO_OK;
+}

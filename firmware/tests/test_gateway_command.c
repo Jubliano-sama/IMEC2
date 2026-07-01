@@ -503,6 +503,52 @@ static void test_collection_records_unique_results_and_builds_eack(void)
     assert(collection.received_count == 2u);
 }
 
+static void test_collection_prepares_eack_broadcast_outbound(void)
+{
+    struct gateway_collection_state collection;
+    struct mesh_outbound out = {0};
+    struct gateway_collection_eack decoded = {0};
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    12u,
+                                    2u,
+                                    COLLECTION_RETRY_ROUND_2_MS) == PROTO_OK);
+    collection.received_count = 5u;
+
+    assert(gateway_collection_prepare_eack_outbound(&collection,
+                                                    EACK_FORMAT_EXPLICIT_MISSING_LIST,
+                                                    &out) == PROTO_OK);
+    assert(out.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
+    assert(out.packet.src_id == GATEWAY_ID_TEST);
+    assert(out.packet.dst_id == MESH_BROADCAST_ID);
+    assert(out.packet.session_id == 1001u);
+    assert(out.packet.seq == 2u);
+    assert(out.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
+    assert(out.packet.payload_len == out.payload_len);
+    assert(out.next_hop_id == MESH_BROADCAST_ID);
+    assert(out.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+
+    assert(gateway_collection_eack_from_tlvs(out.payload,
+                                             out.payload_len,
+                                             &decoded) == PROTO_OK);
+    assert(decoded.gateway_id == GATEWAY_ID_TEST);
+    assert(decoded.gateway_epoch == 9u);
+    assert(decoded.command_seq == 1001u);
+    assert(decoded.collection_epoch_id == 3003u);
+    assert(decoded.membership_epoch == 4u);
+    assert(decoded.expected_count == 12u);
+    assert(decoded.received_count == 5u);
+    assert(decoded.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST);
+    assert(decoded.retry_round == 2u);
+    assert(decoded.next_retry_spread_ms == COLLECTION_RETRY_ROUND_2_MS);
+    assert(decoded.collection_open);
+}
+
 static void test_collection_rejects_wrong_result_identity(void)
 {
     struct gateway_collection_state collection;
@@ -850,6 +896,7 @@ int main(void)
     test_command_flood_requires_collection_identity_for_responses();
     test_collection_initial_due_is_deterministic_and_bounded();
     test_collection_records_unique_results_and_builds_eack();
+    test_collection_prepares_eack_broadcast_outbound();
     test_collection_rejects_wrong_result_identity();
     test_extract_duration_uses_optional_tlv();
     test_extract_role_requires_valid_device_role_tlv();
