@@ -21,6 +21,104 @@ extern "C" {
 #define MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS 5u
 #define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 250u
 #define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 4000u
+#define FLOOD_EPOCH_LOCAL_TTL 2u
+#define FLOOD_EPOCH_REGIONAL_TTL 4u
+#define FLOOD_EPOCH_GLOBAL_TTL 8u
+#define FLOOD_EPOCH_CRITICAL_TTL 12u
+#define FLOOD_FORWARD_MAX_NORMAL 1u
+#define FLOOD_FORWARD_MAX_CRITICAL 2u
+#define FLOOD_FORWARD_SUPPRESS_AFTER_HEARD 2u
+#define FLOOD_WAVE_MS 1400u
+#define FLOOD_RELAY_BURST_MS 600u
+#define FLOOD_RELAY_REPEAT_MS 40u
+#define FLOOD_POST_ROOT_GUARD_MS 150u
+#define C5_POLITE_SNIFF_MS 6u
+#define C5_POLITE_BACKOFF_MIN_MS 20u
+#define C5_POLITE_BACKOFF_MAX_MS 1600u
+#define C5_POLITE_DEFERRAL_MAX 8u
+#define RREP_ACK_TIMEOUT_MS 150u
+#define RREP_RETRY_COUNT_PER_HOP 4u
+#define PARENT_CANDIDATE_COUNT 3u
+#define REVERSE_PATH_CANDIDATE_COUNT 2u
+#define RELAY_BUSY_RETRY_MIN_MS 500u
+#define RELAY_BUSY_RETRY_MAX_MS 5000u
+#define COLLECTION_INITIAL_SPREAD_MIN_MS 30000u
+#define COLLECTION_INITIAL_SPREAD_PER_NODE_MS 300u
+#define COLLECTION_MISSING_SPREAD_PER_NODE_MS 500u
+#define COLLECTION_RETRY_ROUND_0_MS 15000u
+#define COLLECTION_RETRY_ROUND_1_MS 30000u
+#define COLLECTION_RETRY_ROUND_2_MS 60000u
+#define COLLECTION_RETRY_ROUND_3_MS 120000u
+#define COLLECTION_RETRY_ROUND_STEADY_MS 300000u
+#define COLLECTION_RETRY_JITTER_PERCENT 25u
+#define COLLECTION_RESULT_INLINE_C5_MAX_BYTES 32u
+#define COLLECTION_BUNDLE_TARGET_BYTES 512u
+#define COLLECTION_BUNDLE_MAX_RECORDS 8u
+#define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
+#define ROUTE_PARENT_HOLDDOWN_S 30u
+#define FLOOD_BETTER_METRIC_MARGIN_PERCENT 10u
+
+enum flood_epoch_type {
+    FLOOD_EPOCH_TYPE_ROUTE_SOLICIT = 1u,
+    FLOOD_EPOCH_TYPE_GATEWAY_ROUTE_ADV = 2u,
+    FLOOD_EPOCH_TYPE_GATEWAY_COMMAND = 3u,
+    FLOOD_EPOCH_TYPE_COLLECTION_STATUS = 4u,
+};
+
+enum relay_capacity_state {
+    RELAY_CAP_GREEN = 0u,
+    RELAY_CAP_YELLOW = 1u,
+    RELAY_CAP_RED = 2u,
+    RELAY_CAP_BLACK = 3u,
+};
+
+struct mesh_parent_candidate {
+    uint64_t next_hop;
+    uint64_t gateway_id;
+    uint16_t route_epoch;
+    uint8_t hop_count;
+    uint8_t path_quality_min;
+    uint16_t route_cost;
+    uint8_t relay_capacity_state;
+    uint16_t queue_free_hint;
+    uint8_t channel9_busy_hint;
+    bool channel9_timing_valid;
+    uint32_t last_observed_ms;
+    uint32_t last_success_ms;
+    uint32_t hold_down_until_ms;
+};
+
+struct flood_seen_entry {
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t flood_epoch_id;
+    uint8_t flood_type;
+    uint64_t origin_id;
+    uint32_t origin_request_id;
+    uint8_t best_hop_count;
+    uint16_t best_metric;
+    uint64_t best_previous_hop;
+    uint64_t backup_previous_hop;
+    uint8_t forward_count;
+    uint32_t expires_at_ms;
+};
+
+struct persistent_outbox_record {
+    uint32_t packet_id;
+    uint64_t gateway_id;
+    uint8_t packet_class;
+    uint32_t created_uptime_ms;
+    uint32_t age_ms_saturating;
+    uint8_t priority;
+    uint8_t retry_round;
+    uint8_t selected_parent_index;
+    bool custody_accepted;
+    uint64_t custody_parent;
+    bool gateway_acked;
+    uint32_t expiry_s;
+    uint16_t payload_crc;
+    uint16_t payload_len;
+};
 
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,

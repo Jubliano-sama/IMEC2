@@ -2,6 +2,24 @@
 
 ## 2026-07-01
 
+- [x] Replace recursive route-discovery direction with bounded same-event route flood identity.
+  - Added `flood_epoch` terminology and constants in the protocol/relay layer.
+  - `MSG_ROUTE_REQ` now carries `TLV_FLOOD_EPOCH_ID`, `TLV_FLOOD_PROFILE_VERSION`, and `TLV_SLOT_SEED`.
+  - Origin attempts use local/regional/global `FLOOD_EPOCH_*_TTL` profiles.
+  - Relays preserve origin/request/flood identity across forwards and do not activate child route discovery when they can answer with an existing parent route.
+  - Native tests added for TTL escalation, duplicate bounded forwarding, flood identity preservation, and parent-route replies without child discovery.
+- [ ] Add hop-by-hop route reply ACK and backup reverse path retry.
+  - Add `ROUTE_REPLY_ACK`/reply nonce/metric CRC handling before relying on route replies across multiple relays.
+  - Route reply waits must extend or pause when preempted by active click service or required channel-5 wake scan.
+- [ ] Promote parent candidates from route-table compatibility to explicit `PARENT_CANDIDATE_COUNT` behavior.
+  - Keep hop-first cost selection and use capacity only as a tie-breaker or penalty.
+  - Add hold-down behavior after selected-parent failures without age-only route expiry.
+- [ ] Add bounded gateway route advertisement flood.
+  - Seed parent candidates opportunistically at startup/profile changes/maintenance without constant beaconing.
+- [ ] Add relay capacity and explicit busy responses.
+  - Implement GREEN/YELLOW/RED/BLACK behavior plus `RELAY_BUSY` / `RESULT_BUSY` retry hints where packet identity is known.
+- [ ] Add collection_epoch command-result flow.
+  - Add all-node command scopes, hashed result spread, persistent result state, gateway EACK/missing reports, and relay result bundling.
 - [ ] Optimize channel-9 RX arrival time immediately after event negotiation.
   - Current RTT evidence shows expected packets are observed about 44 ms after RX slot start.
   - Verify whether this is true packet start time or receive-complete/host-processing timestamp.

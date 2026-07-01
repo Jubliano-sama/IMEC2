@@ -19,6 +19,27 @@ relay, route-discovery, gateway-ACK, and channel-9 timing machinery.
 Channel 5 remains the wake/contact and route-discovery channel. Channel 9 is
 the mesh payload channel once channel-9 event timing is installed.
 
+Generic channel-5 control dissemination is called a `flood_epoch`. Do not call
+these control bursts clicks: click service is reserved for real accepted
+clicker-originated wake, discovery, schedule, and ranging work. A `flood_epoch`
+is a bounded channel-5 control event for route solicitation, route
+advertisement, gateway command broadcast, or collection-status broadcast. It
+uses one origin, one request ID, and one `flood_epoch_id`; relays forward the
+same event within the configured `FLOOD_FORWARD_*` and `FLOOD_EPOCH_*_TTL`
+bounds and never create child route discoveries for the same gateway target.
+
+Radio priority stays:
+
+1. Active channel-5 click service.
+2. Required quick channel-5 wake scan.
+3. Channel-5 contact for route/control refresh.
+4. Negotiated channel-9 mesh event.
+5. Retained sleep.
+
+Route knowledge and channel-9 timing freshness remain separate. Stale
+channel-9 timing triggers channel-5 contact refresh before payload transfer; it
+does not delete the route by age alone.
+
 In this test profile, any valid channel-5 mesh frame addressed to the local
 anchor or to the global mesh broadcast ID immediately forces that anchor's
 channel-5 scan interval to zero. That makes subsequent channel-5 wake/contact
