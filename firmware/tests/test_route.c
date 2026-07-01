@@ -262,7 +262,11 @@ static void test_capacity_breaks_equal_cost_tie(void)
     const struct route_candidate *selected;
 
     green.relay_capacity_state = RELAY_CAP_GREEN;
+    green.capacity_observed_at_ms = 1000u;
+    green.capacity_valid_until_ms = 2000u;
     yellow.relay_capacity_state = RELAY_CAP_YELLOW;
+    yellow.capacity_observed_at_ms = 1000u;
+    yellow.capacity_valid_until_ms = 2000u;
 
     route_table_init(&table, 1u);
     assert(route_upsert_candidate(&table, &yellow) == PROTO_OK);
@@ -271,6 +275,39 @@ static void test_capacity_breaks_equal_cost_tie(void)
     selected = route_selected(&table);
     assert(selected != NULL);
     assert(selected->next_hop_id == 0x02u);
+}
+
+static void test_expired_capacity_hint_does_not_invalidate_route(void)
+{
+    struct route_table table;
+    struct route_candidate expired_green = candidate(0x03u, 1u, 1u, 80u, 1000u);
+    struct route_candidate unknown = candidate(0x02u, 1u, 1u, 80u, 1000u);
+    const struct route_candidate *selected;
+
+    expired_green.relay_capacity_state = RELAY_CAP_GREEN;
+    expired_green.capacity_observed_at_ms = 1000u;
+    expired_green.capacity_valid_until_ms = 1500u;
+    expired_green.channel9_timing_valid = true;
+    unknown.relay_capacity_state = RELAY_CAP_UNKNOWN;
+    unknown.channel9_timing_valid = true;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &expired_green) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &unknown) == PROTO_OK);
+
+    assert(route_select_best_at(&table, 1500u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x03u);
+
+    assert(route_select_best_at(&table, 1501u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x02u);
+    assert(table.candidates[0].next_hop_id == 0x03u);
+    assert(table.candidates[0].valid);
+    assert(table.candidates[0].channel9_timing_valid);
+    assert(table.candidates[0].hold_down_until_ms == 0u);
 }
 
 static void test_retry_backoff_values(void)
@@ -294,6 +331,7 @@ int main(void)
     test_parent_hold_down_recovers_without_age_expiry();
     test_channel9_timing_breaks_equal_cost_tie();
     test_capacity_breaks_equal_cost_tie();
+    test_expired_capacity_hint_does_not_invalidate_route();
     test_retry_backoff_values();
     return 0;
 }

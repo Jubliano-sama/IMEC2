@@ -41,6 +41,7 @@ extern "C" {
 #define REVERSE_PATH_CANDIDATE_COUNT 2u
 #define RELAY_BUSY_RETRY_MIN_MS 500u
 #define RELAY_BUSY_RETRY_MAX_MS 5000u
+#define RELAY_CAPACITY_HINT_VALIDITY_MS 5000u
 #define COLLECTION_INITIAL_SPREAD_MIN_MS 30000u
 #define COLLECTION_INITIAL_SPREAD_PER_NODE_MS 300u
 #define COLLECTION_MISSING_SPREAD_PER_NODE_MS 500u
@@ -73,6 +74,8 @@ struct mesh_parent_candidate {
     uint8_t relay_capacity_state;
     uint16_t queue_free_hint;
     uint8_t channel9_busy_hint;
+    uint32_t capacity_observed_at_ms;
+    uint32_t capacity_valid_until_ms;
     bool channel9_timing_valid;
     uint32_t last_observed_ms;
     uint32_t last_success_ms;

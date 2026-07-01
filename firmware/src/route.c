@@ -7,6 +7,11 @@ static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
     return (int32_t)(now_ms - deadline_ms) >= 0;
 }
 
+static bool time_after(uint32_t now_ms, uint32_t timestamp_ms)
+{
+    return (int32_t)(now_ms - timestamp_ms) > 0;
+}
+
 static bool candidate_valid_for_epoch(const struct route_candidate *candidate, uint32_t epoch)
 {
     return candidate->valid && candidate->route_epoch == epoch;
@@ -34,6 +39,55 @@ static bool candidate_in_hold_down(const struct route_candidate *candidate, uint
            !deadline_reached(now_ms, candidate->hold_down_until_ms);
 }
 
+static uint8_t normalized_capacity_state(uint8_t capacity_state)
+{
+    return capacity_state <= RELAY_CAP_BLACK ? capacity_state : RELAY_CAP_UNKNOWN;
+}
+
+static uint8_t candidate_effective_capacity(const struct route_candidate *candidate,
+                                            uint32_t now_ms)
+{
+    if (candidate->capacity_valid_until_ms == 0u ||
+        time_after(now_ms, candidate->capacity_valid_until_ms)) {
+        return RELAY_CAP_UNKNOWN;
+    }
+    return normalized_capacity_state(candidate->relay_capacity_state);
+}
+
+static uint8_t capacity_preference_rank(uint8_t capacity_state)
+{
+    switch (capacity_state) {
+    case RELAY_CAP_GREEN:
+        return 0u;
+    case RELAY_CAP_UNKNOWN:
+        return 1u;
+    case RELAY_CAP_YELLOW:
+        return 2u;
+    case RELAY_CAP_RED:
+        return 3u;
+    case RELAY_CAP_BLACK:
+        return 4u;
+    default:
+        return 1u;
+    }
+}
+
+static void normalize_candidate_capacity_hint(struct route_candidate *candidate,
+                                              uint32_t now_ms)
+{
+    candidate->relay_capacity_state =
+        normalized_capacity_state(candidate->relay_capacity_state);
+    if (candidate->relay_capacity_state == RELAY_CAP_UNKNOWN ||
+        candidate->capacity_valid_until_ms == 0u ||
+        time_after(now_ms, candidate->capacity_valid_until_ms)) {
+        candidate->relay_capacity_state = RELAY_CAP_UNKNOWN;
+        candidate->queue_free_hint = 0u;
+        candidate->channel9_busy_hint = 0u;
+        candidate->capacity_observed_at_ms = 0u;
+        candidate->capacity_valid_until_ms = 0u;
+    }
+}
+
 static bool candidate_is_better(const struct route_candidate *candidate,
                                 const struct route_candidate *selected,
                                 uint32_t now_ms)
@@ -42,6 +96,8 @@ static bool candidate_is_better(const struct route_candidate *candidate,
     uint16_t selected_cost;
     bool candidate_held;
     bool selected_held;
+    uint8_t candidate_capacity;
+    uint8_t selected_capacity;
 
     if (selected == NULL) {
         return true;
@@ -65,8 +121,12 @@ static bool candidate_is_better(const struct route_candidate *candidate,
     if (candidate->channel9_timing_valid != selected->channel9_timing_valid) {
         return candidate->channel9_timing_valid;
     }
-    if (candidate->relay_capacity_state != selected->relay_capacity_state) {
-        return candidate->relay_capacity_state < selected->relay_capacity_state;
+    candidate_capacity = capacity_preference_rank(
+        candidate_effective_capacity(candidate, now_ms));
+    selected_capacity = capacity_preference_rank(
+        candidate_effective_capacity(selected, now_ms));
+    if (candidate_capacity != selected_capacity) {
+        return candidate_capacity < selected_capacity;
     }
     if (candidate->last_success_ms != selected->last_success_ms) {
         return candidate->last_success_ms > selected->last_success_ms;
@@ -209,10 +269,8 @@ int route_upsert_candidate(struct route_table *table,
     stored = *candidate;
     stored.valid = true;
     stored.route_cost = route_candidate_cost(stored.hop_count, stored.link_quality);
-    if (stored.relay_capacity_state > RELAY_CAP_BLACK) {
-        stored.relay_capacity_state = RELAY_CAP_BLACK;
-    }
     now_ms = stored.last_seen_ms;
+    normalize_candidate_capacity_hint(&stored, now_ms);
 
     index = find_candidate_index(table, candidate->next_hop_id, candidate->gateway_id);
     if (index >= 0) {
@@ -274,6 +332,38 @@ void route_set_channel9_timing_valid(struct route_table *table,
         return;
     }
     table->candidates[index].channel9_timing_valid = valid;
+    (void)route_select_best_at(table, now_ms);
+}
+
+void route_update_capacity_hint(struct route_table *table,
+                                uint64_t next_hop_id,
+                                uint64_t gateway_id,
+                                uint8_t relay_capacity_state,
+                                uint16_t queue_free_hint,
+                                uint8_t channel9_busy_hint,
+                                uint32_t observed_at_ms,
+                                uint32_t valid_until_ms,
+                                uint32_t now_ms)
+{
+    int index;
+    struct route_candidate *candidate;
+
+    if (table == NULL || next_hop_id == 0u || gateway_id == 0u) {
+        return;
+    }
+
+    index = find_candidate_index(table, next_hop_id, gateway_id);
+    if (index < 0) {
+        return;
+    }
+
+    candidate = &table->candidates[index];
+    candidate->relay_capacity_state = relay_capacity_state;
+    candidate->queue_free_hint = queue_free_hint;
+    candidate->channel9_busy_hint = channel9_busy_hint;
+    candidate->capacity_observed_at_ms = observed_at_ms;
+    candidate->capacity_valid_until_ms = valid_until_ms;
+    normalize_candidate_capacity_hint(candidate, now_ms);
     (void)route_select_best_at(table, now_ms);
 }
 

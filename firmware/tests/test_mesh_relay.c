@@ -941,6 +941,10 @@ static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
                     &value_len) == PROTO_OK);
     assert(value_len == sizeof(uint16_t));
     assert(proto_get_u16_le(value) == RELAY_BUSY_RETRY_MIN_MS);
+    assert(require_tlv_u16(result.busy.payload,
+                           result.busy.payload_len,
+                           TLV_CAPACITY_VALIDITY_INTERVAL_MS) ==
+           RELAY_BUSY_RETRY_MIN_MS);
 
     mesh_relay_cancel_tx(&relay);
     assert(mesh_relay_handle_rx(&relay,
@@ -1111,6 +1115,11 @@ static void test_relay_busy_defers_matching_pending_tx(void)
                          &busy_payload_len,
                          TLV_RELAY_CAPACITY_STATE,
                          RELAY_CAP_YELLOW) == PROTO_OK);
+    assert(tlv_append_u16(busy_payload,
+                          sizeof(busy_payload),
+                          &busy_payload_len,
+                          TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                          RELAY_BUSY_RETRY_MIN_MS) == PROTO_OK);
     busy.msg_type = MSG_RELAY_BUSY;
     busy.flags = 0u;
     busy.src_id = ANCHOR_B;
@@ -1539,6 +1548,10 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(require_tlv_u16(adv.payload, adv.payload_len, TLV_ACCUMULATED_COST) == 0u);
     assert(require_tlv_u8(adv.payload, adv.payload_len, TLV_RELAY_CAPACITY_STATE) ==
            RELAY_CAP_GREEN);
+    assert(require_tlv_u16(adv.payload,
+                           adv.payload_len,
+                           TLV_CAPACITY_VALIDITY_INTERVAL_MS) ==
+           RELAY_CAPACITY_HINT_VALIDITY_MS);
     assert(require_tlv_u16(adv.payload, adv.payload_len, TLV_FLOOD_PROFILE_VERSION) != 0u);
     flood_epoch_id = require_tlv_u32(adv.payload, adv.payload_len, TLV_FLOOD_EPOCH_ID);
     slot_seed = require_tlv_u32(adv.payload, adv.payload_len, TLV_SLOT_SEED);

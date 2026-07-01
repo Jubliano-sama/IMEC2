@@ -33,10 +33,11 @@ enum route_delivery_action {
 };
 
 enum relay_capacity_state {
-    RELAY_CAP_GREEN = 0u,
-    RELAY_CAP_YELLOW = 1u,
-    RELAY_CAP_RED = 2u,
-    RELAY_CAP_BLACK = 3u,
+    RELAY_CAP_UNKNOWN = 0u,
+    RELAY_CAP_GREEN = 1u,
+    RELAY_CAP_YELLOW = 2u,
+    RELAY_CAP_RED = 3u,
+    RELAY_CAP_BLACK = 4u,
 };
 
 struct route_candidate {
@@ -53,6 +54,8 @@ struct route_candidate {
     uint8_t failure_count;
     uint8_t relay_capacity_state;
     uint8_t channel9_busy_hint;
+    uint32_t capacity_observed_at_ms;
+    uint32_t capacity_valid_until_ms;
     bool channel9_timing_valid;
     bool valid;
 };
@@ -76,6 +79,15 @@ void route_set_channel9_timing_valid(struct route_table *table,
                                      uint64_t gateway_id,
                                      bool valid,
                                      uint32_t now_ms);
+void route_update_capacity_hint(struct route_table *table,
+                                uint64_t next_hop_id,
+                                uint64_t gateway_id,
+                                uint8_t relay_capacity_state,
+                                uint16_t queue_free_hint,
+                                uint8_t channel9_busy_hint,
+                                uint32_t observed_at_ms,
+                                uint32_t valid_until_ms,
+                                uint32_t now_ms);
 void route_record_success(struct route_table *table);
 void route_record_success_at(struct route_table *table, uint32_t now_ms);
 void route_refresh_selected_at(struct route_table *table, uint32_t now_ms);

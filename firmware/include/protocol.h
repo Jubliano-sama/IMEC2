@@ -224,6 +224,7 @@ enum tlv_type {
     TLV_RESULT_SEQ = 0x7C,
     TLV_PAYLOAD_LEN = 0x7D,
     TLV_PAYLOAD_CRC = 0x7E,
+    TLV_CAPACITY_VALIDITY_INTERVAL_MS = 0x7F,
 };
 
 enum status_bit {

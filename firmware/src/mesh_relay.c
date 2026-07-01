@@ -18,6 +18,7 @@ struct route_discovery_fields {
     uint16_t reply_nonce;
     uint16_t metric_crc;
     uint16_t queue_free_hint;
+    uint16_t capacity_validity_interval_ms;
     uint8_t hop_count;
     uint8_t quality;
     uint8_t relay_capacity_state;
@@ -36,6 +37,7 @@ struct relay_busy_fields {
     uint32_t requested_session_id;
     uint16_t requested_seq;
     uint16_t retry_after_ms;
+    uint16_t capacity_validity_interval_ms;
     uint8_t capacity_state;
     uint64_t alternate_parent_id;
     bool has_alternate_parent;
@@ -49,6 +51,7 @@ struct gateway_route_adv_fields {
     uint16_t gateway_epoch;
     uint16_t route_cost;
     uint16_t flood_profile_version;
+    uint16_t capacity_validity_interval_ms;
     uint8_t hop_count;
     uint8_t path_quality_min;
     uint8_t gateway_capacity_state;
@@ -162,6 +165,21 @@ static uint16_t relay_current_queue_free_hint(const struct mesh_relay *relay)
     return relay_current_capacity_state(relay) == RELAY_CAP_GREEN ? 1u : 0u;
 }
 
+static uint16_t relay_current_capacity_validity_interval_ms(const struct mesh_relay *relay)
+{
+    return relay_current_capacity_state(relay) == RELAY_CAP_UNKNOWN ?
+           0u :
+           RELAY_CAPACITY_HINT_VALIDITY_MS;
+}
+
+static uint32_t capacity_valid_until_ms(uint32_t observed_at_ms, uint16_t interval_ms)
+{
+    if (interval_ms == 0u) {
+        return 0u;
+    }
+    return observed_at_ms + interval_ms;
+}
+
 static uint16_t relay_busy_retry_after_ms(const struct mesh_relay *relay)
 {
     uint16_t retry_after_ms = RELAY_BUSY_RETRY_MIN_MS;
@@ -197,7 +215,7 @@ static uint16_t route_reply_nonce(uint64_t origin_id,
 
 static uint16_t route_reply_metric_crc(const struct route_discovery_fields *fields)
 {
-    uint8_t metric[40];
+    uint8_t metric[42];
     size_t offset = 0u;
     uint16_t crc;
 
@@ -216,6 +234,8 @@ static uint16_t route_reply_metric_crc(const struct route_discovery_fields *fiel
     metric[offset++] = fields->relay_capacity_state;
     metric[offset++] = fields->channel9_busy_hint;
     proto_put_u16_le(&metric[offset], fields->queue_free_hint);
+    offset += sizeof(uint16_t);
+    proto_put_u16_le(&metric[offset], fields->capacity_validity_interval_ms);
     offset += sizeof(uint16_t);
     proto_put_u32_le(&metric[offset], fields->slot_seed);
     offset += sizeof(uint32_t);
@@ -289,6 +309,12 @@ static int append_route_discovery_tlvs(uint8_t *payload,
     }
     ret = tlv_append_u8(payload, payload_cap, offset,
                         TLV_CHANNEL9_BUSY_HINT, fields->channel9_busy_hint);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                         fields->capacity_validity_interval_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -857,6 +883,15 @@ static int parse_relay_busy_tlvs(const uint8_t *payload,
     if (fields->capacity_state > RELAY_CAP_BLACK) {
         return PROTO_ERR_MALFORMED;
     }
+    ret = find_u16_tlv(payload,
+                       payload_len,
+                       TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                       &fields->capacity_validity_interval_ms);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        fields->capacity_validity_interval_ms = fields->retry_after_ms;
+    } else if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = find_u64_tlv(payload,
                        payload_len,
                        TLV_ALTERNATE_PARENT_ID,
@@ -921,6 +956,14 @@ static int build_busy_response(struct mesh_relay *relay,
                         &payload_len,
                         TLV_RELAY_CAPACITY_STATE,
                         relay_current_capacity_state(relay));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(out->payload,
+                         sizeof(out->payload),
+                         &payload_len,
+                         TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                         retry_after_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -1009,6 +1052,17 @@ static int handle_local_busy(struct mesh_relay *relay,
         retry_after_ms = RELAY_BUSY_RETRY_MAX_MS;
     }
     pending_refresh_age(&relay->pending, now_ms);
+    route_update_capacity_hint(&relay->upstream,
+                               previous_hop_id,
+                               relay->gateway_id,
+                               fields.capacity_state,
+                               0u,
+                               0u,
+                               now_ms,
+                               capacity_valid_until_ms(
+                                   now_ms,
+                                   fields.capacity_validity_interval_ms),
+                               now_ms);
     relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
     relay->pending.retry_after_ms = now_ms + retry_after_ms;
     result->actions |= MESH_RELAY_ACTION_TX_RELAY_BUSY;
@@ -1304,6 +1358,7 @@ static int upsert_reactive_route(struct mesh_relay *relay,
                                  uint8_t relay_capacity_state,
                                  uint16_t queue_free_hint,
                                  uint8_t channel9_busy_hint,
+                                 uint16_t capacity_validity_interval_ms,
                                  uint32_t now_ms)
 {
     if (!id_is_unicast(target_id) ||
@@ -1328,6 +1383,10 @@ static int upsert_reactive_route(struct mesh_relay *relay,
             .relay_capacity_state = relay_capacity_state,
             .queue_free_hint = queue_free_hint,
             .channel9_busy_hint = channel9_busy_hint,
+            .capacity_observed_at_ms = capacity_validity_interval_ms != 0u ? now_ms : 0u,
+            .capacity_valid_until_ms = capacity_valid_until_ms(
+                now_ms,
+                capacity_validity_interval_ms),
             .valid = true,
         };
 
@@ -1385,7 +1444,7 @@ static int parse_route_discovery_tlvs(const uint8_t *payload,
     ret = find_u8_tlv(payload, payload_len,
                       TLV_RELAY_CAPACITY_STATE, &fields->relay_capacity_state);
     if (ret == PROTO_ERR_NOT_FOUND) {
-        fields->relay_capacity_state = RELAY_CAP_GREEN;
+        fields->relay_capacity_state = RELAY_CAP_UNKNOWN;
     } else if (ret != PROTO_OK) {
         return ret;
     }
@@ -1404,6 +1463,20 @@ static int parse_route_discovery_tlvs(const uint8_t *payload,
         fields->channel9_busy_hint = 0u;
     } else if (ret != PROTO_OK) {
         return ret;
+    }
+    ret = find_u16_tlv(payload,
+                       payload_len,
+                       TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                       &fields->capacity_validity_interval_ms);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        fields->capacity_validity_interval_ms = 0u;
+    } else if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (fields->relay_capacity_state == RELAY_CAP_UNKNOWN) {
+        fields->queue_free_hint = 0u;
+        fields->channel9_busy_hint = 0u;
+        fields->capacity_validity_interval_ms = 0u;
     }
 
     ret = find_u32_tlv(payload, payload_len, TLV_FLOOD_EPOCH_ID,
@@ -1511,6 +1584,12 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
         return ret;
     }
     ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                         fields->capacity_validity_interval_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
                          TLV_FLOOD_PROFILE_VERSION, fields->flood_profile_version);
     if (ret != PROTO_OK) {
         return ret;
@@ -1560,6 +1639,18 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
                       TLV_RELAY_CAPACITY_STATE, &fields->gateway_capacity_state);
     if (ret != PROTO_OK) {
         return ret;
+    }
+    ret = find_u16_tlv(payload,
+                       payload_len,
+                       TLV_CAPACITY_VALIDITY_INTERVAL_MS,
+                       &fields->capacity_validity_interval_ms);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        fields->capacity_validity_interval_ms = 0u;
+    } else if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (fields->gateway_capacity_state == RELAY_CAP_UNKNOWN) {
+        fields->capacity_validity_interval_ms = 0u;
     }
     ret = find_u16_tlv(payload, payload_len,
                        TLV_FLOOD_PROFILE_VERSION, &fields->flood_profile_version);
@@ -1722,6 +1813,8 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
         fields->flood_profile_version == 0u ||
         fields->path_quality_min > 100u ||
         fields->gateway_capacity_state > RELAY_CAP_BLACK ||
+        (fields->gateway_capacity_state != RELAY_CAP_UNKNOWN &&
+         fields->capacity_validity_interval_ms == 0u) ||
         fields->route_cost != gateway_route_cost(fields->hop_count, fields->path_quality_min)) {
         return false;
     }
@@ -1811,6 +1904,7 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                       fields.gateway_capacity_state,
                                       UINT16_MAX,
                                       0u,
+                                      fields.capacity_validity_interval_ms,
                                       now_ms);
     if (route_ret != PROTO_OK &&
         route_ret != PROTO_ERR_NO_SPACE) {
@@ -1898,6 +1992,8 @@ static int build_route_reply(struct mesh_relay *relay,
     fields.relay_capacity_state = relay_current_capacity_state(relay);
     fields.queue_free_hint = relay_current_queue_free_hint(relay);
     fields.channel9_busy_hint = relay_active_channel9_timing_count(relay);
+    fields.capacity_validity_interval_ms =
+        relay_current_capacity_validity_interval_ms(relay);
     fields.reply_nonce = route_reply_nonce(fields.origin_id,
                                            fields.target_id,
                                            session_id,
@@ -2018,6 +2114,7 @@ static int handle_route_request(struct mesh_relay *relay,
                                 fields.relay_capacity_state,
                                 fields.queue_free_hint,
                                 fields.channel9_busy_hint,
+                                fields.capacity_validity_interval_ms,
                                 now_ms);
     if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
         return ret;
@@ -2108,6 +2205,7 @@ static int handle_route_reply(struct mesh_relay *relay,
                                 fields.relay_capacity_state,
                                 fields.queue_free_hint,
                                 fields.channel9_busy_hint,
+                                fields.capacity_validity_interval_ms,
                                 now_ms);
     if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
         return ret;
@@ -2608,6 +2706,8 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
     fields.relay_capacity_state = relay_current_capacity_state(relay);
     fields.queue_free_hint = relay_current_queue_free_hint(relay);
     fields.channel9_busy_hint = relay_active_channel9_timing_count(relay);
+    fields.capacity_validity_interval_ms =
+        relay_current_capacity_validity_interval_ms(relay);
 
     ret = append_route_discovery_tlvs(out->payload,
                                       sizeof(out->payload),
@@ -2656,6 +2756,7 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     fields.path_quality_min = 100u;
     fields.route_cost = gateway_route_cost(fields.hop_count, fields.path_quality_min);
     fields.gateway_capacity_state = RELAY_CAP_GREEN;
+    fields.capacity_validity_interval_ms = RELAY_CAPACITY_HINT_VALIDITY_MS;
     fields.flood_profile_version = MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION;
     fields.flood_epoch_id = gateway_route_seq;
     fields.slot_seed = gateway_route_adv_slot_seed(fields.gateway_id,

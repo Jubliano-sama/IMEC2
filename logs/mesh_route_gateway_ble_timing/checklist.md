@@ -20,6 +20,7 @@
   - Route selection preserves the existing route-cost/link-quality behavior, then applies MeshSpec parent hints: active hold-down exclusion, valid channel-9 timing, relay capacity state, most recent gateway-ACK success, and lower next-hop ID.
   - Selected-parent gateway-ACK failures now place the parent in `ROUTE_PARENT_HOLDDOWN_S` instead of deleting route knowledge; age-only expiry still does not invalidate routes.
   - Route replies, route requests, and gateway route advertisements now carry/store relay capacity, queue-free, and channel-9 busy hints where the current protocol fields exist.
+  - Relay capacity is now explicitly short-lived: `RELAY_CAP_UNKNOWN` is the zero/default state, parent candidates store capacity observed/valid-until timestamps, expired capacity is treated as UNKNOWN for selection, and expiry does not delete the route, clear channel-9 timing, or place the parent in hold-down.
 - [ ] Add bounded gateway route advertisement flood.
   - Implemented shared protocol/relay support for `MSG_GATEWAY_ROUTE_ADV`: gateway-origin builder, `gateway_id`/`gateway_epoch`/`gateway_route_seq`/hop/quality/cost/capacity/flood TLVs, parent candidate update through the existing upstream route table, bounded duplicate suppression, and channel-5 broadcast forwarding with TTL decrement and updated hop/quality/cost.
   - Native test covers startup-style advertisement seeding a direct parent, relay forwarding preserving flood identity, duplicate suppression, second-hop candidate install, and no age-only route deletion.
@@ -46,6 +47,7 @@
   - Route selection now stores and uses relay capacity hints as parent-candidate tie-breakers.
   - Added `MSG_RELAY_BUSY` and `MSG_RESULT_BUSY` with requested session/sequence, retry-after, capacity state, and optional alternate-parent TLVs.
   - Busy relays now emit hop-local busy responses when packet identity is known instead of silently dropping; senders that receive a matching busy response preserve the pending packet and move to retry-backoff.
+  - Busy responses now carry `TLV_CAPACITY_VALIDITY_INTERVAL_MS`; matching senders update only the parent capacity hint validity window and do not invalidate route knowledge.
   - Native tests cover relay-busy packet contents, result-busy selection for `COMMAND_RESULT`, and sender-side retry deferral.
 - [ ] Add collection_epoch command-result flow.
   - Added MeshSpec command scope, response mode, and collection EACK format enums plus TLVs for command scope, response mode, membership/expected count, execute delay, command expiry, collection slot seed, result sequence, payload length, and payload CRC.
@@ -54,7 +56,8 @@
   - Relay broadcast handling now forwards only explicit non-single `MSG_COMMAND` floods with valid flood/collection metadata; unscoped broadcast commands still deliver locally without flooding, and duplicates are suppressed.
   - Command floods now use `command_seq` as packet session identity, and broadcast command duplicate suppression ignores packet sequence and uses the default command-result expiry window instead of the ordinary short dedupe window.
   - Added deterministic collection initial-due helpers: spread is `max(COLLECTION_INITIAL_SPREAD_MIN_MS, expected_node_count * COLLECTION_INITIAL_SPREAD_PER_NODE_MS)`, and each node hashes node ID, command sequence, and collection slot seed into that spread.
-  - Remaining gap: persistent result state, gateway EACK/missing reports, result offer/grant, app-level use of the hashed due time, and relay result bundling.
+  - Anchor broadcast command floods now execute once locally, `CMD_RESPONSE_NONE` produces no RF result, and response modes schedule a delayed `COMMAND_RESULT` using the hashed collection due time.
+  - Remaining gap: restart-tolerant persistent result state, gateway EACK/missing reports, result offer/grant, and relay result bundling.
 - [ ] Optimize channel-9 RX arrival time immediately after event negotiation.
   - Current RTT evidence shows expected packets are observed about 44 ms after RX slot start.
   - Verify whether this is true packet start time or receive-complete/host-processing timestamp.

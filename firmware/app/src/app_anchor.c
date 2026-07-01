@@ -35,6 +35,7 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 static struct k_work_delayable anchor_uwb_scan_work;
 static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
+static struct k_work_delayable anchor_collection_result_work;
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_THREAD_STACK_DEFINE(anchor_uwb_scan_work_q_stack, ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE);
@@ -70,6 +71,16 @@ static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
+struct anchor_collection_result_pending {
+    struct proto_packet command;
+    enum command_id command_id;
+    enum command_status status;
+    uint8_t reason;
+    bool active;
+    bool force_rediscovery_after_result;
+    bool reboot_after_result;
+};
+static struct anchor_collection_result_pending anchor_collection_result_pending;
 #if defined(CONFIG_IMEC_ML_ANCHOR)
 static uint32_t anchor_run_clicker_pair_survey(
     const struct uwb_anchor_pair_schedule_frame *schedule,
@@ -94,6 +105,9 @@ static int anchor_start_survey_pair_from_command(const struct proto_packet *pack
                                                   uint8_t *reason);
 static void anchor_abort_survey_pair(void);
 static void anchor_reboot_work_handler(struct k_work *work);
+static void anchor_collection_result_work_handler(struct k_work *work);
+static void anchor_schedule_reboot_after_command_result(void);
+static void anchor_force_rediscovery_from_command(void);
 static void gateway_survey_work_handler(struct k_work *work);
 static void gateway_survey_auto_note_command_result(const struct proto_packet *command,
                                                     enum command_id command_id,
@@ -157,6 +171,109 @@ static int anchor_send_command_result(const struct proto_packet *command,
                          reason,
                          ret);
     return ret;
+}
+
+static void anchor_collection_result_clear(void)
+{
+    memset(&anchor_collection_result_pending, 0, sizeof(anchor_collection_result_pending));
+}
+
+static void anchor_collection_result_work_handler(struct k_work *work)
+{
+    struct anchor_collection_result_pending pending;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_collection_result_pending.active) {
+        return;
+    }
+
+    pending = anchor_collection_result_pending;
+    anchor_collection_result_clear();
+
+    ret = anchor_send_command_result(&pending.command,
+                                     pending.command_id,
+                                     pending.status,
+                                     pending.reason);
+    if (ret < 0) {
+        LOG_WRN("anchor collection command result TX failed: cmd=0x%04x status=%u ret=%d",
+                (unsigned int)pending.command_id,
+                pending.status,
+                ret);
+        pending.active = true;
+        anchor_collection_result_pending = pending;
+        (void)k_work_reschedule(&anchor_collection_result_work,
+                                K_MSEC(COLLECTION_RETRY_ROUND_0_MS));
+        return;
+    }
+
+    LOG_INF("anchor collection command result sent: cmd=0x%04x status=%u reason=%u",
+            (unsigned int)pending.command_id,
+            pending.status,
+            pending.reason);
+    if (pending.force_rediscovery_after_result && pending.status == COMMAND_OK) {
+        anchor_force_rediscovery_from_command();
+    }
+    if (pending.reboot_after_result && pending.status == COMMAND_OK) {
+        anchor_schedule_reboot_after_command_result();
+    }
+}
+
+static int anchor_schedule_collection_command_result(
+    const struct proto_packet *command,
+    const struct gateway_command_options *options,
+    enum command_id command_id,
+    enum command_status status,
+    uint8_t reason,
+    bool force_rediscovery_after_result,
+    bool reboot_after_result)
+{
+    uint32_t now_ms;
+    uint32_t due_ms;
+    uint32_t delay_ms;
+
+    if (command == NULL || options == NULL || !options->collection_required) {
+        return -EINVAL;
+    }
+    if (anchor_collection_result_pending.active) {
+        LOG_WRN("anchor collection command result already pending: cmd=0x%04x new=0x%04x",
+                (unsigned int)anchor_collection_result_pending.command_id,
+                (unsigned int)command_id);
+        return -EBUSY;
+    }
+
+    now_ms = k_uptime_get_32();
+    due_ms = gateway_command_collection_initial_due_ms(now_ms,
+                                                       DEVICE_ID,
+                                                       options->command_seq,
+                                                       options->collection_slot_seed,
+                                                       options->expected_node_count);
+    delay_ms = due_ms - now_ms;
+    if (delay_ms == 0u) {
+        delay_ms = 1u;
+    }
+
+    anchor_collection_result_pending.command = *command;
+    anchor_collection_result_pending.command_id = command_id;
+    anchor_collection_result_pending.status = status;
+    anchor_collection_result_pending.reason = reason;
+    anchor_collection_result_pending.force_rediscovery_after_result =
+        force_rediscovery_after_result;
+    anchor_collection_result_pending.reboot_after_result = reboot_after_result;
+    anchor_collection_result_pending.active = true;
+    (void)k_work_reschedule(&anchor_collection_result_work, K_MSEC(delay_ms));
+
+    LOG_INF("anchor collection command result scheduled: cmd=0x%04x due_ms=%u delay_ms=%u",
+            (unsigned int)command_id,
+            due_ms,
+            delay_ms);
+    high_debug_log_event("COMMAND_RESULT_TX",
+                         "transport=collection-scheduled command=0x%04x due_ms=%u delay_ms=%u",
+                         (unsigned int)command_id,
+                         due_ms,
+                         delay_ms);
+    return 0;
 }
 
 static void anchor_reboot_work_handler(struct k_work *work)
@@ -804,6 +921,7 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
     enum command_id command_id = CMD_VENDOR_BASE;
     enum command_status status = COMMAND_OK;
     enum device_role requested_role = ROLE_ANCHOR;
+    struct gateway_command_options command_options = {0};
     bool reboot_after_result = false;
     bool force_rediscovery_after_result = false;
     bool broadcast_command = false;
@@ -828,67 +946,105 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
         }
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = (uint8_t)(-ret);
-    } else if (broadcast_command) {
-        return;
-    } else if (command_id == CMD_REBOOT) {
-        reboot_after_result = true;
-    } else if (command_id == CMD_SET_ROLE) {
-        ret = gateway_command_extract_role(payload, payload_len, &requested_role);
-        if (ret != PROTO_OK) {
-            status = COMMAND_MALFORMED_PAYLOAD;
-            reason = (uint8_t)(-ret);
-        } else if ((uint8_t)requested_role != (uint8_t)DEVICE_ROLE) {
-            status = COMMAND_DENIED;
+    } else {
+        if (broadcast_command) {
+            ret = gateway_command_extract_options(payload,
+                                                  payload_len,
+                                                  &command_options);
+            if (ret != PROTO_OK || !command_options.flood_required) {
+                LOG_WRN("anchor ignored invalid broadcast command options: ret=%d flood=%u",
+                        ret,
+                        command_options.flood_required ? 1u : 0u);
+                return;
+            }
+        }
+        if (command_id == CMD_REBOOT) {
+            reboot_after_result = true;
+        } else if (command_id == CMD_SET_ROLE) {
+            ret = gateway_command_extract_role(payload, payload_len, &requested_role);
+            if (ret != PROTO_OK) {
+                status = COMMAND_MALFORMED_PAYLOAD;
+                reason = (uint8_t)(-ret);
+            } else if ((uint8_t)requested_role != (uint8_t)DEVICE_ROLE) {
+                status = COMMAND_DENIED;
+                reason = 1u;
+            }
+        } else if (command_id == CMD_START_HEARTBEAT) {
+            ret = anchor_start_heartbeat_from_command(payload, payload_len, &reason);
+            if (ret < 0) {
+                status = COMMAND_MALFORMED_PAYLOAD;
+            }
+        } else if (command_id == CMD_STOP_HEARTBEAT) {
+            anchor_stop_heartbeat();
+        } else if (command_id == CMD_SET_LED_PATTERN) {
+            ret = anchor_set_led_pattern_from_command(payload, payload_len, &reason);
+            if (ret < 0) {
+                status = COMMAND_MALFORMED_PAYLOAD;
+            }
+        } else if (command_id == CMD_SET_ROUTE) {
+            ret = anchor_set_route_from_command(payload, payload_len, &reason);
+            if (ret < 0) {
+                status = ret == -ENOSPC ? COMMAND_BUSY : COMMAND_MALFORMED_PAYLOAD;
+            }
+        } else if (command_id == CMD_CLEAR_ROUTE) {
+            anchor_clear_route_from_command();
+        } else if (command_id == CMD_FORCE_REDISCOVERY) {
+            force_rediscovery_after_result = true;
+        } else if (command_id == CMD_SET_SCAN_DUTY) {
+            ret = anchor_set_scan_duty_from_command(payload, payload_len, &reason);
+            if (ret < 0) {
+                status = COMMAND_MALFORMED_PAYLOAD;
+            }
+        } else if (command_id == CMD_SURVEY_START_PAIR) {
+            ret = anchor_start_survey_pair_from_command(packet,
+                                                        payload,
+                                                        payload_len,
+                                                        &status,
+                                                        &reason);
+            if (ret < 0 && status == COMMAND_OK) {
+                status = COMMAND_INTERNAL_ERROR;
+                reason = (uint8_t)(-ret);
+            }
+        } else if (command_id == CMD_SURVEY_ABORT) {
+            anchor_abort_survey_pair();
+        } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
+            status = COMMAND_UNSUPPORTED_COMMAND;
             reason = 1u;
         }
-    } else if (command_id == CMD_START_HEARTBEAT) {
-        ret = anchor_start_heartbeat_from_command(payload, payload_len, &reason);
-        if (ret < 0) {
-            status = COMMAND_MALFORMED_PAYLOAD;
-        }
-    } else if (command_id == CMD_STOP_HEARTBEAT) {
-        anchor_stop_heartbeat();
-    } else if (command_id == CMD_SET_LED_PATTERN) {
-        ret = anchor_set_led_pattern_from_command(payload, payload_len, &reason);
-        if (ret < 0) {
-            status = COMMAND_MALFORMED_PAYLOAD;
-        }
-    } else if (command_id == CMD_SET_ROUTE) {
-        ret = anchor_set_route_from_command(payload, payload_len, &reason);
-        if (ret < 0) {
-            status = ret == -ENOSPC ? COMMAND_BUSY : COMMAND_MALFORMED_PAYLOAD;
-        }
-    } else if (command_id == CMD_CLEAR_ROUTE) {
-        anchor_clear_route_from_command();
-    } else if (command_id == CMD_FORCE_REDISCOVERY) {
-        force_rediscovery_after_result = true;
-    } else if (command_id == CMD_SET_SCAN_DUTY) {
-        ret = anchor_set_scan_duty_from_command(payload, payload_len, &reason);
-        if (ret < 0) {
-            status = COMMAND_MALFORMED_PAYLOAD;
-        }
-    } else if (command_id == CMD_SURVEY_START_PAIR) {
-        ret = anchor_start_survey_pair_from_command(packet,
-                                                    payload,
-                                                    payload_len,
-                                                    &status,
-                                                    &reason);
-        if (ret < 0 && status == COMMAND_OK) {
-            status = COMMAND_INTERNAL_ERROR;
-            reason = (uint8_t)(-ret);
-        }
-    } else if (command_id == CMD_SURVEY_ABORT) {
-        anchor_abort_survey_pair();
-    } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
-        status = COMMAND_UNSUPPORTED_COMMAND;
-        reason = 1u;
     }
 
     if (broadcast_command) {
-        LOG_INF("anchor broadcast command handled: cmd=0x%04x status=%u reason=%u",
-                (unsigned int)command_id,
-                status,
-                reason);
+        if (command_options.response_mode == CMD_RESPONSE_NONE) {
+            LOG_INF("anchor broadcast command handled without result: cmd=0x%04x status=%u reason=%u",
+                    (unsigned int)command_id,
+                    status,
+                    reason);
+            if (force_rediscovery_after_result && status == COMMAND_OK) {
+                anchor_force_rediscovery_from_command();
+            }
+            if (reboot_after_result && status == COMMAND_OK) {
+                anchor_schedule_reboot_after_command_result();
+            }
+            return;
+        }
+        ret = anchor_schedule_collection_command_result(packet,
+                                                        &command_options,
+                                                        command_id,
+                                                        status,
+                                                        reason,
+                                                        force_rediscovery_after_result,
+                                                        reboot_after_result);
+        if (ret < 0) {
+            LOG_WRN("anchor collection command result schedule failed: cmd=0x%04x status=%u ret=%d",
+                    (unsigned int)command_id,
+                    status,
+                    ret);
+        } else {
+            LOG_INF("anchor broadcast command handled with collection result: cmd=0x%04x status=%u reason=%u",
+                    (unsigned int)command_id,
+                    status,
+                    reason);
+        }
         return;
     }
 
@@ -4053,6 +4209,8 @@ const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void)
 int app_anchor_init(void)
 {
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
+    k_work_init_delayable(&anchor_collection_result_work,
+                          anchor_collection_result_work_handler);
     return 0;
 }
 
@@ -4080,6 +4238,8 @@ int app_anchor_start_anchor_role(void)
     k_work_init_delayable(&anchor_heartbeat_work, anchor_heartbeat_work_handler);
     k_work_init_delayable(&anchor_reboot_work, anchor_reboot_work_handler);
     k_work_init_delayable(&anchor_survey_work, anchor_survey_work_handler);
+    k_work_init_delayable(&anchor_collection_result_work,
+                          anchor_collection_result_work_handler);
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (gateway_ble_transport_enabled()) {
         status_debug_note("DBG_ANCHOR_BLE_INIT_BEGIN\n");
