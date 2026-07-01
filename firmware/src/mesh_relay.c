@@ -592,13 +592,19 @@ static bool duplicate_matches_packet(const struct mesh_duplicate_entry *entry,
     if (packet->msg_type == MSG_COMMAND && packet->dst_id == MESH_BROADCAST_ID) {
         return true;
     }
+    if (packet->msg_type == MSG_GATEWAY_COLLECTION_EACK &&
+        packet->dst_id == MESH_BROADCAST_ID) {
+        return true;
+    }
 
     return entry->seq == packet->seq;
 }
 
 static uint32_t duplicate_window_ms(const struct mesh_duplicate_entry *entry)
 {
-    if (entry->msg_type == MSG_COMMAND && entry->dst_id == MESH_BROADCAST_ID) {
+    if ((entry->msg_type == MSG_COMMAND ||
+         entry->msg_type == MSG_GATEWAY_COLLECTION_EACK) &&
+        entry->dst_id == MESH_BROADCAST_ID) {
         return COMMAND_RESULT_EXPIRY_DEFAULT_S * 1000u;
     }
     return ROUTE_DEDUP_WINDOW_MS;
@@ -1446,7 +1452,31 @@ static bool command_flood_broadcast_valid(const uint8_t *payload, size_t payload
     return true;
 }
 
-static bool broadcast_packet_needs_forward(const struct proto_packet *packet,
+static bool collection_eack_broadcast_valid(const struct mesh_relay *relay,
+                                            const struct proto_packet *packet,
+                                            const uint8_t *payload,
+                                            size_t payload_len)
+{
+    struct gateway_collection_eack eack;
+
+    if (relay == NULL || packet == NULL ||
+        packet->src_id != relay->gateway_id ||
+        packet->dst_id != MESH_BROADCAST_ID ||
+        gateway_collection_eack_from_tlvs(payload, payload_len, &eack) != PROTO_OK) {
+        return false;
+    }
+    if (eack.gateway_id != relay->gateway_id ||
+        eack.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        eack.command_seq == 0u ||
+        eack.collection_epoch_id == 0u ||
+        eack.received_count > eack.expected_count) {
+        return false;
+    }
+    return true;
+}
+
+static bool broadcast_packet_needs_forward(const struct mesh_relay *relay,
+                                           const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len)
 {
@@ -1456,16 +1486,20 @@ static bool broadcast_packet_needs_forward(const struct proto_packet *packet,
     if (packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
         return true;
     }
+    if (packet->msg_type == MSG_GATEWAY_COLLECTION_EACK) {
+        return collection_eack_broadcast_valid(relay, packet, payload, payload_len);
+    }
     return packet->msg_type == MSG_COMMAND &&
            command_flood_broadcast_valid(payload, payload_len);
 }
 
-static int build_broadcast_forward(const struct proto_packet *packet,
+static int build_broadcast_forward(const struct mesh_relay *relay,
+                                   const struct proto_packet *packet,
                                    const uint8_t *payload,
                                    size_t payload_len,
                                    struct mesh_outbound *out)
 {
-    if (!broadcast_packet_needs_forward(packet, payload, payload_len)) {
+    if (!broadcast_packet_needs_forward(relay, packet, payload, payload_len)) {
         return PROTO_ERR_STALE;
     }
 
@@ -3567,6 +3601,14 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
+    if (packet->msg_type == MSG_GATEWAY_COLLECTION_EACK &&
+        packet->dst_id == MESH_BROADCAST_ID &&
+        !collection_eack_broadcast_valid(relay, packet, payload, payload_len)) {
+        result->status = PROTO_ERR_MALFORMED;
+        result->actions |= MESH_RELAY_ACTION_DROP;
+        return PROTO_OK;
+    }
+
     if (packet->dst_id == relay->local_id) {
         duplicate_store(relay, packet, now_ms);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
@@ -3577,7 +3619,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     if (packet->dst_id == MESH_BROADCAST_ID) {
         duplicate_store(relay, packet, now_ms);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
-        ret = build_broadcast_forward(packet, payload, payload_len, &result->forward);
+        ret = build_broadcast_forward(relay, packet, payload, payload_len, &result->forward);
         if (ret == PROTO_OK) {
             result->actions |= MESH_RELAY_ACTION_FORWARD;
         }

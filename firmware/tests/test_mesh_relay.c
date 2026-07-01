@@ -617,6 +617,127 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
+static void test_collection_eack_broadcast_delivers_and_forwards_once(void)
+{
+    const struct gateway_collection_eack eack = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1001u,
+        .collection_epoch_id = 3003u,
+        .membership_epoch = 3u,
+        .expected_count = 12u,
+        .received_count = 5u,
+        .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
+        .retry_round = 1u,
+        .next_retry_spread_ms = COLLECTION_RETRY_ROUND_0_MS,
+        .collection_open = true,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay_result result;
+    struct proto_packet duplicate_packet;
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 3003u,
+        .seq = 21u,
+        .ttl = 3u,
+    };
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(gateway_collection_eack_append_tlvs(payload,
+                                               sizeof(payload),
+                                               &payload_len,
+                                               &eack) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                GATEWAY,
+                                80u,
+                                3040u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(result.forward.next_hop_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
+    assert(result.forward.packet.src_id == GATEWAY);
+    assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.ttl == 2u);
+    assert(result.forward.payload_len == payload_len);
+    assert(memcmp(result.forward.payload, payload, payload_len) == 0);
+
+    duplicate_packet = packet;
+    duplicate_packet.seq = 22u;
+    assert(mesh_relay_handle_rx(&relay,
+                                &duplicate_packet,
+                                payload,
+                                payload_len,
+                                GATEWAY,
+                                80u,
+                                3050u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+}
+
+static void test_collection_eack_broadcast_rejects_wrong_gateway_epoch(void)
+{
+    const struct gateway_collection_eack eack = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 12u,
+        .command_seq = 1001u,
+        .collection_epoch_id = 3003u,
+        .membership_epoch = 3u,
+        .expected_count = 12u,
+        .received_count = 5u,
+        .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
+        .retry_round = 1u,
+        .next_retry_spread_ms = COLLECTION_RETRY_ROUND_0_MS,
+        .collection_open = true,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay_result result;
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 3003u,
+        .seq = 23u,
+        .ttl = 3u,
+    };
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(gateway_collection_eack_append_tlvs(payload,
+                                               sizeof(payload),
+                                               &payload_len,
+                                               &eack) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                GATEWAY,
+                                80u,
+                                3060u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_MALFORMED);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+}
+
 static void test_busy_survey_discovery_broadcast_still_forwards(void)
 {
     struct mesh_relay relay;
@@ -3501,6 +3622,8 @@ int main(void)
     test_survey_discovery_broadcast_delivers_and_floods();
     test_broadcast_command_delivers_without_flooding();
     test_command_flood_broadcast_delivers_and_forwards_once();
+    test_collection_eack_broadcast_delivers_and_forwards_once();
+    test_collection_eack_broadcast_rejects_wrong_gateway_epoch();
     test_busy_survey_discovery_broadcast_still_forwards();
     test_downlink_routes_survive_age_until_delivery_failure();
     test_downlink_route_selection_uses_weighted_quality();
