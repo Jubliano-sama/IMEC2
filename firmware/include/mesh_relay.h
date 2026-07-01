@@ -54,6 +54,8 @@ extern "C" {
 #define COLLECTION_RESULT_INLINE_C5_MAX_BYTES 32u
 #define COLLECTION_BUNDLE_TARGET_BYTES 512u
 #define COLLECTION_BUNDLE_MAX_RECORDS 8u
+#define MESH_RELAY_RESULT_BUNDLE_RECORDS 2u
+#define MESH_RELAY_RESULT_BUNDLE_HOLD_MS 25u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
 #define FLOOD_BETTER_METRIC_MARGIN_PERCENT 10u
 
@@ -181,6 +183,7 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_SEND_RESULT_BUSY = 1u << 20,
     MESH_RELAY_ACTION_TX_RELAY_BUSY = 1u << 21,
     MESH_RELAY_ACTION_SEND_RESULT_GRANT = 1u << 22,
+    MESH_RELAY_ACTION_CUSTODY_ACCEPTED = 1u << 23,
 };
 
 enum mesh_relay_tx_state {
@@ -271,6 +274,27 @@ struct mesh_route_discovery_state {
     bool active;
 };
 
+struct mesh_result_bundle_entry {
+    struct command_result_id result_id;
+    uint16_t payload_len;
+    uint16_t payload_crc;
+    uint32_t message_age_ms;
+    uint32_t queued_at_ms;
+    uint8_t payload[RESULT_BUNDLE_RECORD_MAX_PAYLOAD_LEN];
+    bool valid;
+};
+
+struct mesh_result_bundle_queue {
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t command_seq;
+    uint32_t collection_epoch_id;
+    uint32_t due_ms;
+    uint8_t record_count;
+    bool active;
+    struct mesh_result_bundle_entry records[MESH_RELAY_RESULT_BUNDLE_RECORDS];
+};
+
 struct mesh_relay {
     enum mesh_relay_role role;
     uint64_t local_id;
@@ -281,6 +305,7 @@ struct mesh_relay {
     struct mesh_relay_event_timing_entry event_timings[MESH_RELAY_EVENT_TIMINGS];
     struct mesh_pending_tx pending;
     struct mesh_route_discovery_state route_discovery;
+    struct mesh_result_bundle_queue result_bundle;
     uint8_t duplicate_next;
     uint16_t next_seq;
 };
@@ -362,6 +387,10 @@ int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   size_t payload_cap,
                                   size_t *offset);
 bool mesh_relay_tx_active(const struct mesh_relay *relay);
+bool mesh_relay_result_bundle_pending(const struct mesh_relay *relay);
+uint32_t mesh_relay_result_bundle_due_ms(const struct mesh_relay *relay);
+void mesh_relay_result_bundle_note_forwarded(struct mesh_relay *relay,
+                                             const struct mesh_outbound *out);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,

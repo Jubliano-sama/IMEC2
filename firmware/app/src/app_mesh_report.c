@@ -1245,7 +1245,9 @@ static void mesh_schedule_tx_timeout(void)
     uint32_t deadline;
     uint32_t delay_ms;
 
-    if (!mesh_relay_tx_active(&mesh_runtime) && !mesh_ch9_tx_pending.active) {
+    if (!mesh_relay_tx_active(&mesh_runtime) &&
+        !mesh_ch9_tx_pending.active &&
+        !mesh_relay_result_bundle_pending(&mesh_runtime)) {
         (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
         return;
     }
@@ -1260,6 +1262,12 @@ static void mesh_schedule_tx_timeout(void)
         (deadline == UINT32_MAX ||
          uptime_deadline_reached(deadline, mesh_ch9_tx_pending.deadline_ms))) {
         deadline = mesh_ch9_tx_pending.deadline_ms;
+    }
+    if (mesh_relay_result_bundle_pending(&mesh_runtime) &&
+        (deadline == UINT32_MAX ||
+         uptime_deadline_reached(deadline,
+                                 mesh_relay_result_bundle_due_ms(&mesh_runtime)))) {
+        deadline = mesh_relay_result_bundle_due_ms(&mesh_runtime);
     }
     delay_ms = uptime_ms_until_deadline(now, deadline);
     (void)mesh_reschedule_delayable(&mesh_tx_timeout_work, delay_ms);
@@ -4143,6 +4151,7 @@ static bool mesh_packet_prefers_channel9(const struct proto_packet *packet)
     case MSG_GATEWAY_ACK:
     case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
     case MSG_SURVEY_REACH_REPORT:
     case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_PAIR_RESULT:
@@ -5698,8 +5707,12 @@ after_gateway_ack:
             ret = mesh_start_tracked_tx(&result->forward, "forward");
         }
         forward_sent = ret == 0;
+        if (forward_sent && result->forward.packet.msg_type == MSG_RESULT_BUNDLE) {
+            mesh_relay_result_bundle_note_forwarded(&mesh_runtime, &result->forward);
+        }
     }
-    if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) && forward_sent) {
+    if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) &&
+        (forward_sent || (result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) != 0u)) {
         struct mesh_outbound *hop_ack = &mesh_result_action_tx;
 
         *hop_ack = result->hop_ack;
@@ -5910,6 +5923,9 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) {
         LOG_INF("mesh local delivery ready");
+    }
+    if (mesh_relay_result_bundle_pending(&mesh_runtime)) {
+        mesh_schedule_tx_timeout();
     }
     if (DEVICE_ROLE == ROLE_ANCHOR && !mesh_relay_tx_active(&mesh_runtime)) {
         report_tx_schedule(0u);
@@ -6126,7 +6142,8 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         return;
     }
     mesh_handle_result_actions(result, UWB_CHANNEL_WAKE_CONTACT, NULL);
-    if (mesh_relay_tx_active(&mesh_runtime)) {
+    if (mesh_relay_tx_active(&mesh_runtime) ||
+        mesh_relay_result_bundle_pending(&mesh_runtime)) {
         mesh_schedule_tx_timeout();
     }
 
