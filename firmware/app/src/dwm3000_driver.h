@@ -100,6 +100,14 @@ enum dwm3000_rx_failure {
     DWM3000_RX_FAILURE_BAD_FRAME = 5,
 };
 
+struct dwm3000_rx_frame_timing {
+    uint64_t rx_timestamp;
+    uint32_t rx_enable_time32;
+    uint32_t rx_timestamp_time32;
+    uint32_t rx_since_enable_uus;
+    bool valid;
+};
+
 struct dwm3000_driver_stats {
     uint32_t sys_status_poll_loops;
     uint32_t sys_status_poll_timeouts;
@@ -148,6 +156,14 @@ int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                             uint8_t *quality,
                                             int8_t *rsl_dbm,
                                             enum dwm3000_rx_failure *failure);
+int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
+                                                  uint8_t *frame,
+                                                  size_t frame_cap,
+                                                  size_t *frame_len,
+                                                  uint8_t *quality,
+                                                  int8_t *rsl_dbm,
+                                                  enum dwm3000_rx_failure *failure,
+                                                  struct dwm3000_rx_frame_timing *timing);
 int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                    struct dwm3000_range_result *result);
 int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,

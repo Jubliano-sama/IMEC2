@@ -557,6 +557,15 @@ static uint16_t dwt_delta_to_uus(uint32_t start_ts, uint32_t end_ts)
     return uus > UINT16_MAX ? UINT16_MAX : (uint16_t)uus;
 }
 
+static uint32_t dwt_time32_delta_to_uus(uint32_t start_time32, uint32_t end_time32)
+{
+    uint32_t delta = end_time32 - start_time32;
+
+    return (uint32_t)((((uint64_t)delta << 8) +
+                       (DWM3000_UUS_TO_DWT_TIME / 2u)) /
+                      DWM3000_UUS_TO_DWT_TIME);
+}
+
 static uint32_t delayed_tx_time_from_rx_reference(uint64_t rx_reference_ts,
                                                   uint16_t delay_uus)
 {
@@ -2793,9 +2802,12 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                                                uint8_t *quality,
                                                int8_t *rsl_dbm,
                                                enum dwm3000_rx_failure *failure,
+                                               struct dwm3000_rx_frame_timing *timing,
                                                bool log_events)
 {
     uint8_t rx_buffer[UWB_MESH_MAX_FRAME_LEN + FCS_LEN];
+    uint64_t rx_timestamp = 0u;
+    uint32_t rx_enable_time32 = 0u;
     uint32_t status = 0u;
     size_t raw_len = 0u;
     size_t payload_len;
@@ -2810,6 +2822,9 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     if (failure != NULL) {
         *failure = DWM3000_RX_FAILURE_NONE;
     }
+    if (timing != NULL) {
+        memset(timing, 0, sizeof(*timing));
+    }
 
     ret = ensure_current_phy_or_range();
     if (ret < 0) {
@@ -2822,13 +2837,16 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
         return -EIO;
     }
+    if (timing != NULL) {
+        rx_enable_time32 = dwt_readsystimestamphi32();
+    }
 
     ret = receive_frame(timeout_ms,
                         &status,
                         rx_buffer,
                         sizeof(rx_buffer),
                         &raw_len,
-                        NULL,
+                        timing == NULL ? NULL : &rx_timestamp,
                         &rx_quality,
                         &rx_rsl_dbm,
                         NULL,
@@ -2871,6 +2889,14 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     if (rsl_dbm != NULL) {
         *rsl_dbm = rx_rsl_dbm;
     }
+    if (timing != NULL) {
+        timing->rx_timestamp = rx_timestamp;
+        timing->rx_enable_time32 = rx_enable_time32;
+        timing->rx_timestamp_time32 = (uint32_t)(rx_timestamp >> 8);
+        timing->rx_since_enable_uus =
+            dwt_time32_delta_to_uus(rx_enable_time32, timing->rx_timestamp_time32);
+        timing->valid = true;
+    }
     return 0;
 }
 
@@ -2890,6 +2916,7 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                                quality,
                                                rsl_dbm,
                                                failure,
+                                               NULL,
                                                true);
 }
 
@@ -2900,6 +2927,25 @@ int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                             uint8_t *quality,
                                             int8_t *rsl_dbm,
                                             enum dwm3000_rx_failure *failure)
+{
+    return dwm3000_driver_receive_frame_continuous_timed(timeout_ms,
+                                                        frame,
+                                                        frame_cap,
+                                                        frame_len,
+                                                        quality,
+                                                        rsl_dbm,
+                                                        failure,
+                                                        NULL);
+}
+
+int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
+                                                  uint8_t *frame,
+                                                  size_t frame_cap,
+                                                  size_t *frame_len,
+                                                  uint8_t *quality,
+                                                  int8_t *rsl_dbm,
+                                                  enum dwm3000_rx_failure *failure,
+                                                  struct dwm3000_rx_frame_timing *timing)
 {
     bool log_events = !focused_anchor_rx_logs_enabled();
 
@@ -2917,6 +2963,7 @@ int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                                quality,
                                                rsl_dbm,
                                                failure,
+                                               timing,
                                                log_events);
 }
 
