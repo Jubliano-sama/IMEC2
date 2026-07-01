@@ -15,7 +15,19 @@
   - Keep hop-first cost selection and use capacity only as a tie-breaker or penalty.
   - Add hold-down behavior after selected-parent failures without age-only route expiry.
 - [ ] Add bounded gateway route advertisement flood.
-  - Seed parent candidates opportunistically at startup/profile changes/maintenance without constant beaconing.
+  - Current state: not implemented. The gateway only answers solicited `MSG_ROUTE_REQ` with `MSG_ROUTE_REPLY`; it does not periodically announce a route.
+  - Implement `gateway_route_adv` exactly as specified in `Documentation/MeshSpec.md` section 7.
+  - Message fields: `gateway_id`, `gateway_epoch`, `gateway_route_seq`, `hop_count`, `path_quality_min`, `route_cost`, `gateway_capacity_state`, `flood_profile_version`, `flood_epoch_id`, and `slot_seed`.
+  - Gateway behavior: send during startup, after route/profile changes, after force rediscovery, and periodically at a low maintenance rate.
+  - Use bounded `flood_epoch` rules and do not send so often that advertisements compete with click service.
+  - Anchor behavior: valid advertisements update parent candidates, compute cost with existing route-cost semantics, forward only if TTL remains and duplicate suppression allows, suppress enough-heard equivalent advertisements, and do not clear old routes just because an advertisement was missed.
+  - Preserve route freshness policy: routes are usable until replaced, explicitly cleared, or proven stale by delivery failure; do not add age-only expiry.
+  - Tests from MeshSpec intent:
+    - startup advertisement seeds a parent candidate;
+    - relay forwarding preserves the same `flood_epoch_id` and decrements TTL;
+    - duplicate or equivalent advertisements are suppressed within configured bounds;
+    - missing advertisements do not delete usable routes;
+    - active click service and required quick channel-5 wake scans preempt advertisement work.
 - [ ] Add relay capacity and explicit busy responses.
   - Implement GREEN/YELLOW/RED/BLACK behavior plus `RELAY_BUSY` / `RESULT_BUSY` retry hints where packet identity is known.
 - [ ] Add collection_epoch command-result flow.
