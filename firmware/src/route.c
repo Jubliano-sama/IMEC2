@@ -2,22 +2,46 @@
 
 #include <string.h>
 
+static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
 static bool candidate_valid_for_epoch(const struct route_candidate *candidate, uint32_t epoch)
 {
     return candidate->valid && candidate->route_epoch == epoch;
 }
 
+uint16_t route_candidate_cost(uint8_t hop_count, uint8_t link_quality)
+{
+    if (link_quality > 100u) {
+        link_quality = 100u;
+    }
+    return (uint16_t)((uint16_t)hop_count * 100u +
+                      (uint16_t)(100u - link_quality));
+}
+
 static uint16_t candidate_effective_cost(const struct route_candidate *candidate)
 {
-    return (uint16_t)((uint16_t)candidate->hop_count * 100u +
-                      (uint16_t)(100u - candidate->link_quality));
+    return candidate->route_cost != 0u ?
+           candidate->route_cost :
+           route_candidate_cost(candidate->hop_count, candidate->link_quality);
+}
+
+static bool candidate_in_hold_down(const struct route_candidate *candidate, uint32_t now_ms)
+{
+    return candidate->hold_down_until_ms != 0u &&
+           !deadline_reached(now_ms, candidate->hold_down_until_ms);
 }
 
 static bool candidate_is_better(const struct route_candidate *candidate,
-                                const struct route_candidate *selected)
+                                const struct route_candidate *selected,
+                                uint32_t now_ms)
 {
     uint16_t candidate_cost;
     uint16_t selected_cost;
+    bool candidate_held;
+    bool selected_held;
 
     if (selected == NULL) {
         return true;
@@ -27,14 +51,25 @@ static bool candidate_is_better(const struct route_candidate *candidate,
     if (candidate_cost != selected_cost) {
         return candidate_cost < selected_cost;
     }
+    candidate_held = candidate_in_hold_down(candidate, now_ms);
+    selected_held = candidate_in_hold_down(selected, now_ms);
+    if (candidate_held != selected_held) {
+        return !candidate_held;
+    }
     if (candidate->link_quality != selected->link_quality) {
         return candidate->link_quality > selected->link_quality;
     }
     if (candidate->hop_count != selected->hop_count) {
         return candidate->hop_count < selected->hop_count;
     }
-    if (candidate->last_seen_ms != selected->last_seen_ms) {
-        return candidate->last_seen_ms > selected->last_seen_ms;
+    if (candidate->channel9_timing_valid != selected->channel9_timing_valid) {
+        return candidate->channel9_timing_valid;
+    }
+    if (candidate->relay_capacity_state != selected->relay_capacity_state) {
+        return candidate->relay_capacity_state < selected->relay_capacity_state;
+    }
+    if (candidate->last_success_ms != selected->last_success_ms) {
+        return candidate->last_success_ms > selected->last_success_ms;
     }
     return candidate->next_hop_id < selected->next_hop_id;
 }
@@ -64,6 +99,31 @@ static int find_free_candidate_index(const struct route_table *table)
     return -1;
 }
 
+static int find_replacement_candidate_index(const struct route_table *table,
+                                            const struct route_candidate *candidate,
+                                            uint32_t now_ms)
+{
+    const struct route_candidate *worst = NULL;
+    uint8_t worst_index = ROUTE_NO_SELECTION;
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *current = &table->candidates[i];
+
+        if (!candidate_valid_for_epoch(current, table->current_epoch)) {
+            return (int)i;
+        }
+        if (worst == NULL || candidate_is_better(worst, current, now_ms)) {
+            worst = current;
+            worst_index = i;
+        }
+    }
+
+    if (worst != NULL && candidate_is_better(candidate, worst, now_ms)) {
+        return (int)worst_index;
+    }
+    return -1;
+}
+
 static void invalidate_candidates(struct route_table *table)
 {
     for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
@@ -83,6 +143,11 @@ void route_table_init(struct route_table *table, uint32_t current_epoch)
 
 int route_select_best(struct route_table *table)
 {
+    return route_select_best_at(table, 0u);
+}
+
+int route_select_best_at(struct route_table *table, uint32_t now_ms)
+{
     uint8_t selected_index = ROUTE_NO_SELECTION;
     const struct route_candidate *selected = NULL;
 
@@ -95,7 +160,10 @@ int route_select_best(struct route_table *table)
         if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
             continue;
         }
-        if (candidate_is_better(candidate, selected)) {
+        if (candidate_in_hold_down(candidate, now_ms)) {
+            continue;
+        }
+        if (candidate_is_better(candidate, selected, now_ms)) {
             selected = candidate;
             selected_index = i;
         }
@@ -107,16 +175,19 @@ int route_select_best(struct route_table *table)
 
 uint8_t route_expire_stale(struct route_table *table, uint32_t now_ms, uint32_t max_age_ms)
 {
-    (void)table;
-    (void)now_ms;
     (void)max_age_ms;
+    (void)route_select_best_at(table, now_ms);
     return 0u;
 }
 
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate)
 {
+    struct route_candidate stored;
+    struct route_candidate previous = {0};
     int index;
+    bool updating_existing = false;
+    uint32_t now_ms;
 
     if (table == NULL || candidate == NULL) {
         return PROTO_ERR_ARG;
@@ -135,18 +206,43 @@ int route_upsert_candidate(struct route_table *table,
         invalidate_candidates(table);
     }
 
+    stored = *candidate;
+    stored.valid = true;
+    stored.route_cost = route_candidate_cost(stored.hop_count, stored.link_quality);
+    if (stored.relay_capacity_state > RELAY_CAP_BLACK) {
+        stored.relay_capacity_state = RELAY_CAP_BLACK;
+    }
+    now_ms = stored.last_seen_ms;
+
     index = find_candidate_index(table, candidate->next_hop_id, candidate->gateway_id);
+    if (index >= 0) {
+        previous = table->candidates[index];
+        updating_existing = true;
+    }
     if (index < 0) {
         index = find_free_candidate_index(table);
+    }
+    if (index < 0) {
+        index = find_replacement_candidate_index(table, &stored, now_ms);
     }
     if (index < 0) {
         return PROTO_ERR_NO_SPACE;
     }
 
-    table->candidates[index] = *candidate;
-    table->candidates[index].valid = true;
-    table->candidates[index].failure_count = 0u;
-    return route_select_best(table);
+    if (updating_existing) {
+        stored.failure_count = previous.failure_count;
+        stored.last_success_ms = previous.last_success_ms;
+        stored.hold_down_until_ms = previous.hold_down_until_ms;
+        stored.channel9_timing_valid = stored.channel9_timing_valid ||
+                                       previous.channel9_timing_valid;
+    } else {
+        stored.failure_count = 0u;
+        stored.last_success_ms = 0u;
+        stored.hold_down_until_ms = 0u;
+    }
+
+    table->candidates[index] = stored;
+    return route_select_best_at(table, now_ms);
 }
 
 const struct route_candidate *route_selected(const struct route_table *table)
@@ -161,6 +257,26 @@ const struct route_candidate *route_selected(const struct route_table *table)
     return &table->candidates[table->selected_index];
 }
 
+void route_set_channel9_timing_valid(struct route_table *table,
+                                     uint64_t next_hop_id,
+                                     uint64_t gateway_id,
+                                     bool valid,
+                                     uint32_t now_ms)
+{
+    int index;
+
+    if (table == NULL || next_hop_id == 0u || gateway_id == 0u) {
+        return;
+    }
+
+    index = find_candidate_index(table, next_hop_id, gateway_id);
+    if (index < 0) {
+        return;
+    }
+    table->candidates[index].channel9_timing_valid = valid;
+    (void)route_select_best_at(table, now_ms);
+}
+
 void route_record_success(struct route_table *table)
 {
     struct route_candidate *candidate;
@@ -173,6 +289,7 @@ void route_record_success(struct route_table *table)
     candidate = &table->candidates[table->selected_index];
     if (candidate_valid_for_epoch(candidate, table->current_epoch)) {
         candidate->failure_count = 0u;
+        candidate->hold_down_until_ms = 0u;
     }
 }
 
@@ -189,6 +306,8 @@ void route_record_success_at(struct route_table *table, uint32_t now_ms)
     if (candidate_valid_for_epoch(candidate, table->current_epoch)) {
         candidate->failure_count = 0u;
         candidate->last_seen_ms = now_ms;
+        candidate->last_success_ms = now_ms;
+        candidate->hold_down_until_ms = 0u;
     }
 }
 
@@ -209,6 +328,13 @@ void route_refresh_selected_at(struct route_table *table, uint32_t now_ms)
 
 enum route_delivery_action route_record_failure(struct route_table *table,
                                                           enum route_failure_kind kind)
+{
+    return route_record_failure_at(table, kind, 0u);
+}
+
+enum route_delivery_action route_record_failure_at(struct route_table *table,
+                                                   enum route_failure_kind kind,
+                                                   uint32_t now_ms)
 {
     struct route_candidate *candidate;
 
@@ -233,8 +359,12 @@ enum route_delivery_action route_record_failure(struct route_table *table,
         return ROUTE_DELIVERY_RETRY_CURRENT;
     }
 
-    candidate->valid = false;
-    if (route_select_best(table) == PROTO_OK) {
+    candidate->failure_count = 0u;
+    candidate->hold_down_until_ms = now_ms + ROUTE_PARENT_HOLDDOWN_MS;
+    if (candidate->hold_down_until_ms == 0u) {
+        candidate->hold_down_until_ms = 1u;
+    }
+    if (route_select_best_at(table, now_ms) == PROTO_OK) {
         return ROUTE_DELIVERY_TRY_ALTERNATE;
     }
     return ROUTE_DELIVERY_DISCOVER;

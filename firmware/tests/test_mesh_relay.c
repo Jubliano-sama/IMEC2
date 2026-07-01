@@ -1414,7 +1414,7 @@ static void test_retry_and_route_discovery_backoff_apply_jitter(void)
     assert(mesh_relay_route_discovery_backoff_ms(5u, 11u) == 4011u);
 }
 
-static void test_invalidated_candidate_can_return_on_fresh_discovery(void)
+static void test_held_down_candidate_can_return_after_hold_down(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(GATEWAY, 13u, 70u);
@@ -1422,16 +1422,17 @@ static void test_invalidated_candidate_can_return_on_fresh_discovery(void)
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
-    assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK) ==
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2000u) ==
            ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK) ==
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
            ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK) ==
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
            ROUTE_DELIVERY_DISCOVER);
     assert(route_selected(&relay.upstream) == NULL);
 
-    route.last_seen_ms = 2000u;
-    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(route_expire_stale(&relay.upstream,
+                              2200u + ROUTE_PARENT_HOLDDOWN_MS + 1u,
+                              ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
     selected = route_selected(&relay.upstream);
     assert(selected != NULL);
     assert(selected->next_hop_id == GATEWAY);
@@ -2948,7 +2949,7 @@ int main(void)
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
     test_route_discovery_ready_resets_attempt_budget();
     test_retry_and_route_discovery_backoff_apply_jitter();
-    test_invalidated_candidate_can_return_on_fresh_discovery();
+    test_held_down_candidate_can_return_after_hold_down();
     test_forced_route_invalidation_clears_routes_and_discovery_state();
     test_forwarded_gateway_bound_packet_sends_hop_ack();
     test_hop_ack_extends_gateway_ack_timeout();

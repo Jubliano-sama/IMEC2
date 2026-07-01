@@ -14,9 +14,11 @@
   - Native relay test covers intermediate relay ACK, origin ACK, ACK payload matching, and ACK parsing back at the sender.
   - Remaining gap: no explicit backup reverse-path candidate retry yet.
   - Route reply waits must extend or pause when preempted by active click service or required channel-5 wake scan.
-- [ ] Promote parent candidates from route-table compatibility to explicit `PARENT_CANDIDATE_COUNT` behavior.
-  - Keep hop-first cost selection and use capacity only as a tie-breaker or penalty.
-  - Add hold-down behavior after selected-parent failures without age-only route expiry.
+- [x] Promote parent candidates from route-table compatibility to explicit `PARENT_CANDIDATE_COUNT` behavior.
+  - Upstream route candidates are now capped by `PARENT_CANDIDATE_COUNT`, normalized with the MeshSpec route-cost calculation, and replaced by keeping the best candidates rather than returning no-space when a better parent appears.
+  - Route selection preserves the existing route-cost/link-quality behavior, then applies MeshSpec parent hints: active hold-down exclusion, valid channel-9 timing, relay capacity state, most recent gateway-ACK success, and lower next-hop ID.
+  - Selected-parent gateway-ACK failures now place the parent in `ROUTE_PARENT_HOLDDOWN_S` instead of deleting route knowledge; age-only expiry still does not invalidate routes.
+  - Route replies, route requests, and gateway route advertisements now carry/store relay capacity, queue-free, and channel-9 busy hints where the current protocol fields exist.
 - [ ] Add bounded gateway route advertisement flood.
   - Implemented shared protocol/relay support for `MSG_GATEWAY_ROUTE_ADV`: gateway-origin builder, `gateway_id`/`gateway_epoch`/`gateway_route_seq`/hop/quality/cost/capacity/flood TLVs, parent candidate update through the existing upstream route table, bounded duplicate suppression, and channel-5 broadcast forwarding with TTL decrement and updated hop/quality/cost.
   - Native test covers startup-style advertisement seeding a direct parent, relay forwarding preserving flood identity, duplicate suppression, second-hop candidate install, and no age-only route deletion.
@@ -36,6 +38,7 @@
     - [ ] equivalent advertisement suppression beyond exact duplicate identity;
     - active click service and required quick channel-5 wake scans preempt advertisement work.
 - [ ] Add relay capacity and explicit busy responses.
+  - Route selection now stores and uses relay capacity hints as parent-candidate tie-breakers.
   - Implement GREEN/YELLOW/RED/BLACK behavior plus `RELAY_BUSY` / `RESULT_BUSY` retry hints where packet identity is known.
 - [ ] Add collection_epoch command-result flow.
   - Add all-node command scopes, hashed result spread, persistent result state, gateway EACK/missing reports, and relay result bundling.

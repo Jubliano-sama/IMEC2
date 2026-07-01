@@ -19,6 +19,18 @@ static struct route_candidate candidate(uint64_t next_hop_id,
     return route;
 }
 
+static uint8_t valid_candidate_count(const struct route_table *table)
+{
+    uint8_t count = 0u;
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        if (table->candidates[i].valid) {
+            count++;
+        }
+    }
+    return count;
+}
+
 static void test_weighted_cost_prefers_useful_direct_route(void)
 {
     struct route_table table;
@@ -153,18 +165,112 @@ static void test_failures_try_alternate_then_discovery(void)
     assert(route_upsert_candidate(&table, &route_a) == PROTO_OK);
     assert(route_upsert_candidate(&table, &route_b) == PROTO_OK);
 
-    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_TRY_ALTERNATE);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2000u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_TRY_ALTERNATE);
 
     selected = route_selected(&table);
     assert(selected != NULL);
     assert(selected->next_hop_id == 0x03u);
 
-    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure(&table, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_DISCOVER);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2400u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2500u) ==
+           ROUTE_DELIVERY_DISCOVER);
     assert(route_selected(&table) == NULL);
+}
+
+static void test_parent_candidate_count_replaces_worst_route(void)
+{
+    struct route_table table;
+    struct route_candidate route_a = candidate(0x02u, 1u, 3u, 20u, 1000u);
+    struct route_candidate route_b = candidate(0x03u, 1u, 2u, 60u, 1000u);
+    struct route_candidate route_c = candidate(0x04u, 1u, 1u, 90u, 1000u);
+    struct route_candidate route_d = candidate(0x05u, 1u, 1u, 95u, 1000u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route_a) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &route_b) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &route_c) == PROTO_OK);
+    assert(valid_candidate_count(&table) == PARENT_CANDIDATE_COUNT);
+
+    assert(route_upsert_candidate(&table, &route_d) == PROTO_OK);
+    assert(valid_candidate_count(&table) == PARENT_CANDIDATE_COUNT);
+
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x05u);
+}
+
+static void test_parent_hold_down_recovers_without_age_expiry(void)
+{
+    struct route_table table;
+    struct route_candidate route = candidate(0x02u, 1u, 1u, 90u, 1000u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route) == PROTO_OK);
+
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2000u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_DISCOVER);
+    assert(route_selected(&table) == NULL);
+
+    assert(route_expire_stale(&table,
+                              2200u + ROUTE_PARENT_HOLDDOWN_MS + 1u,
+                              ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x02u);
+}
+
+static void test_channel9_timing_breaks_equal_cost_tie(void)
+{
+    struct route_table table;
+    struct route_candidate route_a = candidate(0x02u, 1u, 1u, 80u, 1000u);
+    struct route_candidate route_b = candidate(0x03u, 1u, 1u, 80u, 1000u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route_a) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &route_b) == PROTO_OK);
+
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x02u);
+
+    route_set_channel9_timing_valid(&table, 0x03u, route_b.gateway_id, true, 1200u);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x03u);
+}
+
+static void test_capacity_breaks_equal_cost_tie(void)
+{
+    struct route_table table;
+    struct route_candidate green = candidate(0x02u, 1u, 1u, 80u, 1000u);
+    struct route_candidate yellow = candidate(0x03u, 1u, 1u, 80u, 1000u);
+    const struct route_candidate *selected;
+
+    green.relay_capacity_state = RELAY_CAP_GREEN;
+    yellow.relay_capacity_state = RELAY_CAP_YELLOW;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &yellow) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &green) == PROTO_OK);
+
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == 0x02u);
 }
 
 static void test_retry_backoff_values(void)
@@ -184,6 +290,10 @@ int main(void)
     test_age_alone_keeps_all_routes_selectable();
     test_success_refreshes_selected_route_age();
     test_failures_try_alternate_then_discovery();
+    test_parent_candidate_count_replaces_worst_route();
+    test_parent_hold_down_recovers_without_age_expiry();
+    test_channel9_timing_breaks_equal_cost_tie();
+    test_capacity_breaks_equal_cost_tie();
     test_retry_backoff_values();
     return 0;
 }

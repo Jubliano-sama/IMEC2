@@ -38,7 +38,6 @@ extern "C" {
 #define C5_POLITE_DEFERRAL_MAX 8u
 #define RREP_ACK_TIMEOUT_MS 150u
 #define RREP_RETRY_COUNT_PER_HOP 4u
-#define PARENT_CANDIDATE_COUNT 3u
 #define REVERSE_PATH_CANDIDATE_COUNT 2u
 #define RELAY_BUSY_RETRY_MIN_MS 500u
 #define RELAY_BUSY_RETRY_MAX_MS 5000u
@@ -55,7 +54,6 @@ extern "C" {
 #define COLLECTION_BUNDLE_TARGET_BYTES 512u
 #define COLLECTION_BUNDLE_MAX_RECORDS 8u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
-#define ROUTE_PARENT_HOLDDOWN_S 30u
 #define FLOOD_BETTER_METRIC_MARGIN_PERCENT 10u
 
 enum flood_epoch_type {
@@ -63,13 +61,6 @@ enum flood_epoch_type {
     FLOOD_EPOCH_TYPE_GATEWAY_ROUTE_ADV = 2u,
     FLOOD_EPOCH_TYPE_GATEWAY_COMMAND = 3u,
     FLOOD_EPOCH_TYPE_COLLECTION_STATUS = 4u,
-};
-
-enum relay_capacity_state {
-    RELAY_CAP_GREEN = 0u,
-    RELAY_CAP_YELLOW = 1u,
-    RELAY_CAP_RED = 2u,
-    RELAY_CAP_BLACK = 3u,
 };
 
 struct mesh_parent_candidate {
