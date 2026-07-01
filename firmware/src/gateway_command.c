@@ -31,6 +31,13 @@ static bool command_response_mode_valid(uint8_t response_mode)
            response_mode == CMD_RESPONSE_LARGE_RESULT;
 }
 
+static bool collection_eack_format_valid(uint8_t eack_format)
+{
+    return eack_format == EACK_FORMAT_ROSTER_BITMAP ||
+           eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST ||
+           eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST;
+}
+
 static bool command_response_requires_collection(enum command_response_mode response_mode)
 {
     return response_mode == CMD_RESPONSE_ACK_ONLY ||
@@ -589,4 +596,174 @@ bool gateway_command_pending_expired(struct gateway_command_pending *pending,
     }
     gateway_command_pending_clear(pending);
     return true;
+}
+
+static bool command_result_id_equal(const struct command_result_id *a,
+                                    const struct command_result_id *b)
+{
+    return a->gateway_id == b->gateway_id &&
+           a->gateway_epoch == b->gateway_epoch &&
+           a->command_seq == b->command_seq &&
+           a->node_id == b->node_id &&
+           a->node_boot_counter == b->node_boot_counter &&
+           a->result_seq == b->result_seq;
+}
+
+static void gateway_collection_refresh_open(struct gateway_collection_state *collection)
+{
+    if (collection->expected_count != 0u &&
+        collection->received_count >= collection->expected_count) {
+        collection->collection_open = false;
+    }
+}
+
+void gateway_collection_clear(struct gateway_collection_state *collection)
+{
+    if (collection != NULL) {
+        memset(collection, 0, sizeof(*collection));
+    }
+}
+
+int gateway_collection_start(struct gateway_collection_state *collection,
+                             uint64_t gateway_id,
+                             uint16_t gateway_epoch,
+                             uint32_t command_seq,
+                             uint32_t collection_epoch_id,
+                             uint16_t membership_epoch,
+                             uint16_t expected_count,
+                             uint8_t retry_round,
+                             uint32_t next_retry_spread_ms)
+{
+    if (collection == NULL ||
+        gateway_id == 0u ||
+        command_seq == 0u ||
+        collection_epoch_id == 0u ||
+        membership_epoch == 0u ||
+        expected_count == 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(collection, 0, sizeof(*collection));
+    collection->gateway_id = gateway_id;
+    collection->gateway_epoch = gateway_epoch;
+    collection->command_seq = command_seq;
+    collection->collection_epoch_id = collection_epoch_id;
+    collection->membership_epoch = membership_epoch;
+    collection->expected_count = expected_count;
+    collection->retry_round = retry_round;
+    collection->next_retry_spread_ms = next_retry_spread_ms;
+    collection->collection_open = true;
+    return PROTO_OK;
+}
+
+bool gateway_collection_contains_result(const struct gateway_collection_state *collection,
+                                        const struct command_result_id *id)
+{
+    if (collection == NULL || id == NULL) {
+        return false;
+    }
+
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_entry *entry = &collection->results[i];
+
+        if (entry->valid && command_result_id_equal(&entry->id, id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int gateway_collection_record_result(struct gateway_collection_state *collection,
+                                     const struct proto_packet *result,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     bool *duplicate)
+{
+    struct command_result_id id;
+    struct gateway_collection_result_entry *free_entry = NULL;
+    int ret;
+
+    if (collection == NULL || result == NULL || duplicate == NULL ||
+        (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+    if (result->msg_type != MSG_COMMAND_RESULT ||
+        result->dst_id != collection->gateway_id ||
+        result->payload_len != payload_len) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = command_result_id_from_tlvs(payload, payload_len, &id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (id.gateway_id != collection->gateway_id ||
+        id.gateway_epoch != collection->gateway_epoch ||
+        id.command_seq != collection->command_seq ||
+        id.node_id == 0u ||
+        result->src_id != id.node_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *duplicate = false;
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        struct gateway_collection_result_entry *entry = &collection->results[i];
+
+        if (entry->valid) {
+            if (command_result_id_equal(&entry->id, &id)) {
+                *duplicate = true;
+                return PROTO_OK;
+            }
+            continue;
+        }
+        if (free_entry == NULL) {
+            free_entry = entry;
+        }
+    }
+    if (!collection->collection_open) {
+        return PROTO_ERR_STALE;
+    }
+    if (free_entry == NULL) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    free_entry->id = id;
+    free_entry->payload_crc = proto_crc16_ccitt_false(payload, payload_len);
+    free_entry->payload_len = (uint16_t)payload_len;
+    free_entry->valid = true;
+    if (collection->received_count < UINT16_MAX) {
+        collection->received_count++;
+    }
+    gateway_collection_refresh_open(collection);
+    return PROTO_OK;
+}
+
+int gateway_collection_build_eack(const struct gateway_collection_state *collection,
+                                  uint8_t eack_format,
+                                  struct gateway_collection_eack *eack)
+{
+    if (collection == NULL || eack == NULL || !collection_eack_format_valid(eack_format)) {
+        return PROTO_ERR_ARG;
+    }
+    if (collection->gateway_id == 0u ||
+        collection->command_seq == 0u ||
+        collection->collection_epoch_id == 0u ||
+        collection->membership_epoch == 0u ||
+        collection->expected_count == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(eack, 0, sizeof(*eack));
+    eack->gateway_id = collection->gateway_id;
+    eack->gateway_epoch = collection->gateway_epoch;
+    eack->command_seq = collection->command_seq;
+    eack->collection_epoch_id = collection->collection_epoch_id;
+    eack->membership_epoch = collection->membership_epoch;
+    eack->expected_count = collection->expected_count;
+    eack->received_count = collection->received_count;
+    eack->eack_format = eack_format;
+    eack->retry_round = collection->retry_round;
+    eack->next_retry_spread_ms = collection->next_retry_spread_ms;
+    eack->collection_open = collection->collection_open;
+    return PROTO_OK;
 }

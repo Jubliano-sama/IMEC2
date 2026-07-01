@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 #define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
+#define GATEWAY_COLLECTION_RESULT_CACHE_SIZE 64u
 
 struct gateway_command_pending {
     struct proto_packet command;
@@ -34,6 +35,27 @@ struct gateway_command_options {
     uint16_t expected_node_count;
     bool collection_required;
     bool flood_required;
+};
+
+struct gateway_collection_result_entry {
+    struct command_result_id id;
+    uint16_t payload_crc;
+    uint16_t payload_len;
+    bool valid;
+};
+
+struct gateway_collection_state {
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t command_seq;
+    uint32_t collection_epoch_id;
+    uint16_t membership_epoch;
+    uint16_t expected_count;
+    uint16_t received_count;
+    uint8_t retry_round;
+    uint32_t next_retry_spread_ms;
+    bool collection_open;
+    struct gateway_collection_result_entry results[GATEWAY_COLLECTION_RESULT_CACHE_SIZE];
 };
 
 int gateway_command_extract_id(const uint8_t *payload,
@@ -87,6 +109,26 @@ bool gateway_command_pending_expired(struct gateway_command_pending *pending,
                                      uint32_t now_ms,
                                      struct proto_packet *command,
                                      enum command_id *command_id);
+void gateway_collection_clear(struct gateway_collection_state *collection);
+int gateway_collection_start(struct gateway_collection_state *collection,
+                             uint64_t gateway_id,
+                             uint16_t gateway_epoch,
+                             uint32_t command_seq,
+                             uint32_t collection_epoch_id,
+                             uint16_t membership_epoch,
+                             uint16_t expected_count,
+                             uint8_t retry_round,
+                             uint32_t next_retry_spread_ms);
+int gateway_collection_record_result(struct gateway_collection_state *collection,
+                                     const struct proto_packet *result,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     bool *duplicate);
+bool gateway_collection_contains_result(const struct gateway_collection_state *collection,
+                                        const struct command_result_id *id);
+int gateway_collection_build_eack(const struct gateway_collection_state *collection,
+                                  uint8_t eack_format,
+                                  struct gateway_collection_eack *eack);
 
 #ifdef __cplusplus
 }
