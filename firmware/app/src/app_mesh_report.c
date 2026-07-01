@@ -44,6 +44,12 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 #define MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS 20u
 #define MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS MESH_EVENT_DEFAULT_GUARD_MS
+#define MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS 2u
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+BUILD_ASSERT(MESH_RELAY_EVENT_TIMINGS >= MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
+             "mesh route-test needs room for upstream and downstream channel-9 timings");
+#endif
 
 struct mesh_rx_pending {
     struct proto_packet packet;
@@ -221,6 +227,99 @@ static void mesh_restore_anchor_low_duty_if_no_ch9(const char *reason)
 #else
     ARG_UNUSED(reason);
 #endif
+}
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+static const char *mesh_ch9_direction_name(enum mesh_relay_channel9_direction direction)
+{
+    switch (direction) {
+    case MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM:
+        return "upstream";
+    case MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM:
+        return "downstream";
+    case MESH_RELAY_CHANNEL9_DIRECTION_AMBIGUOUS:
+        return "ambiguous";
+    case MESH_RELAY_CHANNEL9_DIRECTION_UNKNOWN:
+    default:
+        return "unknown";
+    }
+}
+
+static const char *mesh_ch9_guard_reason_name(enum mesh_relay_channel9_guard_reason reason)
+{
+    switch (reason) {
+    case MESH_RELAY_CHANNEL9_GUARD_OK:
+        return "ok";
+    case MESH_RELAY_CHANNEL9_GUARD_REPLACED_PEER:
+        return "replaced-peer";
+    case MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_NEW_PEER:
+        return "ambiguous-new-peer";
+    case MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_ACTIVE_PEER:
+        return "ambiguous-active-peer";
+    case MESH_RELAY_CHANNEL9_GUARD_TOO_MANY_PEERS:
+        return "too-many-peers";
+    case MESH_RELAY_CHANNEL9_GUARD_DIRECTION_BUSY:
+        return "direction-busy";
+    default:
+        return "unknown";
+    }
+}
+#endif
+
+static int mesh_install_channel9_timing(uint64_t peer_id,
+                                        const struct mesh_event_timing *timing,
+                                        const char *reason)
+{
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        struct mesh_relay_channel9_guard_status guard = {0};
+        int ret = mesh_relay_set_channel9_timing_guarded(&mesh_runtime,
+                                                         peer_id,
+                                                         timing,
+                                                         MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
+                                                         &guard);
+
+        if (ret != PROTO_OK) {
+            const char *guard_reason = mesh_ch9_guard_reason_name(guard.reason);
+            const char *direction = mesh_ch9_direction_name(guard.direction);
+            const char *conflict_direction =
+                mesh_ch9_direction_name(guard.conflict_direction);
+
+            status_debug_note("DBG_CH9_GUARD_REJECT\n");
+            status_debug_printf("DBG_CH9_GUARD peer=0x%llx ret=%d reason=%u dir=%u active=%u conflict=0x%llx cdir=%u\n",
+                                (unsigned long long)peer_id,
+                                ret,
+                                (unsigned int)guard.reason,
+                                (unsigned int)guard.direction,
+                                guard.active_peer_count,
+                                (unsigned long long)guard.conflict_peer_id,
+                                (unsigned int)guard.conflict_direction);
+            high_debug_log_event("MESH_CH9_GUARD",
+                                 "phase=reject install_reason=%s guard_reason=%s peer=0x%016llx direction=%s active=%u conflict=0x%016llx conflict_direction=%s ret=%d",
+                                 reason == NULL ? "install" : reason,
+                                 guard_reason,
+                                 (unsigned long long)peer_id,
+                                 direction,
+                                 guard.active_peer_count,
+                                 (unsigned long long)guard.conflict_peer_id,
+                                 conflict_direction,
+                                 ret);
+            LOG_WRN("mesh route-test channel-9 timing rejected: peer=0x%016llx reason=%s direction=%s active=%u conflict=0x%016llx conflict_direction=%s ret=%d",
+                    (unsigned long long)peer_id,
+                    guard_reason,
+                    direction,
+                    guard.active_peer_count,
+                    (unsigned long long)guard.conflict_peer_id,
+                    conflict_direction,
+                    ret);
+        }
+        return ret;
+    }
+#else
+    ARG_UNUSED(reason);
+#endif
+
+    return mesh_relay_set_channel9_timing(&mesh_runtime, peer_id, timing);
 }
 
 static uint8_t mesh_expire_channel9_timings(uint32_t now_ms, const char *reason)
@@ -2269,7 +2368,9 @@ static int mesh_send_event_control(uint64_t peer_id,
         if (msg_type == MSG_MESH_EVENT_PROPOSE) {
             mesh_event_timing_set_local_first_slot_tx(&local_timing, true);
         }
-        ret = mesh_relay_set_channel9_timing(&mesh_runtime, peer_id, &local_timing);
+        ret = mesh_install_channel9_timing(peer_id,
+                                           &local_timing,
+                                           reason == NULL ? "mesh-event-control" : reason);
         if (ret != PROTO_OK) {
             return mesh_errno_from_proto(ret);
         }
@@ -2430,7 +2531,9 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         mesh_event_timing_set_local_first_slot_tx(&timing, true);
     }
 
-    ret = mesh_relay_set_channel9_timing(&mesh_runtime, previous_hop_id, &timing);
+    ret = mesh_install_channel9_timing(previous_hop_id,
+                                       &timing,
+                                       "event-control-rx");
     if (ret != PROTO_OK) {
         LOG_WRN("mesh event control timing install failed: next=0x%016llx ret=%d",
                 (unsigned long long)previous_hop_id,

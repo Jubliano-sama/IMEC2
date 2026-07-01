@@ -1214,6 +1214,54 @@ static int free_event_timing_index(const struct mesh_relay *relay)
     return -1;
 }
 
+static enum mesh_relay_channel9_direction channel9_peer_direction(
+    const struct mesh_relay *relay,
+    uint64_t next_hop_id)
+{
+    const struct route_candidate *upstream;
+    bool matches_upstream = false;
+    bool matches_downstream = false;
+
+    if (relay == NULL || !id_is_unicast(next_hop_id)) {
+        return MESH_RELAY_CHANNEL9_DIRECTION_UNKNOWN;
+    }
+
+    upstream = route_selected(&relay->upstream);
+    matches_upstream = upstream != NULL && upstream->next_hop_id == next_hop_id;
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+
+        if (entry->valid && entry->next_hop_id == next_hop_id) {
+            matches_downstream = true;
+            break;
+        }
+    }
+
+    if (matches_upstream && matches_downstream) {
+        return MESH_RELAY_CHANNEL9_DIRECTION_AMBIGUOUS;
+    }
+    if (matches_upstream) {
+        return MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM;
+    }
+    if (matches_downstream) {
+        return MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM;
+    }
+    return MESH_RELAY_CHANNEL9_DIRECTION_UNKNOWN;
+}
+
+static bool channel9_direction_valid(enum mesh_relay_channel9_direction direction)
+{
+    return direction == MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM ||
+           direction == MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM;
+}
+
+static void channel9_guard_reset(struct mesh_relay_channel9_guard_status *status)
+{
+    if (status != NULL) {
+        memset(status, 0, sizeof(*status));
+    }
+}
+
 static bool channel9_plan_misses_event(enum mesh_event_plan_action action)
 {
     return action == MESH_EVENT_PLAN_DEFER_CH5_ACTIVE ||
@@ -1244,6 +1292,98 @@ int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
     relay->event_timings[index].timing = *timing;
     relay->event_timings[index].valid = true;
     return PROTO_OK;
+}
+
+int mesh_relay_set_channel9_timing_guarded(struct mesh_relay *relay,
+                                           uint64_t next_hop_id,
+                                           const struct mesh_event_timing *timing,
+                                           uint8_t max_active_peers,
+                                           struct mesh_relay_channel9_guard_status *status)
+{
+    enum mesh_relay_channel9_direction direction;
+    uint8_t active_peer_count = 0u;
+    int index;
+
+    channel9_guard_reset(status);
+    if (relay == NULL || timing == NULL || !id_is_unicast(next_hop_id) ||
+        max_active_peers == 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    index = event_timing_index(relay, next_hop_id);
+    if (index >= 0) {
+        if (status != NULL) {
+            status->reason = MESH_RELAY_CHANNEL9_GUARD_REPLACED_PEER;
+            status->direction = channel9_peer_direction(relay, next_hop_id);
+        }
+        return mesh_relay_set_channel9_timing(relay, next_hop_id, timing);
+    }
+
+    direction = channel9_peer_direction(relay, next_hop_id);
+    if (status != NULL) {
+        status->direction = direction;
+    }
+    if (!channel9_direction_valid(direction)) {
+        if (status != NULL) {
+            status->reason = MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_NEW_PEER;
+        }
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry = &relay->event_timings[i];
+        enum mesh_relay_channel9_direction entry_direction;
+
+        if (!entry->valid) {
+            continue;
+        }
+
+        active_peer_count++;
+        entry_direction = channel9_peer_direction(relay, entry->next_hop_id);
+        if (!channel9_direction_valid(entry_direction)) {
+            if (status != NULL) {
+                status->reason = MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_ACTIVE_PEER;
+                status->conflict_peer_id = entry->next_hop_id;
+                status->conflict_direction = entry_direction;
+                status->active_peer_count = active_peer_count;
+            }
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+
+    if (status != NULL) {
+        status->active_peer_count = active_peer_count;
+    }
+    if (active_peer_count >= max_active_peers) {
+        if (status != NULL) {
+            status->reason = MESH_RELAY_CHANNEL9_GUARD_TOO_MANY_PEERS;
+        }
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry = &relay->event_timings[i];
+        enum mesh_relay_channel9_direction entry_direction;
+
+        if (!entry->valid) {
+            continue;
+        }
+
+        entry_direction = channel9_peer_direction(relay, entry->next_hop_id);
+        if (entry_direction == direction) {
+            if (status != NULL) {
+                status->reason = MESH_RELAY_CHANNEL9_GUARD_DIRECTION_BUSY;
+                status->conflict_peer_id = entry->next_hop_id;
+                status->conflict_direction = entry_direction;
+            }
+            return PROTO_ERR_BUSY;
+        }
+    }
+
+    if (status != NULL) {
+        status->reason = MESH_RELAY_CHANNEL9_GUARD_OK;
+    }
+    return mesh_relay_set_channel9_timing(relay, next_hop_id, timing);
 }
 
 void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,

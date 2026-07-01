@@ -86,6 +86,30 @@ struct mesh_relay_event_timing_entry {
     bool valid;
 };
 
+enum mesh_relay_channel9_direction {
+    MESH_RELAY_CHANNEL9_DIRECTION_UNKNOWN = 0,
+    MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM = 1,
+    MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM = 2,
+    MESH_RELAY_CHANNEL9_DIRECTION_AMBIGUOUS = 3,
+};
+
+enum mesh_relay_channel9_guard_reason {
+    MESH_RELAY_CHANNEL9_GUARD_OK = 0,
+    MESH_RELAY_CHANNEL9_GUARD_REPLACED_PEER = 1,
+    MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_NEW_PEER = 2,
+    MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_ACTIVE_PEER = 3,
+    MESH_RELAY_CHANNEL9_GUARD_TOO_MANY_PEERS = 4,
+    MESH_RELAY_CHANNEL9_GUARD_DIRECTION_BUSY = 5,
+};
+
+struct mesh_relay_channel9_guard_status {
+    enum mesh_relay_channel9_guard_reason reason;
+    enum mesh_relay_channel9_direction direction;
+    enum mesh_relay_channel9_direction conflict_direction;
+    uint64_t conflict_peer_id;
+    uint8_t active_peer_count;
+};
+
 struct mesh_pending_tx {
     enum mesh_relay_tx_state state;
     struct proto_packet packet;
@@ -143,6 +167,11 @@ int mesh_relay_select_next_hop(const struct mesh_relay *relay,
 int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
                                    uint64_t next_hop_id,
                                    const struct mesh_event_timing *timing);
+int mesh_relay_set_channel9_timing_guarded(struct mesh_relay *relay,
+                                           uint64_t next_hop_id,
+                                           const struct mesh_event_timing *timing,
+                                           uint8_t max_active_peers,
+                                           struct mesh_relay_channel9_guard_status *status);
 void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
                                       uint64_t next_hop_id);
 void mesh_relay_invalidate_routes(struct mesh_relay *relay);

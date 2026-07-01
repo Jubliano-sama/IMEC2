@@ -9,6 +9,7 @@
 
 #define ANCHOR_A 0x1111222233334444ull
 #define ANCHOR_B 0x5555666677778888ull
+#define ANCHOR_C 0x2222333344445555ull
 #define GATEWAY  0x9999888877776666ull
 #define NETWORK_ID 0x494D4543u
 
@@ -87,6 +88,18 @@ static void seed_downlink(struct mesh_relay *relay,
     }
 
     assert(false);
+}
+
+static uint8_t channel9_timing_count(const struct mesh_relay *relay)
+{
+    uint8_t count = 0u;
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        if (relay->event_timings[i].valid) {
+            count++;
+        }
+    }
+    return count;
 }
 
 static void decode_outbound_over_uwb(const struct mesh_outbound *out,
@@ -2067,6 +2080,159 @@ static void test_reactive_gateway_discovers_downlink_anchor(void)
     assert(command_tx.next_hop_id == ANCHOR_B);
 }
 
+static void test_channel9_guard_allows_one_upstream_and_one_downstream(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 90u, 90u);
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(2000u);
+    struct mesh_relay_channel9_guard_status guard = {0};
+
+    assert(MESH_RELAY_EVENT_TIMINGS >= 2u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 90u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&relay, ANCHOR_A, ANCHOR_A, 90u, 1u, 90u, 1000u);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  GATEWAY,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_OK);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_OK);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM);
+    assert(guard.active_peer_count == 0u);
+
+    params = channel9_params(2200u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_A,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_OK);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_OK);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM);
+    assert(guard.active_peer_count == 1u);
+    assert(channel9_timing_count(&relay) == 2u);
+
+    params = channel9_params(2400u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  GATEWAY,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_OK);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_REPLACED_PEER);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM);
+    assert(channel9_timing_count(&relay) == 2u);
+}
+
+static void test_channel9_guard_rejects_second_peer_in_same_direction(void)
+{
+    struct mesh_relay relay;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(3000u);
+    struct mesh_relay_channel9_guard_status guard = {0};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 91u);
+    seed_downlink(&relay, ANCHOR_A, ANCHOR_A, 91u, 1u, 90u, 1000u);
+    seed_downlink(&relay, ANCHOR_C, ANCHOR_C, 91u, 1u, 90u, 1000u);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_A,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_OK);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM);
+
+    params = channel9_params(3200u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_C,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_ERR_BUSY);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_DIRECTION_BUSY);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM);
+    assert(guard.conflict_peer_id == ANCHOR_A);
+    assert(guard.conflict_direction == MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM);
+    assert(guard.active_peer_count == 1u);
+    assert(channel9_timing_count(&relay) == 1u);
+}
+
+static void test_channel9_guard_rejects_third_peer(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 92u, 90u);
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(4000u);
+    struct mesh_relay_channel9_guard_status guard = {0};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 92u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&relay, ANCHOR_A, ANCHOR_A, 92u, 1u, 90u, 1000u);
+    seed_downlink(&relay, ANCHOR_C, ANCHOR_C, 92u, 1u, 90u, 1000u);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  GATEWAY,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_OK);
+    params = channel9_params(4200u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_A,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_OK);
+
+    params = channel9_params(4400u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_C,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_ERR_NO_SPACE);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_TOO_MANY_PEERS);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM);
+    assert(guard.active_peer_count == 2u);
+    assert(channel9_timing_count(&relay) == 2u);
+}
+
+static void test_channel9_guard_rejects_ambiguous_or_unknown_direction(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(ANCHOR_A, 93u, 90u);
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(5000u);
+    struct mesh_relay_channel9_guard_status guard = {0};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 93u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&relay, ANCHOR_C, ANCHOR_A, 93u, 1u, 90u, 1000u);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_A,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_ERR_MALFORMED);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_NEW_PEER);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_AMBIGUOUS);
+    assert(channel9_timing_count(&relay) == 0u);
+
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  GATEWAY,
+                                                  &timing,
+                                                  2u,
+                                                  &guard) == PROTO_ERR_MALFORMED);
+    assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_NEW_PEER);
+    assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_UNKNOWN);
+    assert(channel9_timing_count(&relay) == 0u);
+}
+
 static void test_channel9_report_tx_requires_negotiated_event(void)
 {
     struct mesh_relay relay;
@@ -2410,6 +2576,10 @@ int main(void)
     test_malformed_route_reply_does_not_poison_upstream_route();
     test_reactive_route_and_report_flow_over_uwb_mesh_frames();
     test_reactive_gateway_discovers_downlink_anchor();
+    test_channel9_guard_allows_one_upstream_and_one_downstream();
+    test_channel9_guard_rejects_second_peer_in_same_direction();
+    test_channel9_guard_rejects_third_peer();
+    test_channel9_guard_rejects_ambiguous_or_unknown_direction();
     test_channel9_report_tx_requires_negotiated_event();
     test_channel9_report_delivery_and_gateway_ack_require_events();
     test_channel9_rx_observation_keeps_negotiated_event_timing();
