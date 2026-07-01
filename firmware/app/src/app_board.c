@@ -59,7 +59,10 @@ static const struct adc_dt_spec battery_adc = {
 #endif
 
 static struct k_work_delayable status0_debug_pulse_off_work;
+static struct k_work_delayable status1_debug_pulse_restore_work;
 static bool status0_debug_pulse_work_ready;
+static bool status1_debug_pulse_work_ready;
+static bool status_power_indicator_enabled;
 
 static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
 {
@@ -216,7 +219,8 @@ void status_led1_set(bool red, bool green, bool blue)
 
 void status_power_indicator_set(bool enabled)
 {
-    status_led1_set(false, enabled, false);
+    status_power_indicator_enabled = enabled;
+    status_led1_set(false, false, enabled);
 }
 
 static void status0_debug_pulse_off_handler(struct k_work *work)
@@ -224,6 +228,13 @@ static void status0_debug_pulse_off_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     status_led0_set(false, false, false);
+}
+
+static void status1_debug_pulse_restore_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    status_led1_set(false, false, status_power_indicator_enabled);
 }
 
 static void status0_debug_pulse(bool red, bool green, bool blue)
@@ -235,6 +246,18 @@ static void status0_debug_pulse(bool red, bool green, bool blue)
 
     status_led0_set(red, green, blue);
     (void)k_work_reschedule(&status0_debug_pulse_off_work,
+                            K_MSEC(DEBUG_LED_PULSE_MS));
+}
+
+static void status1_debug_pulse(bool red, bool green, bool blue)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        !status1_debug_pulse_work_ready) {
+        return;
+    }
+
+    status_led1_set(red, green, blue);
+    (void)k_work_reschedule(&status1_debug_pulse_restore_work,
                             K_MSEC(DEBUG_LED_PULSE_MS));
 }
 
@@ -349,6 +372,20 @@ void status_debug_tx_mesh_frame_sent_pulse(void)
     }
 }
 
+void status_debug_tx_gateway_ack_rx_pulse(void)
+{
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        status1_debug_pulse(false, true, false);
+    }
+}
+
+void status_debug_gateway_ack_tx_pulse(void)
+{
+    if (DEVICE_ROLE == ROLE_GATEWAY && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status1_debug_pulse(true, false, false);
+    }
+}
+
 static void BLE_CONNECTIVITY_TEST_UNUSED disconnect_gpio(const struct gpio_dt_spec *gpio)
 {
     if (gpio_is_ready_dt(gpio)) {
@@ -420,6 +457,9 @@ int status_leds_init(void)
     k_work_init_delayable(&status0_debug_pulse_off_work,
                           status0_debug_pulse_off_handler);
     status0_debug_pulse_work_ready = true;
+    k_work_init_delayable(&status1_debug_pulse_restore_work,
+                          status1_debug_pulse_restore_handler);
+    status1_debug_pulse_work_ready = true;
 
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     ret |= configure_output(&status0_red);

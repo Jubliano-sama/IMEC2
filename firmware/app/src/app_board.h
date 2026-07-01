@@ -17,6 +17,8 @@ void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel);
 void status_debug_tx_packet_sent_pulse(void);
 void status_debug_tx_wake_claim_sent_pulse(void);
 void status_debug_tx_mesh_frame_sent_pulse(void);
+void status_debug_tx_gateway_ack_rx_pulse(void);
+void status_debug_gateway_ack_tx_pulse(void);
 void status_debug_note(const char *text);
 void status_debug_printf(const char *fmt, ...);
 void status_leds_disconnect(void);

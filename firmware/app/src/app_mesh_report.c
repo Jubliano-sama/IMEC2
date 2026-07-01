@@ -42,6 +42,8 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
 #define MESH_EVENT_CONTROL_CH5_AIRTIME_MS 10u
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
+#define MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS 20u
+#define MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS MESH_EVENT_DEFAULT_GUARD_MS
 
 struct mesh_rx_pending {
     struct proto_packet packet;
@@ -1035,6 +1037,7 @@ static uint32_t mesh_next_channel9_rx_delay_ms(uint32_t now_ms)
 static uint32_t mesh_active_channel9_ch5_gap_window_ms(uint32_t now_ms)
 {
     uint32_t delay_ms;
+    uint32_t available_ms;
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         DEVICE_ROLE != ROLE_ANCHOR ||
@@ -1047,7 +1050,15 @@ static uint32_t mesh_active_channel9_ch5_gap_window_ms(uint32_t now_ms)
         return 0u;
     }
 
-    return MIN(delay_ms, MESH_ROUTE_TEST_CH5_GAP_SCAN_MS);
+    if (delay_ms <= MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS) {
+        return 0u;
+    }
+    available_ms = delay_ms - MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS;
+    if (available_ms < MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS) {
+        return 0u;
+    }
+
+    return MIN(available_ms, MESH_ROUTE_TEST_CH5_GAP_SCAN_MS);
 }
 
 static void mesh_schedule_uwb_rx(uint32_t delay_ms)
@@ -1168,6 +1179,7 @@ int mesh_send_outbound(const struct mesh_outbound *out, const char *reason)
     status_debug_tx_mesh_frame_sent_pulse();
     HIGH_DEBUG_COUNTER_INC(mesh_tx);
     if (tx->packet.msg_type == MSG_GATEWAY_ACK) {
+        status_debug_gateway_ack_tx_pulse();
         HIGH_DEBUG_COUNTER_INC(mesh_ack);
         high_debug_log_event("GATEWAY_ACK_TX",
                              "dst=0x%016llx next=0x%016llx seq=%u channel=%u",
@@ -3733,6 +3745,7 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
     }
     HIGH_DEBUG_COUNTER_INC(mesh_rx);
     if (pending.packet.msg_type == MSG_GATEWAY_ACK) {
+        status_debug_tx_gateway_ack_rx_pulse();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_GATEWAY_ACK_RX\n");
         }
@@ -3950,13 +3963,19 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     if (DEVICE_ROLE == ROLE_ANCHOR && !channel9_event) {
         channel5_gap_window_ms = mesh_active_channel9_ch5_gap_window_ms(k_uptime_get_32());
         if (channel5_gap_window_ms == 0u) {
+            uint32_t next_delay_ms = mesh_next_channel9_rx_delay_ms(k_uptime_get_32());
+
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                mesh_channel9_connection_count() > 0u) {
+                mesh_channel9_connection_count() > 0u &&
+                next_delay_ms > MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS) {
                 status_debug_printf("DBG_CH5_GAP_SCAN_SKIP now=%u next_delay=%u\n",
                                     k_uptime_get_32(),
-                                    mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+                                    next_delay_ms);
             }
-            mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+            if (next_delay_ms > 0u) {
+                next_delay_ms++;
+            }
+            mesh_schedule_uwb_rx(next_delay_ms);
             return;
         }
         channel5_gap_scan = true;
