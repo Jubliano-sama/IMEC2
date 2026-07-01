@@ -20,7 +20,8 @@
 - [ ] Add bounded gateway route advertisement flood.
   - Implemented shared protocol/relay support for `MSG_GATEWAY_ROUTE_ADV`: gateway-origin builder, `gateway_id`/`gateway_epoch`/`gateway_route_seq`/hop/quality/cost/capacity/flood TLVs, parent candidate update through the existing upstream route table, bounded duplicate suppression, and channel-5 broadcast forwarding with TTL decrement and updated hop/quality/cost.
   - Native test covers startup-style advertisement seeding a direct parent, relay forwarding preserving flood identity, duplicate suppression, second-hop candidate install, and no age-only route deletion.
-  - Remaining gap: app-level gateway startup/profile-change/force-rediscovery/low-rate periodic scheduling is not wired yet.
+  - Gateway app now sends a startup advertisement after gateway RX starts and a low-rate maintenance advertisement, deferring while channel-9 connections are active.
+  - Remaining gap: profile-change and force-rediscovery-triggered advertisements are not wired yet.
   - Implement `gateway_route_adv` exactly as specified in `Documentation/MeshSpec.md` section 7.
   - Message fields: `gateway_id`, `gateway_epoch`, `gateway_route_seq`, `hop_count`, `path_quality_min`, `route_cost`, `gateway_capacity_state`, `flood_profile_version`, `flood_epoch_id`, and `slot_seed`.
   - Gateway behavior: send during startup, after route/profile changes, after force rediscovery, and periodically at a low maintenance rate.

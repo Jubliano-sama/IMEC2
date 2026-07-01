@@ -410,6 +410,8 @@ int main(void)
         ret = mesh_start_uwb_rx("gateway startup");
         if (ret < 0) {
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
+        } else {
+            mesh_gateway_route_adv_start();
         }
         app_stack_diag_start();
         LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",

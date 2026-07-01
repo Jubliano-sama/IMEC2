@@ -83,5 +83,6 @@ bool mesh_queue_from_frame(const uint8_t *frame,
                            uint64_t *previous_hop_id);
 int mesh_start_uwb_rx(const char *reason);
 bool mesh_route_waiting_tx_active(void);
+void mesh_gateway_route_adv_start(void);
 
 #endif

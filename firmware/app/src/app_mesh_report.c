@@ -56,6 +56,9 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS 2u
 #define MESH_GATEWAY_ROUTE_PREEMPT_MS 2000u
 #define MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS 10u
+#define MESH_GATEWAY_ROUTE_ADV_STARTUP_DELAY_MS 500u
+#define MESH_GATEWAY_ROUTE_ADV_PERIOD_MS 300000u
+#define MESH_GATEWAY_ROUTE_ADV_DEFER_MS 1000u
 #define MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES 48u
 #define MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN 125u
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC0 0x4du
@@ -125,7 +128,9 @@ static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_uwb_rx_work;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable report_tx_work;
+static struct k_work_delayable gateway_route_adv_work;
 static uint32_t mesh_rx_window_log_next_ms;
+static uint32_t gateway_route_adv_seq;
 static bool mesh_route_reply_handoff_pending;
 static uint32_t mesh_route_reply_handoff_deadline_ms;
 
@@ -1528,6 +1533,75 @@ static int mesh_submit_work(struct k_work *work)
 static int mesh_cancel_delayable(struct k_work_delayable *work)
 {
     return k_work_cancel_delayable(work);
+}
+
+static uint32_t gateway_route_adv_next_seq(void)
+{
+    gateway_route_adv_seq++;
+    if (gateway_route_adv_seq == 0u) {
+        gateway_route_adv_seq = 1u;
+    }
+    return gateway_route_adv_seq;
+}
+
+static void gateway_route_adv_schedule(uint32_t delay_ms)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+    (void)mesh_reschedule_delayable(&gateway_route_adv_work, delay_ms);
+}
+
+static void gateway_route_adv_work_handler(struct k_work *work)
+{
+    struct mesh_outbound adv;
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t route_seq;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+    if (mesh_channel9_connection_count() > 0u) {
+        gateway_route_adv_schedule(MESH_GATEWAY_ROUTE_ADV_DEFER_MS);
+        return;
+    }
+
+    route_seq = gateway_route_adv_next_seq();
+    ret = mesh_relay_build_gateway_route_adv(&mesh_runtime,
+                                             route_seq,
+                                             now_ms,
+                                             &adv);
+    if (ret == PROTO_OK) {
+        ret = mesh_send_outbound(&adv, "gateway-route-adv");
+        if (ret == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime, &adv, k_uptime_get_32());
+            high_debug_log_event("GATEWAY_ROUTE_ADV",
+                                 "phase=sent seq=%u ttl=%u",
+                                 route_seq,
+                                 adv.packet.ttl);
+        } else {
+            high_debug_log_event("GATEWAY_ROUTE_ADV",
+                                 "phase=send-fail seq=%u ret=%d",
+                                 route_seq,
+                                 ret);
+            LOG_WRN("gateway route advertisement TX failed: seq=%u ret=%d",
+                    route_seq,
+                    ret);
+        }
+    } else {
+        high_debug_log_event("GATEWAY_ROUTE_ADV",
+                             "phase=build-fail seq=%u ret=%d",
+                             route_seq,
+                             ret);
+        LOG_WRN("gateway route advertisement build failed: seq=%u ret=%d",
+                route_seq,
+                ret);
+    }
+
+    gateway_route_adv_schedule(MESH_GATEWAY_ROUTE_ADV_PERIOD_MS);
 }
 
 static bool mesh_pending_tx_blocks_uwb_rx(void)
@@ -6373,5 +6447,20 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     k_work_init_delayable(&mesh_uwb_rx_work, mesh_uwb_rx_work_handler);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
+    k_work_init_delayable(&gateway_route_adv_work, gateway_route_adv_work_handler);
     return 0;
+}
+
+void mesh_gateway_route_adv_start(void)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+    if (gateway_route_adv_seq == 0u) {
+        gateway_route_adv_seq = k_uptime_get_32();
+        if (gateway_route_adv_seq == 0u) {
+            gateway_route_adv_seq = 1u;
+        }
+    }
+    gateway_route_adv_schedule(MESH_GATEWAY_ROUTE_ADV_STARTUP_DELAY_MS);
 }
