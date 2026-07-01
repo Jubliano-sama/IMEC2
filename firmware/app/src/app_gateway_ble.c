@@ -487,8 +487,10 @@ static bool gateway_ble_packet_notify_enabled;
 static bool gateway_ble_log_notify_enabled;
 static uint8_t gateway_ble_uwb_quiet_depth;
 static bool gateway_ble_quiet_stopped_advertising;
+#if GATEWAY_BLE_QUIET_LOG_BUFFER_SIZE > 0u
 static uint8_t gateway_ble_quiet_log_buf[GATEWAY_BLE_QUIET_LOG_BUFFER_SIZE];
 static size_t gateway_ble_quiet_log_len;
+#endif
 static uint32_t gateway_ble_quiet_log_dropped;
 static uint8_t gateway_ble_rx_frame[SERIAL_FRAME_MAX_LEN];
 static size_t gateway_ble_rx_len;
@@ -522,13 +524,16 @@ static bool gateway_ble_keep_active_during_uwb(void)
 
 static void gateway_ble_buffer_quiet_log_bytes(const uint8_t *data, size_t len)
 {
+#if GATEWAY_BLE_QUIET_LOG_BUFFER_SIZE > 0u
     size_t room;
     size_t copy_len;
+#endif
 
     if (data == NULL || len == 0u) {
         return;
     }
 
+#if GATEWAY_BLE_QUIET_LOG_BUFFER_SIZE > 0u
     room = sizeof(gateway_ble_quiet_log_buf) - gateway_ble_quiet_log_len;
     copy_len = MIN(room, len);
     if (copy_len > 0u) {
@@ -541,6 +546,9 @@ static void gateway_ble_buffer_quiet_log_bytes(const uint8_t *data, size_t len)
         gateway_ble_quiet_log_dropped += (uint32_t)MIN(len - copy_len,
                                                        (size_t)UINT32_MAX);
     }
+#else
+    gateway_ble_quiet_log_dropped += (uint32_t)MIN(len, (size_t)UINT32_MAX);
+#endif
 }
 
 void gateway_ble_enter_uwb_quiet(const char *reason)
@@ -701,6 +709,7 @@ static void gateway_ble_flush_quiet_logs(void)
     uint8_t dropped_line[64];
     int dropped_len;
 
+#if GATEWAY_BLE_QUIET_LOG_BUFFER_SIZE > 0u
     if (gateway_ble_quiet_log_len > 0u) {
         (void)gateway_ble_notify_attr(&gateway_ble_svc.attrs[GATEWAY_BLE_LOG_TX_ATTR_INDEX],
                                       gateway_ble_quiet_log_buf,
@@ -708,6 +717,7 @@ static void gateway_ble_flush_quiet_logs(void)
                                       gateway_ble_log_notify_enabled);
     }
     gateway_ble_quiet_log_len = 0u;
+#endif
 
     if (gateway_ble_quiet_log_dropped == 0u) {
         return;

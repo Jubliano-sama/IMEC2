@@ -70,9 +70,11 @@ static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
+#if defined(CONFIG_IMEC_ML_ANCHOR)
 static uint32_t anchor_run_clicker_pair_survey(
     const struct uwb_anchor_pair_schedule_frame *schedule,
     int64_t schedule_rx_ms);
+#endif
 static void anchor_set_uwb_busy(bool busy);
 static void anchor_note_uwb_awake_since(int64_t start_ms, uint32_t already_counted_us);
 static int anchor_start_uwb_scan(void);
@@ -3022,6 +3024,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     return retained_sleep_us;
 }
 
+#if defined(CONFIG_IMEC_ML_ANCHOR)
 static bool anchor_pair_schedule_matches_epoch(
     const struct uwb_anchor_pair_schedule_frame *schedule)
 {
@@ -3206,6 +3209,7 @@ static uint32_t anchor_run_clicker_pair_survey(
     LOG_INF("anchor pair-survey done: survey=%u", schedule->survey_id);
     return retained_sleep_us;
 }
+#endif
 
 static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_claim,
                                     uint8_t first_quality,
@@ -3608,7 +3612,9 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
             frame_type = frame[2];
             if (frame_type != MSG_UWB_RANGE_SCHEDULE &&
+#if defined(CONFIG_IMEC_ML_ANCHOR)
                 frame_type != MSG_UWB_ANCHOR_PAIR_SCHEDULE &&
+#endif
                 frame_type != MSG_UWB_RANGE_RELEASE) {
                 last_schedule_ret = -EBADMSG;
                 LOG_DBG("anchor ignored non-schedule frame while waiting for RANGE_SCHEDULE: type=0x%02x len=%u",
@@ -3660,6 +3666,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             return true;
         }
 
+#if defined(CONFIG_IMEC_ML_ANCHOR)
         if (frame_len >= UWB_SYNC_HEADER_LEN &&
             frame[2] == MSG_UWB_ANCHOR_PAIR_SCHEDULE) {
             struct uwb_anchor_pair_schedule_frame pair_schedule;
@@ -3686,6 +3693,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             }
             return true;
         }
+#endif
 
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
         if (ret != PROTO_OK) {

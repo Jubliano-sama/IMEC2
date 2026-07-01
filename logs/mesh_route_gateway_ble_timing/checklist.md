@@ -9,6 +9,8 @@
   - Measurement under test: `DBG_CH9_RX_TIMING` reports RX arm delta from slot start, hardware RX timestamp estimate relative to slot start, host receive delta, frame length, and quality.
   - `transmitter_measurement_20260701-182438.typescript` measured ACK RX hardware arrival about 3.7-5.1 ms after slot start with host receive reporting 6-7 ms. Need the matching gateway measurement build flashed to measure transmitter data arrival at the gateway.
   - `transmitter_stack_measurement_20260701-182800.typescript` measured ACK RX hardware arrival about 3.1-4.6 ms after slot start with host receive reporting 5-7 ms.
+  - Patch under test: keep the negotiated event guard at 20 ms, but use a 30 ms local channel-9 retune guard and reduce the shared mesh-test TX offset from 20 ms to 15 ms. Verify both roles are flashed before drawing timing conclusions.
+  - `transmitter_after_15ms_offset_20260701-185139.typescript` stayed ACK-clean, but transmitter-side ACK timing moved very early: RX armed 11-12 ms before slot start, while ACK hardware deltas were about -1.9 to -0.3 ms relative to nominal slot start. Confirm on gateway RTT before lowering the shared offset further.
 - [x] Test multiple packets in one channel-9 TX slot.
   - Fill the queue intentionally and confirm sender only transmits packets that fit before slot expiry.
   - Confirm the receiver accepts multiple packets in one RX slot and returns one ACK batch containing all received IDs/seqs in the next TX slot.
@@ -16,13 +18,14 @@
   - Validated with `transmitter_burst_ack_ids_20260701-170028.typescript`: queue depth reached 8, batches sent up to 3 packets, one ACK packet carried up to 3 packet IDs, and the transmitter completed up to 3 pending ACKs from that one ACK with zero timeouts.
 - [ ] Optimize same-slot channel-9 throughput toward the theoretical 8-packet target.
   - Current burst testing is limited by per-frame TX/config completion time, not by ACK matching.
-  - Measured same-slot batches currently top out at 3 packets in the 100 ms slot.
+  - Measured same-slot batches currently top out at 4 large 963-byte packets in the 100 ms slot.
   - Patch under test: configure channel 9 once per TX slot and send queued frames back-to-back, with the configured-slot fit counting only explicit inter-frame wait plus estimated airtime/trailer.
   - Session/destination are no longer batch boundaries; ready packets may share a slot when they use the same selected channel-9 next hop. ACK payloads now include parallel session and sequence lists for mixed-session acknowledgement.
   - `check_after_mixed_session_20260701-180211.typescript` improved large 963-byte frame slots to `max_sent=4`; distribution was 18 two-packet, 16 three-packet, and 17 four-packet slots with no ACK timeouts or queue-full markers.
   - Measurement under test: `DBG_CH9_TX_BATCH_FIT`, `DBG_CH9_TX_DONE`, `DBG_CH9_TX_BATCH_FRAME`, and `DBG_CH9_TX_BATCH_STOP` report fit estimates, actual send duration, remaining slot time, and early-stop causes.
   - `transmitter_measurement_20260701-182438.typescript` measured 963-byte frame sends at 14-15 ms. Four-frame slots ended with about 8 ms remaining; the fifth frame was correctly deferred because fit required about 18 ms.
   - `transmitter_stack_measurement_20260701-182800.typescript` repeated the result under stack diagnostics: 79 TX batches, max four 963-byte packets per slot, and fifth-packet deferrals remained legitimate fit failures.
+  - `transmitter_after_15ms_offset_20260701-185139.typescript` still maxed at four 963-byte frames per slot. The fourth frame left 6-13 ms; the fifth still required about 18 ms, so the 15 ms offset is not enough for five large frames.
 - [x] Reduce gateway RAM after measured stack headroom.
   - `gateway_stack_20260701-180826.typescript` observed active gateway channel-9 ACK load with no stack faults.
   - Implemented gateway mesh-route-test `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4096`; the transmitter preset still overrides to 16384.

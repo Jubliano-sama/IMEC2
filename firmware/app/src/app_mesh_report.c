@@ -34,6 +34,8 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_REPLY_HANDOFF_WAIT_MS 250u
 #define MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS 1000u
 #define MESH_ROUTE_TEST_REPLY_CAPTURE_MAX 4u
+#define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
+#define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
 #define MESH_RX_WINDOW_IDLE_LOG_INTERVAL_MS 1000u
@@ -44,15 +46,26 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
 #define MESH_CH9_TX_CONFIG_GUARD_MS 25u
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
-#define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS 20u
+#define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS 15u
+#define MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS 30u
 #define MESH_EVENT_CONTROL_CH5_AIRTIME_MS 10u
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 #define MESH_GATEWAY_CH5_CONTINUOUS_RX_MS 2000u
 #define MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS 20u
-#define MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS MESH_EVENT_DEFAULT_GUARD_MS
+#define MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS
 #define MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS 2u
 #define MESH_GATEWAY_ROUTE_PREEMPT_MS 2000u
 #define MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS 10u
+#define MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES 32u
+#define MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN 125u
+#define MESH_ROUTE_WAKE_ROUTE_MAGIC0 0x4du
+#define MESH_ROUTE_WAKE_ROUTE_MAGIC1 0x52u
+#define MESH_ROUTE_WAKE_ROUTE_VERSION 1u
+#define MESH_ROUTE_WAKE_ROUTE_HEADER_LEN 13u
+#define MESH_ROUTE_WAKE_ROUTE_CRC_LEN 2u
+#define MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_LEN \
+    (MESH_ROUTE_WAKE_ROUTE_HEADER_LEN + MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES + \
+     MESH_ROUTE_WAKE_ROUTE_CRC_LEN)
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(MESH_RELAY_EVENT_TIMINGS >= MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
@@ -60,6 +73,11 @@ BUILD_ASSERT(MESH_RELAY_EVENT_TIMINGS >= MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
 BUILD_ASSERT(MESH_ROUTE_TEST_CH9_TX_OFFSET_MS + MESH_CH9_TX_SLOT_TRAILER_MS <
              MESH_EVENT_DEFAULT_WINDOW_MS,
              "mesh route-test TX offset must fit inside the channel-9 window");
+BUILD_ASSERT(MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS >= MESH_EVENT_DEFAULT_GUARD_MS,
+             "mesh route-test retune guard must cover the negotiated event guard");
+BUILD_ASSERT(UWB_WAKE_CLAIM_LEN + MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_LEN <=
+             MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN,
+             "mesh route-test compact wake route request must fit standard channel-5 PHR");
 BUILD_ASSERT(MESH_CH9_ACK_BATCH_MAX >= MESH_CH9_TX_BATCH_MAX,
              "mesh route-test ACK batch must cover the largest TX batch");
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -90,6 +108,12 @@ struct mesh_reply_capture {
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
     size_t frame_len;
     uint8_t quality;
+    uint32_t received_at_ms;
+};
+
+struct mesh_route_embedded_rx_state {
+    bool valid;
+    struct proto_packet packet;
     uint32_t received_at_ms;
 };
 
@@ -172,13 +196,22 @@ static struct mesh_outbound mesh_result_action_tx;
 static uint64_t mesh_route_ready_event_peer_id;
 static uint64_t mesh_gateway_route_preempt_peer_id;
 static uint32_t mesh_gateway_route_preempt_deadline_ms;
+static struct mesh_route_embedded_rx_state mesh_route_embedded_rx;
+static uint64_t mesh_route_embedded_reply_peer_id;
+static uint32_t mesh_route_embedded_reply_hold_until_ms;
 
 static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
+static int mesh_submit_work(struct k_work *work);
 static void mesh_try_route_waiting_tx(void);
-static int mesh_send_route_wake_train(uint64_t target_id, const char *reason);
+static int mesh_send_route_wake_train(uint64_t target_id,
+                                      const struct mesh_outbound *embedded_route_req,
+                                      bool *embedded_sent,
+                                      const char *reason);
 static int mesh_listen_for_route_reply(uint64_t target_id,
                                        const char *reason,
                                        bool *route_reply_captured);
+static void mesh_route_reply_handoff_after_capture(uint64_t target_id,
+                                                   const char *reason);
 static bool mesh_packet_is_event_control_type(uint8_t msg_type);
 static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
                                             size_t frame_len,
@@ -1058,6 +1091,265 @@ static bool mesh_route_reply_handoff_active(void)
     return true;
 }
 
+static void mesh_route_reply_handoff_after_capture(uint64_t target_id,
+                                                   const char *reason)
+{
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_note("DBG_ROUTE_REPLY_HANDOFF\n");
+    }
+    mesh_route_reply_handoff_begin();
+    if (!mesh_ch9_tx_pending.active &&
+        !mesh_relay_tx_active(&mesh_runtime)) {
+        (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_ROUTE_REPLY_CANCEL_RETRY\n");
+        }
+    }
+    LOG_INF("mesh route reply captured; waiting for queued route processing: target=0x%016llx reason=%s",
+            (unsigned long long)target_id,
+            reason == NULL ? "route" : reason);
+}
+
+static int mesh_route_wake_encode_suffix(const struct mesh_outbound *route_req,
+                                         uint8_t *out,
+                                         size_t out_cap,
+                                         size_t *written)
+{
+    size_t payload_len;
+    size_t total_len;
+    uint16_t crc;
+
+    if (route_req == NULL || out == NULL || written == NULL) {
+        return -EINVAL;
+    }
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        route_req->packet.msg_type != MSG_ROUTE_REQ ||
+        route_req->packet.src_id != DEVICE_ID ||
+        route_req->packet.dst_id != MESH_BROADCAST_ID ||
+        route_req->next_hop_id != MESH_BROADCAST_ID ||
+        route_req->payload_len != route_req->packet.payload_len) {
+        return -EINVAL;
+    }
+
+    payload_len = route_req->payload_len;
+    if (payload_len == 0u ||
+        payload_len > MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES ||
+        payload_len > UINT8_MAX) {
+        return -EMSGSIZE;
+    }
+
+    total_len = MESH_ROUTE_WAKE_ROUTE_HEADER_LEN + payload_len +
+                MESH_ROUTE_WAKE_ROUTE_CRC_LEN;
+    if (out_cap < total_len) {
+        return -ENOSPC;
+    }
+
+    out[0] = MESH_ROUTE_WAKE_ROUTE_MAGIC0;
+    out[1] = MESH_ROUTE_WAKE_ROUTE_MAGIC1;
+    out[2] = MESH_ROUTE_WAKE_ROUTE_VERSION;
+    out[3] = MSG_ROUTE_REQ;
+    out[4] = route_req->packet.flags;
+    out[5] = route_req->packet.ttl;
+    proto_put_u32_le(&out[6], route_req->packet.session_id);
+    proto_put_u16_le(&out[10], route_req->packet.seq);
+    out[12] = (uint8_t)payload_len;
+    memcpy(&out[MESH_ROUTE_WAKE_ROUTE_HEADER_LEN], route_req->payload, payload_len);
+
+    crc = proto_crc16_ccitt_false(out, total_len - MESH_ROUTE_WAKE_ROUTE_CRC_LEN);
+    proto_put_u16_le(&out[total_len - MESH_ROUTE_WAKE_ROUTE_CRC_LEN], crc);
+    *written = total_len;
+    return 0;
+}
+
+static int mesh_route_wake_decode_suffix(const uint8_t *data,
+                                         size_t len,
+                                         uint64_t source_id,
+                                         struct proto_packet *packet,
+                                         uint8_t *payload,
+                                         size_t payload_cap,
+                                         size_t *payload_len)
+{
+    uint8_t declared_payload_len;
+    uint16_t expected_crc;
+    uint16_t actual_crc;
+
+    if (data == NULL || packet == NULL || payload == NULL ||
+        payload_len == NULL || !mesh_id_is_unicast(source_id)) {
+        return -EINVAL;
+    }
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        len < MESH_ROUTE_WAKE_ROUTE_HEADER_LEN + MESH_ROUTE_WAKE_ROUTE_CRC_LEN) {
+        return -EINVAL;
+    }
+    if (data[0] != MESH_ROUTE_WAKE_ROUTE_MAGIC0 ||
+        data[1] != MESH_ROUTE_WAKE_ROUTE_MAGIC1 ||
+        data[2] != MESH_ROUTE_WAKE_ROUTE_VERSION ||
+        data[3] != MSG_ROUTE_REQ) {
+        return -EBADMSG;
+    }
+
+    declared_payload_len = data[12];
+    if (declared_payload_len == 0u ||
+        declared_payload_len > MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES ||
+        declared_payload_len > payload_cap ||
+        len != MESH_ROUTE_WAKE_ROUTE_HEADER_LEN + declared_payload_len +
+               MESH_ROUTE_WAKE_ROUTE_CRC_LEN) {
+        return -EMSGSIZE;
+    }
+
+    expected_crc = proto_get_u16_le(&data[len - MESH_ROUTE_WAKE_ROUTE_CRC_LEN]);
+    actual_crc = proto_crc16_ccitt_false(data, len - MESH_ROUTE_WAKE_ROUTE_CRC_LEN);
+    if (expected_crc != actual_crc) {
+        return -EBADMSG;
+    }
+
+    memset(packet, 0, sizeof(*packet));
+    packet->msg_type = MSG_ROUTE_REQ;
+    packet->flags = data[4];
+    packet->src_id = source_id;
+    packet->dst_id = MESH_BROADCAST_ID;
+    packet->session_id = proto_get_u32_le(&data[6]);
+    packet->seq = proto_get_u16_le(&data[10]);
+    packet->ttl = data[5];
+    packet->payload_len = declared_payload_len;
+    memcpy(payload, &data[MESH_ROUTE_WAKE_ROUTE_HEADER_LEN], declared_payload_len);
+    *payload_len = declared_payload_len;
+    return 0;
+}
+
+static bool mesh_route_embedded_duplicate(const struct proto_packet *packet,
+                                          uint32_t now_ms)
+{
+    uint32_t suppress_deadline_ms;
+
+    if (!mesh_route_embedded_rx.valid || packet == NULL) {
+        return false;
+    }
+
+    suppress_deadline_ms = mesh_route_embedded_rx.received_at_ms +
+                           MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS;
+    if (uptime_deadline_reached(now_ms, suppress_deadline_ms)) {
+        mesh_route_embedded_rx.valid = false;
+        return false;
+    }
+
+    return mesh_route_embedded_rx.packet.msg_type == packet->msg_type &&
+           mesh_route_embedded_rx.packet.src_id == packet->src_id &&
+           mesh_route_embedded_rx.packet.dst_id == packet->dst_id &&
+           mesh_route_embedded_rx.packet.session_id == packet->session_id &&
+           mesh_route_embedded_rx.packet.seq == packet->seq;
+}
+
+static bool mesh_queue_embedded_route_request(
+    const struct uwb_wake_claim_frame *claim,
+    const uint8_t *suffix,
+    size_t suffix_len,
+    uint8_t link_quality)
+{
+    struct mesh_rx_pending pending = {0};
+    size_t payload_len = 0u;
+    uint32_t now_ms;
+    int ret;
+
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        claim == NULL || suffix == NULL || suffix_len == 0u ||
+        claim->clicker_id == DEVICE_ID) {
+        return false;
+    }
+
+    ret = mesh_route_wake_decode_suffix(suffix,
+                                        suffix_len,
+                                        claim->clicker_id,
+                                        &pending.packet,
+                                        pending.payload,
+                                        sizeof(pending.payload),
+                                        &payload_len);
+    if (ret < 0) {
+        high_debug_log_event("MESH_ROUTE_REQ_EMBEDDED_RX",
+                             "phase=reject src=0x%016llx ret=%d suffix_len=%u",
+                             (unsigned long long)claim->clicker_id,
+                             ret,
+                             (unsigned int)suffix_len);
+        return false;
+    }
+
+    now_ms = k_uptime_get_32();
+    if (mesh_route_embedded_duplicate(&pending.packet, now_ms)) {
+        status_debug_note("DBG_EMBEDDED_ROUTE_REQ_DUP\n");
+        return true;
+    }
+
+    pending.payload_len = (uint16_t)payload_len;
+    pending.previous_hop_id = claim->clicker_id;
+    pending.link_quality = link_quality;
+    pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    pending.received_at_ms = now_ms;
+    app_mesh_test_note_wake_event(&pending.packet,
+                                  pending.previous_hop_id,
+                                  pending.link_quality,
+                                  pending.radio_channel);
+
+    ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
+        LOG_WRN("embedded route request RX queue full; dropped src=0x%016llx seq=%u ret=%d",
+                (unsigned long long)pending.packet.src_id,
+                pending.packet.seq,
+                ret);
+        return false;
+    }
+
+    mesh_route_embedded_rx.valid = true;
+    mesh_route_embedded_rx.packet = pending.packet;
+    mesh_route_embedded_rx.received_at_ms = now_ms;
+    mesh_route_embedded_reply_peer_id = claim->clicker_id;
+    mesh_route_embedded_reply_hold_until_ms =
+        now_ms + claim->wake_train_ends_in_ms + MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS;
+
+    status_debug_note("DBG_EMBEDDED_ROUTE_REQ_RX\n");
+    status_debug_printf("DBG_EMBEDDED_ROUTE_REQ src=0x%llx seq=%u hold_until=%u\n",
+                        (unsigned long long)pending.packet.src_id,
+                        pending.packet.seq,
+                        mesh_route_embedded_reply_hold_until_ms);
+    high_debug_log_event("MESH_ROUTE_REQ_EMBEDDED_RX",
+                         "phase=queued src=0x%016llx seq=%u suffix_len=%u payload_len=%u hold_until=%u quality=%u",
+                         (unsigned long long)pending.packet.src_id,
+                         pending.packet.seq,
+                         (unsigned int)suffix_len,
+                         (unsigned int)payload_len,
+                         mesh_route_embedded_reply_hold_until_ms,
+                         link_quality);
+    (void)mesh_submit_work(&mesh_rx_work);
+    return true;
+}
+
+static void mesh_route_embedded_wait_before_reply(const struct mesh_outbound *route_reply)
+{
+    uint32_t now_ms;
+    uint32_t delay_ms;
+
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        route_reply == NULL ||
+        route_reply->packet.msg_type != MSG_ROUTE_REPLY ||
+        mesh_route_embedded_reply_peer_id == 0u ||
+        route_reply->next_hop_id != mesh_route_embedded_reply_peer_id) {
+        return;
+    }
+
+    now_ms = k_uptime_get_32();
+    delay_ms = uptime_ms_until_deadline(now_ms,
+                                        mesh_route_embedded_reply_hold_until_ms);
+    if (delay_ms > 0u) {
+        status_debug_printf("DBG_EMBEDDED_ROUTE_REPLY_HOLD delay=%u peer=0x%llx\n",
+                            delay_ms,
+                            (unsigned long long)mesh_route_embedded_reply_peer_id);
+        k_msleep(delay_ms);
+    }
+
+    mesh_route_embedded_reply_peer_id = 0u;
+    mesh_route_embedded_reply_hold_until_ms = 0u;
+}
+
 static void mesh_schedule_route_waiting_retry_after(const char *reason, uint32_t delay_ms)
 {
     if (!mesh_route_waiting_tx_valid) {
@@ -1424,6 +1716,26 @@ static bool mesh_channel9_next_required_activity(const struct mesh_relay_event_t
     return mesh_event_timing_local_rx_slot(timing);
 }
 
+static uint32_t mesh_channel9_prepare_start_ms(const struct mesh_event_timing *timing)
+{
+    uint32_t retune_guard_ms;
+
+    if (timing == NULL) {
+        return 0u;
+    }
+
+    retune_guard_ms = timing->guard_ms;
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+        retune_guard_ms < MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS) {
+        retune_guard_ms = MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS;
+    }
+
+    if (timing->next_event_time_ms <= retune_guard_ms) {
+        return 1u;
+    }
+    return timing->next_event_time_ms - retune_guard_ms;
+}
+
 static uint32_t mesh_next_channel9_rx_delay_ms(uint32_t now_ms)
 {
     uint32_t delay_ms = mesh_uwb_rx_idle_delay_ms();
@@ -1440,7 +1752,7 @@ static uint32_t mesh_next_channel9_rx_delay_ms(uint32_t now_ms)
             continue;
         }
         candidate_delay_ms = uptime_ms_until_deadline(now_ms,
-                                                      mesh_event_guard_start_ms(&timing));
+                                                      mesh_channel9_prepare_start_ms(&timing));
         if (candidate_delay_ms < delay_ms) {
             delay_ms = candidate_delay_ms;
         }
@@ -2439,7 +2751,25 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     return true;
 }
 
-static int mesh_send_route_wake_train(uint64_t target_id, const char *reason)
+static uint16_t mesh_route_wake_claimed_duration_ms(
+    uint16_t wake_train_ends_in_ms,
+    const struct app_clicker_wake_train_config *config)
+{
+    uint32_t claimed_ms;
+
+    if (config == NULL) {
+        return wake_train_ends_in_ms;
+    }
+
+    claimed_ms = (uint32_t)wake_train_ends_in_ms +
+                 config->post_wake_claimed_duration_ms;
+    return claimed_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)claimed_ms;
+}
+
+static int mesh_send_route_wake_train(uint64_t target_id,
+                                      const struct mesh_outbound *embedded_route_req,
+                                      bool *embedded_sent,
+                                      const char *reason)
 {
     struct uwb_clicker_session session;
     struct uwb_clicker_config config;
@@ -2448,9 +2778,18 @@ static int mesh_send_route_wake_train(uint64_t target_id, const char *reason)
         .post_wake_claimed_duration_ms = UWB_POST_WAKE_CLAIMED_DURATION_MS,
         .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
     };
+    uint8_t route_suffix[MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_LEN];
+    size_t route_suffix_len = 0u;
+    bool embed_route = false;
     uint32_t event_seq;
+    int64_t close_ms;
+    uint16_t sent_count = 0u;
+    uint16_t embedded_count = 0u;
     int ret;
 
+    if (embedded_sent != NULL) {
+        *embedded_sent = false;
+    }
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         DEVICE_ROLE == ROLE_GATEWAY) {
         return 0;
@@ -2485,32 +2824,215 @@ static int mesh_send_route_wake_train(uint64_t target_id, const char *reason)
         return -EINVAL;
     }
 
+    if (embedded_route_req != NULL) {
+        ret = mesh_route_wake_encode_suffix(embedded_route_req,
+                                            route_suffix,
+                                            sizeof(route_suffix),
+                                            &route_suffix_len);
+        if (ret == 0) {
+            embed_route = true;
+        } else {
+            LOG_WRN("mesh route wake-train embedded request disabled: target=0x%016llx ret=%d reason=%s",
+                    (unsigned long long)target_id,
+                    ret,
+                    reason == NULL ? "route" : reason);
+        }
+    }
+
     mesh_stop_role_scan();
     high_debug_log_event("MESH_CH5_WAKE_TX",
-                         "phase=start target=0x%016llx event_seq=%u reason=%s",
+                         "phase=start target=0x%016llx event_seq=%u embed=%u reason=%s",
                          (unsigned long long)target_id,
                          event_seq,
+                         embed_route ? 1u : 0u,
                          reason == NULL ? "route" : reason);
-    LOG_INF("mesh route channel-5 wake train start: target=0x%016llx event_seq=%u reason=%s",
+    LOG_INF("mesh route channel-5 wake train start: target=0x%016llx event_seq=%u embed=%u reason=%s",
             (unsigned long long)target_id,
             event_seq,
+            embed_route ? 1u : 0u,
             reason == NULL ? "route" : reason);
-    ret = app_clicker_send_wake_claim_train(&session,
-                                            clicker_priority_id(event_seq, session.attempt_index),
-                                            &wake_train_config);
+
+    ret = radio_guard_uwb_start("mesh route WAKE_CLAIM train");
+    if (ret < 0) {
+        status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
+        LOG_WRN("mesh route UWB WAKE_CLAIM guard failed: target=0x%016llx ret=%d",
+                (unsigned long long)target_id,
+                ret);
+        mesh_restart_role_scan();
+        return ret;
+    }
+    status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
+    stage1_led_phase(STAGE1_LED_PHASE_WAKE);
+    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
+
+    status_debug_note("DBG_WAKE_TRAIN_CONFIG_BEGIN\n");
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        status_debug_note("DBG_WAKE_TRAIN_CONFIG_FAIL\n");
+        LOG_WRN("mesh route UWB WAKE_CLAIM wake-mode config failed: target=0x%016llx ret=%d",
+                (unsigned long long)target_id,
+                ret);
+        goto out;
+    }
+    status_debug_note("DBG_WAKE_TRAIN_CONFIG_OK\n");
+
+    close_ms = k_uptime_get() + wake_train_config.wake_adv_ms;
+    while (k_uptime_get() < close_ms) {
+        struct uwb_wake_claim_frame claim;
+        uint8_t frame[MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN];
+        size_t frame_len = 0u;
+        int64_t remaining_ms = close_ms - k_uptime_get();
+        uint16_t remaining_u16 = delay_ms_to_u16(remaining_ms);
+
+        ret = uwb_clicker_build_wake_claim(&session,
+                                           clicker_priority_id(event_seq,
+                                                               session.attempt_index),
+                                           remaining_u16,
+                                           remaining_u16,
+                                           mesh_route_wake_claimed_duration_ms(
+                                               remaining_u16,
+                                               &wake_train_config),
+                                           &claim);
+        if (ret != PROTO_OK) {
+            status_debug_note("DBG_WAKE_TRAIN_BUILD_FAIL\n");
+            LOG_WRN("mesh route UWB WAKE_CLAIM build failed: target=0x%016llx proto_ret=%d",
+                    (unsigned long long)target_id,
+                    ret);
+            ret = -EINVAL;
+            break;
+        }
+
+        ret = uwb_encode_wake_claim(&claim,
+                                    frame,
+                                    sizeof(frame),
+                                    &frame_len);
+        if (ret != PROTO_OK) {
+            status_debug_note("DBG_WAKE_TRAIN_ENCODE_FAIL\n");
+            LOG_WRN("mesh route UWB WAKE_CLAIM encode failed: target=0x%016llx proto_ret=%d",
+                    (unsigned long long)target_id,
+                    ret);
+            ret = -EINVAL;
+            break;
+        }
+
+        if (embed_route &&
+            frame_len + route_suffix_len <= sizeof(frame) &&
+            k_uptime_get() < close_ms) {
+            memcpy(&frame[frame_len], route_suffix, route_suffix_len);
+            frame_len += route_suffix_len;
+            ret = dwm3000_driver_send_frame(frame,
+                                            frame_len,
+                                            wake_train_config.control_tx_timeout_ms);
+            if (ret < 0) {
+                status_debug_note("DBG_EMBEDDED_ROUTE_REQ_TX_FAIL\n");
+                LOG_WRN("mesh route embedded WAKE_CLAIM send failed: target=0x%016llx sent=%u embedded=%u ret=%d frame_len=%u",
+                        (unsigned long long)target_id,
+                        sent_count,
+                        embedded_count,
+                        ret,
+                        (unsigned int)frame_len);
+                break;
+            }
+            status_debug_note("DBG_EMBEDDED_ROUTE_REQ_TX\n");
+            status_debug_tx_wake_claim_sent_pulse();
+            sent_count++;
+            embedded_count++;
+            HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
+            uwb_clicker_note_wake_claim_tx(&session, 1u);
+        }
+
+        if (k_uptime_get() >= close_ms) {
+            continue;
+        }
+
+        ret = uwb_encode_wake_claim(&claim,
+                                    frame,
+                                    sizeof(frame),
+                                    &frame_len);
+        if (ret != PROTO_OK) {
+            status_debug_note("DBG_WAKE_TRAIN_ENCODE_FAIL\n");
+            LOG_WRN("mesh route plain WAKE_CLAIM encode failed: target=0x%016llx proto_ret=%d",
+                    (unsigned long long)target_id,
+                    ret);
+            ret = -EINVAL;
+            break;
+        }
+        if (sent_count == 0u) {
+            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_BEGIN\n");
+        }
+        ret = dwm3000_driver_send_frame(frame,
+                                        frame_len,
+                                        wake_train_config.control_tx_timeout_ms);
+        if (ret < 0) {
+            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_FAIL\n");
+            LOG_WRN("mesh route plain WAKE_CLAIM send failed: target=0x%016llx sent=%u ret=%d frame_len=%u",
+                    (unsigned long long)target_id,
+                    sent_count,
+                    ret,
+                    (unsigned int)frame_len);
+            break;
+        }
+        if (sent_count == 0u) {
+            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_OK\n");
+        }
+        status_debug_tx_wake_claim_sent_pulse();
+        sent_count++;
+        HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
+        uwb_clicker_note_wake_claim_tx(&session, 1u);
+
+        if (k_uptime_get() < close_ms) {
+            uint32_t jitter_us = uwb_clicker_wake_claim_jitter_us(sys_rand32_get());
+            int64_t remaining_after_tx_ms = close_ms - k_uptime_get();
+
+            if (jitter_us > 0u && remaining_after_tx_ms > 0) {
+                k_busy_wait(jitter_us);
+            }
+        }
+    }
+
+out:
+    (void)dwm3000_driver_standby();
+    radio_guard_uwb_stop();
+
+    if (ret < 0) {
+        stage1_led_result(STAGE1_LED_RESULT_ERROR);
+        high_debug_log_event("MESH_CH5_WAKE_TX",
+                             "phase=fail target=0x%016llx event_seq=%u ret=%d wake_claims=%u embedded=%u reason=%s",
+                             (unsigned long long)target_id,
+                             event_seq,
+                             ret,
+                             sent_count,
+                             embedded_count,
+                             reason == NULL ? "route" : reason);
+        LOG_WRN("mesh route channel-5 wake train failed: target=0x%016llx ret=%d wake_claims=%u embedded=%u reason=%s",
+                (unsigned long long)target_id,
+                ret,
+                sent_count,
+                embedded_count,
+                reason == NULL ? "route" : reason);
+        return ret;
+    }
+    if (embedded_sent != NULL) {
+        *embedded_sent = embedded_count > 0u;
+    }
+    stage1_led_result(sent_count == 0u ?
+                      STAGE1_LED_RESULT_TIMEOUT :
+                      STAGE1_LED_RESULT_OK);
     high_debug_log_event("MESH_CH5_WAKE_TX",
-                         "phase=done target=0x%016llx event_seq=%u ret=%d wake_claims=%u reason=%s",
+                         "phase=done target=0x%016llx event_seq=%u ret=%d wake_claims=%u embedded=%u reason=%s",
                          (unsigned long long)target_id,
                          event_seq,
-                         ret,
+                         sent_count == 0u ? -ETIMEDOUT : 0,
                          session.diagnostics.wake_claim_tx_count,
+                         embedded_count,
                          reason == NULL ? "route" : reason);
-    LOG_INF("mesh route channel-5 wake train complete: target=0x%016llx ret=%d wake_claims=%u reason=%s",
+    LOG_INF("mesh route channel-5 wake train complete: target=0x%016llx ret=%d wake_claims=%u embedded=%u reason=%s",
             (unsigned long long)target_id,
-            ret,
-            session.diagnostics.wake_claim_tx_count,
+            sent_count == 0u ? -ETIMEDOUT : 0,
+            sent_count,
+            embedded_count,
             reason == NULL ? "route" : reason);
-    return ret;
+    return sent_count == 0u ? -ETIMEDOUT : 0;
 }
 
 static int mesh_listen_for_route_reply(uint64_t target_id,
@@ -2757,6 +3279,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
 {
     struct mesh_outbound route_req;
     uint32_t now_ms = k_uptime_get_32();
+    bool embedded_route_sent = false;
     int ret;
 
     if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
@@ -2794,7 +3317,10 @@ int mesh_request_route(uint64_t target_id, const char *reason)
             mesh_runtime.route_discovery.attempts,
             mesh_runtime.route_discovery.next_request_ms,
             reason);
-    ret = mesh_send_route_wake_train(target_id, reason);
+    ret = mesh_send_route_wake_train(target_id,
+                                     &route_req,
+                                     &embedded_route_sent,
+                                     reason);
     if (ret < 0) {
         LOG_WRN("mesh route discovery wake train failed: target=0x%016llx attempt=%u ret=%d reason=%s",
                 (unsigned long long)target_id,
@@ -2804,6 +3330,43 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         mesh_restart_role_scan();
         mesh_schedule_route_waiting_retry(reason);
         return ret;
+    }
+    if (embedded_route_sent) {
+        bool route_reply_captured = false;
+        int listen_ret;
+
+        high_debug_log_event("MESH_ROUTE_REQ_TX",
+                             "phase=embedded-listen target=0x%016llx attempt=%u reason=%s",
+                             (unsigned long long)target_id,
+                             mesh_runtime.route_discovery.attempts,
+                             reason == NULL ? "route" : reason);
+        listen_ret = mesh_listen_for_route_reply(target_id,
+                                                 "embedded-route-request",
+                                                 &route_reply_captured);
+        if (route_reply_captured) {
+            status_debug_note("DBG_EMBEDDED_ROUTE_REQ_SKIP_FALLBACK\n");
+            high_debug_log_event("MESH_ROUTE_REQ_TX",
+                                 "phase=embedded-reply target=0x%016llx attempt=%u reason=%s",
+                                 (unsigned long long)target_id,
+                                 mesh_runtime.route_discovery.attempts,
+                                 reason == NULL ? "route" : reason);
+            mesh_route_reply_handoff_after_capture(target_id, reason);
+            return 0;
+        }
+        if (listen_ret < 0 && listen_ret != -ETIMEDOUT) {
+            LOG_WRN("mesh embedded route reply listen failed: target=0x%016llx attempt=%u ret=%d reason=%s",
+                    (unsigned long long)target_id,
+                    mesh_runtime.route_discovery.attempts,
+                    listen_ret,
+                    reason == NULL ? "route" : reason);
+        }
+        status_debug_note("DBG_EMBEDDED_ROUTE_REQ_FALLBACK\n");
+        high_debug_log_event("MESH_ROUTE_REQ_TX",
+                             "phase=embedded-fallback target=0x%016llx attempt=%u listen_ret=%d reason=%s",
+                             (unsigned long long)target_id,
+                             mesh_runtime.route_discovery.attempts,
+                             listen_ret,
+                             reason == NULL ? "route" : reason);
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         high_debug_log_event("MESH_ROUTE_REQ_TX",
@@ -2848,21 +3411,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                     reason == NULL ? "route" : reason);
         }
         if (route_reply_captured) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_note("DBG_ROUTE_REPLY_HANDOFF\n");
-            }
-            mesh_route_reply_handoff_begin();
-            if (!mesh_ch9_tx_pending.active &&
-                !mesh_relay_tx_active(&mesh_runtime)) {
-                (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
-                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                    status_debug_note("DBG_ROUTE_REPLY_CANCEL_RETRY\n");
-                }
-            }
-            LOG_INF("mesh route reply captured; waiting for queued route processing: target=0x%016llx attempt=%u reason=%s",
-                    (unsigned long long)target_id,
-                    mesh_runtime.route_discovery.attempts,
-                    reason == NULL ? "route" : reason);
+            mesh_route_reply_handoff_after_capture(target_id, reason);
         } else {
             mesh_schedule_route_waiting_retry(reason);
         }
@@ -2911,7 +3460,9 @@ static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *r
     }
 
     memset(requirements, 0, sizeof(*requirements));
-    requirements->retune_guard_ms = MESH_EVENT_DEFAULT_GUARD_MS;
+    requirements->retune_guard_ms = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
+                                    MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS :
+                                    MESH_EVENT_DEFAULT_GUARD_MS;
     if (DEVICE_ROLE == ROLE_ANCHOR) {
         now_ms = k_uptime_get_32();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
@@ -3087,7 +3638,7 @@ static int mesh_send_event_control(uint64_t peer_id,
             status_debug_note("DBG_EVENT_LOCAL_TIMING_INSTALLED\n");
         }
         mesh_schedule_uwb_rx(uptime_ms_until_deadline(k_uptime_get_32(),
-                                                      mesh_event_guard_start_ms(&local_timing)));
+                                                      mesh_channel9_prepare_start_ms(&local_timing)));
     }
     return 0;
 }
@@ -3244,7 +3795,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         }
         if (use_active_timing) {
             mesh_schedule_uwb_rx(uptime_ms_until_deadline(k_uptime_get_32(),
-                                                          mesh_event_guard_start_ms(&timing)));
+                                                          mesh_channel9_prepare_start_ms(&timing)));
             return true;
         }
     } else if (packet->msg_type == MSG_MESH_EVENT_ACCEPT) {
@@ -3262,7 +3813,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
     }
 
     mesh_schedule_uwb_rx(uptime_ms_until_deadline(k_uptime_get_32(),
-                                                  mesh_event_guard_start_ms(&timing)));
+                                                  mesh_channel9_prepare_start_ms(&timing)));
     if (mesh_gateway_route_test_role() &&
         packet->msg_type == MSG_MESH_EVENT_PROPOSE) {
         mesh_gateway_route_test_clear_preempt(previous_hop_id,
@@ -4347,6 +4898,7 @@ after_gateway_ack:
         (void)mesh_send_outbound(&result->route_request, "route-request-forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
+        mesh_route_embedded_wait_before_reply(&result->route_reply);
         if (mesh_send_route_reply_train(&result->route_reply) == 0 &&
             mesh_id_is_unicast(result->route_reply.next_hop_id)) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -4844,13 +5396,22 @@ static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
                                             uint8_t link_quality)
 {
     struct uwb_wake_claim_frame claim;
+    bool embedded_route_frame = false;
     int ret;
 
     if (frame == NULL || frame_len == 0u) {
         return false;
     }
 
-    ret = uwb_decode_wake_claim(frame, frame_len, &claim);
+    if (frame_len == UWB_WAKE_CLAIM_LEN) {
+        ret = uwb_decode_wake_claim(frame, frame_len, &claim);
+    } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+               frame_len > UWB_WAKE_CLAIM_LEN) {
+        ret = uwb_decode_wake_claim(frame, UWB_WAKE_CLAIM_LEN, &claim);
+        embedded_route_frame = ret == PROTO_OK;
+    } else {
+        ret = PROTO_ERR_MALFORMED;
+    }
     if (ret != PROTO_OK) {
         return false;
     }
@@ -4873,6 +5434,12 @@ static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
             claim.attempt_index,
             link_quality,
             role_name());
+    if (embedded_route_frame) {
+        (void)mesh_queue_embedded_route_request(&claim,
+                                                &frame[UWB_WAKE_CLAIM_LEN],
+                                                frame_len - UWB_WAKE_CLAIM_LEN,
+                                                link_quality);
+    }
     return true;
 }
 
@@ -5088,7 +5655,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             status_debug_printf("DBG_CH9_RX_EARLY_ARM now=%u start=%u guard=%u\n",
                                 k_uptime_get_32(),
                                 channel9_plan.start_ms,
-                                MESH_EVENT_DEFAULT_GUARD_MS);
+                                MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS);
         } else {
             mesh_wait_until_ms(channel9_plan.start_ms);
         }

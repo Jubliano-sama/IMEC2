@@ -58,6 +58,8 @@ Flash the exact build directory for the image you intend to program; do not rely
 
 For deterministic ML anchors, replace `build/ml-anchor-1` with the anchor image being programmed, such as `build/ml-anchor-2` through `build/ml-anchor-8`.
 
+Flashing at 4MHz has been proven to work, if a flash fails, assume the cabling is at fault and do not reduce flash speed.
+
 ## Coding Style & Naming Conventions
 
 Code is C using Zephyr conventions: 4-space indentation, braces on the same line for functions/control blocks, and `snake_case` for functions and variables. Do not add project-wide prefixes such as `IMEC_` to new identifiers; use descriptive module-scoped names and the existing protocol/route/status naming style. Keep hardware-independent logic in `firmware/src`; keep Zephyr, GPIO, BLE, and SPI code in `firmware/app`.
@@ -68,7 +70,7 @@ Add native tests for protocol/state behavior before relying on hardware. Keep te
 
 ## Commit & Pull Request Guidelines
 
-This workspace has no repo-level Git history available, so use clear imperative commit subjects, for example `Add BLE-gated anchor ranging MVP`. PRs should include a short summary, affected roles (`clicker`, `anchor`, `gateway`), test/build commands run, and any hardware assumptions or smoke-test gaps.
+Use clear imperative commit subjects, for example `Add BLE-gated anchor ranging MVP`. PRs should include a short summary, affected roles (`clicker`, `anchor`, `gateway`), test/build commands run, and any hardware assumptions or smoke-test gaps. After a bug is fixed, always commit your work, even if the bug is only partially fixed.
 
 ## Agent-Specific Instructions
 
