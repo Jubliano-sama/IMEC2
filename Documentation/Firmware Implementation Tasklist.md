@@ -52,6 +52,43 @@ This tasklist prioritizes the DWM3000 IMEC Clicker/Anchor/Gateway firmware work.
 | Completed | Implement anchor heartbeat reporting | `CMD_START_HEARTBEAT`/`CMD_STOP_HEARTBEAT` control a periodic `MSG_ANCHOR_HEARTBEAT` path with UWB health status bits, route TLVs, gateway ACK, and deferral behind active click epochs or tracked mesh TX |
 | Completed | Implement COBS USB serial gateway output | Binary gateway packets and command failures emitted over USB CDC |
 
+### MeshSpec Implementation Checklist
+
+This checklist tracks implementation progress against `Documentation/MeshSpec.md` without modifying that spec. Status is code-and-test oriented; `Partial` means at least one path exists, but the full spec behavior or coverage is not complete yet.
+
+| Status | MeshSpec item | Current evidence / next output |
+| --- | --- | --- |
+| Completed | Terminology and protocol constants | `flood_epoch`, `collection_epoch`, C5 contact, channel-9 event, relay capacity, route reply ACK, and collection constants are defined in the protocol/relay layer |
+| Completed | Protocol fields and message types | Route solicitation/reply/ACK, gateway route advertisement, relay busy/result busy, command flood fields, command result identity, result offer/grant, result bundle, and collection EACK TLVs have native round-trip coverage |
+| Completed | Parent candidate/capacity data model | Route candidates carry hop-first cost, channel-9 timing validity, capacity state, queue hint, channel-9 busy hint, and capacity validity timing; expired capacity becomes `RELAY_CAP_UNKNOWN` without deleting route truth |
+| Completed | Bounded same-event route discovery | Route solicit uses one origin/request/flood identity, preserves that identity through relays, and no-route relays do not create child discoveries for the same gateway target |
+| Completed | Route reply ACK path | Route replies carry nonce/metric CRC, use `ROUTE_REPLY_ACK`, retry the reverse path, and can fall back to backup reverse-path metadata |
+| Completed | Gateway route advertisement | Gateway route advertisement floods seed parent candidates using bounded flood identity and duplicate suppression |
+| Completed | Relay capacity and busy responses | `RELAY_CAP_UNKNOWN/GREEN/YELLOW/RED/BLACK`, `RELAY_BUSY`, `RESULT_BUSY`, retry-after, alternate-parent, and capacity-validity fields are implemented and tested |
+| Completed | All-node command scope and collection fields | Gateway command options parse group/all-registered/all-heard scopes, response mode, flood identity, command sequence, collection epoch, membership, expiry, and collection slot seed |
+| Completed | Gateway collection state and EACK | Gateway collection start, result dedupe, EACK payloads, missing/received status, and collection-open state have native coverage |
+| Completed | Result bundling at gateway and relays | Gateway accepts/dedupes `MSG_RESULT_BUNDLE`; relays now queue small collection results, custody-ACK after local storage, flush on hold deadline or queue fill, send bundles over channel 9, and retain custody until outbound handoff succeeds |
+| Completed | Channel-9 finite event states | Channel-9 event state excludes gateway-ACK/EACK wait states and closes on complete, busy/retry-later, expiry, or C5 preemption |
+| Completed | C5 contact state model | App-level C5 contact state tracks peer, purpose, accepted exchange, last frame, and expiry, so accepted exchanges do not require a full wake train before every individual frame |
+| Partial | Sleeping-peer wake train audit for all C5 control paths | Route replies and mesh route-test contact paths use the existing UWB wake train/wake-claim mechanism; remaining generic command/collection flood paths still need a targeted audit and tests |
+| Partial | Collection result source persistence/retry schedule | Gateway collection/EACK exists and relay custody state exists; source-side persistent outbox, retry rounds, missing-EACK behavior, and stop-after-EACK still need complete code and tests |
+| Partial | Result offer/grant large-result flow | Result offer/grant/busy exists and large command results start with an offer; full storage-backed custody reservation and multi-hop collection retry behavior still need broader coverage |
+| Partial | Telemetry coverage | C5/C9 preemption and timing diagnostics exist; flood suppression, collection pending count, result duplicates, route reply retries, busy responses, and parent hold-downs need a consolidated status surface |
+| Partial | Spec failure-mode tests | Cold mesh, duplicate route identity, relay busy, duplicate command/result, capacity expiry, channel-9 local completion with later gateway ACK, and bundle dedupe have coverage; dense flood, all-node collection spread, missing EACK, and click-service preemption during collection still need focused tests |
+
+Current focused verification for MeshSpec relay bundling:
+
+- `git diff --check`
+- `cmake --build firmware/build`
+- `ctest --test-dir firmware/build --output-on-failure`
+- `cmake --build build/firmware-gateway`
+- `cmake --build build/firmware-anchor`
+- `cmake --build build/firmware-clicker`
+- `cmake --build build/mesh-gateway`
+- `cmake --build build/mesh-transmitter`
+- `cmake --build build/mesh-anchor-1`
+- `cmake --build build/ml-anchor-1`
+
 ### Packet-Age and Survey-Discovery Refactor
 
 | Status | Task | Output |
