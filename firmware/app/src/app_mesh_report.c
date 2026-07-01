@@ -2307,6 +2307,16 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
             }
 
             if (mesh_handle_channel5_wake_claim(frame, frame_len, quality)) {
+                uint32_t preempted_at_ms = k_uptime_get_32();
+
+                deadline_ms = preempted_at_ms + RREP_ACK_TIMEOUT_MS;
+                status_debug_note("DBG_ROUTE_REPLY_ACK_PREEMPT_EXTEND\n");
+                high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                                     "phase=c5-preempt-click next=0x%016llx seq=%u attempt=%u extended_deadline=%u",
+                                     (unsigned long long)route_reply->next_hop_id,
+                                     route_reply->packet.seq,
+                                     attempt,
+                                     deadline_ms);
                 continue;
             }
 
@@ -3493,6 +3503,15 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
 
             status_debug_note("DBG_ROUTE_REPLY_RX_FRAME\n");
             if (mesh_handle_channel5_wake_claim(frame, frame_len, quality)) {
+                uint32_t preempted_at_ms = k_uptime_get_32();
+
+                deadline_ms = preempted_at_ms + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS;
+                status_debug_note("DBG_ROUTE_REPLY_RX_PREEMPT_EXTEND\n");
+                high_debug_log_event("MESH_ROUTE_REPLY_RX",
+                                     "phase=c5-preempt-click target=0x%016llx extended_deadline=%u reason=%s",
+                                     (unsigned long long)target_id,
+                                     deadline_ms,
+                                     reason == NULL ? "route" : reason);
                 continue;
             }
             ret = uwb_mesh_frame_decode(frame,

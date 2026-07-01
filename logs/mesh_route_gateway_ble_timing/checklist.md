@@ -8,13 +8,13 @@
   - Origin attempts use local/regional/global `FLOOD_EPOCH_*_TTL` profiles.
   - Relays preserve origin/request/flood identity across forwards and do not activate child route discovery when they can answer with an existing parent route.
   - Native tests added for TTL escalation, duplicate bounded forwarding, flood identity preservation, and parent-route replies without child discovery.
-- [ ] Add hop-by-hop route reply ACK, backup reverse path retry, and preemption-aware waits.
+- [x] Add hop-by-hop route reply ACK, backup reverse path retry, and preemption-aware waits.
   - Implemented `MSG_ROUTE_REPLY_ACK` with `TLV_REPLY_NONCE` and `TLV_METRIC_CRC`; route replies now carry both fields, receivers emit a channel-5 hop-local ACK after accepting a valid route reply, and duplicate route replies re-emit the ACK so lost ACKs can recover.
   - App route-reply TX now waits up to `RREP_ACK_TIMEOUT_MS` and retries through `RREP_RETRY_COUNT_PER_HOP` before declaring the reverse-hop reply failed.
   - Native relay test covers intermediate relay ACK, origin ACK, ACK payload matching, and ACK parsing back at the sender.
   - Implemented backup reverse-path retry: when the reverse route table has an alternate downlink to the route origin, the relay result exposes a backup next hop, and the app retries the same route reply through that backup only after the primary hop exhausts its ACK retry budget.
   - Native relay test covers both responder and intermediate-relay backup next-hop exposure while preserving the best-hop first send.
-  - Route reply waits must extend or pause when preempted by active click service or required channel-5 wake scan.
+  - Route-reply RX and route-reply ACK waits now extend their deadline when a valid channel-5 wake claim is handled during the wait; because both waits are already continuous channel-5 receive windows, required quick channel-5 wake scanning is not skipped while they are active.
 - [x] Promote parent candidates from route-table compatibility to explicit `PARENT_CANDIDATE_COUNT` behavior.
   - Upstream route candidates are now capped by `PARENT_CANDIDATE_COUNT`, normalized with the MeshSpec route-cost calculation, and replaced by keeping the best candidates rather than returning no-space when a better parent appears.
   - Route selection preserves the existing route-cost/link-quality behavior, then applies MeshSpec parent hints: active hold-down exclusion, valid channel-9 timing, relay capacity state, most recent gateway-ACK success, and lower next-hop ID.
