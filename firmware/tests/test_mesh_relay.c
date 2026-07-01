@@ -1413,6 +1413,9 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     struct mesh_relay_result result_a;
     struct mesh_relay_result result_b;
     struct mesh_relay_result duplicate_result;
+    struct mesh_relay_result next_adv_result;
+    struct mesh_outbound equivalent_adv;
+    struct mesh_outbound next_adv;
     const struct route_candidate *selected;
     uint32_t flood_epoch_id;
     uint32_t slot_seed;
@@ -1493,6 +1496,32 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(duplicate_result.status == PROTO_ERR_STALE);
     assert(has_action(&duplicate_result, MESH_RELAY_ACTION_DROP));
     assert(!has_action(&duplicate_result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+
+    equivalent_adv = adv;
+    equivalent_adv.packet.seq++;
+    assert(mesh_relay_handle_rx(&anchor_a,
+                                &equivalent_adv.packet,
+                                equivalent_adv.payload,
+                                equivalent_adv.payload_len,
+                                GATEWAY,
+                                82u,
+                                1025u,
+                                &duplicate_result) == PROTO_OK);
+    assert(duplicate_result.status == PROTO_ERR_STALE);
+    assert(has_action(&duplicate_result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&duplicate_result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+
+    assert(mesh_relay_build_gateway_route_adv(&gateway, 78u, 1026u, &next_adv) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&anchor_a,
+                                &next_adv.packet,
+                                next_adv.payload,
+                                next_adv.payload_len,
+                                GATEWAY,
+                                82u,
+                                1027u,
+                                &next_adv_result) == PROTO_OK);
+    assert(next_adv_result.status == PROTO_OK);
+    assert(has_action(&next_adv_result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
 
     assert(mesh_relay_handle_rx(&anchor_b,
                                 &result_a.gateway_route_adv.packet,

@@ -549,6 +549,24 @@ static bool duplicate_tracked(const struct proto_packet *packet)
     return true;
 }
 
+static bool duplicate_matches_packet(const struct mesh_duplicate_entry *entry,
+                                     const struct proto_packet *packet)
+{
+    if (!entry->valid ||
+        entry->msg_type != packet->msg_type ||
+        entry->src_id != packet->src_id ||
+        entry->dst_id != packet->dst_id ||
+        entry->session_id != packet->session_id) {
+        return false;
+    }
+
+    if (packet->msg_type == MSG_GATEWAY_ROUTE_ADV) {
+        return true;
+    }
+
+    return entry->seq == packet->seq;
+}
+
 static void duplicate_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry;
@@ -574,12 +592,7 @@ static bool duplicate_seen(struct mesh_relay *relay,
     duplicate_expire_stale(relay, now_ms);
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
-        if (entry->valid &&
-            entry->msg_type == packet->msg_type &&
-            entry->src_id == packet->src_id &&
-            entry->dst_id == packet->dst_id &&
-            entry->session_id == packet->session_id &&
-            entry->seq == packet->seq) {
+        if (duplicate_matches_packet(entry, packet)) {
             return true;
         }
     }
