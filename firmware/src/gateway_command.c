@@ -399,7 +399,7 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
         return PROTO_ERR_ARG;
     }
 
-    session_id = host_packet->session_id;
+    session_id = options.flood_required ? options.command_seq : host_packet->session_id;
     if (session_id == 0u) {
         session_id = now_ms == 0u ? 1u : now_ms;
     }

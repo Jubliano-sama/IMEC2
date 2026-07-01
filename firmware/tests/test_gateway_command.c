@@ -259,7 +259,7 @@ static void test_prepare_outbound_accepts_all_registered_command_flood(void)
     assert(command_id == CMD_GET_STATUS);
     assert(out.packet.src_id == GATEWAY_ID_TEST);
     assert(out.packet.dst_id == MESH_BROADCAST_ID);
-    assert(out.packet.session_id == 1234u);
+    assert(out.packet.session_id == 1001u);
     assert(out.packet.seq == 9u);
     assert(out.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
     assert(out.packet.flags == FLAG_DIAGNOSTIC);

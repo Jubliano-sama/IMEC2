@@ -513,11 +513,12 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
     struct mesh_relay_result result;
     uint8_t payload[96];
     size_t payload_len = 0u;
+    struct proto_packet duplicate_packet;
     struct proto_packet packet = {
         .msg_type = MSG_COMMAND,
         .src_id = GATEWAY,
         .dst_id = MESH_BROADCAST_ID,
-        .session_id = 0x1234567Au,
+        .session_id = 1001u,
         .seq = 13u,
         .ttl = 3u,
     };
@@ -589,8 +590,10 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
     assert(result.forward.payload_len == payload_len);
     assert(memcmp(result.forward.payload, payload, payload_len) == 0);
 
+    duplicate_packet = packet;
+    duplicate_packet.seq = 99u;
     assert(mesh_relay_handle_rx(&relay,
-                                &packet,
+                                &duplicate_packet,
                                 payload,
                                 payload_len,
                                 GATEWAY,

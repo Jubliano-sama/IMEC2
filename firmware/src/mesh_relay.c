@@ -563,8 +563,19 @@ static bool duplicate_matches_packet(const struct mesh_duplicate_entry *entry,
     if (packet->msg_type == MSG_GATEWAY_ROUTE_ADV) {
         return true;
     }
+    if (packet->msg_type == MSG_COMMAND && packet->dst_id == MESH_BROADCAST_ID) {
+        return true;
+    }
 
     return entry->seq == packet->seq;
+}
+
+static uint32_t duplicate_window_ms(const struct mesh_duplicate_entry *entry)
+{
+    if (entry->msg_type == MSG_COMMAND && entry->dst_id == MESH_BROADCAST_ID) {
+        return COMMAND_RESULT_EXPIRY_DEFAULT_S * 1000u;
+    }
+    return ROUTE_DEDUP_WINDOW_MS;
 }
 
 static void duplicate_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
@@ -573,7 +584,8 @@ static void duplicate_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
 
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
-        if (entry->valid && (uint32_t)(now_ms - entry->last_seen_ms) > ROUTE_DEDUP_WINDOW_MS) {
+        if (entry->valid &&
+            (uint32_t)(now_ms - entry->last_seen_ms) > duplicate_window_ms(entry)) {
             entry->valid = false;
         }
     }
