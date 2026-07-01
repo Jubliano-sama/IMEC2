@@ -51,7 +51,8 @@
   - Added MeshSpec command scope, response mode, and collection EACK format enums plus TLVs for command scope, response mode, membership/expected count, execute delay, command expiry, collection slot seed, result sequence, payload length, and payload CRC.
   - Gateway command parsing now defaults old commands to single-node/small-result behavior, accepts explicit all-node command floods only with command/flood identity, and requires collection identity when responses are expected.
   - Native gateway-command tests cover default single-node behavior, rejection of unscoped broadcast commands, acceptance of all-registered command-flood metadata, and rejection of response floods missing collection identity.
-  - Remaining gap: hashed result spread, persistent result state, gateway EACK/missing reports, result offer/grant, command flood forwarding/execution, and relay result bundling.
+  - Relay broadcast handling now forwards only explicit non-single `MSG_COMMAND` floods with valid flood/collection metadata; unscoped broadcast commands still deliver locally without flooding, and duplicates are suppressed.
+  - Remaining gap: hashed result spread, persistent result state, gateway EACK/missing reports, result offer/grant, command execution dedupe policy, and relay result bundling.
 - [ ] Optimize channel-9 RX arrival time immediately after event negotiation.
   - Current RTT evidence shows expected packets are observed about 44 ms after RX slot start.
   - Verify whether this is true packet start time or receive-complete/host-processing timestamp.

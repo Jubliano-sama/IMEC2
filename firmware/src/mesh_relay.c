@@ -1105,16 +1105,92 @@ static bool packet_requires_channel9_payload_event(const struct proto_packet *pa
     }
 }
 
+static bool tlv_u32_nonzero(const uint8_t *payload, size_t payload_len, uint8_t type)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    return tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK &&
+           value_len == sizeof(uint32_t) &&
+           proto_get_u32_le(value) != 0u;
+}
+
+static bool tlv_u16_nonzero(const uint8_t *payload, size_t payload_len, uint8_t type)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    return tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK &&
+           value_len == sizeof(uint16_t) &&
+           proto_get_u16_le(value) != 0u;
+}
+
+static bool command_flood_broadcast_valid(const uint8_t *payload, size_t payload_len)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    uint8_t scope;
+    uint8_t response_mode = CMD_RESPONSE_SMALL_RESULT;
+    int ret;
+
+    ret = tlv_find(payload, payload_len, TLV_COMMAND_SCOPE, &value, &value_len);
+    if (ret != PROTO_OK || value_len != sizeof(uint8_t)) {
+        return false;
+    }
+    scope = value[0];
+    if (scope == CMD_SCOPE_SINGLE_NODE ||
+        (scope != CMD_SCOPE_GROUP &&
+         scope != CMD_SCOPE_ALL_REGISTERED &&
+         scope != CMD_SCOPE_ALL_HEARD)) {
+        return false;
+    }
+
+    ret = tlv_find(payload, payload_len, TLV_COMMAND_RESPONSE_MODE, &value, &value_len);
+    if (ret == PROTO_OK) {
+        if (value_len != sizeof(uint8_t)) {
+            return false;
+        }
+        response_mode = value[0];
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return false;
+    }
+    if (response_mode != CMD_RESPONSE_NONE &&
+        response_mode != CMD_RESPONSE_ACK_ONLY &&
+        response_mode != CMD_RESPONSE_SMALL_RESULT &&
+        response_mode != CMD_RESPONSE_LARGE_RESULT) {
+        return false;
+    }
+
+    if (!tlv_u32_nonzero(payload, payload_len, TLV_COMMAND_SEQ) ||
+        !tlv_u32_nonzero(payload, payload_len, TLV_FLOOD_EPOCH_ID)) {
+        return false;
+    }
+    if (scope == CMD_SCOPE_ALL_REGISTERED &&
+        (!tlv_u16_nonzero(payload, payload_len, TLV_MEMBERSHIP_EPOCH) ||
+         !tlv_u16_nonzero(payload, payload_len, TLV_EXPECTED_NODE_COUNT))) {
+        return false;
+    }
+    if (response_mode != CMD_RESPONSE_NONE &&
+        (!tlv_u32_nonzero(payload, payload_len, TLV_COLLECTION_EPOCH_ID) ||
+         !tlv_u32_nonzero(payload, payload_len, TLV_COLLECTION_SLOT_SEED))) {
+        return false;
+    }
+
+    return true;
+}
+
 static bool broadcast_packet_needs_forward(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len)
 {
-    (void)payload;
-    (void)payload_len;
-
-    return packet->dst_id == MESH_BROADCAST_ID &&
-           packet->ttl > 0u &&
-           packet->msg_type == MSG_SURVEY_DISCOVERY_START;
+    if (packet->dst_id != MESH_BROADCAST_ID || packet->ttl == 0u) {
+        return false;
+    }
+    if (packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
+        return true;
+    }
+    return packet->msg_type == MSG_COMMAND &&
+           command_flood_broadcast_valid(payload, payload_len);
 }
 
 static int build_broadcast_forward(const struct proto_packet *packet,
@@ -1133,6 +1209,7 @@ static int build_broadcast_forward(const struct proto_packet *packet,
     }
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     return PROTO_OK;
 }
 

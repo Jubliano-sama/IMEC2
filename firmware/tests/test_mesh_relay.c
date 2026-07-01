@@ -507,6 +507,102 @@ static void test_broadcast_command_delivers_without_flooding(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
+static void test_command_flood_broadcast_delivers_and_forwards_once(void)
+{
+    struct mesh_relay relay;
+    struct mesh_relay_result result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 0x1234567Au,
+        .seq = 13u,
+        .ttl = 3u,
+    };
+
+    assert(mesh_append_command_id(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  CMD_GET_STATUS) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_SMALL_RESULT) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MEMBERSHIP_EPOCH,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_COUNT,
+                          12u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          3003u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_SLOT_SEED,
+                          4004u) == PROTO_OK);
+    packet.payload_len = (uint8_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                GATEWAY,
+                                80u,
+                                3020u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(result.forward.next_hop_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.msg_type == MSG_COMMAND);
+    assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
+    assert(result.forward.packet.ttl == 2u);
+    assert(result.forward.payload_len == payload_len);
+    assert(memcmp(result.forward.payload, payload, payload_len) == 0);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                GATEWAY,
+                                80u,
+                                3030u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+}
+
 static void test_busy_survey_discovery_broadcast_still_forwards(void)
 {
     struct mesh_relay relay;
@@ -3112,6 +3208,7 @@ int main(void)
     test_legacy_route_beacons_are_dropped();
     test_survey_discovery_broadcast_delivers_and_floods();
     test_broadcast_command_delivers_without_flooding();
+    test_command_flood_broadcast_delivers_and_forwards_once();
     test_busy_survey_discovery_broadcast_still_forwards();
     test_downlink_routes_survive_age_until_delivery_failure();
     test_downlink_route_selection_uses_weighted_quality();
