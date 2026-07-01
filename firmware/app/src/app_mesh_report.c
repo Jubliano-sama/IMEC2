@@ -42,6 +42,7 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_CH9_DATA_RATE_BPS 850000u
 #define MESH_CH9_PHY_OVERHEAD_US 1500u
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
+#define MESH_CH9_TX_CONFIG_GUARD_MS 25u
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
 #define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS 20u
 #define MESH_EVENT_CONTROL_CH5_AIRTIME_MS 10u
@@ -3040,6 +3041,17 @@ static uint32_t mesh_ch9_slot_send_start_ms(const struct mesh_outbound *out,
     return now_ms;
 }
 
+static uint32_t mesh_ch9_effective_send_start_ms(const struct mesh_outbound *out,
+                                                 const struct mesh_event_plan *plan,
+                                                 uint32_t now_ms)
+{
+    uint32_t send_start_ms = mesh_ch9_slot_send_start_ms(out, plan, now_ms);
+    uint32_t config_ready_ms = now_ms + MESH_CH9_TX_CONFIG_GUARD_MS;
+
+    return uptime_deadline_reached(send_start_ms, config_ready_ms) ?
+           send_start_ms : config_ready_ms;
+}
+
 static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
                                   const struct mesh_event_plan *plan,
                                   uint32_t now_ms,
@@ -3047,6 +3059,7 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
 {
     uint32_t needed_ms;
     uint32_t available_ms;
+    uint32_t effective_send_start_ms;
 
     if (out == NULL || plan == NULL || out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
         return true;
@@ -3054,10 +3067,11 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
 
     needed_ms = mesh_ch9_estimated_tx_ms(mesh_outbound_encoded_frame_len(out)) +
                 MESH_CH9_TX_SLOT_TRAILER_MS;
-    available_ms = uptime_ms_until_deadline(mesh_ch9_slot_send_start_ms(out, plan, now_ms),
-                                            plan->end_ms);
+    effective_send_start_ms = mesh_ch9_effective_send_start_ms(out, plan, now_ms);
+    available_ms = uptime_ms_until_deadline(effective_send_start_ms, plan->end_ms);
     if (required_ms != NULL) {
-        *required_ms = needed_ms;
+        *required_ms = uptime_ms_until_deadline(now_ms, effective_send_start_ms) +
+                       needed_ms;
     }
     return available_ms >= needed_ms;
 }
