@@ -31,13 +31,15 @@ static void assert_command_result_id_equal(const struct command_result_id *actua
 static void make_collection_result_payload(uint8_t *payload,
                                            size_t payload_cap,
                                            size_t *payload_len,
-                                           const struct command_result_id *id)
+                                           const struct command_result_id *id,
+                                           uint32_t collection_epoch_id)
 {
     *payload_len = 0u;
-    assert(command_result_id_append_tlvs(payload,
-                                         payload_cap,
-                                         payload_len,
-                                         id) == PROTO_OK);
+    assert(gateway_command_append_collection_result_identity(payload,
+                                                            payload_cap,
+                                                            payload_len,
+                                                            id,
+                                                            collection_epoch_id) == PROTO_OK);
     assert(mesh_append_command_result(payload,
                                       payload_cap,
                                       payload_len,
@@ -428,6 +430,45 @@ static void test_collection_initial_due_is_deterministic_and_bounded(void)
     assert(due_other != due_a);
 }
 
+static void test_append_collection_result_identity_requires_epoch(void)
+{
+    const struct command_result_id id = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct command_result_id decoded = {0};
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(gateway_command_append_collection_result_identity(payload,
+                                                            sizeof(payload),
+                                                            &payload_len,
+                                                            &id,
+                                                            3003u) == PROTO_OK);
+    assert(command_result_id_from_tlvs(payload, payload_len, &decoded) == PROTO_OK);
+    assert_command_result_id_equal(&decoded, &id);
+    assert(tlv_find(payload,
+                    payload_len,
+                    TLV_COLLECTION_EPOCH_ID,
+                    &value,
+                    &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint32_t));
+    assert(proto_get_u32_le(value) == 3003u);
+
+    payload_len = 0u;
+    assert(gateway_command_append_collection_result_identity(payload,
+                                                            sizeof(payload),
+                                                            &payload_len,
+                                                            &id,
+                                                            0u) == PROTO_ERR_MALFORMED);
+}
+
 static void test_collection_records_unique_results_and_builds_eack(void)
 {
     struct gateway_collection_state collection;
@@ -451,8 +492,8 @@ static void test_collection_records_unique_results_and_builds_eack(void)
 
     id_b.node_id = 0x2222333344445555ull;
     id_b.result_seq = 2u;
-    make_collection_result_payload(payload_a, sizeof(payload_a), &payload_a_len, &id_a);
-    make_collection_result_payload(payload_b, sizeof(payload_b), &payload_b_len, &id_b);
+    make_collection_result_payload(payload_a, sizeof(payload_a), &payload_a_len, &id_a, 3003u);
+    make_collection_result_payload(payload_b, sizeof(payload_b), &payload_b_len, &id_b, 3003u);
     result_a = make_collection_result_packet(&id_a, payload_a_len);
     result_b = make_collection_result_packet(&id_b, payload_b_len);
 
@@ -615,11 +656,13 @@ static void test_collection_records_result_bundle_and_dedupes_replay(void)
     make_collection_result_payload(result_payload_a,
                                    sizeof(result_payload_a),
                                    &result_payload_a_len,
-                                   &id_a);
+                                   &id_a,
+                                   3003u);
     make_collection_result_payload(result_payload_b,
                                    sizeof(result_payload_b),
                                    &result_payload_b_len,
-                                   &id_b);
+                                   &id_b,
+                                   3003u);
     append_collection_result_record(records,
                                     sizeof(records),
                                     &records_len,
@@ -717,7 +760,8 @@ static void test_collection_rejects_corrupt_result_bundle(void)
     make_collection_result_payload(result_payload,
                                    sizeof(result_payload),
                                    &result_payload_len,
-                                   &id);
+                                   &id,
+                                   3003u);
     append_collection_result_record(records,
                                     sizeof(records),
                                     &records_len,
@@ -772,7 +816,7 @@ static void test_collection_rejects_wrong_result_identity(void)
     uint8_t command_seq_len = 0u;
     bool duplicate = false;
 
-    make_collection_result_payload(payload, sizeof(payload), &payload_len, &id);
+    make_collection_result_payload(payload, sizeof(payload), &payload_len, &id, 3003u);
     result = make_collection_result_packet(&id, payload_len);
     assert(gateway_collection_start(&collection,
                                     GATEWAY_ID_TEST,
@@ -799,6 +843,58 @@ static void test_collection_rejects_wrong_result_identity(void)
                     &command_seq_len) == PROTO_OK);
     assert(command_seq_len == sizeof(uint32_t));
     payload[(size_t)(command_seq_value - payload)] ^= 0x01u;
+    assert(gateway_collection_record_result(&collection,
+                                            &result,
+                                            payload,
+                                            payload_len,
+                                            &duplicate) == PROTO_ERR_MALFORMED);
+}
+
+static void test_collection_rejects_missing_or_wrong_collection_epoch(void)
+{
+    struct gateway_collection_state collection;
+    const struct command_result_id id = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct proto_packet result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    bool duplicate = false;
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    2u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+
+    assert(command_result_id_append_tlvs(payload,
+                                         sizeof(payload),
+                                         &payload_len,
+                                         &id) == PROTO_OK);
+    assert(mesh_append_command_result(payload,
+                                      sizeof(payload),
+                                      &payload_len,
+                                      CMD_GET_STATUS,
+                                      COMMAND_OK,
+                                      0u) == PROTO_OK);
+    result = make_collection_result_packet(&id, payload_len);
+    assert(gateway_collection_record_result(&collection,
+                                            &result,
+                                            payload,
+                                            payload_len,
+                                            &duplicate) == PROTO_ERR_NOT_FOUND);
+
+    make_collection_result_payload(payload, sizeof(payload), &payload_len, &id, 3004u);
+    result = make_collection_result_packet(&id, payload_len);
     assert(gateway_collection_record_result(&collection,
                                             &result,
                                             payload,
@@ -1100,11 +1196,13 @@ int main(void)
     test_prepare_outbound_accepts_all_registered_command_flood();
     test_command_flood_requires_collection_identity_for_responses();
     test_collection_initial_due_is_deterministic_and_bounded();
+    test_append_collection_result_identity_requires_epoch();
     test_collection_records_unique_results_and_builds_eack();
     test_collection_prepares_eack_broadcast_outbound();
     test_collection_records_result_bundle_and_dedupes_replay();
     test_collection_rejects_corrupt_result_bundle();
     test_collection_rejects_wrong_result_identity();
+    test_collection_rejects_missing_or_wrong_collection_epoch();
     test_extract_duration_uses_optional_tlv();
     test_extract_role_requires_valid_device_role_tlv();
     test_build_failure_result_is_host_visible();

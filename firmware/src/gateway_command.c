@@ -136,6 +136,31 @@ static int extract_optional_u32(const uint8_t *payload,
     return PROTO_OK;
 }
 
+static int extract_required_u32(const uint8_t *payload,
+                                size_t payload_len,
+                                uint8_t type,
+                                uint32_t *out)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (out == NULL || (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(payload, payload_len, type, &value, &value_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *out = proto_get_u32_le(value);
+    return PROTO_OK;
+}
+
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id)
@@ -342,6 +367,37 @@ uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms
     hash ^= (uint32_t)(node_id >> 32);
     hash = mix32(hash);
     return command_flood_end_ms + (hash % spread_ms);
+}
+
+int gateway_command_append_collection_result_identity(uint8_t *payload,
+                                                      size_t payload_cap,
+                                                      size_t *payload_len,
+                                                      const struct command_result_id *id,
+                                                      uint32_t collection_epoch_id)
+{
+    int ret;
+
+    if (payload == NULL || payload_len == NULL || id == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (id->gateway_id == 0u ||
+        id->command_seq == 0u ||
+        id->node_id == 0u ||
+        id->node_boot_counter == 0u ||
+        id->result_seq == 0u ||
+        collection_epoch_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = command_result_id_append_tlvs(payload, payload_cap, payload_len, id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload,
+                          payload_cap,
+                          payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          collection_epoch_id);
 }
 
 int gateway_command_extract_role(const uint8_t *payload,
@@ -713,6 +769,7 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
 {
     struct command_result_id id;
     struct gateway_collection_result_entry *free_entry = NULL;
+    uint32_t collection_epoch_id = 0u;
     int ret;
 
     if (collection == NULL || result == NULL || duplicate == NULL ||
@@ -734,6 +791,16 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
         id.command_seq != collection->command_seq ||
         id.node_id == 0u ||
         result->src_id != id.node_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = extract_required_u32(payload,
+                               payload_len,
+                               TLV_COLLECTION_EPOCH_ID,
+                               &collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (collection_epoch_id != collection->collection_epoch_id) {
         return PROTO_ERR_MALFORMED;
     }
 

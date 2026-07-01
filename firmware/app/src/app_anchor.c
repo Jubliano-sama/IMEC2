@@ -23,6 +23,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
+#include <zephyr/random/random.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
@@ -71,8 +72,12 @@ static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
+static uint32_t anchor_collection_node_boot_counter;
+static uint16_t anchor_collection_result_seq;
 struct anchor_collection_result_pending {
     struct proto_packet command;
+    struct command_result_id result_id;
+    uint32_t collection_epoch_id;
     enum command_id command_id;
     enum command_status status;
     uint8_t reason;
@@ -117,13 +122,40 @@ static void gateway_survey_auto_note_command_timeout(const struct proto_packet *
                                                      enum command_id command_id);
 static void anchor_heartbeat_work_handler(struct k_work *work);
 
+static uint32_t anchor_collection_node_boot_id(void)
+{
+    if (anchor_collection_node_boot_counter == 0u) {
+        anchor_collection_node_boot_counter = sys_rand32_get();
+        if (anchor_collection_node_boot_counter == 0u) {
+            anchor_collection_node_boot_counter = k_uptime_get_32();
+        }
+        if (anchor_collection_node_boot_counter == 0u) {
+            anchor_collection_node_boot_counter = 1u;
+        }
+    }
+    return anchor_collection_node_boot_counter;
+}
+
+static uint16_t anchor_next_collection_result_seq(void)
+{
+    anchor_collection_result_seq++;
+    if (anchor_collection_result_seq == 0u) {
+        anchor_collection_result_seq = 1u;
+    }
+    return anchor_collection_result_seq;
+}
+
 static int anchor_send_command_result(const struct proto_packet *command,
                                       enum command_id command_id,
                                       enum command_status status,
-                                      uint8_t reason)
+                                      uint8_t reason,
+                                      const struct command_result_id *collection_result_id,
+                                      uint32_t collection_epoch_id)
 {
     struct mesh_outbound outbound = {0};
     size_t payload_len = 0u;
+    uint32_t session_id;
+    uint16_t seq;
     bool diagnostic;
     int ret;
 
@@ -146,13 +178,28 @@ static int anchor_send_command_result(const struct proto_packet *command,
             return -EINVAL;
         }
     }
+    if (collection_result_id != NULL) {
+        ret = gateway_command_append_collection_result_identity(outbound.payload,
+                                                               sizeof(outbound.payload),
+                                                               &payload_len,
+                                                               collection_result_id,
+                                                               collection_epoch_id);
+        if (ret != PROTO_OK) {
+            return -EINVAL;
+        }
+        session_id = collection_result_id->command_seq;
+        seq = collection_result_id->result_seq;
+    } else {
+        session_id = command->session_id;
+        seq = command->seq;
+    }
 
     diagnostic = (command->flags & FLAG_DIAGNOSTIC) != 0u;
     ret = mesh_init_command_result(&outbound.packet,
                                    DEVICE_ID,
                                    GATEWAY_ID,
-                                   command->session_id,
-                                   command->seq,
+                                   session_id,
+                                   seq,
                                    (uint8_t)payload_len,
                                    diagnostic);
     if (ret != PROTO_OK) {
@@ -195,7 +242,9 @@ static void anchor_collection_result_work_handler(struct k_work *work)
     ret = anchor_send_command_result(&pending.command,
                                      pending.command_id,
                                      pending.status,
-                                     pending.reason);
+                                     pending.reason,
+                                     &pending.result_id,
+                                     pending.collection_epoch_id);
     if (ret < 0) {
         LOG_WRN("anchor collection command result TX failed: cmd=0x%04x status=%u ret=%d",
                 (unsigned int)pending.command_id,
@@ -255,6 +304,16 @@ static int anchor_schedule_collection_command_result(
     }
 
     anchor_collection_result_pending.command = *command;
+    anchor_collection_result_pending.collection_epoch_id = options->collection_epoch_id;
+    anchor_collection_result_pending.result_id.gateway_id = GATEWAY_ID;
+    anchor_collection_result_pending.result_id.gateway_epoch =
+        (uint16_t)mesh_runtime.upstream.current_epoch;
+    anchor_collection_result_pending.result_id.command_seq = options->command_seq;
+    anchor_collection_result_pending.result_id.node_id = DEVICE_ID;
+    anchor_collection_result_pending.result_id.node_boot_counter =
+        anchor_collection_node_boot_id();
+    anchor_collection_result_pending.result_id.result_seq =
+        anchor_next_collection_result_seq();
     anchor_collection_result_pending.command_id = command_id;
     anchor_collection_result_pending.status = status;
     anchor_collection_result_pending.reason = reason;
@@ -269,8 +328,11 @@ static int anchor_schedule_collection_command_result(
             due_ms,
             delay_ms);
     high_debug_log_event("COMMAND_RESULT_TX",
-                         "transport=collection-scheduled command=0x%04x due_ms=%u delay_ms=%u",
+                         "transport=collection-scheduled command=0x%04x command_seq=%u result_seq=%u collection=%u due_ms=%u delay_ms=%u",
                          (unsigned int)command_id,
+                         anchor_collection_result_pending.result_id.command_seq,
+                         anchor_collection_result_pending.result_id.result_seq,
+                         anchor_collection_result_pending.collection_epoch_id,
                          due_ms,
                          delay_ms);
     return 0;
@@ -900,7 +962,7 @@ static void anchor_handle_survey_pair_prepare(const struct proto_packet *packet,
         k_spin_unlock(&anchor_survey_lock, key);
     }
 
-    ret = anchor_send_command_result(packet, CMD_SURVEY_PREPARE_PAIR, status, reason);
+    ret = anchor_send_command_result(packet, CMD_SURVEY_PREPARE_PAIR, status, reason, NULL, 0u);
     if (ret < 0) {
         LOG_WRN("survey pair prepare result TX failed: status=%u ret=%d", status, ret);
         return;
@@ -1048,7 +1110,7 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
         return;
     }
 
-    ret = anchor_send_command_result(packet, command_id, status, reason);
+    ret = anchor_send_command_result(packet, command_id, status, reason, NULL, 0u);
     if (ret < 0) {
         LOG_WRN("anchor command result TX failed: cmd=0x%04x status=%u ret=%d",
                 (unsigned int)command_id,

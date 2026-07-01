@@ -70,6 +70,11 @@ uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms
                                                   uint32_t command_seq,
                                                   uint32_t collection_slot_seed,
                                                   uint16_t expected_node_count);
+int gateway_command_append_collection_result_identity(uint8_t *payload,
+                                                      size_t payload_cap,
+                                                      size_t *payload_len,
+                                                      const struct command_result_id *id,
+                                                      uint32_t collection_epoch_id);
 int gateway_command_extract_role(const uint8_t *payload,
                                  size_t payload_len,
                                  enum device_role *role);
