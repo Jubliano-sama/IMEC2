@@ -699,6 +699,12 @@ static int apply_radio_config(const dwt_config_t *config,
     }
 
     if (dwt_configure((dwt_config_t *)config) != DWT_SUCCESS) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
+
+            status_debug_printf("DBG_DWM_CONFIG_FAIL phy=%d ret=%d sys=0x%08x\n",
+                                phy_mode, -EIO, (unsigned int)sys_status);
+        }
         return -EIO;
     }
 
@@ -783,21 +789,39 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
 
     ret = dwm3000_port_init();
     if (ret < 0) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_RESET_PORT_INIT_FAIL phy=%d ret=%d\n",
+                                phy_mode, ret);
+        }
         return ret;
     }
 
     ret = dwm3000_port_wakeup();
     if (ret < 0) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_RESET_WAKE_PIN_FAIL phy=%d ret=%d\n",
+                                phy_mode, ret);
+        }
         return ret;
     }
 
     ret = dwm3000_port_hw_reset();
     if (ret < 0) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_RESET_HW_FAIL phy=%d ret=%d\n",
+                                phy_mode, ret);
+        }
         return ret;
     }
 
     ret = initialise_radio(false);
     if (ret < 0) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
+
+            status_debug_printf("DBG_DWM_RESET_INIT_FAIL phy=%d ret=%d sys=0x%08x\n",
+                                phy_mode, ret, (unsigned int)sys_status);
+        }
         return ret;
     }
 
@@ -819,10 +843,22 @@ static int wake_configured_radio(void)
     wake_start_us = k_cyc_to_us_floor32(k_cycle_get_32());
     driver_stats.sleep_wake_count++;
 
-    (void)dwm3000_port_set_slow_spi();
+    ret = dwm3000_port_set_slow_spi();
+    if (ret < 0) {
+        driver_stats.sleep_wake_failures++;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_WAKE_SLOW_SPI_FAIL phy=%d ret=%d\n",
+                                requested_phy, ret);
+        }
+        return ret;
+    }
     ret = dwm3000_port_wakeup();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_WAKE_PIN_FAIL phy=%d ret=%d\n",
+                                requested_phy, ret);
+        }
         return ret;
     }
 
@@ -837,12 +873,24 @@ static int wake_configured_radio(void)
     }
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
+
+            status_debug_printf("DBG_DWM_WAKE_IDLE_RC_TIMEOUT phy=%d ret=%d sys=0x%08x\n",
+                                requested_phy, ret, (unsigned int)sys_status);
+        }
         return ret;
     }
 
     ret = restore_txrx_after_sleep();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
+
+            status_debug_printf("DBG_DWM_WAKE_RESTORE_FAIL phy=%d ret=%d sys=0x%08x\n",
+                                requested_phy, ret, (unsigned int)sys_status);
+        }
         return ret;
     }
     radio_awake = true;
@@ -852,6 +900,10 @@ static int wake_configured_radio(void)
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
+                                requested_phy, ret);
+        }
         return ret;
     }
     wake_elapsed_us = k_cyc_to_us_floor32(k_cycle_get_32()) - wake_start_us;
@@ -2671,8 +2723,13 @@ int dwm3000_driver_configure_wake_mode(void)
 {
     int ret;
 
-    ret = ensure_phy_mode(DWM3000_PHY_WAKE);
+    ret = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
+          configure_radio_from_reset(DWM3000_PHY_WAKE) :
+          ensure_phy_mode(DWM3000_PHY_WAKE);
     if (ret < 0) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_WAKE_RESET_FAIL ret=%d\n", ret);
+        }
         return ret;
     }
 
