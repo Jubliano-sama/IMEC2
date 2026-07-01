@@ -64,6 +64,47 @@ enum flood_epoch_type {
     FLOOD_EPOCH_TYPE_COLLECTION_STATUS = 4u,
 };
 
+enum c5_contact_state {
+    C5_CONTACT_NONE = 0,
+    C5_CONTACT_WAKE_PENDING = 1,
+    C5_CONTACT_AWAKE_ACCEPTED = 2,
+    C5_CONTACT_EXCHANGE_ACTIVE = 3,
+    C5_CONTACT_CLOSING = 4,
+};
+
+enum c5_contact_purpose {
+    C5_CONTACT_PURPOSE_ROUTE_SOLICIT = 1u,
+    C5_CONTACT_PURPOSE_ROUTE_REPLY = 2u,
+    C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH = 3u,
+    C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD = 4u,
+    C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD = 5u,
+    C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT = 6u,
+    C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION = 7u,
+};
+
+struct c5_contact_context {
+    uint64_t peer_id;
+    uint32_t contact_id;
+    uint8_t purpose;
+    bool peer_was_woken;
+    bool accepted;
+    uint32_t opened_at_ms;
+    uint32_t last_frame_at_ms;
+    uint32_t expires_at_ms;
+    enum c5_contact_state state;
+};
+
+enum ch9_event_state {
+    CH9_EVENT_NONE = 0,
+    CH9_EVENT_GRANTED = 1,
+    CH9_EVENT_TX_PAYLOAD = 2,
+    CH9_EVENT_WAIT_CUSTODY_ACK = 3,
+    CH9_EVENT_COMPLETE = 4,
+    CH9_EVENT_BUSY_RETRY_LATER = 5,
+    CH9_EVENT_WINDOW_EXPIRED = 6,
+    CH9_EVENT_PREEMPTED_BY_C5 = 7,
+};
+
 struct mesh_parent_candidate {
     uint64_t next_hop;
     uint64_t gateway_id;
