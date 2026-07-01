@@ -1060,6 +1060,161 @@ static void add_busy_action(struct mesh_relay *relay,
                        MESH_RELAY_ACTION_SEND_RELAY_BUSY;
 }
 
+static int build_result_offer_busy_response(struct mesh_relay *relay,
+                                            const struct proto_packet *packet,
+                                            const struct result_offer *offer,
+                                            uint64_t previous_hop_id,
+                                            struct mesh_outbound *out)
+{
+    const struct route_candidate *alternate;
+    struct result_busy busy;
+    size_t payload_len = 0u;
+    int ret;
+
+    if (relay == NULL || packet == NULL || offer == NULL || out == NULL ||
+        !id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(out, 0, sizeof(*out));
+    memset(&busy, 0, sizeof(busy));
+    busy.result_id = offer->result_id;
+    busy.retry_after_ms = relay_busy_retry_after_ms(relay);
+    busy.capacity_state = relay_current_capacity_state(relay);
+    busy.capacity_validity_interval_ms = busy.retry_after_ms;
+
+    alternate = route_selected(&relay->upstream);
+    if (alternate != NULL &&
+        alternate->next_hop_id != previous_hop_id &&
+        alternate->next_hop_id != packet->src_id) {
+        busy.optional_alternate_parent = alternate->next_hop_id;
+        busy.has_optional_alternate_parent = true;
+    }
+
+    ret = result_busy_append_tlvs(out->payload, sizeof(out->payload), &payload_len, &busy);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_RESULT_BUSY;
+    out->packet.flags = 0u;
+    out->packet.src_id = relay->local_id;
+    out->packet.dst_id = packet->src_id;
+    out->packet.session_id = packet->session_id;
+    out->packet.seq = relay_next_seq(relay);
+    out->packet.ttl = 1u;
+    out->packet.payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)payload_len;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->next_hop_id = previous_hop_id;
+    return PROTO_OK;
+}
+
+static int build_result_grant_response(struct mesh_relay *relay,
+                                       const struct proto_packet *packet,
+                                       const struct result_offer *offer,
+                                       uint64_t previous_hop_id,
+                                       struct mesh_outbound *out)
+{
+    struct result_grant grant;
+    size_t payload_len = 0u;
+    uint16_t max_bytes;
+    int ret;
+
+    if (relay == NULL || packet == NULL || offer == NULL || out == NULL ||
+        !id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+    if (offer->result_len == 0u || offer->result_len > UWB_MESH_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    max_bytes = offer->result_len > COLLECTION_BUNDLE_TARGET_BYTES ?
+                COLLECTION_BUNDLE_TARGET_BYTES :
+                offer->result_len;
+    if (max_bytes == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(out, 0, sizeof(*out));
+    memset(&grant, 0, sizeof(grant));
+    grant.result_id = offer->result_id;
+    grant.granted_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    grant.max_bytes = max_bytes;
+    grant.event_offset_hint = 0u;
+
+    ret = result_grant_append_tlvs(out->payload, sizeof(out->payload), &payload_len, &grant);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet.msg_type = MSG_RESULT_GRANT;
+    out->packet.flags = 0u;
+    out->packet.src_id = relay->local_id;
+    out->packet.dst_id = packet->src_id;
+    out->packet.session_id = packet->session_id;
+    out->packet.seq = relay_next_seq(relay);
+    out->packet.ttl = 1u;
+    out->packet.payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)payload_len;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->next_hop_id = previous_hop_id;
+    return PROTO_OK;
+}
+
+static int handle_result_offer(struct mesh_relay *relay,
+                               const struct proto_packet *packet,
+                               const uint8_t *payload,
+                               size_t payload_len,
+                               uint64_t previous_hop_id,
+                               struct mesh_relay_result *result)
+{
+    struct result_offer offer;
+    int ret;
+
+    if (packet->dst_id != relay->local_id || packet->msg_type != MSG_RESULT_OFFER) {
+        return PROTO_OK;
+    }
+    if (!id_is_unicast(previous_hop_id) || previous_hop_id != packet->src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = result_offer_from_tlvs(payload, payload_len, &offer);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (offer.result_id.gateway_id != relay->gateway_id ||
+        offer.result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        offer.result_len == 0u ||
+        offer.result_len > UWB_MESH_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    if (mesh_relay_tx_active(relay) || relay_current_capacity_state(relay) >= RELAY_CAP_RED) {
+        ret = build_result_offer_busy_response(relay,
+                                               packet,
+                                               &offer,
+                                               previous_hop_id,
+                                               &result->busy);
+        if (ret == PROTO_OK) {
+            result->actions |= MESH_RELAY_ACTION_SEND_RESULT_BUSY |
+                               MESH_RELAY_ACTION_DROP;
+            result->status = PROTO_ERR_BUSY;
+        }
+        return ret;
+    }
+
+    ret = build_result_grant_response(relay,
+                                      packet,
+                                      &offer,
+                                      previous_hop_id,
+                                      &result->result_grant);
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_SEND_RESULT_GRANT;
+    }
+    return ret;
+}
+
 static int handle_local_busy(struct mesh_relay *relay,
                              const struct proto_packet *packet,
                              const uint8_t *payload,
@@ -3280,6 +3435,20 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                                 previous_hop_id,
                                 now_ms,
                                 result);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+        }
+        return PROTO_OK;
+    }
+
+    if (packet->msg_type == MSG_RESULT_OFFER && packet->dst_id == relay->local_id) {
+        ret = handle_result_offer(relay,
+                                  packet,
+                                  payload,
+                                  payload_len,
+                                  previous_hop_id,
+                                  result);
         if (ret != PROTO_OK) {
             result->status = ret;
             result->actions |= MESH_RELAY_ACTION_DROP;

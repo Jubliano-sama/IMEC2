@@ -1149,6 +1149,202 @@ static void test_result_busy_preserves_command_result_identity(void)
     assert(decoded_busy.capacity_validity_interval_ms == RELAY_BUSY_RETRY_MIN_MS);
 }
 
+static void test_result_offer_gets_result_grant_when_parent_has_capacity(void)
+{
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = GATEWAY,
+            .gateway_epoch = 3u,
+            .command_seq = 0x22334455u,
+            .node_id = ANCHOR_A,
+            .node_boot_counter = 21u,
+            .result_seq = 22u,
+        },
+        .result_len = UWB_MESH_MAX_PAYLOAD_LEN,
+        .result_crc = 0x789au,
+        .priority = 4u,
+    };
+    struct mesh_relay relay;
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_OFFER,
+        .flags = 0u,
+        .src_id = ANCHOR_A,
+        .dst_id = ANCHOR_B,
+        .session_id = 91u,
+        .seq = 7u,
+        .ttl = 1u,
+    };
+    struct mesh_relay_result result;
+    struct result_grant decoded_grant = {0};
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(result_offer_append_tlvs(payload,
+                                    sizeof(payload),
+                                    &payload_len,
+                                    &offer) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                ANCHOR_A,
+                                80u,
+                                4300u,
+                                &result) == PROTO_OK);
+
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_GRANT));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+    assert(result.result_grant.packet.msg_type == MSG_RESULT_GRANT);
+    assert(result.result_grant.packet.src_id == ANCHOR_B);
+    assert(result.result_grant.packet.dst_id == ANCHOR_A);
+    assert(result.result_grant.packet.session_id == packet.session_id);
+    assert(result.result_grant.packet.ttl == 1u);
+    assert(result.result_grant.next_hop_id == ANCHOR_A);
+    assert(result.result_grant.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+    assert(result_grant_from_tlvs(result.result_grant.payload,
+                                  result.result_grant.payload_len,
+                                  &decoded_grant) == PROTO_OK);
+    assert_command_result_id_equal(&decoded_grant.result_id, &offer.result_id);
+    assert(decoded_grant.granted_channel == UWB_CHANNEL_MESH_PAYLOAD);
+    assert(decoded_grant.max_bytes == COLLECTION_BUNDLE_TARGET_BYTES);
+    assert(decoded_grant.event_offset_hint == 0u);
+}
+
+static void test_result_offer_rejects_wrong_gateway_epoch(void)
+{
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = GATEWAY,
+            .gateway_epoch = 2u,
+            .command_seq = 0x55667788u,
+            .node_id = ANCHOR_A,
+            .node_boot_counter = 31u,
+            .result_seq = 32u,
+        },
+        .result_len = UWB_MESH_MAX_PAYLOAD_LEN,
+        .result_crc = 0x1234u,
+        .priority = 4u,
+    };
+    struct mesh_relay relay;
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_OFFER,
+        .flags = 0u,
+        .src_id = ANCHOR_A,
+        .dst_id = ANCHOR_B,
+        .session_id = 93u,
+        .seq = 9u,
+        .ttl = 1u,
+    };
+    struct mesh_relay_result result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(result_offer_append_tlvs(payload,
+                                    sizeof(payload),
+                                    &payload_len,
+                                    &offer) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                ANCHOR_A,
+                                80u,
+                                4301u,
+                                &result) == PROTO_OK);
+
+    assert(result.status == PROTO_ERR_MALFORMED);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_GRANT));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+}
+
+static void test_result_offer_gets_result_busy_when_parent_busy(void)
+{
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = GATEWAY,
+            .gateway_epoch = 3u,
+            .command_seq = 0x66778899u,
+            .node_id = ANCHOR_A,
+            .node_boot_counter = 23u,
+            .result_seq = 24u,
+        },
+        .result_len = UWB_MESH_MAX_PAYLOAD_LEN,
+        .result_crc = 0x4567u,
+        .priority = 6u,
+    };
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_OFFER,
+        .flags = 0u,
+        .src_id = ANCHOR_A,
+        .dst_id = ANCHOR_B,
+        .session_id = 92u,
+        .seq = 8u,
+        .ttl = 1u,
+    };
+    struct proto_packet local_report;
+    struct mesh_outbound tracked_report;
+    struct mesh_relay_result result;
+    struct result_busy decoded_busy = {0};
+    uint8_t payload[96];
+    uint8_t local_payload[1] = {0x47u};
+    size_t payload_len = 0u;
+
+    assert(result_offer_append_tlvs(payload,
+                                    sizeof(payload),
+                                    &payload_len,
+                                    &offer) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&local_report,
+                                    ANCHOR_B,
+                                    GATEWAY,
+                                    82u,
+                                    6u,
+                                    sizeof(local_payload)) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &local_report,
+                               local_payload,
+                               sizeof(local_payload),
+                               4301u,
+                               &tracked_report) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &packet,
+                                payload,
+                                payload_len,
+                                ANCHOR_A,
+                                80u,
+                                4302u,
+                                &result) == PROTO_OK);
+
+    assert(result.status == PROTO_ERR_BUSY);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_GRANT));
+    assert(result.busy.packet.msg_type == MSG_RESULT_BUSY);
+    assert(result.busy.packet.dst_id == ANCHOR_A);
+    assert(result.busy.next_hop_id == ANCHOR_A);
+    assert(result_busy_from_tlvs(result.busy.payload,
+                                 result.busy.payload_len,
+                                 &decoded_busy) == PROTO_OK);
+    assert_command_result_id_equal(&decoded_busy.result_id, &offer.result_id);
+    assert(decoded_busy.retry_after_ms == RELAY_BUSY_RETRY_MIN_MS);
+    assert(decoded_busy.capacity_state == RELAY_CAP_YELLOW);
+    assert(decoded_busy.capacity_validity_interval_ms == RELAY_BUSY_RETRY_MIN_MS);
+}
+
 static void test_relay_busy_defers_matching_pending_tx(void)
 {
     struct mesh_relay relay;
@@ -3317,6 +3513,9 @@ int main(void)
     test_busy_relay_drops_duplicate_forward();
     test_busy_relay_sends_result_busy_for_command_result();
     test_result_busy_preserves_command_result_identity();
+    test_result_offer_gets_result_grant_when_parent_has_capacity();
+    test_result_offer_rejects_wrong_gateway_epoch();
+    test_result_offer_gets_result_busy_when_parent_busy();
     test_relay_busy_defers_matching_pending_tx();
     test_local_gateway_bound_tx_waits_for_gateway_ack();
     test_local_gateway_bound_tx_accepts_batched_gateway_ack();

@@ -180,6 +180,7 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_SEND_RELAY_BUSY = 1u << 19,
     MESH_RELAY_ACTION_SEND_RESULT_BUSY = 1u << 20,
     MESH_RELAY_ACTION_TX_RELAY_BUSY = 1u << 21,
+    MESH_RELAY_ACTION_SEND_RESULT_GRANT = 1u << 22,
 };
 
 enum mesh_relay_tx_state {
@@ -296,6 +297,7 @@ struct mesh_relay_result {
     union {
         struct mesh_outbound hop_ack;
         struct mesh_outbound busy;
+        struct mesh_outbound result_grant;
     };
     bool route_reply_backup_valid;
 };

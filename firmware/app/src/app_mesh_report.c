@@ -5711,6 +5711,17 @@ after_gateway_ack:
             mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
         }
     }
+    if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) {
+        mesh_c5_contact_exchange(result->result_grant.next_hop_id,
+                                 C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+                                 k_uptime_get_32() + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
+                                 "result-grant");
+        if (mesh_send_outbound(&result->result_grant, "result-grant") == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime,
+                                    &result->result_grant,
+                                    k_uptime_get_32());
+        }
+    }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
         uint64_t route_reply_acked_next_hop = 0u;
 
