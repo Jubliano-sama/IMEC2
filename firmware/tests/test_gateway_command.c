@@ -327,6 +327,41 @@ static void test_command_flood_requires_collection_identity_for_responses(void)
     assert(!options.collection_required);
 }
 
+static void test_collection_initial_due_is_deterministic_and_bounded(void)
+{
+    uint32_t due_a;
+    uint32_t due_b;
+    uint32_t due_other;
+
+    assert(gateway_command_collection_spread_ms(0u) == COLLECTION_INITIAL_SPREAD_MIN_MS);
+    assert(gateway_command_collection_spread_ms(1u) == COLLECTION_INITIAL_SPREAD_MIN_MS);
+    assert(gateway_command_collection_spread_ms(200u) ==
+           200u * COLLECTION_INITIAL_SPREAD_PER_NODE_MS);
+
+    due_a = gateway_command_collection_initial_due_ms(10000u,
+                                                      ANCHOR_ID_TEST,
+                                                      1001u,
+                                                      4004u,
+                                                      200u);
+    due_b = gateway_command_collection_initial_due_ms(10000u,
+                                                      ANCHOR_ID_TEST,
+                                                      1001u,
+                                                      4004u,
+                                                      200u);
+    due_other = gateway_command_collection_initial_due_ms(10000u,
+                                                          ANCHOR_ID_TEST + 1u,
+                                                          1001u,
+                                                          4004u,
+                                                          200u);
+
+    assert(due_a == due_b);
+    assert(due_a >= 10000u);
+    assert(due_a < 10000u + gateway_command_collection_spread_ms(200u));
+    assert(due_other >= 10000u);
+    assert(due_other < 10000u + gateway_command_collection_spread_ms(200u));
+    assert(due_other != due_a);
+}
+
 static void test_extract_duration_uses_optional_tlv(void)
 {
     uint8_t payload[16];
@@ -620,6 +655,7 @@ int main(void)
     test_extract_options_defaults_to_single_node_small_result();
     test_prepare_outbound_accepts_all_registered_command_flood();
     test_command_flood_requires_collection_identity_for_responses();
+    test_collection_initial_due_is_deterministic_and_bounded();
     test_extract_duration_uses_optional_tlv();
     test_extract_role_requires_valid_device_role_tlv();
     test_build_failure_result_is_host_visible();

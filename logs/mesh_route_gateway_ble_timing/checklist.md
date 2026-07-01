@@ -53,7 +53,8 @@
   - Native gateway-command tests cover default single-node behavior, rejection of unscoped broadcast commands, acceptance of all-registered command-flood metadata, and rejection of response floods missing collection identity.
   - Relay broadcast handling now forwards only explicit non-single `MSG_COMMAND` floods with valid flood/collection metadata; unscoped broadcast commands still deliver locally without flooding, and duplicates are suppressed.
   - Command floods now use `command_seq` as packet session identity, and broadcast command duplicate suppression ignores packet sequence and uses the default command-result expiry window instead of the ordinary short dedupe window.
-  - Remaining gap: hashed result spread, persistent result state, gateway EACK/missing reports, result offer/grant, and relay result bundling.
+  - Added deterministic collection initial-due helpers: spread is `max(COLLECTION_INITIAL_SPREAD_MIN_MS, expected_node_count * COLLECTION_INITIAL_SPREAD_PER_NODE_MS)`, and each node hashes node ID, command sequence, and collection slot seed into that spread.
+  - Remaining gap: persistent result state, gateway EACK/missing reports, result offer/grant, app-level use of the hashed due time, and relay result bundling.
 - [ ] Optimize channel-9 RX arrival time immediately after event negotiation.
   - Current RTT evidence shows expected packets are observed about 44 ms after RX slot start.
   - Verify whether this is true packet start time or receive-complete/host-processing timestamp.

@@ -38,6 +38,16 @@ static bool command_response_requires_collection(enum command_response_mode resp
            response_mode == CMD_RESPONSE_LARGE_RESULT;
 }
 
+static uint32_t mix32(uint32_t value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
 static int extract_optional_u8(const uint8_t *payload,
                                size_t payload_len,
                                uint8_t type,
@@ -296,6 +306,35 @@ int gateway_command_extract_options(const uint8_t *payload,
     }
 
     return PROTO_OK;
+}
+
+uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count)
+{
+    uint32_t spread_ms;
+
+    spread_ms = (uint32_t)expected_node_count *
+                COLLECTION_INITIAL_SPREAD_PER_NODE_MS;
+    if (spread_ms < COLLECTION_INITIAL_SPREAD_MIN_MS) {
+        spread_ms = COLLECTION_INITIAL_SPREAD_MIN_MS;
+    }
+    return spread_ms;
+}
+
+uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms,
+                                                  uint64_t node_id,
+                                                  uint32_t command_seq,
+                                                  uint32_t collection_slot_seed,
+                                                  uint16_t expected_node_count)
+{
+    uint32_t spread_ms;
+    uint32_t hash;
+
+    spread_ms = gateway_command_collection_spread_ms(expected_node_count);
+    hash = command_seq ^ collection_slot_seed;
+    hash ^= (uint32_t)node_id;
+    hash ^= (uint32_t)(node_id >> 32);
+    hash = mix32(hash);
+    return command_flood_end_ms + (hash % spread_ms);
 }
 
 int gateway_command_extract_role(const uint8_t *payload,

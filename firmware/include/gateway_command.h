@@ -42,6 +42,12 @@ int gateway_command_extract_id(const uint8_t *payload,
 int gateway_command_extract_options(const uint8_t *payload,
                                     size_t payload_len,
                                     struct gateway_command_options *options);
+uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count);
+uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms,
+                                                  uint64_t node_id,
+                                                  uint32_t command_seq,
+                                                  uint32_t collection_slot_seed,
+                                                  uint16_t expected_node_count);
 int gateway_command_extract_role(const uint8_t *payload,
                                  size_t payload_len,
                                  enum device_role *role);
