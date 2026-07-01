@@ -9,7 +9,10 @@
   - Relays preserve origin/request/flood identity across forwards and do not activate child route discovery when they can answer with an existing parent route.
   - Native tests added for TTL escalation, duplicate bounded forwarding, flood identity preservation, and parent-route replies without child discovery.
 - [ ] Add hop-by-hop route reply ACK and backup reverse path retry.
-  - Add `ROUTE_REPLY_ACK`/reply nonce/metric CRC handling before relying on route replies across multiple relays.
+  - Implemented `MSG_ROUTE_REPLY_ACK` with `TLV_REPLY_NONCE` and `TLV_METRIC_CRC`; route replies now carry both fields, receivers emit a channel-5 hop-local ACK after accepting a valid route reply, and duplicate route replies re-emit the ACK so lost ACKs can recover.
+  - App route-reply TX now waits up to `RREP_ACK_TIMEOUT_MS` and retries through `RREP_RETRY_COUNT_PER_HOP` before declaring the reverse-hop reply failed.
+  - Native relay test covers intermediate relay ACK, origin ACK, ACK payload matching, and ACK parsing back at the sender.
+  - Remaining gap: no explicit backup reverse-path candidate retry yet.
   - Route reply waits must extend or pause when preempted by active click service or required channel-5 wake scan.
 - [ ] Promote parent candidates from route-table compatibility to explicit `PARENT_CANDIDATE_COUNT` behavior.
   - Keep hop-first cost selection and use capacity only as a tie-breaker or penalty.

@@ -2104,7 +2104,228 @@ out_unlock:
     return ret;
 }
 
-static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
+static bool mesh_same_tlv_value(const uint8_t *lhs,
+                                size_t lhs_len,
+                                const uint8_t *rhs,
+                                size_t rhs_len,
+                                uint8_t type)
+{
+    const uint8_t *lhs_value = NULL;
+    const uint8_t *rhs_value = NULL;
+    uint8_t lhs_value_len = 0u;
+    uint8_t rhs_value_len = 0u;
+
+    if (tlv_find(lhs, lhs_len, type, &lhs_value, &lhs_value_len) != PROTO_OK ||
+        tlv_find(rhs, rhs_len, type, &rhs_value, &rhs_value_len) != PROTO_OK ||
+        lhs_value_len != rhs_value_len) {
+        return false;
+    }
+
+    return memcmp(lhs_value, rhs_value, lhs_value_len) == 0;
+}
+
+static bool mesh_route_reply_ack_matches(const struct mesh_outbound *route_reply,
+                                         const struct mesh_frame_parse_context *parsed)
+{
+    if (route_reply == NULL ||
+        parsed == NULL ||
+        parsed->packet.msg_type != MSG_ROUTE_REPLY_ACK ||
+        parsed->packet.src_id != route_reply->next_hop_id ||
+        parsed->packet.dst_id != DEVICE_ID ||
+        parsed->previous_hop_id != route_reply->next_hop_id ||
+        parsed->packet.session_id != route_reply->packet.session_id) {
+        return false;
+    }
+
+    return mesh_same_tlv_value(route_reply->payload,
+                               route_reply->payload_len,
+                               parsed->payload,
+                               parsed->payload_len,
+                               TLV_INITIATOR_ID) &&
+           mesh_same_tlv_value(route_reply->payload,
+                               route_reply->payload_len,
+                               parsed->payload,
+                               parsed->payload_len,
+                               TLV_RESPONDER_ID) &&
+           mesh_same_tlv_value(route_reply->payload,
+                               route_reply->payload_len,
+                               parsed->payload,
+                               parsed->payload_len,
+                               TLV_FLOOD_EPOCH_ID) &&
+           mesh_same_tlv_value(route_reply->payload,
+                               route_reply->payload_len,
+                               parsed->payload,
+                               parsed->payload_len,
+                               TLV_REPLY_NONCE) &&
+           mesh_same_tlv_value(route_reply->payload,
+                               route_reply->payload_len,
+                               parsed->payload,
+                               parsed->payload_len,
+                               TLV_METRIC_CRC);
+}
+
+static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_reply,
+                                           uint8_t attempt)
+{
+    struct mesh_reply_capture capture = {0};
+    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    int64_t uwb_window_start_ms = -1;
+    uint32_t deadline_ms;
+    bool captured = false;
+    int last_ret = -ETIMEDOUT;
+    int ret;
+
+    if (route_reply == NULL ||
+        route_reply->packet.msg_type != MSG_ROUTE_REPLY ||
+        !mesh_id_is_unicast(route_reply->next_hop_id)) {
+        return -EINVAL;
+    }
+
+    mesh_stop_role_scan();
+    ret = radio_guard_uwb_start("mesh route reply ACK RX");
+    if (ret < 0) {
+        mesh_restart_role_scan();
+        return ret;
+    }
+
+    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                         "phase=start next=0x%016llx seq=%u attempt=%u timeout_ms=%u",
+                         (unsigned long long)route_reply->next_hop_id,
+                         route_reply->packet.seq,
+                         attempt,
+                         RREP_ACK_TIMEOUT_MS);
+    uwb_window_start_ms = k_uptime_get();
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret == 0) {
+        deadline_ms = k_uptime_get_32() + RREP_ACK_TIMEOUT_MS;
+        while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms)) {
+            struct mesh_frame_parse_context parsed = {0};
+            enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+            uint32_t now_ms = k_uptime_get_32();
+            uint32_t remaining_ms = uptime_ms_until_deadline(now_ms, deadline_ms);
+            size_t frame_len = 0u;
+            uint8_t quality = 0u;
+
+            if (remaining_ms == 0u) {
+                break;
+            }
+
+            ret = dwm3000_driver_receive_frame_continuous(remaining_ms,
+                                                          frame,
+                                                          sizeof(frame),
+                                                          &frame_len,
+                                                          &quality,
+                                                          NULL,
+                                                          &rx_failure);
+            last_ret = ret;
+            if (ret == -ETIMEDOUT) {
+                break;
+            }
+            if (ret < 0) {
+                high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                                     "phase=rx-fail next=0x%016llx seq=%u attempt=%u ret=%d rx_failure=%u",
+                                     (unsigned long long)route_reply->next_hop_id,
+                                     route_reply->packet.seq,
+                                     attempt,
+                                     ret,
+                                     (unsigned int)rx_failure);
+                continue;
+            }
+
+            if (mesh_handle_channel5_wake_claim(frame, frame_len, quality)) {
+                continue;
+            }
+
+            ret = uwb_mesh_frame_decode(frame,
+                                        frame_len,
+                                        NETWORK_ID,
+                                        DEVICE_ID,
+                                        &parsed.previous_hop_id,
+                                        &parsed.packet,
+                                        parsed.payload,
+                                        sizeof(parsed.payload),
+                                        &parsed.payload_len);
+            if (ret != PROTO_OK || parsed.payload_len > UINT8_MAX) {
+                high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                                     "phase=reject next=0x%016llx seq=%u attempt=%u len=%u quality=%u decode_ret=%d",
+                                     (unsigned long long)route_reply->next_hop_id,
+                                     route_reply->packet.seq,
+                                     attempt,
+                                     (unsigned int)frame_len,
+                                     quality,
+                                     ret);
+                continue;
+            }
+
+            if (!mesh_route_reply_ack_matches(route_reply, &parsed)) {
+                LOG_INF("mesh route reply ACK listen ignored unrelated mesh frame: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u",
+                        parsed.packet.msg_type,
+                        (unsigned long long)parsed.packet.src_id,
+                        (unsigned long long)parsed.packet.dst_id,
+                        (unsigned long long)parsed.previous_hop_id,
+                        parsed.packet.seq,
+                        quality);
+                continue;
+            }
+
+            memcpy(capture.frame, frame, frame_len);
+            capture.frame_len = frame_len;
+            capture.quality = quality;
+            capture.received_at_ms = k_uptime_get_32();
+            captured = true;
+            status_debug_note("DBG_ROUTE_REPLY_ACK_RX\n");
+            high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                                 "phase=capture next=0x%016llx seq=%u ack_seq=%u attempt=%u quality=%u",
+                                 (unsigned long long)route_reply->next_hop_id,
+                                 route_reply->packet.seq,
+                                 parsed.packet.seq,
+                                 attempt,
+                                 quality);
+            break;
+        }
+    } else {
+        last_ret = ret;
+        high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                             "phase=config-fail next=0x%016llx seq=%u attempt=%u ret=%d",
+                             (unsigned long long)route_reply->next_hop_id,
+                             route_reply->packet.seq,
+                             attempt,
+                             ret);
+    }
+
+    (void)dwm3000_driver_standby();
+    mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
+    radio_guard_uwb_stop();
+    mesh_restart_role_scan();
+
+    if (captured) {
+        bool valid_mesh_frame = false;
+        uint64_t previous_hop_id = 0u;
+
+        (void)mesh_queue_from_frame_at(capture.frame,
+                                       capture.frame_len,
+                                       capture.quality,
+                                       UWB_CHANNEL_WAKE_CONTACT,
+                                       capture.received_at_ms,
+                                       &valid_mesh_frame,
+                                       &previous_hop_id);
+        ARG_UNUSED(valid_mesh_frame);
+        ARG_UNUSED(previous_hop_id);
+        return 0;
+    }
+
+    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                         "phase=timeout next=0x%016llx seq=%u attempt=%u last_ret=%d",
+                         (unsigned long long)route_reply->next_hop_id,
+                         route_reply->packet.seq,
+                         attempt,
+                         last_ret);
+    return last_ret;
+}
+
+static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
+                                       uint8_t attempt,
+                                       bool apply_turnaround_delay)
 {
     uint8_t repeat_count = 1u;
     uint8_t sent_count = 0u;
@@ -2116,13 +2337,15 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         DEVICE_ROLE == ROLE_GATEWAY &&
+        apply_turnaround_delay &&
         mesh_id_is_unicast(route_reply->next_hop_id)) {
         repeat_count = MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_COUNT;
-        LOG_INF("mesh route-reply turnaround delay: next=0x%016llx delay_ms=%u repeats=%u gap_ms=%u",
+        LOG_INF("mesh route-reply turnaround delay: next=0x%016llx delay_ms=%u repeats=%u gap_ms=%u attempt=%u",
                 (unsigned long long)route_reply->next_hop_id,
                 MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS,
                 repeat_count,
-                MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS);
+                MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS,
+                attempt);
         k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS);
     }
 
@@ -2136,7 +2359,8 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
                                                 "route-reply-repeat");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             DEVICE_ROLE == ROLE_GATEWAY) {
-            status_debug_printf("DBG_ROUTE_REPLY_TX_REPEAT idx=%u ret=%d sent=%u\n",
+            status_debug_printf("DBG_ROUTE_REPLY_TX_REPEAT attempt=%u idx=%u ret=%d sent=%u\n",
+                                attempt,
                                 i,
                                 last_ret,
                                 sent_count + (last_ret == 0 ? 1u : 0u));
@@ -2147,6 +2371,35 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
     }
 
     return sent_count > 0u ? 0 : last_ret;
+}
+
+static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply)
+{
+    int last_ret = -EINVAL;
+
+    if (route_reply == NULL) {
+        return -EINVAL;
+    }
+
+    for (uint8_t attempt = 0u; attempt <= RREP_RETRY_COUNT_PER_HOP; attempt++) {
+        last_ret = mesh_send_route_reply_burst(route_reply, attempt, attempt == 0u);
+        if (last_ret != 0) {
+            continue;
+        }
+
+        last_ret = mesh_listen_for_route_reply_ack(route_reply, attempt);
+        if (last_ret == 0) {
+            return 0;
+        }
+    }
+
+    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
+                         "phase=failed next=0x%016llx seq=%u attempts=%u last_ret=%d",
+                         (unsigned long long)route_reply->next_hop_id,
+                         route_reply->packet.seq,
+                         (unsigned int)(RREP_RETRY_COUNT_PER_HOP + 1u),
+                         last_ret);
+    return last_ret;
 }
 
 static bool mesh_payload_find_u32(const uint8_t *payload,
@@ -4892,6 +5145,16 @@ after_gateway_ack:
             }
         } else if (mesh_send_outbound(hop_ack, "hop-ack") == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, hop_ack, k_uptime_get_32());
+        }
+    }
+    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK) {
+        struct mesh_outbound *route_reply_ack = &mesh_result_action_tx;
+
+        *route_reply_ack = result->route_reply_ack;
+        if (mesh_send_outbound(route_reply_ack, "route-reply-ack") == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime,
+                                    route_reply_ack,
+                                    k_uptime_get_32());
         }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
