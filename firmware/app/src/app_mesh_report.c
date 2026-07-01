@@ -1544,6 +1544,18 @@ static uint32_t gateway_route_adv_next_seq(void)
     return gateway_route_adv_seq;
 }
 
+static void gateway_route_adv_seed_seq(void)
+{
+    if (gateway_route_adv_seq != 0u) {
+        return;
+    }
+
+    gateway_route_adv_seq = k_uptime_get_32();
+    if (gateway_route_adv_seq == 0u) {
+        gateway_route_adv_seq = 1u;
+    }
+}
+
 static void gateway_route_adv_schedule(uint32_t delay_ms)
 {
     if (DEVICE_ROLE != ROLE_GATEWAY) {
@@ -6536,14 +6548,19 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
 
 void mesh_gateway_route_adv_start(void)
 {
+    mesh_gateway_route_adv_request(MESH_GATEWAY_ROUTE_ADV_STARTUP_DELAY_MS, "startup");
+}
+
+void mesh_gateway_route_adv_request(uint32_t delay_ms, const char *reason)
+{
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
     }
-    if (gateway_route_adv_seq == 0u) {
-        gateway_route_adv_seq = k_uptime_get_32();
-        if (gateway_route_adv_seq == 0u) {
-            gateway_route_adv_seq = 1u;
-        }
-    }
-    gateway_route_adv_schedule(MESH_GATEWAY_ROUTE_ADV_STARTUP_DELAY_MS);
+
+    gateway_route_adv_seed_seq();
+    high_debug_log_event("GATEWAY_ROUTE_ADV",
+                         "phase=request delay_ms=%u reason=%s",
+                         delay_ms,
+                         reason == NULL ? "unspecified" : reason);
+    gateway_route_adv_schedule(delay_ms);
 }

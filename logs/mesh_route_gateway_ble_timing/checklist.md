@@ -25,7 +25,8 @@
   - Native test covers startup-style advertisement seeding a direct parent, relay forwarding preserving flood identity, duplicate suppression, second-hop candidate install, and no age-only route deletion.
   - Gateway app now sends a startup advertisement after gateway RX starts and a low-rate maintenance advertisement, deferring while channel-9 connections are active.
   - Equivalent advertisement suppression now treats repeated `MSG_GATEWAY_ROUTE_ADV` packets with the same gateway route sequence/session as the same flood even if packet sequence differs; a newer gateway route sequence still forwards.
-  - Remaining gap: profile-change and force-rediscovery-triggered advertisements are not wired yet.
+  - Gateway app now schedules an immediate advertisement after `CMD_FORCE_REDISCOVERY` succeeds or times out.
+  - Remaining gap: profile-change-triggered advertisements are not wired yet.
   - Implement `gateway_route_adv` exactly as specified in `Documentation/MeshSpec.md` section 7.
   - Message fields: `gateway_id`, `gateway_epoch`, `gateway_route_seq`, `hop_count`, `path_quality_min`, `route_cost`, `gateway_capacity_state`, `flood_profile_version`, `flood_epoch_id`, and `slot_seed`.
   - Gateway behavior: send during startup, after route/profile changes, after force rediscovery, and periodically at a low maintenance rate.
@@ -38,6 +39,7 @@
     - [x] duplicate advertisements are suppressed within configured bounds;
     - [x] missing advertisements do not delete usable routes;
     - [x] equivalent advertisement suppression beyond exact duplicate identity;
+    - [x] force rediscovery triggers a gateway route advertisement;
     - active click service and required quick channel-5 wake scans preempt advertisement work.
 - [x] Add relay capacity and explicit busy responses.
   - Route selection now stores and uses relay capacity hints as parent-candidate tie-breakers.

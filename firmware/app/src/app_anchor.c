@@ -1480,6 +1480,9 @@ void gateway_command_timeout_side_effects(const struct proto_packet *command,
 
     mesh_clear_route_waiting_tx(command);
     gateway_survey_auto_note_command_timeout(command, command_id);
+    if (command_id == CMD_FORCE_REDISCOVERY) {
+        mesh_gateway_route_adv_request(0u, "force-rediscovery-timeout");
+    }
 }
 
 void gateway_command_result_side_effects(const struct proto_packet *command,
@@ -1488,6 +1491,9 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason)
 {
     gateway_survey_auto_note_command_result(command, command_id, status, reason);
+    if (command_id == CMD_FORCE_REDISCOVERY && status == COMMAND_OK) {
+        mesh_gateway_route_adv_request(0u, "force-rediscovery-result");
+    }
 }
 
 static void gateway_survey_work_handler(struct k_work *work)
