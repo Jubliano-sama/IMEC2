@@ -448,7 +448,7 @@ static void test_status_tlvs_report_selected_route(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(ANCHOR_B, 44u, 77u);
-    uint8_t payload[96];
+    uint8_t payload[128];
     size_t payload_len = 0u;
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
@@ -458,6 +458,14 @@ static void test_status_tlvs_report_selected_route(void)
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
     assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
     assert(route_record_failure(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK) == ROUTE_DELIVERY_RETRY_CURRENT);
+    relay.duplicates[0].valid = true;
+    relay.duplicates[1].valid = true;
+    relay.result_bundle.active = true;
+    relay.result_bundle.record_count = 2u;
+    relay.outbox_record.valid = true;
+    relay.outbox_record.delivery_state = MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK;
+    relay.route_discovery.attempts = 3u;
+    relay.upstream.candidates[relay.upstream.selected_index].hold_down_until_ms = 12345u;
 
     assert(mesh_relay_append_status_tlvs(&relay, payload, sizeof(payload), &payload_len) == PROTO_OK);
 
@@ -484,6 +492,26 @@ static void test_status_tlvs_report_selected_route(void)
     assert(tlv_find(payload, payload_len, TLV_RETRY_COUNT, &value, &value_len) == PROTO_OK);
     assert(value_len == 1u);
     assert(value[0] == 2u);
+
+    assert(tlv_find(payload, payload_len, TLV_MESH_DUPLICATE_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 2u);
+
+    assert(tlv_find(payload, payload_len, TLV_COLLECTION_PENDING_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 3u);
+
+    assert(tlv_find(payload, payload_len, TLV_PARENT_HOLDDOWN_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 1u);
+
+    assert(tlv_find(payload, payload_len, TLV_ROUTE_DISCOVERY_ATTEMPTS, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 3u);
+
+    assert(tlv_find(payload, payload_len, TLV_OUTBOX_DELIVERY_STATE, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
 }
 
 static void test_status_tlvs_report_missing_route_reason(void)

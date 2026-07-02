@@ -3788,6 +3788,92 @@ int mesh_relay_prepare_route_request(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+static uint8_t relay_duplicate_count(const struct mesh_relay *relay)
+{
+    uint8_t count = 0u;
+
+    for (size_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
+        if (relay->duplicates[i].valid && count < UINT8_MAX) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static uint8_t relay_parent_hold_down_count(const struct mesh_relay *relay)
+{
+    uint8_t count = 0u;
+
+    for (size_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate = &relay->upstream.candidates[i];
+
+        if (candidate->valid &&
+            candidate->hold_down_until_ms != 0u &&
+            count < UINT8_MAX) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static uint8_t relay_collection_pending_count(const struct mesh_relay *relay)
+{
+    uint8_t count = relay->result_bundle.active ? relay->result_bundle.record_count : 0u;
+
+    if (relay->outbox_record.valid &&
+        relay->outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK &&
+        count < UINT8_MAX) {
+        count++;
+    }
+    return count;
+}
+
+static int mesh_relay_append_telemetry_tlvs(const struct mesh_relay *relay,
+                                            uint8_t *payload,
+                                            size_t payload_cap,
+                                            size_t *offset)
+{
+    int ret;
+
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_MESH_DUPLICATE_COUNT,
+                        relay_duplicate_count(relay));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_COLLECTION_PENDING_COUNT,
+                        relay_collection_pending_count(relay));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_PARENT_HOLDDOWN_COUNT,
+                        relay_parent_hold_down_count(relay));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_ROUTE_DISCOVERY_ATTEMPTS,
+                        relay->route_discovery.attempts);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u8(payload,
+                         payload_cap,
+                         offset,
+                         TLV_OUTBOX_DELIVERY_STATE,
+                         relay->outbox_record.delivery_state);
+}
+
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   uint8_t *payload,
                                   size_t payload_cap,
@@ -3818,16 +3904,24 @@ int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
         if (ret != PROTO_OK) {
             return ret;
         }
-        return tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, 100u);
+        ret = tlv_append_u8(payload, payload_cap, offset, TLV_QUALITY, 100u);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        return mesh_relay_append_telemetry_tlvs(relay, payload, payload_cap, offset);
     }
 
     selected = route_selected(&relay->upstream);
     if (selected == NULL || selected->hop_count == UINT8_MAX) {
-        return tlv_append_u8(payload,
-                             payload_cap,
-                             offset,
-                             TLV_REASON,
-                             (uint8_t)(-PROTO_ERR_NOT_FOUND));
+        ret = tlv_append_u8(payload,
+                            payload_cap,
+                            offset,
+                            TLV_REASON,
+                            (uint8_t)(-PROTO_ERR_NOT_FOUND));
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        return mesh_relay_append_telemetry_tlvs(relay, payload, payload_cap, offset);
     }
 
     ret = tlv_append_u64(payload, payload_cap, offset, TLV_NEXT_HOP_ID, selected->next_hop_id);
@@ -3846,7 +3940,11 @@ int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return tlv_append_u8(payload, payload_cap, offset, TLV_RETRY_COUNT, selected->failure_count);
+    ret = tlv_append_u8(payload, payload_cap, offset, TLV_RETRY_COUNT, selected->failure_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return mesh_relay_append_telemetry_tlvs(relay, payload, payload_cap, offset);
 }
 
 bool mesh_relay_tx_active(const struct mesh_relay *relay)
