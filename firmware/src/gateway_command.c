@@ -333,11 +333,32 @@ int gateway_command_extract_options(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
     if (options->collection_required &&
-        (options->collection_epoch_id == 0u || options->collection_slot_seed == 0u)) {
+        (options->collection_epoch_id == 0u ||
+         options->collection_slot_seed == 0u ||
+         options->membership_epoch == 0u ||
+         options->expected_node_count == 0u)) {
         return PROTO_ERR_MALFORMED;
     }
 
     return PROTO_OK;
+}
+
+enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(
+    const struct gateway_command_options *options)
+{
+    if (options == NULL) {
+        return GATEWAY_COMMAND_TRACK_NONE;
+    }
+    if (options->scope == CMD_SCOPE_SINGLE_NODE) {
+        return GATEWAY_COMMAND_TRACK_LEGACY_RESULT;
+    }
+    if (options->response_mode == CMD_RESPONSE_NONE) {
+        return GATEWAY_COMMAND_TRACK_NONE;
+    }
+    if (options->collection_required) {
+        return GATEWAY_COMMAND_TRACK_COLLECTION;
+    }
+    return GATEWAY_COMMAND_TRACK_NONE;
 }
 
 uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count)

@@ -1906,7 +1906,9 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
                                                                     size_t payload_len)
 {
     struct mesh_outbound outbound = {0};
+    struct gateway_command_options command_options = {0};
     enum command_id command_id = CMD_VENDOR_BASE;
+    enum gateway_command_tracking_mode tracking_mode = GATEWAY_COMMAND_TRACK_NONE;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
@@ -1939,17 +1941,42 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
         return mesh_errno_from_proto(ret);
     }
 
-    ret = gateway_begin_command_result_wait(&outbound.packet, command_id);
-    if (ret < 0) {
-        LOG_WRN("gateway command result tracker busy: cmd=0x%04x dst=0x%016llx ret=%d",
-                (unsigned int)command_id,
-                (unsigned long long)outbound.packet.dst_id,
-                ret);
+    ret = gateway_command_extract_options(payload, payload_len, &command_options);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway rejected BLE host command options after prepare: %d", ret);
         gateway_emit_host_command_result(&outbound.packet,
                                          command_id,
-                                         ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                         COMMAND_MALFORMED_PAYLOAD,
                                          (uint8_t)(-ret));
-        return ret;
+        return mesh_errno_from_proto(ret);
+    }
+    tracking_mode = gateway_command_tracking_mode_from_options(&command_options);
+    if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
+        ret = gateway_begin_command_result_wait(&outbound.packet, command_id);
+        if (ret < 0) {
+            LOG_WRN("gateway command result tracker busy: cmd=0x%04x dst=0x%016llx ret=%d",
+                    (unsigned int)command_id,
+                    (unsigned long long)outbound.packet.dst_id,
+                    ret);
+            gateway_emit_host_command_result(&outbound.packet,
+                                             command_id,
+                                             ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                             (uint8_t)(-ret));
+            return ret;
+        }
+    } else if (tracking_mode == GATEWAY_COMMAND_TRACK_COLLECTION) {
+        ret = gateway_begin_command_collection(&command_options);
+        if (ret < 0) {
+            LOG_WRN("gateway command collection tracker busy: cmd=0x%04x command_seq=%u ret=%d",
+                    (unsigned int)command_id,
+                    command_options.command_seq,
+                    ret);
+            gateway_emit_host_command_result(&outbound.packet,
+                                             command_id,
+                                             ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
+                                             (uint8_t)(-ret));
+            return ret;
+        }
     }
 
     ret = mesh_start_tracked_tx(&outbound, "ble-command");
@@ -1964,7 +1991,11 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
                     (unsigned long long)outbound.packet.dst_id);
             return 0;
         }
-        gateway_clear_pending_command_result(&outbound.packet);
+        if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
+            gateway_clear_pending_command_result(&outbound.packet);
+        } else if (tracking_mode == GATEWAY_COMMAND_TRACK_COLLECTION) {
+            gateway_clear_command_collection(&command_options);
+        }
         gateway_emit_host_command_result(&outbound.packet,
                                          command_id,
                                          ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,

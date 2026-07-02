@@ -40,6 +40,8 @@ void gateway_emit_host_command_result(const struct proto_packet *command,
 int gateway_begin_command_result_wait(const struct proto_packet *command,
                                       enum command_id command_id);
 void gateway_clear_pending_command_result(const struct proto_packet *command);
+int gateway_begin_command_collection(const struct gateway_command_options *options);
+void gateway_clear_command_collection(const struct gateway_command_options *options);
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len);

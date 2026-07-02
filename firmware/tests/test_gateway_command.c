@@ -395,6 +395,134 @@ static void test_command_flood_requires_collection_identity_for_responses(void)
     assert(!options.collection_required);
 }
 
+static void test_tracking_mode_keeps_single_node_on_legacy_wait(void)
+{
+    uint8_t payload[24];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_PING);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.scope == CMD_SCOPE_SINGLE_NODE);
+    assert(options.response_mode == CMD_RESPONSE_NONE);
+    assert(!options.collection_required);
+    assert(gateway_command_tracking_mode_from_options(&options) ==
+           GATEWAY_COMMAND_TRACK_LEGACY_RESULT);
+}
+
+static void test_tracking_mode_skips_broadcast_no_response_wait(void)
+{
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_SET_LED_PATTERN);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MEMBERSHIP_EPOCH,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_COUNT,
+                          12u) == PROTO_OK);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.scope == CMD_SCOPE_ALL_REGISTERED);
+    assert(options.response_mode == CMD_RESPONSE_NONE);
+    assert(options.flood_required);
+    assert(!options.collection_required);
+    assert(gateway_command_tracking_mode_from_options(&options) ==
+           GATEWAY_COMMAND_TRACK_NONE);
+}
+
+static void test_tracking_mode_uses_collection_for_broadcast_results(void)
+{
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_GET_STATUS);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_SMALL_RESULT) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MEMBERSHIP_EPOCH,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_COUNT,
+                          12u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          3003u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_SLOT_SEED,
+                          4004u) == PROTO_OK);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.collection_required);
+    assert(gateway_command_tracking_mode_from_options(&options) ==
+           GATEWAY_COMMAND_TRACK_COLLECTION);
+}
+
 static void test_collection_initial_due_is_deterministic_and_bounded(void)
 {
     uint32_t due_a;
@@ -1195,6 +1323,9 @@ int main(void)
     test_extract_options_defaults_to_single_node_small_result();
     test_prepare_outbound_accepts_all_registered_command_flood();
     test_command_flood_requires_collection_identity_for_responses();
+    test_tracking_mode_keeps_single_node_on_legacy_wait();
+    test_tracking_mode_skips_broadcast_no_response_wait();
+    test_tracking_mode_uses_collection_for_broadcast_results();
     test_collection_initial_due_is_deterministic_and_bounded();
     test_append_collection_result_identity_requires_epoch();
     test_collection_records_unique_results_and_builds_eack();

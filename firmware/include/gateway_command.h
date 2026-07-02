@@ -37,6 +37,12 @@ struct gateway_command_options {
     bool flood_required;
 };
 
+enum gateway_command_tracking_mode {
+    GATEWAY_COMMAND_TRACK_NONE = 0,
+    GATEWAY_COMMAND_TRACK_LEGACY_RESULT = 1,
+    GATEWAY_COMMAND_TRACK_COLLECTION = 2,
+};
+
 struct gateway_collection_result_entry {
     struct command_result_id id;
     uint16_t payload_crc;
@@ -64,6 +70,8 @@ int gateway_command_extract_id(const uint8_t *payload,
 int gateway_command_extract_options(const uint8_t *payload,
                                     size_t payload_len,
                                     struct gateway_command_options *options);
+enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(
+    const struct gateway_command_options *options);
 uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count);
 uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms,
                                                   uint64_t node_id,

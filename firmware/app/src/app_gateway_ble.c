@@ -3,6 +3,7 @@
 #include "app_anchor.h"
 #include "app_config.h"
 #include "app_high_debug.h"
+#include "app_mesh_report.h"
 #include "app_state.h"
 #include "mesh_relay.h"
 #include "serial_frame.h"
@@ -98,6 +99,18 @@ void gateway_clear_pending_command_result(const struct proto_packet *command)
     ARG_UNUSED(command);
 }
 
+int gateway_begin_command_collection(const struct gateway_command_options *options)
+{
+    ARG_UNUSED(options);
+
+    return -ENOTSUP;
+}
+
+void gateway_clear_command_collection(const struct gateway_command_options *options)
+{
+    ARG_UNUSED(options);
+}
+
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len)
@@ -112,6 +125,7 @@ void gateway_command_result_tracking_init(void)
 }
 #else
 static struct gateway_command_pending gateway_command_pending_state;
+static struct gateway_collection_state gateway_collection_state;
 static struct k_work_delayable gateway_command_result_timeout_work;
 
 void gateway_command_timeout_side_effects(const struct proto_packet *command,
@@ -120,6 +134,120 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          enum command_id command_id,
                                          enum command_status status,
                                          uint8_t reason);
+
+static bool gateway_collection_tracking_active(void)
+{
+    return DEVICE_ROLE == ROLE_GATEWAY &&
+           gateway_collection_state.gateway_id == DEVICE_ID &&
+           gateway_collection_state.command_seq != 0u &&
+           gateway_collection_state.collection_epoch_id != 0u;
+}
+
+static void gateway_send_collection_eack(const char *reason)
+{
+    struct mesh_outbound eack = {0};
+    int ret;
+
+    if (!gateway_collection_tracking_active()) {
+        return;
+    }
+
+    ret = gateway_collection_prepare_eack_outbound(&gateway_collection_state,
+                                                   EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
+                                                   &eack);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway collection EACK build failed: ret=%d", ret);
+        return;
+    }
+
+    ret = mesh_send_outbound(&eack, reason);
+    if (ret < 0) {
+        LOG_WRN("gateway collection EACK send failed: ret=%d", ret);
+        return;
+    }
+
+    mesh_relay_note_tx_sent(&mesh_runtime, &eack, k_uptime_get_32());
+    LOG_INF("gateway collection EACK sent: command_seq=%u received=%u expected=%u open=%u",
+            gateway_collection_state.command_seq,
+            gateway_collection_state.received_count,
+            gateway_collection_state.expected_count,
+            gateway_collection_state.collection_open ? 1u : 0u);
+}
+
+static void gateway_note_collection_result(const struct proto_packet *packet,
+                                           const uint8_t *payload,
+                                           size_t payload_len)
+{
+    bool duplicate = false;
+    int ret;
+
+    if (!gateway_collection_tracking_active() ||
+        packet == NULL ||
+        packet->msg_type != MSG_COMMAND_RESULT) {
+        return;
+    }
+
+    ret = gateway_collection_record_result(&gateway_collection_state,
+                                           packet,
+                                           payload,
+                                           payload_len,
+                                           &duplicate);
+    if (ret != PROTO_OK) {
+        LOG_DBG("gateway collection result ignored: src=0x%016llx ret=%d",
+                packet == NULL ? 0ull : (unsigned long long)packet->src_id,
+                ret);
+        return;
+    }
+
+    LOG_INF("gateway collection result recorded: src=0x%016llx command_seq=%u received=%u expected=%u duplicate=%u",
+            (unsigned long long)packet->src_id,
+            gateway_collection_state.command_seq,
+            gateway_collection_state.received_count,
+            gateway_collection_state.expected_count,
+            duplicate ? 1u : 0u);
+    if (!duplicate) {
+        gateway_send_collection_eack("collection-eack-result");
+    }
+}
+
+static void gateway_note_collection_bundle(const struct proto_packet *packet,
+                                           const uint8_t *payload,
+                                           size_t payload_len)
+{
+    uint16_t accepted_count = 0u;
+    uint16_t duplicate_count = 0u;
+    int ret;
+
+    if (!gateway_collection_tracking_active() ||
+        packet == NULL ||
+        packet->msg_type != MSG_RESULT_BUNDLE) {
+        return;
+    }
+
+    ret = gateway_collection_record_bundle(&gateway_collection_state,
+                                           packet,
+                                           payload,
+                                           payload_len,
+                                           &accepted_count,
+                                           &duplicate_count);
+    if (ret != PROTO_OK) {
+        LOG_DBG("gateway collection bundle ignored: src=0x%016llx ret=%d",
+                packet == NULL ? 0ull : (unsigned long long)packet->src_id,
+                ret);
+        return;
+    }
+
+    LOG_INF("gateway collection bundle recorded: src=0x%016llx command_seq=%u accepted=%u duplicate=%u received=%u expected=%u",
+            (unsigned long long)packet->src_id,
+            gateway_collection_state.command_seq,
+            (unsigned int)accepted_count,
+            (unsigned int)duplicate_count,
+            gateway_collection_state.received_count,
+            gateway_collection_state.expected_count);
+    if (accepted_count != 0u) {
+        gateway_send_collection_eack("collection-eack-bundle");
+    }
+}
 
 int gateway_encode_host_packet_frame(const struct proto_packet *packet,
                                      const uint8_t *payload,
@@ -164,6 +292,9 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
         !(DEVICE_ROLE == ROLE_CLICKER && IS_ENABLED(CONFIG_IMEC_ML_CLICKER)) &&
         !(DEVICE_ROLE == ROLE_ANCHOR && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST))) {
         return 0;
+    }
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        gateway_note_collection_bundle(packet, payload, payload_len);
     }
     if (!gateway_ble_transport_enabled()) {
         return -ENOTSUP;
@@ -354,6 +485,52 @@ void gateway_clear_pending_command_result(const struct proto_packet *command)
     (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
 }
 
+int gateway_begin_command_collection(const struct gateway_command_options *options)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || options == NULL || !options->collection_required) {
+        return -EINVAL;
+    }
+    if (gateway_command_pending_state.active || gateway_collection_state.collection_open) {
+        return -EBUSY;
+    }
+
+    ret = gateway_collection_start(&gateway_collection_state,
+                                   DEVICE_ID,
+                                   (uint16_t)mesh_runtime.upstream.current_epoch,
+                                   options->command_seq,
+                                   options->collection_epoch_id,
+                                   options->membership_epoch,
+                                   options->expected_node_count,
+                                   0u,
+                                   COLLECTION_RETRY_ROUND_0_MS);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    LOG_INF("gateway collection tracking started: command_seq=%u collection=%u epoch=%u expected=%u",
+            gateway_collection_state.command_seq,
+            gateway_collection_state.collection_epoch_id,
+            gateway_collection_state.gateway_epoch,
+            gateway_collection_state.expected_count);
+    return 0;
+}
+
+void gateway_clear_command_collection(const struct gateway_command_options *options)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY || options == NULL ||
+        !gateway_collection_tracking_active()) {
+        return;
+    }
+    if (gateway_collection_state.command_seq != options->command_seq ||
+        gateway_collection_state.collection_epoch_id != options->collection_epoch_id) {
+        return;
+    }
+
+    gateway_collection_clear(&gateway_collection_state);
+}
+
 static void gateway_command_result_timeout_handler(struct k_work *work)
 {
     struct proto_packet command = {0};
@@ -393,8 +570,13 @@ void gateway_note_command_result(const struct proto_packet *packet,
     uint8_t reason = 0u;
     int ret;
 
-    if (DEVICE_ROLE != ROLE_GATEWAY ||
-        !gateway_command_pending_matches_result(&gateway_command_pending_state, packet)) {
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    gateway_note_collection_result(packet, payload, payload_len);
+
+    if (!gateway_command_pending_matches_result(&gateway_command_pending_state, packet)) {
         return;
     }
 
@@ -428,6 +610,10 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
 {
     int ret;
 
+    if (gateway_collection_state.collection_open) {
+        return -EBUSY;
+    }
+
     ret = gateway_command_pending_start(&gateway_command_pending_state,
                                         command,
                                         command_id,
@@ -444,6 +630,7 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
 
 void gateway_command_result_tracking_init(void)
 {
+    gateway_collection_clear(&gateway_collection_state);
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
 }
