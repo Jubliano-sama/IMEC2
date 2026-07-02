@@ -74,16 +74,16 @@ Current `get_goal()`:
    Native relay coverage also verifies that a closed collection EACK terminates
    pending source delivery even when the EACK uses roster-bitmap format and
    carries no explicit node list.
-   Gateway app collection EACK now keeps a single volatile return peer from
-   accepted result/result-bundle traffic and uses a focused helper to prefer
-   channel-9 EACK return over that existing timing, falling back to channel-5
-   flood when no return peer or usable channel-9 event exists. This is a
-   one-peer return optimization, not full MeshSpec EACK routing: there is no
-   per-result previous-hop table, no multiple return-parent tracking, and no
-   durable EACK return state. RAM impact for this slice is one volatile
-   `uint64_t gateway_collection_return_next_hop_id` plus stack locals; latest
-   measured role-build RAM, not remeasured by this docs-only checkpoint, was
-   clicker 81936 B 62.51%, anchor 94848 B 72.36%, gateway 101708 B 77.60%.
+   Gateway app collection EACK now keeps up to two volatile return peers from
+   accepted result/result-bundle traffic as upstream first-hop candidates and
+   tries valid candidates for channel-9 EACK return over existing timing,
+   falling back to channel-5 flood when no cached return peer can be used. This
+   is a two-candidate first-hop cache, not full
+   MeshSpec EACK routing: there is no per-result previous-hop table, no durable
+   EACK return state. RAM impact for this slice is a two-entry
+   volatile `uint64_t gateway_collection_return_next_hop_ids[]` cache, 16 bytes
+   plus stack locals; latest measured role-build RAM was clicker 82000 B
+   62.56%, anchor 94912 B 72.41%, gateway 101708 B 77.60%.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
