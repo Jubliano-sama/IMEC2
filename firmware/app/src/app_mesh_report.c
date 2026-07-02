@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
+#include "app_mesh_persistence.h"
 #include "app_mesh_test.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
@@ -1328,6 +1329,7 @@ void mesh_preempt_for_click_event(void)
         }
         if (!mesh_defer_active_collection_result("click-preempt")) {
             mesh_relay_cancel_tx(&mesh_runtime);
+            app_mesh_persistence_clear_outbox();
             (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
         }
         LOG_INF("anchor click discovery preempted active mesh TX");
@@ -1381,6 +1383,7 @@ static bool mesh_defer_active_collection_result(const char *reason)
         return false;
     }
 
+    (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
     LOG_INF("mesh pending collection result deferred: reason=%s",
             reason == NULL ? "defer" : reason);
     mesh_schedule_tx_timeout();
@@ -5144,6 +5147,7 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
 
                 if (!deferred) {
                     mesh_relay_cancel_tx(&mesh_runtime);
+                    app_mesh_persistence_clear_outbox();
                 }
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_note("DBG_CH9_TX_SINGLE_SLOT_FULL\n");
@@ -5274,6 +5278,7 @@ send_prepared:
             return 0;
         }
         mesh_relay_cancel_tx(&mesh_runtime);
+        app_mesh_persistence_clear_outbox();
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
             int route_ret;
 
@@ -5289,6 +5294,7 @@ send_prepared:
     }
 
     mesh_relay_note_tx_sent(&mesh_runtime, &tx, k_uptime_get_32());
+    (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
     if (channel9_success_pending) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_CH9_TX_SINGLE_SEND_OK\n");
@@ -6131,22 +6137,27 @@ after_gateway_ack:
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
         HIGH_DEBUG_COUNTER_INC(mesh_ack);
         LOG_INF("mesh pending TX gateway acknowledged");
+        app_mesh_persistence_clear_outbox();
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_HOP_PROGRESS) {
         LOG_INF("mesh pending TX hop progress acknowledged");
+        (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_RELAY_BUSY) {
         LOG_INF("mesh pending TX deferred by relay busy hint");
+        (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_COLLECTION_RETRY) {
         LOG_INF("mesh pending collection result scheduled for EACK retry");
+        (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_COLLECTION_CLOSED) {
         LOG_INF("mesh pending collection result stopped after collection close");
+        app_mesh_persistence_clear_outbox();
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) {

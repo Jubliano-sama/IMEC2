@@ -8,8 +8,13 @@ out explicitly.
 Snapshot basis:
 
 - Current code at repository `HEAD`.
-- `Documentation/Firmware Implementation Tasklist.md` MeshSpec checklist.
+- `Documentation/Firmware Implementation Tasklist.md` current checklist statuses.
 - Current mesh relay, app mesh-report, gateway command, and native test code.
+
+Reading rule: this document records the protocol surface that exists in the
+firmware tree now. It is not a statement of desired MeshSpec behavior unless the
+behavior is also present in code or tests. Unimplemented and partially
+implemented items are listed as gaps rather than described as operational flow.
 
 ## Current Scope
 
@@ -76,7 +81,7 @@ existing modules.
 
 ## Implemented Scheduler Priorities
 
-The current implementation preserves the intended single-radio priority model:
+The current scheduler code follows this single-radio priority order:
 
 1. Active channel-5 click service.
 2. Required quick channel-5 wake scan.
@@ -319,12 +324,16 @@ Implemented and tested for active pending results:
 - C5/click-style deferral preservation in native relay paths,
 - relay outbox snapshot/restore after `mesh_relay_init()` with command-result
   identity, payload length, payload CRC, gateway/local identity, collection
-  epoch, gateway epoch, and completed-record validation.
+  epoch, gateway epoch, and completed-record validation,
+- anchor-role Zephyr NVS persistence for active relay outbox snapshots using
+  the board `storage_partition`.
 
 Partial:
 
-- Zephyr nonvolatile storage is not wired to the relay snapshot/restore API.
-- Full source retry-round persistence across real reboot is not implemented.
+- Pre-relay scheduled command results in the anchor app are not persisted before
+  they become active relay outbox state.
+- Full source retry-round persistence across real reboot is not implemented for
+  every collection-result state.
 
 ## Implemented Result Offer / Grant
 
@@ -422,12 +431,14 @@ Remaining partial test gap:
 
 These are the concrete gaps still present relative to `MeshSpec.md`:
 
-1. Relay-level outbox snapshot/restore exists, but Zephyr nonvolatile storage
-   is not wired to it. The API can restore payload bytes and pending retry state
-   after `mesh_relay_init()`, but it is not yet persisted across real power loss.
+1. Anchor-role Zephyr NVS storage is wired to relay-level outbox
+   snapshot/restore for active local collection-result TX state. It restores
+   after `mesh_relay_init()` and saves/clears around active relay TX state
+   transitions. This does not yet cover pre-relay scheduled command results.
 
 2. Source retry-round state for collection results is not fully persistent
-   across real reboot because there is no app/NVS storage integration yet.
+   across real reboot for every state because only active relay outbox snapshots
+   are storage-backed.
 
 3. Gateway app scheduled EACKs currently use explicit received-list format.
    Missing-list EACK generation exists in native helpers/tests, but the app
@@ -498,7 +509,7 @@ flowchart TD
     N --> O{EACK/ACK received?}
     O -- yes --> P[Clear active retry state]
     O -- missing/open --> Q[Retry in collection path]
-    O -- no EACK timeout --> R[Current behavior falls back to route retry path]
+    O -- no EACK timeout --> R[Schedule collection retry round with jitter]
 ```
 
 ## Verification Commands For Current State
@@ -519,5 +530,6 @@ Zephyr role builds normally used after app-facing changes:
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-gateway -- -DFIRMWARE_ROLE=gateway
 ```
 
-This document itself does not prove those commands currently pass; it records
-the current implemented protocol surface and the known remaining gaps.
+This document itself is not a fresh verification result. It records the current
+implemented protocol surface and the known remaining gaps. Use the commands
+above to refresh build/test proof after code changes.

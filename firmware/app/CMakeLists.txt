@@ -220,6 +220,21 @@ elseif(FIRMWARE_ROLE STREQUAL "clicker")
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj-clicker.conf")
 endif()
 
+if(FIRMWARE_ROLE STREQUAL "anchor")
+    set(IMEC_MESH_PERSISTENCE_CONF
+        "${CMAKE_CURRENT_BINARY_DIR}/imec-mesh-persistence.conf")
+    file(WRITE "${IMEC_MESH_PERSISTENCE_CONF}"
+        "CONFIG_FLASH=y\n"
+        "CONFIG_FLASH_MAP=y\n"
+        "CONFIG_FLASH_PAGE_LAYOUT=y\n"
+        "CONFIG_NVS=y\n")
+    list(FIND EXTRA_CONF_FILE "${IMEC_MESH_PERSISTENCE_CONF}"
+         IMEC_MESH_PERSISTENCE_CONF_INDEX)
+    if(IMEC_MESH_PERSISTENCE_CONF_INDEX EQUAL -1)
+        list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_PERSISTENCE_CONF}")
+    endif()
+endif()
+
 if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/gateway-ble-connectivity-test.conf")
     list(APPEND EXTRA_DTC_OVERLAY_FILE
@@ -316,6 +331,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_clicker.c
     src/app_ml.c
     src/app_mesh_test.c
+    src/app_mesh_persistence.c
     src/app_mesh_report.c
     src/app_stack_diag.c
     src/app_anchor.c

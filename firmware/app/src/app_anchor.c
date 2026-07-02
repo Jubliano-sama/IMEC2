@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
+#include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
 #include "app_ml.h"
 #include "app_state.h"
@@ -4336,6 +4337,10 @@ int app_anchor_start_anchor_role(void)
                     DEVICE_ID,
                     GATEWAY_ID,
                     1u);
+    ret = app_mesh_persistence_restore_outbox(&mesh_runtime, k_uptime_get_32());
+    if (ret < 0) {
+        LOG_WRN("anchor mesh outbox restore unavailable: %d", ret);
+    }
     ret = uwb_anchor_session_init(&anchor_uwb_session, &anchor_config);
     if (ret < 0) {
         LOG_ERR("anchor UWB session init failed: %d", ret);

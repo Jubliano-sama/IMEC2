@@ -19,14 +19,11 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `adc6d78` before the current relay snapshot/restore work
+- HEAD: `002daa9` after relay snapshot/restore work
 - `git status --short`:
   - No tracked modifications in code or headers.
   - Untracked files only:
     - `Documentation/MeshSpec Addendum.md`
-    - `Documentation/Mesh Protocol Detailed Flow.md` (current implementation snapshot,
-      not an idealized spec restatement)
-    - `Documentation/MeshSpec_Worktree_State.md` (this file)
     - `logs/` directory with historical test logs and RTT sessions.
 
 ## Verified tracking source
@@ -51,8 +48,9 @@ Current `get_goal()`:
 
 ## Explicit remaining gaps
 
-1. Source/retry persistence now has relay-level snapshot/restore APIs, but Zephyr
-   nonvolatile storage integration is not wired yet.
+1. Source/retry persistence now has relay-level snapshot/restore APIs plus
+   anchor-role Zephyr NVS save/restore for active relay outbox snapshots.
+   Pre-relay scheduled command results are still not restart-tolerant.
 2. Large-result durability across restart and some multi-hop custody corner cases are still
    incomplete versus full persistence target.
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
@@ -67,6 +65,10 @@ Current `get_goal()`:
 - Relay outbox snapshot/restore now preserves local collection command results with payload
   CRC/identity validation after `mesh_relay_init()` and restores them into retry-backoff state
   instead of stale pre-reboot radio wait deadlines.
+- Anchor-role app/NVS integration now saves active relay outbox snapshots on
+  TX/defer/retry/busy/progress transitions, clears them on gateway confirmation,
+  collection close, or true cancel, and restores valid snapshots after
+  `mesh_relay_init()`.
 - Native regression coverage: `test_collection_result_timeout_uses_collection_retry_round`
   plus outbox snapshot/restore tests and updated route-loss preservation expectations in
   `test_mesh_relay`.
@@ -79,8 +81,9 @@ Current `get_goal()`:
 
 ## Next actions
 
-1. Add explicit restart-safe relay outbox snapshot/restore APIs plus tests.
-2. Add/finalize app-integrated failure-mode test cases.
+1. Add/finalize app-integrated failure-mode test cases.
+2. Decide whether pre-relay scheduled command results need storage-backed
+   persistence or can remain outside the current implementation scope.
 3. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is actually implemented
    right now, including partial and missing behavior. Do not turn it into an idealized restatement
    of `Documentation/MeshSpec.md`.
