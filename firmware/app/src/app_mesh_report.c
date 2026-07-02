@@ -5921,6 +5921,14 @@ after_gateway_ack:
         LOG_INF("mesh pending TX deferred by relay busy hint");
         mesh_schedule_tx_timeout();
     }
+    if (result->actions & MESH_RELAY_ACTION_TX_COLLECTION_RETRY) {
+        LOG_INF("mesh pending collection result scheduled for EACK retry");
+        mesh_schedule_tx_timeout();
+    }
+    if (result->actions & MESH_RELAY_ACTION_TX_COLLECTION_CLOSED) {
+        LOG_INF("mesh pending collection result stopped after collection close");
+        mesh_schedule_tx_timeout();
+    }
     if (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) {
         LOG_INF("mesh local delivery ready");
     }

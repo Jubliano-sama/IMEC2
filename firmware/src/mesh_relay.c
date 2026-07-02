@@ -1887,7 +1887,7 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     struct gateway_collection_eack eack;
     struct command_result_id pending_id;
     uint32_t collection_epoch_id = 0u;
-    bool received = false;
+    bool listed = false;
     int ret;
 
     if (relay == NULL || result == NULL || payload == NULL ||
@@ -1901,7 +1901,8 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (eack.eack_format != EACK_FORMAT_EXPLICIT_RECEIVED_LIST) {
+    if (eack.eack_format != EACK_FORMAT_EXPLICIT_RECEIVED_LIST &&
+        eack.eack_format != EACK_FORMAT_EXPLICIT_MISSING_LIST) {
         return PROTO_OK;
     }
 
@@ -1929,18 +1930,32 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     ret = gateway_collection_eack_contains_node_id(payload,
                                                    payload_len,
                                                    pending_id.node_id,
-                                                   &received);
+                                                   &listed);
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (!received) {
+    if (eack.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST && listed) {
+        result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+        mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
+        relay->pending.state = MESH_RELAY_TX_IDLE;
+        route_record_success_at(&relay->upstream, now_ms);
         return PROTO_OK;
     }
 
-    result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
-    mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
-    relay->pending.state = MESH_RELAY_TX_IDLE;
-    route_record_success_at(&relay->upstream, now_ms);
+    if (!eack.collection_open) {
+        result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
+        relay->pending.state = MESH_RELAY_TX_IDLE;
+        return PROTO_OK;
+    }
+
+    if (eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && listed) {
+        pending_refresh_age(&relay->pending, now_ms);
+        relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+        relay->pending.retry_after_ms = now_ms + (eack.next_retry_spread_ms == 0u ?
+                                                   COLLECTION_RETRY_ROUND_0_MS :
+                                                   eack.next_retry_spread_ms);
+        result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_RETRY;
+    }
     return PROTO_OK;
 }
 

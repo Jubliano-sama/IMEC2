@@ -928,6 +928,188 @@ static void test_collection_eack_received_list_ignores_other_node(void)
     assert(mesh_relay_tx_active(&relay));
 }
 
+static void test_collection_eack_missing_list_schedules_patient_retry(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1003u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 65u,
+        .result_seq = 66u,
+    };
+    const struct gateway_collection_eack eack = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1003u,
+        .collection_epoch_id = 3005u,
+        .membership_epoch = 3u,
+        .expected_count = 12u,
+        .received_count = 11u,
+        .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
+        .retry_round = 2u,
+        .next_retry_spread_ms = COLLECTION_RETRY_ROUND_1_MS,
+        .collection_open = true,
+    };
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(ANCHOR_B, 13u, 90u);
+    struct proto_packet result_packet;
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    struct proto_packet eack_packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 3005u,
+        .seq = 25u,
+        .ttl = 2u,
+    };
+    uint8_t result_payload[128];
+    uint8_t eack_payload[128];
+    size_t result_payload_len = 0u;
+    size_t eack_payload_len = 0u;
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3005u,
+                                            &result_payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    result_id.command_seq,
+                                    result_id.result_seq,
+                                    (uint8_t)result_payload_len,
+                                    false) == PROTO_OK);
+    assert(gateway_collection_eack_append_tlvs(eack_payload,
+                                               sizeof(eack_payload),
+                                               &eack_payload_len,
+                                               &eack) == PROTO_OK);
+    assert(tlv_append_u64(eack_payload,
+                          sizeof(eack_payload),
+                          &eack_payload_len,
+                          TLV_NODE_ID,
+                          ANCHOR_A) == PROTO_OK);
+    eack_packet.payload_len = (uint16_t)eack_payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &result_packet,
+                               result_payload,
+                               result_payload_len,
+                               5000u,
+                               &tx) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &eack_packet,
+                                eack_payload,
+                                eack_payload_len,
+                                GATEWAY,
+                                80u,
+                                5100u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_TX_COLLECTION_RETRY));
+    assert(!has_action(&result, MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED));
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    assert(relay.pending.retry_after_ms == 5100u + COLLECTION_RETRY_ROUND_1_MS);
+}
+
+static void test_collection_eack_closed_stops_pending_without_success(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1004u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 67u,
+        .result_seq = 68u,
+    };
+    const struct gateway_collection_eack eack = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1004u,
+        .collection_epoch_id = 3006u,
+        .membership_epoch = 3u,
+        .expected_count = 12u,
+        .received_count = 11u,
+        .eack_format = EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
+        .retry_round = 3u,
+        .next_retry_spread_ms = COLLECTION_RETRY_ROUND_2_MS,
+        .collection_open = false,
+    };
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(ANCHOR_B, 13u, 90u);
+    struct proto_packet result_packet;
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    struct proto_packet eack_packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 3006u,
+        .seq = 26u,
+        .ttl = 2u,
+    };
+    uint8_t result_payload[128];
+    uint8_t eack_payload[128];
+    size_t result_payload_len = 0u;
+    size_t eack_payload_len = 0u;
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3006u,
+                                            &result_payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    result_id.command_seq,
+                                    result_id.result_seq,
+                                    (uint8_t)result_payload_len,
+                                    false) == PROTO_OK);
+    assert(gateway_collection_eack_append_tlvs(eack_payload,
+                                               sizeof(eack_payload),
+                                               &eack_payload_len,
+                                               &eack) == PROTO_OK);
+    assert(tlv_append_u64(eack_payload,
+                          sizeof(eack_payload),
+                          &eack_payload_len,
+                          TLV_NODE_ID,
+                          ANCHOR_B) == PROTO_OK);
+    eack_packet.payload_len = (uint16_t)eack_payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &result_packet,
+                               result_payload,
+                               result_payload_len,
+                               5000u,
+                               &tx) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &eack_packet,
+                                eack_payload,
+                                eack_payload_len,
+                                GATEWAY,
+                                80u,
+                                5100u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_TX_COLLECTION_CLOSED));
+    assert(!has_action(&result, MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED));
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!mesh_relay_tx_active(&relay));
+}
+
 static void test_collection_eack_broadcast_rejects_wrong_gateway_epoch(void)
 {
     const struct gateway_collection_eack eack = {
@@ -4507,6 +4689,8 @@ int main(void)
     test_collection_eack_broadcast_delivers_and_forwards_once();
     test_collection_eack_received_list_confirms_pending_result();
     test_collection_eack_received_list_ignores_other_node();
+    test_collection_eack_missing_list_schedules_patient_retry();
+    test_collection_eack_closed_stops_pending_without_success();
     test_collection_eack_broadcast_rejects_wrong_gateway_epoch();
     test_busy_survey_discovery_broadcast_still_forwards();
     test_downlink_routes_survive_age_until_delivery_failure();
