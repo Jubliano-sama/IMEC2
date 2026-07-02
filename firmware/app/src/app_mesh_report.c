@@ -10,6 +10,7 @@
 #include "app_state.h"
 #include "dwm3000_driver.h"
 #include "mesh.h"
+#include "mesh_preemption.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 #include "report.h"
@@ -1308,36 +1309,41 @@ int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_t *payl
 
 void mesh_preempt_for_click_event(void)
 {
-    struct mesh_outbound pending_report = {0};
-    bool requeue_report = false;
+    struct mesh_click_preempt_plan plan;
 
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
 
-    if (mesh_relay_tx_active(&mesh_runtime)) {
-        if (mesh_runtime.pending.packet.msg_type == MSG_CLICK_REPORT &&
-            mesh_runtime.pending.packet.src_id == DEVICE_ID) {
-            pending_report.packet = mesh_runtime.pending.packet;
-            pending_report.payload_len = mesh_runtime.pending.payload_len;
-            if (pending_report.payload_len > 0u) {
-                memcpy(pending_report.payload,
-                       mesh_runtime.pending.payload,
-                       pending_report.payload_len);
-            }
-            requeue_report = true;
-        }
-        if (!mesh_defer_active_collection_result("click-preempt")) {
-            mesh_relay_cancel_tx(&mesh_runtime);
-            app_mesh_persistence_clear_outbox();
-            (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
-        }
+    if (mesh_prepare_click_preemption(&mesh_runtime,
+                                      DEVICE_ID,
+                                      k_uptime_get_32(),
+                                      &plan) != PROTO_OK) {
+        return;
+    }
+
+    if (plan.save_outbox) {
+        (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
+        LOG_INF("mesh pending collection result deferred: reason=click-preempt");
+    }
+    if (plan.clear_outbox) {
+        app_mesh_persistence_clear_outbox();
+    }
+    if (plan.cancel_timeout) {
+        (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
+    }
+    if (plan.schedule_timeout) {
+        mesh_schedule_tx_timeout();
+    }
+    if (plan.save_outbox || plan.clear_outbox) {
         LOG_INF("anchor click discovery preempted active mesh TX");
     }
 
-    k_msgq_purge(&mesh_rx_msgq);
-    if (requeue_report) {
-        if (k_msgq_put(&report_tx_msgq, &pending_report, K_NO_WAIT) != 0) {
+    if (plan.purge_rx_queue) {
+        k_msgq_purge(&mesh_rx_msgq);
+    }
+    if (plan.requeue_click_report) {
+        if (k_msgq_put(&report_tx_msgq, &plan.click_report, K_NO_WAIT) != 0) {
             LOG_WRN("preempted click report could not be requeued");
         }
     }

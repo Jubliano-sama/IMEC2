@@ -14,6 +14,7 @@ add_library(core
     src/uwb_ble_courtesy.c
     src/uwb_session.c
     src/mesh.c
+    src/mesh_preemption.c
     src/mesh_relay.c
     src/report.c
     src/serial_frame.c
@@ -61,6 +62,10 @@ add_test(NAME route COMMAND test_route)
 add_executable(test_mesh tests/test_mesh.c)
 target_link_libraries(test_mesh PRIVATE core)
 add_test(NAME mesh COMMAND test_mesh)
+
+add_executable(test_mesh_preemption tests/test_mesh_preemption.c)
+target_link_libraries(test_mesh_preemption PRIVATE core)
+add_test(NAME mesh_preemption COMMAND test_mesh_preemption)
 
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)

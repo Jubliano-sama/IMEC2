@@ -359,6 +359,7 @@ else()
         ../src/uwb_ble_courtesy.c
         ../src/uwb_session.c
         ../src/mesh.c
+        ../src/mesh_preemption.c
         ../src/mesh_relay.c
         ../src/report.c
         ../src/serial_frame.c

@@ -96,9 +96,11 @@ C5/click deferral paths that currently have native coverage.
 
 Known remaining gap:
 
-- App-integrated click-service preemption during collection is still listed as
-  partial in the tasklist. Native coverage exists for several deferral paths,
-  but the app-integrated click-service collection case is not fully proven.
+- The app-used accepted-click preemption decision is covered by native tests:
+  collection results are deferred/scheduled for retry, ordinary pending TX is
+  canceled, and local click reports are copied for requeue. The Zephyr runtime
+  side effects around the real msgq, delayable work, and NVS calls are still
+  build-proven rather than runtime-tested.
 
 ## Implemented Channel-5 Contact Behavior
 
@@ -442,10 +444,14 @@ The tasklist marks the following as covered by native tests:
 - All-node collection spread.
 - Route-loss preservation.
 - Portable click/C5 preemption during collection.
+- App-used accepted-click preemption decision for collection-result deferral,
+  non-collection cancellation, and local click-report requeue.
 
 Remaining partial test gap:
 
-- App-integrated click-service preemption during collection.
+- Zephyr runtime side effects for accepted-click preemption during collection:
+  msgq purge/requeue, delayable timeout scheduling/cancel, and NVS save/clear
+  calls are not covered by a Zephyr app test.
 
 ## Current Not-Implemented / Partial Summary
 
@@ -482,8 +488,9 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    are restart-tolerant at the relay snapshot layer. Full app-integrated
    multi-hop recovery coverage remains partial.
 
-6. App-integrated click-service preemption during collection still needs focused
-   test coverage.
+6. Accepted-click preemption during collection has native coverage for the
+   decision used by `mesh_preempt_for_click_event()`, but still needs Zephyr
+   runtime coverage for msgq, delayable work, and NVS side effects.
 
 ## Current Flow: Direct Gateway Link
 

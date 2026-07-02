@@ -22,7 +22,8 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `69d7547` after collection retry-delay snapshot restore was committed
+- HEAD: `063692b` after app-used accepted-click preemption decision coverage
+  was committed
 - `git status --short` after this checkpoint edit is expected to show:
   - No tracked modifications.
   - Untracked files only:
@@ -55,7 +56,8 @@ Current `get_goal()`:
    anchor-role Zephyr NVS save/restore for active relay outbox snapshots and
    pre-relay scheduled command results. Outbox snapshots carry export uptime
    and preserve the remaining retry-backoff delay for restored collection
-   retry-round state.
+   retry-round state. `mesh_preemption` native coverage now covers the
+   accepted-click preemption decision used by `mesh_preempt_for_click_event()`.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -66,7 +68,7 @@ Current `get_goal()`:
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
    expected-node roster table is currently wired into collection state.
 4. App-level failure-mode coverage still needs one or more focused integration tests for
-   real-time preemption/retry behavior.
+   Zephyr runtime side effects during real-time preemption/retry behavior.
 
 ## Latest verified change
 
@@ -97,6 +99,14 @@ Current `get_goal()`:
   remaining retry-backoff delay when the saved pending TX was already waiting
   for a collection retry round. Native coverage:
   `test_collection_outbox_snapshot_preserves_retry_round_delay`.
+- `063692b`: `mesh_prepare_click_preemption()`
+  extracts the app-used accepted-click preemption decision into a
+  platform-independent helper. `mesh_preempt_for_click_event()` now applies the
+  helper's plan for NVS save/clear, delayable timeout schedule/cancel, RX queue
+  purge, and click-report requeue. Native coverage:
+  `test_mesh_preemption` verifies collection-result deferral, non-collection TX
+  cancel, and local click-report requeue. Zephyr runtime side effects are still
+  build-proven rather than runtime-tested.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -124,6 +134,10 @@ Current `get_goal()`:
   `cmake --build firmware/build` passed,
   `ctest --test-dir firmware/build --output-on-failure` passed 13/13, and
   Zephyr clicker/anchor/gateway role builds passed.
+- Verification run after the accepted-click preemption decision slice:
+  `cmake --build firmware/build` passed,
+  `ctest --test-dir firmware/build --output-on-failure` passed 14/14, and
+  Zephyr clicker/anchor/gateway role builds passed.
 
 ## Documentation rule after user correction
 
@@ -135,8 +149,8 @@ forward-looking behavior as if it exists.
 ## Next actions
 
 1. Add/finalize app-integrated failure-mode test cases.
-   The smallest concrete next gap is the accepted-click app boundary:
-   `app_anchor.c` accepted wake claim -> `mesh_preempt_for_click_event()` ->
-   collection-result deferral/persistence/reschedule in `app_mesh_report.c`.
+   The smallest remaining concrete gap is Zephyr runtime coverage for
+   accepted-click preemption side effects: msgq purge/requeue, delayable timeout
+   scheduling/cancel, and NVS save/clear calls.
 2. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
    actually implemented right now, including partial and missing behavior.
