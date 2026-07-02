@@ -140,8 +140,23 @@ struct flood_seen_entry {
     uint32_t expires_at_ms;
 };
 
+enum mesh_relay_delivery_state {
+    MESH_RELAY_DELIVERY_NONE = 0,
+    MESH_RELAY_DELIVERY_WAIT_LOCAL_CUSTODY_ACK = 1,
+    MESH_RELAY_DELIVERY_CUSTODY_ACCEPTED = 2,
+    MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK = 3,
+    MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK = 4,
+    MESH_RELAY_DELIVERY_GATEWAY_ACKED = 5,
+    MESH_RELAY_DELIVERY_EXPIRED = 6,
+    MESH_RELAY_DELIVERY_COLLECTION_CLOSED = 7,
+};
+
 struct persistent_outbox_record {
+    bool valid;
+    enum mesh_relay_delivery_state delivery_state;
     uint32_t packet_id;
+    uint32_t session_id;
+    uint16_t seq;
     uint64_t gateway_id;
     uint8_t packet_class;
     uint32_t created_uptime_ms;
@@ -306,6 +321,7 @@ struct mesh_relay {
     struct mesh_duplicate_entry duplicates[MESH_RELAY_DUP_CACHE_SIZE];
     struct mesh_relay_event_timing_entry event_timings[MESH_RELAY_EVENT_TIMINGS];
     struct mesh_pending_tx pending;
+    struct persistent_outbox_record outbox_record;
     struct mesh_route_discovery_state route_discovery;
     struct mesh_result_bundle_queue result_bundle;
     uint8_t duplicate_next;
@@ -384,6 +400,8 @@ void mesh_relay_reset_route_discovery(struct mesh_relay *relay);
 uint32_t mesh_relay_retry_backoff_ms(uint8_t failure_count, uint32_t random_value);
 uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
                                                uint32_t random_value);
+uint32_t mesh_relay_collection_retry_delay_ms(uint32_t base_delay_ms,
+                                              uint32_t random_value);
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   uint8_t *payload,
                                   size_t payload_cap,

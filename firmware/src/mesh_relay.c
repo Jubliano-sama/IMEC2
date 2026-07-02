@@ -90,6 +90,29 @@ static uint32_t jittered_delay_ms(uint32_t base_ms, uint32_t random_value)
     return base_ms + (random_value % (base_ms + 1u));
 }
 
+static uint32_t mix32(uint32_t value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
+static uint32_t collection_retry_seed(uint64_t node_id,
+                                      uint32_t command_seq,
+                                      uint32_t collection_epoch_id,
+                                      uint8_t retry_round)
+{
+    uint32_t seed = command_seq ^ collection_epoch_id;
+
+    seed ^= (uint32_t)node_id;
+    seed ^= (uint32_t)(node_id >> 32);
+    seed ^= (uint32_t)retry_round << 24;
+    return mix32(seed);
+}
+
 static uint8_t route_request_ttl_for_attempt(uint8_t previous_attempts, bool critical)
 {
     if (critical) {
@@ -268,6 +291,26 @@ uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
     }
 
     return jittered_delay_ms(backoff_ms, random_value);
+}
+
+uint32_t mesh_relay_collection_retry_delay_ms(uint32_t base_delay_ms,
+                                              uint32_t random_value)
+{
+    uint32_t jitter_ms;
+    uint32_t window_ms;
+
+    if (base_delay_ms == 0u) {
+        return 0u;
+    }
+
+    jitter_ms = (uint32_t)(((uint64_t)base_delay_ms *
+                            COLLECTION_RETRY_JITTER_PERCENT) / 100u);
+    if (jitter_ms == 0u) {
+        return base_delay_ms;
+    }
+
+    window_ms = (jitter_ms * 2u) + 1u;
+    return (base_delay_ms - jitter_ms) + (random_value % window_ms);
 }
 
 static int append_route_discovery_tlvs(uint8_t *payload,
@@ -845,6 +888,188 @@ static int collection_epoch_id_from_payload(const uint8_t *payload,
     }
     *collection_epoch_id = proto_get_u32_le(value);
     return *collection_epoch_id == 0u ? PROTO_ERR_MALFORMED : PROTO_OK;
+}
+
+static uint32_t outbox_packet_id_for(const struct proto_packet *packet)
+{
+    uint8_t identity[sizeof(uint32_t) + sizeof(uint16_t)];
+    uint16_t crc;
+
+    proto_put_u32_le(&identity[0], packet->session_id);
+    proto_put_u16_le(&identity[sizeof(uint32_t)], packet->seq);
+    crc = proto_crc16_ccitt_false(identity, sizeof(identity));
+    return ((uint32_t)crc << 16) | packet->seq;
+}
+
+static uint32_t outbox_age_from_pending(const struct mesh_pending_tx *pending,
+                                        uint32_t now_ms)
+{
+    return packet_age_add(pending->packet.message_age_ms, now_ms - pending->queued_at_ms);
+}
+
+static uint8_t outbox_selected_parent_index(const struct mesh_relay *relay,
+                                            uint64_t next_hop_id)
+{
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate = &relay->upstream.candidates[i];
+
+        if (candidate->valid &&
+            candidate->route_epoch == relay->upstream.current_epoch &&
+            candidate->next_hop_id == next_hop_id) {
+            return i;
+        }
+    }
+    return UINT8_MAX;
+}
+
+static uint32_t outbox_expiry_s_for(const struct proto_packet *packet,
+                                    const uint8_t *payload,
+                                    size_t payload_len)
+{
+    uint32_t expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S;
+    uint32_t requested_s = 0u;
+
+    if (packet->msg_type != MSG_COMMAND_RESULT) {
+        return expiry_s;
+    }
+    if (find_u32_tlv(payload, payload_len, TLV_COMMAND_EXPIRY_S, &requested_s) == PROTO_OK &&
+        requested_s != 0u &&
+        requested_s < expiry_s) {
+        expiry_s = requested_s;
+    }
+    return expiry_s;
+}
+
+static enum mesh_relay_delivery_state outbox_delivery_state_for(
+    const struct mesh_pending_tx *pending)
+{
+    uint32_t collection_epoch_id = 0u;
+
+    if (pending->packet.msg_type == MSG_COMMAND_RESULT && pending->result_offer_active) {
+        return MESH_RELAY_DELIVERY_WAIT_LOCAL_CUSTODY_ACK;
+    }
+    if (pending->packet.msg_type == MSG_COMMAND_RESULT &&
+        collection_epoch_id_from_payload(pending->payload,
+                                         pending->payload_len,
+                                         &collection_epoch_id) == PROTO_OK) {
+        return MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK;
+    }
+    return MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK;
+}
+
+static bool outbox_should_track_pending(const struct mesh_relay *relay,
+                                        const struct mesh_pending_tx *pending)
+{
+    return relay != NULL &&
+           pending != NULL &&
+           pending->packet.src_id == relay->local_id &&
+           pending->packet.dst_id == relay->gateway_id &&
+           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
+static void outbox_record_clear(struct mesh_relay *relay)
+{
+    memset(&relay->outbox_record, 0, sizeof(relay->outbox_record));
+}
+
+static void outbox_record_sync_age_from_pending(struct mesh_relay *relay,
+                                                uint32_t now_ms)
+{
+    if (relay->outbox_record.valid && mesh_relay_tx_active(relay)) {
+        relay->outbox_record.age_ms_saturating =
+            outbox_age_from_pending(&relay->pending, now_ms);
+    }
+}
+
+static void outbox_record_track_pending(struct mesh_relay *relay,
+                                        uint32_t now_ms)
+{
+    struct persistent_outbox_record *record;
+    const struct mesh_pending_tx *pending;
+
+    if (relay == NULL) {
+        return;
+    }
+    if (!mesh_relay_tx_active(relay)) {
+        outbox_record_clear(relay);
+        return;
+    }
+
+    pending = &relay->pending;
+    if (!outbox_should_track_pending(relay, pending)) {
+        outbox_record_clear(relay);
+        return;
+    }
+
+    record = &relay->outbox_record;
+    memset(record, 0, sizeof(*record));
+    record->valid = true;
+    record->delivery_state = outbox_delivery_state_for(pending);
+    record->packet_id = outbox_packet_id_for(&pending->packet);
+    record->session_id = pending->packet.session_id;
+    record->seq = pending->packet.seq;
+    record->gateway_id = relay->gateway_id;
+    record->packet_class = pending->packet.msg_type;
+    record->created_uptime_ms = now_ms;
+    record->age_ms_saturating = pending->packet.message_age_ms;
+    record->selected_parent_index = outbox_selected_parent_index(relay, pending->next_hop_id);
+    record->expiry_s = outbox_expiry_s_for(&pending->packet,
+                                           pending->payload,
+                                           pending->payload_len);
+    record->payload_crc = proto_crc16_ccitt_false(pending->payload, pending->payload_len);
+    record->payload_len = pending->payload_len;
+}
+
+static void outbox_record_mark_gateway_acked(struct mesh_relay *relay,
+                                             uint32_t now_ms)
+{
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    if (relay->outbox_record.valid ||
+        relay->outbox_record.delivery_state != MESH_RELAY_DELIVERY_NONE) {
+        relay->outbox_record.valid = false;
+        relay->outbox_record.delivery_state = MESH_RELAY_DELIVERY_GATEWAY_ACKED;
+        relay->outbox_record.gateway_acked = true;
+    }
+}
+
+static void outbox_record_mark_collection_retry(struct mesh_relay *relay,
+                                                const struct gateway_collection_eack *eack,
+                                                uint32_t now_ms)
+{
+    if (!relay->outbox_record.valid || eack == NULL) {
+        return;
+    }
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    relay->outbox_record.delivery_state = MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK;
+    relay->outbox_record.retry_round = eack->retry_round;
+    relay->outbox_record.gateway_acked = false;
+}
+
+static void outbox_record_mark_collection_closed(struct mesh_relay *relay,
+                                                 const struct gateway_collection_eack *eack,
+                                                 uint32_t now_ms)
+{
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    if (relay->outbox_record.valid ||
+        relay->outbox_record.delivery_state != MESH_RELAY_DELIVERY_NONE) {
+        relay->outbox_record.valid = false;
+        relay->outbox_record.delivery_state = MESH_RELAY_DELIVERY_COLLECTION_CLOSED;
+        relay->outbox_record.retry_round = eack != NULL ? eack->retry_round : 0u;
+        relay->outbox_record.gateway_acked = false;
+    }
+}
+
+static void outbox_record_mark_custody_accepted(struct mesh_relay *relay,
+                                                uint64_t custody_parent,
+                                                uint32_t now_ms)
+{
+    if (!relay->outbox_record.valid) {
+        return;
+    }
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    relay->outbox_record.custody_accepted = true;
+    relay->outbox_record.custody_parent = custody_parent;
+    relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
 }
 
 static bool result_bundle_key_matches(const struct mesh_result_bundle_queue *queue,
@@ -1603,6 +1828,7 @@ static int handle_result_grant(struct mesh_relay *relay,
     }
     if (relay->pending.payload_len > grant.max_bytes) {
         pending_refresh_age(&relay->pending, now_ms);
+        outbox_record_sync_age_from_pending(relay, now_ms);
         relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
         relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
         result->status = PROTO_ERR_NO_SPACE;
@@ -1615,6 +1841,7 @@ static int handle_result_grant(struct mesh_relay *relay,
     relay->pending.next_hop_id = previous_hop_id;
     relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
     pending_set_deadlines(&relay->pending, now_ms);
+    outbox_record_mark_custody_accepted(relay, previous_hop_id, now_ms);
     ret = outbound_from_pending(relay, &relay->pending, now_ms, &result->retransmit);
     if (ret != PROTO_OK) {
         return ret;
@@ -1661,6 +1888,7 @@ static int handle_local_busy(struct mesh_relay *relay,
         retry_after_ms = RELAY_BUSY_RETRY_MAX_MS;
     }
     pending_refresh_age(&relay->pending, now_ms);
+    outbox_record_sync_age_from_pending(relay, now_ms);
     route_update_capacity_hint(&relay->upstream,
                                previous_hop_id,
                                relay->gateway_id,
@@ -1710,6 +1938,7 @@ static int handle_local_ack(struct mesh_relay *relay,
         packet->src_id == relay->gateway_id) {
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
         mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
+        outbox_record_mark_gateway_acked(relay, now_ms);
         relay->pending.state = MESH_RELAY_TX_IDLE;
         route_record_success_at(&relay->upstream, now_ms);
     } else if (packet->msg_type == MSG_MESH_HOP_ACK &&
@@ -1937,6 +2166,7 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     if (eack.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST && listed) {
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
         mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
+        outbox_record_mark_gateway_acked(relay, now_ms);
         relay->pending.state = MESH_RELAY_TX_IDLE;
         route_record_success_at(&relay->upstream, now_ms);
         return PROTO_OK;
@@ -1944,17 +2174,26 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
 
     if (!eack.collection_open) {
         result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
+        outbox_record_mark_collection_closed(relay, &eack, now_ms);
         relay->pending.state = MESH_RELAY_TX_IDLE;
         return PROTO_OK;
     }
 
     if ((eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && listed) ||
         (eack.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST && !listed)) {
+        uint32_t retry_base_ms = eack.next_retry_spread_ms == 0u ?
+                                 COLLECTION_RETRY_ROUND_0_MS :
+                                 eack.next_retry_spread_ms;
+        uint32_t retry_seed = collection_retry_seed(pending_id.node_id,
+                                                    pending_id.command_seq,
+                                                    collection_epoch_id,
+                                                    eack.retry_round);
+
         pending_refresh_age(&relay->pending, now_ms);
         relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
-        relay->pending.retry_after_ms = now_ms + (eack.next_retry_spread_ms == 0u ?
-                                                   COLLECTION_RETRY_ROUND_0_MS :
-                                                   eack.next_retry_spread_ms);
+        relay->pending.retry_after_ms =
+            now_ms + mesh_relay_collection_retry_delay_ms(retry_base_ms, retry_seed);
+        outbox_record_mark_collection_retry(relay, &eack, now_ms);
         result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_RETRY;
     }
     return PROTO_OK;
@@ -3660,6 +3899,7 @@ void mesh_relay_cancel_tx(struct mesh_relay *relay)
 {
     if (relay != NULL) {
         memset(&relay->pending, 0, sizeof(relay->pending));
+        outbox_record_clear(relay);
     }
 }
 
@@ -3711,6 +3951,7 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
     relay->pending.next_hop_id = next_hop_id;
     relay->pending.queued_at_ms = now_ms;
     pending_set_deadlines(&relay->pending, now_ms);
+    outbox_record_track_pending(relay, now_ms);
     return outbound_from_pending(relay, &relay->pending, now_ms, out);
 }
 
@@ -3769,6 +4010,7 @@ int mesh_relay_start_result_offer(struct mesh_relay *relay,
     relay->pending.queued_at_ms = now_ms;
     relay->pending.gateway_ack_deadline_ms = now_ms + RREP_ACK_TIMEOUT_MS;
     relay->pending.result_offer_active = true;
+    outbox_record_track_pending(relay, now_ms);
     return outbound_from_pending(relay, &relay->pending, now_ms, out);
 }
 
@@ -3974,6 +4216,7 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
         }
         relay->pending.packet.message_age_ms = result->retransmit.packet.message_age_ms;
         relay->pending.queued_at_ms = now_ms;
+        outbox_record_sync_age_from_pending(relay, now_ms);
         if (relay->pending.result_offer_active) {
             relay->pending.state = MESH_RELAY_TX_WAIT_RESULT_GRANT;
             relay->pending.gateway_ack_deadline_ms = now_ms + RREP_ACK_TIMEOUT_MS;
@@ -3988,6 +4231,7 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
     if (relay->pending.state == MESH_RELAY_TX_WAIT_RESULT_GRANT &&
         deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
         pending_refresh_age(&relay->pending, now_ms);
+        outbox_record_sync_age_from_pending(relay, now_ms);
         relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
         relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
         return PROTO_OK;
@@ -3996,12 +4240,14 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
     if (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
         deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
         pending_refresh_age(&relay->pending, now_ms);
+        outbox_record_sync_age_from_pending(relay, now_ms);
         action = route_record_failure_at(&relay->upstream,
                                          ROUTE_FAILURE_GATEWAY_ACK,
                                          now_ms);
         if (action == ROUTE_DELIVERY_DISCOVER ||
             mesh_relay_select_next_hop(relay, relay->pending.packet.dst_id, &next_hop_id) != PROTO_OK) {
             relay->pending.state = MESH_RELAY_TX_IDLE;
+            outbox_record_clear(relay);
             result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
             result->status = PROTO_ERR_NOT_FOUND;
             return PROTO_OK;
