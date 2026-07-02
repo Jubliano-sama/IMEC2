@@ -267,6 +267,13 @@ static uint16_t route_reply_metric_crc(const struct route_discovery_fields *fiel
     return crc == 0u ? 1u : crc;
 }
 
+static void relay_diag_inc_u8(uint8_t *counter)
+{
+    if (counter != NULL && *counter < UINT8_MAX) {
+        (*counter)++;
+    }
+}
+
 uint32_t mesh_relay_retry_backoff_ms(uint8_t failure_count, uint32_t random_value)
 {
     return jittered_delay_ms(route_retry_backoff_ms(failure_count), random_value);
@@ -311,6 +318,14 @@ uint32_t mesh_relay_collection_retry_delay_ms(uint32_t base_delay_ms,
 
     window_ms = (jitter_ms * 2u) + 1u;
     return (base_delay_ms - jitter_ms) + (random_value % window_ms);
+}
+
+void mesh_relay_note_route_reply_retry(struct mesh_relay *relay)
+{
+    if (relay == NULL) {
+        return;
+    }
+    relay_diag_inc_u8(&relay->diagnostics.route_reply_retry_count);
 }
 
 static int append_route_discovery_tlvs(uint8_t *payload,
@@ -1616,6 +1631,7 @@ static void add_busy_action(struct mesh_relay *relay,
     result->actions |= busy_msg_type == MSG_RESULT_BUSY ?
                        MESH_RELAY_ACTION_SEND_RESULT_BUSY :
                        MESH_RELAY_ACTION_SEND_RELAY_BUSY;
+    relay_diag_inc_u8(&relay->diagnostics.busy_response_count);
 }
 
 static int build_result_offer_busy_response(struct mesh_relay *relay,
@@ -1771,6 +1787,7 @@ static int handle_result_offer(struct mesh_relay *relay,
             result->actions |= MESH_RELAY_ACTION_SEND_RESULT_BUSY |
                                MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_BUSY;
+            relay_diag_inc_u8(&relay->diagnostics.busy_response_count);
         }
         return ret;
     }
@@ -3867,11 +3884,35 @@ static int mesh_relay_append_telemetry_tlvs(const struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_OUTBOX_DELIVERY_STATE,
+                        relay->outbox_record.delivery_state);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_FLOOD_SUPPRESSION_COUNT,
+                        relay->diagnostics.flood_suppression_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_ROUTE_REPLY_RETRY_COUNT,
+                        relay->diagnostics.route_reply_retry_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     return tlv_append_u8(payload,
                          payload_cap,
                          offset,
-                         TLV_OUTBOX_DELIVERY_STATE,
-                         relay->outbox_record.delivery_state);
+                         TLV_BUSY_RESPONSE_COUNT,
+                         relay->diagnostics.busy_response_count);
 }
 
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
@@ -4477,6 +4518,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
             return PROTO_OK;
         }
         if (packet->dst_id == MESH_BROADCAST_ID) {
+            relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_STALE;
             return PROTO_OK;

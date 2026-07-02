@@ -465,6 +465,10 @@ static void test_status_tlvs_report_selected_route(void)
     relay.outbox_record.valid = true;
     relay.outbox_record.delivery_state = MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK;
     relay.route_discovery.attempts = 3u;
+    relay.diagnostics.flood_suppression_count = 4u;
+    mesh_relay_note_route_reply_retry(&relay);
+    mesh_relay_note_route_reply_retry(&relay);
+    relay.diagnostics.busy_response_count = 5u;
     relay.upstream.candidates[relay.upstream.selected_index].hold_down_until_ms = 12345u;
 
     assert(mesh_relay_append_status_tlvs(&relay, payload, sizeof(payload), &payload_len) == PROTO_OK);
@@ -512,12 +516,24 @@ static void test_status_tlvs_report_selected_route(void)
     assert(tlv_find(payload, payload_len, TLV_OUTBOX_DELIVERY_STATE, &value, &value_len) == PROTO_OK);
     assert(value_len == 1u);
     assert(value[0] == MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+
+    assert(tlv_find(payload, payload_len, TLV_FLOOD_SUPPRESSION_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 4u);
+
+    assert(tlv_find(payload, payload_len, TLV_ROUTE_REPLY_RETRY_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 2u);
+
+    assert(tlv_find(payload, payload_len, TLV_BUSY_RESPONSE_COUNT, &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u);
+    assert(value[0] == 5u);
 }
 
 static void test_status_tlvs_report_missing_route_reason(void)
 {
     struct mesh_relay relay;
-    uint8_t payload[32];
+    uint8_t payload[48];
     size_t payload_len = 0u;
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
@@ -1621,6 +1637,7 @@ static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
     assert(has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(relay.diagnostics.busy_response_count == 1u);
     assert(result.busy.packet.msg_type == MSG_RELAY_BUSY);
     assert(result.busy.packet.dst_id == ANCHOR_A);
     assert(result.busy.next_hop_id == ANCHOR_A);
@@ -2777,6 +2794,7 @@ static void test_dense_route_solicit_duplicates_are_bounded(void)
         assert(has_action(&result, MESH_RELAY_ACTION_DROP));
         assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
         assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+        assert(relay.diagnostics.flood_suppression_count == (uint8_t)(i + 1u));
     }
 
     for (size_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {

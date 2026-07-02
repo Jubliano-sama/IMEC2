@@ -73,10 +73,10 @@ This checklist tracks implementation progress against `Documentation/MeshSpec.md
 | Completed | Sleeping-peer wake train audit for all C5 control paths | App-level C5 control sends now route through `mesh_send_c5_control()`: gateway command/survey floods, collection EACK floods, broadcast forwards, gateway route advertisements, route-request forwards, result offers/busy replies, gateway ACK C5 fallback, and channel-9 event negotiation use the existing UWB wake train when no accepted contact is active; route-reply ACK and result grant require an accepted C5 exchange before direct send |
 | Partial | Collection result source persistence/retry schedule | Gateway collection/EACK exists and relay custody state exists; source-side received-list completion, received-list absence retry, explicit missing-list retry, closed-collection stop, and deterministic ± jitter retry delay behavior have native coverage; restart-tolerant persistent outbox and full source retry-round persistence still need code and tests |
 | Partial | Result offer/grant large-result flow | Result offer/grant/busy exists and large command results start with an offer; full storage-backed custody reservation and multi-hop collection retry behavior still need broader coverage |
-| Partial | Telemetry coverage | C5/C9 preemption and timing diagnostics exist; relay status TLVs now expose duplicate-cache count, collection-pending count, parent hold-down count, route-discovery attempts, and outbox delivery state; flood suppression, route reply retries, and busy-response counters still need explicit status coverage |
+| Completed | Telemetry coverage | C5/C9 preemption and timing diagnostics exist; relay status TLVs now expose duplicate-cache count, collection-pending count, parent hold-down count, route-discovery attempts, outbox delivery state, flood suppression count, route-reply retry count, and busy-response count; native tests cover status serialization plus live duplicate-flood suppression and busy-response increments |
 | Partial | Spec failure-mode tests | Cold mesh, dense flood duplicate suppression, duplicate route identity, relay busy, duplicate command/result, capacity expiry, channel-9 local completion with later gateway ACK, missing EACK, and bundle dedupe have coverage; all-node collection spread and click-service preemption during collection still need focused tests |
 
-Current focused verification for MeshSpec C5 wake/contact wrapper:
+Current focused verification for MeshSpec telemetry counters:
 
 - `git diff --check`
 - `cmake --build firmware/build`
@@ -88,7 +88,7 @@ Current focused verification for MeshSpec C5 wake/contact wrapper:
 - `cmake --build build/mesh-transmitter`
 - `cmake --build build/mesh-anchor-1`
 
-Native unit coverage is not added for `mesh_send_c5_control()` because it is an app-level Zephyr/radio wrapper around DWM3000 wake-claim TX and contact bookkeeping.
+Native coverage is in `test_mesh_relay`; route-reply retry counting is noted through the app-level route-reply ACK retry loop because that loop owns the radio ACK wait.
 
 ### Packet-Age and Survey-Discovery Refactor
 

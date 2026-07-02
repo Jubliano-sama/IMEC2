@@ -2893,12 +2893,18 @@ static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_
     for (uint8_t attempt = 0u; attempt <= RREP_RETRY_COUNT_PER_HOP; attempt++) {
         last_ret = mesh_send_route_reply_burst(route_reply, attempt, attempt == 0u);
         if (last_ret != 0) {
+            if (attempt < RREP_RETRY_COUNT_PER_HOP) {
+                mesh_relay_note_route_reply_retry(&mesh_runtime);
+            }
             continue;
         }
 
         last_ret = mesh_listen_for_route_reply_ack(route_reply, attempt);
         if (last_ret == 0) {
             return 0;
+        }
+        if (attempt < RREP_RETRY_COUNT_PER_HOP) {
+            mesh_relay_note_route_reply_retry(&mesh_runtime);
         }
     }
 
@@ -2944,6 +2950,7 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
 
     backup_route_reply = *route_reply;
     backup_route_reply.next_hop_id = backup_next_hop_id;
+    mesh_relay_note_route_reply_retry(&mesh_runtime);
     high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
                          "phase=backup primary=0x%016llx backup=0x%016llx seq=%u primary_ret=%d",
                          (unsigned long long)route_reply->next_hop_id,

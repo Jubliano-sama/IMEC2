@@ -312,6 +312,12 @@ struct mesh_result_bundle_queue {
     struct mesh_result_bundle_entry records[MESH_RELAY_RESULT_BUNDLE_RECORDS];
 };
 
+struct mesh_relay_diagnostics {
+    uint8_t flood_suppression_count;
+    uint8_t route_reply_retry_count;
+    uint8_t busy_response_count;
+};
+
 struct mesh_relay {
     enum mesh_relay_role role;
     uint64_t local_id;
@@ -324,6 +330,7 @@ struct mesh_relay {
     struct persistent_outbox_record outbox_record;
     struct mesh_route_discovery_state route_discovery;
     struct mesh_result_bundle_queue result_bundle;
+    struct mesh_relay_diagnostics diagnostics;
     uint8_t duplicate_next;
     uint16_t next_seq;
 };
@@ -448,6 +455,7 @@ void mesh_relay_note_channel9_missed(struct mesh_relay *relay,
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);
+void mesh_relay_note_route_reply_retry(struct mesh_relay *relay);
 void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
                                       uint64_t dst_id);
 int mesh_relay_tick(struct mesh_relay *relay,
