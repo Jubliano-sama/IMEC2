@@ -337,7 +337,10 @@ Implemented and tested for active pending results:
   become active relay outbox state; the restored record preserves the original
   collection result identity,
 - `native_sim/native/64` Zephyr test coverage for scheduled collection-result
-  snapshot round-trip, clear, and invalid-save rejection.
+  snapshot round-trip, clear, and invalid-save rejection,
+- `native_sim/native/64` Zephyr test coverage for the app-used preemption
+  side-effect helper: queue purge/requeue, delayable timeout schedule/cancel,
+  and save/clear callback dispatch.
 
 Partial:
 
@@ -476,8 +479,9 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    across every app-integrated radio handoff/preemption point; scheduled source
    results and active relay outbox snapshots are storage-backed, scheduled
    collection-result snapshot persistence has Zephyr/NVS round-trip coverage,
-   active command-result expiry stops retrying, and retry-round delay restore
-   has native coverage.
+   app-used preemption side effects have focused Zephyr helper coverage, active
+   command-result expiry stops retrying, and retry-round delay restore has
+   native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
    active all-registered command supplied an explicit count-matched roster via

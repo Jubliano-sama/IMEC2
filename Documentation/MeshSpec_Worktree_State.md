@@ -22,9 +22,10 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: current `Add gateway collection roster EACK` commit
+- HEAD: current MeshSpec implementation commits through the app preemption
+  side-effect test slice
 - `git status --short` after this checkpoint edit is expected to show:
-  - No tracked modifications.
+  - No tracked modifications after the current slice is committed.
   - Untracked files only:
     - `Documentation/MeshSpec Addendum.md`
     - `logs/` directory with historical test logs and RTT sessions.
@@ -61,7 +62,10 @@ Current `get_goal()`:
    delivery state expired. A `native_sim/native/64` Zephyr test now covers
    scheduled collection-result snapshot save/restore/clear and invalid-save
    rejection against real NVS. `mesh_preemption` native coverage now covers the
-   accepted-click preemption decision used by `mesh_preempt_for_click_event()`.
+   accepted-click preemption decision used by `mesh_preempt_for_click_event()`,
+   and `firmware/app/tests/mesh_preemption` covers the app-used Zephyr
+   preemption side-effect helper for queue purge/requeue plus delayable timeout
+   schedule/cancel.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -75,8 +79,8 @@ Current `get_goal()`:
    because no persistent membership table is wired into collection state. It
    also falls back to received-list if the explicit missing-list payload does
    not fit.
-4. App-level failure-mode coverage still needs one or more focused integration tests for
-   Zephyr runtime side effects during real-time preemption/retry behavior.
+4. App-level failure-mode coverage still needs broader integration tests for
+   full radio handoff/retry behavior across real-time preemption points.
 
 ## Latest verified change
 
@@ -128,6 +132,11 @@ Current `get_goal()`:
 - Latest mesh persistence test slice: `firmware/app/tests/mesh_persistence` adds a
   Zephyr `native_sim/native/64` NVS test for scheduled collection-result
   snapshot round-trip, clear, and invalid-save rejection.
+- Latest app preemption test slice: `firmware/app/src/app_mesh_preemption.*`
+  applies the app-used Zephyr side effects for a precomputed click-preemption
+  plan, and `firmware/app/tests/mesh_preemption` verifies queue purge/requeue,
+  delayable timeout schedule/cancel, and save/clear callback dispatch using
+  real Zephyr objects under `native_sim/native/64`.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -169,9 +178,7 @@ forward-looking behavior as if it exists.
 
 ## Next actions
 
-1. Add/finalize app-integrated failure-mode test cases.
-   The smallest remaining concrete gap is Zephyr runtime coverage for
-   accepted-click preemption side effects: msgq purge/requeue, delayable timeout
-   scheduling/cancel, and NVS save/clear calls.
+1. Add/finalize broader app-integrated failure-mode test cases around full
+   radio handoff/retry behavior during real-time preemption.
 2. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
    actually implemented right now, including partial and missing behavior.

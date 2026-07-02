@@ -6,6 +6,7 @@
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
 #include "app_mesh_persistence.h"
+#include "app_mesh_preemption.h"
 #include "app_mesh_test.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
@@ -217,6 +218,9 @@ static int mesh_submit_work(struct k_work *work);
 static void mesh_try_route_waiting_tx(void);
 static void mesh_schedule_tx_timeout(void);
 static bool mesh_defer_active_collection_result(const char *reason);
+static int mesh_preempt_save_outbox(void *ctx);
+static void mesh_preempt_clear_outbox(void *ctx);
+static int mesh_preempt_schedule_timeout(void *ctx);
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
@@ -1310,6 +1314,15 @@ int append_anchor_status_tlvs(uint8_t *payload, size_t payload_cap, size_t *payl
 void mesh_preempt_for_click_event(void)
 {
     struct mesh_click_preempt_plan plan;
+    struct app_mesh_click_preempt_ops ops = {
+        .mesh_rx_msgq = &mesh_rx_msgq,
+        .report_tx_msgq = &report_tx_msgq,
+        .tx_timeout_work = &mesh_tx_timeout_work,
+        .save_outbox = mesh_preempt_save_outbox,
+        .clear_outbox = mesh_preempt_clear_outbox,
+        .schedule_timeout = mesh_preempt_schedule_timeout,
+    };
+    struct app_mesh_click_preempt_result result;
 
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
@@ -1322,31 +1335,39 @@ void mesh_preempt_for_click_event(void)
         return;
     }
 
-    if (plan.save_outbox) {
-        (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
+    (void)app_mesh_apply_click_preempt_plan(&plan, &ops, &result);
+
+    if (result.outbox_saved) {
         LOG_INF("mesh pending collection result deferred: reason=click-preempt");
     }
-    if (plan.clear_outbox) {
-        app_mesh_persistence_clear_outbox();
-    }
-    if (plan.cancel_timeout) {
-        (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
-    }
-    if (plan.schedule_timeout) {
-        mesh_schedule_tx_timeout();
-    }
-    if (plan.save_outbox || plan.clear_outbox) {
+    if (result.outbox_saved || result.outbox_cleared) {
         LOG_INF("anchor click discovery preempted active mesh TX");
     }
+    if (result.click_report_requeue_failed) {
+        LOG_WRN("preempted click report could not be requeued");
+    }
+}
 
-    if (plan.purge_rx_queue) {
-        k_msgq_purge(&mesh_rx_msgq);
-    }
-    if (plan.requeue_click_report) {
-        if (k_msgq_put(&report_tx_msgq, &plan.click_report, K_NO_WAIT) != 0) {
-            LOG_WRN("preempted click report could not be requeued");
-        }
-    }
+static int mesh_preempt_save_outbox(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
+}
+
+static void mesh_preempt_clear_outbox(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    app_mesh_persistence_clear_outbox();
+}
+
+static int mesh_preempt_schedule_timeout(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    mesh_schedule_tx_timeout();
+    return 0;
 }
 
 static void mesh_schedule_tx_timeout(void)
