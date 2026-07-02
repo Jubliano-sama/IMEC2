@@ -1,0 +1,3 @@
+&flash0 {
+	erase-block-size = <0x400>;
+};

@@ -335,7 +335,9 @@ Implemented and tested for active pending results:
   the board `storage_partition`,
 - anchor-role Zephyr NVS persistence for scheduled command results before they
   become active relay outbox state; the restored record preserves the original
-  collection result identity.
+  collection result identity,
+- `native_sim/native/64` Zephyr test coverage for scheduled collection-result
+  snapshot round-trip, clear, and invalid-save rejection.
 
 Partial:
 
@@ -472,9 +474,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
 
 2. Source retry-round state for collection results is not fully persistent
    across every app-integrated radio handoff/preemption point; scheduled source
-   results and active relay outbox snapshots are storage-backed, active
-   command-result expiry stops retrying, and retry-round delay restore has
-   native coverage.
+   results and active relay outbox snapshots are storage-backed, scheduled
+   collection-result snapshot persistence has Zephyr/NVS round-trip coverage,
+   active command-result expiry stops retrying, and retry-round delay restore
+   has native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
    active all-registered command supplied an explicit count-matched roster via
