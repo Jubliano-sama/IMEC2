@@ -839,7 +839,7 @@ static void test_collection_eack_received_list_confirms_pending_result(void)
     assert(!mesh_relay_tx_active(&relay));
 }
 
-static void test_collection_eack_received_list_ignores_other_node(void)
+static void test_collection_eack_received_list_schedules_retry_when_not_received(void)
 {
     const struct command_result_id result_id = {
         .gateway_id = GATEWAY,
@@ -922,10 +922,13 @@ static void test_collection_eack_received_list_ignores_other_node(void)
                                 5100u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_TX_COLLECTION_RETRY));
     assert(!has_action(&result, MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED));
     assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
     assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    assert(relay.pending.retry_after_ms == 5100u + COLLECTION_RETRY_ROUND_0_MS);
 }
 
 static void test_collection_eack_missing_list_schedules_patient_retry(void)
@@ -4688,7 +4691,7 @@ int main(void)
     test_command_flood_broadcast_delivers_and_forwards_once();
     test_collection_eack_broadcast_delivers_and_forwards_once();
     test_collection_eack_received_list_confirms_pending_result();
-    test_collection_eack_received_list_ignores_other_node();
+    test_collection_eack_received_list_schedules_retry_when_not_received();
     test_collection_eack_missing_list_schedules_patient_retry();
     test_collection_eack_closed_stops_pending_without_success();
     test_collection_eack_broadcast_rejects_wrong_gateway_epoch();

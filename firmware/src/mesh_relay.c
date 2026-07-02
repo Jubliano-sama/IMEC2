@@ -1948,7 +1948,8 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
-    if (eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && listed) {
+    if ((eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && listed) ||
+        (eack.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST && !listed)) {
         pending_refresh_age(&relay->pending, now_ms);
         relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
         relay->pending.retry_after_ms = now_ms + (eack.next_retry_spread_ms == 0u ?
