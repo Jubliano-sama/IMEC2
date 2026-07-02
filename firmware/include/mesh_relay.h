@@ -56,7 +56,7 @@ extern "C" {
 #define COLLECTION_BUNDLE_MAX_RECORDS 8u
 #define MESH_RELAY_RESULT_BUNDLE_RECORDS 2u
 #define MESH_RELAY_RESULT_BUNDLE_HOLD_MS 25u
-#define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 1u
+#define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 2u
 #define MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION 1u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
 #define FLOOD_BETTER_METRIC_MARGIN_PERCENT 10u
@@ -293,6 +293,7 @@ struct mesh_relay_outbox_snapshot {
     uint64_t gateway_id;
     struct persistent_outbox_record record;
     struct mesh_pending_tx pending;
+    uint32_t snapshot_at_ms;
     bool valid;
 };
 

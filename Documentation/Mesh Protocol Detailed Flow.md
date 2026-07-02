@@ -455,12 +455,15 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    relay-level outbox snapshot/restore for active local collection-result TX
    state. It restores after `mesh_relay_init()`, avoids duplicating a pre-relay
    record if an active relay outbox snapshot is restored, and saves/clears
-   around active relay TX state transitions.
+   around active relay TX state transitions. Relay outbox snapshots include the
+   snapshot uptime, so restored retry-backoff state keeps the saved retry round
+   and remaining patient retry delay instead of collapsing to the short generic
+   relay-busy retry.
 
 2. Source retry-round state for collection results is not fully persistent
-   across real reboot for every state; scheduled source results and active
-   relay outbox snapshots are storage-backed, but broader multi-hop custody
-   state remains RAM-only.
+   across every app-integrated radio handoff/preemption point; scheduled source
+   results and active relay outbox snapshots are storage-backed, and retry-round
+   delay restore has native coverage.
 
 3. Gateway app scheduled EACKs currently use explicit received-list format.
    Missing-list EACK generation exists in native helpers/tests, but the app

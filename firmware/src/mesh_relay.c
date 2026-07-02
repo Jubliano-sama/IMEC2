@@ -4374,6 +4374,19 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+static uint32_t outbox_snapshot_restore_retry_delay_ms(
+    const struct mesh_relay_outbox_snapshot *snapshot)
+{
+    if (snapshot == NULL ||
+        snapshot->pending.state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        return RELAY_BUSY_RETRY_MIN_MS;
+    }
+    if (deadline_reached(snapshot->snapshot_at_ms, snapshot->pending.retry_after_ms)) {
+        return 1u;
+    }
+    return snapshot->pending.retry_after_ms - snapshot->snapshot_at_ms;
+}
+
 int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
                                       uint32_t now_ms,
                                       struct mesh_relay_outbox_snapshot *snapshot)
@@ -4398,6 +4411,7 @@ int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
     snapshot->gateway_id = relay->gateway_id;
     snapshot->record = relay->outbox_record;
     snapshot->pending = relay->pending;
+    snapshot->snapshot_at_ms = now_ms;
     snapshot->valid = true;
     return PROTO_OK;
 }
@@ -4425,7 +4439,8 @@ int mesh_relay_restore_outbox_snapshot(struct mesh_relay *relay,
     relay->pending.packet.message_age_ms = relay->outbox_record.age_ms_saturating;
     relay->pending.queued_at_ms = now_ms;
     relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
-    relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
+    relay->pending.retry_after_ms =
+        now_ms + outbox_snapshot_restore_retry_delay_ms(snapshot);
     relay->pending.gateway_ack_deadline_ms = 0u;
     relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     relay->pending.next_hop_id = 0u;
