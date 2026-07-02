@@ -564,6 +564,70 @@ static void test_collection_initial_due_is_deterministic_and_bounded(void)
     assert(due_other != due_a);
 }
 
+static void test_all_node_collection_due_spreads_responses(void)
+{
+    enum { NODE_COUNT = 64u };
+    const uint32_t command_flood_end_ms = 120000u;
+    const uint32_t command_seq = 0x10203040u;
+    const uint32_t slot_seed = 0xa5a55a5au;
+    const uint16_t expected_node_count = 128u;
+    const uint32_t spread_ms = gateway_command_collection_spread_ms(expected_node_count);
+    uint32_t due_times[NODE_COUNT];
+    uint32_t min_due = command_flood_end_ms + spread_ms;
+    uint32_t max_due = command_flood_end_ms;
+    uint8_t immediate_count = 0u;
+    uint8_t first_second_count = 0u;
+    uint8_t unique_count = 0u;
+
+    assert(spread_ms == expected_node_count * COLLECTION_INITIAL_SPREAD_PER_NODE_MS);
+
+    for (uint8_t i = 0u; i < NODE_COUNT; i++) {
+        uint64_t node_id = ANCHOR_ID_TEST + (uint64_t)i;
+        uint32_t due = gateway_command_collection_initial_due_ms(command_flood_end_ms,
+                                                                 node_id,
+                                                                 command_seq,
+                                                                 slot_seed,
+                                                                 expected_node_count);
+        bool unique = true;
+
+        assert(due == gateway_command_collection_initial_due_ms(command_flood_end_ms,
+                                                                node_id,
+                                                                command_seq,
+                                                                slot_seed,
+                                                                expected_node_count));
+        assert(due >= command_flood_end_ms);
+        assert(due < command_flood_end_ms + spread_ms);
+
+        if (due == command_flood_end_ms) {
+            immediate_count++;
+        }
+        if (due < command_flood_end_ms + 1000u) {
+            first_second_count++;
+        }
+        if (due < min_due) {
+            min_due = due;
+        }
+        if (due > max_due) {
+            max_due = due;
+        }
+        for (uint8_t j = 0u; j < i; j++) {
+            if (due_times[j] == due) {
+                unique = false;
+                break;
+            }
+        }
+        due_times[i] = due;
+        if (unique) {
+            unique_count++;
+        }
+    }
+
+    assert(immediate_count <= 1u);
+    assert(first_second_count <= 8u);
+    assert(unique_count >= 48u);
+    assert(max_due - min_due > (spread_ms / 2u));
+}
+
 static void test_collection_retry_round_advances_spread(void)
 {
     struct gateway_collection_state collection;
@@ -1515,6 +1579,7 @@ int main(void)
     test_tracking_mode_skips_broadcast_no_response_wait();
     test_tracking_mode_uses_collection_for_broadcast_results();
     test_collection_initial_due_is_deterministic_and_bounded();
+    test_all_node_collection_due_spreads_responses();
     test_collection_retry_round_advances_spread();
     test_append_collection_result_identity_requires_epoch();
     test_collection_records_unique_results_and_builds_eack();
