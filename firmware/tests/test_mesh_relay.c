@@ -4878,6 +4878,7 @@ int main(void)
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
     test_route_discovery_ready_resets_attempt_budget();
     test_retry_and_route_discovery_backoff_apply_jitter();
+    test_collection_retry_delay_uses_symmetric_jitter();
     test_held_down_candidate_can_return_after_hold_down();
     test_forced_route_invalidation_clears_routes_and_discovery_state();
     test_forwarded_gateway_bound_packet_sends_hop_ack();
