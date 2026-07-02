@@ -1083,6 +1083,36 @@ static bool pending_is_local_collection_result(const struct mesh_relay *relay,
                                             &collection_epoch_id) == PROTO_OK;
 }
 
+static bool pending_is_result_bundle(const struct mesh_relay *relay,
+                                     const struct mesh_pending_tx *pending)
+{
+    struct result_bundle_header bundle;
+    uint8_t header[64];
+    size_t header_len = 0u;
+
+    if (!outbox_should_track_pending(relay, pending) ||
+        pending->state == MESH_RELAY_TX_IDLE ||
+        pending->packet.msg_type != MSG_RESULT_BUNDLE ||
+        result_bundle_header_from_tlvs(pending->payload,
+                                       pending->payload_len,
+                                       &bundle) != PROTO_OK ||
+        bundle.gateway_id != relay->gateway_id ||
+        bundle.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        bundle.command_seq == 0u ||
+        bundle.collection_epoch_id == 0u ||
+        bundle.record_count == 0u ||
+        result_bundle_header_append_tlvs(header,
+                                         sizeof(header),
+                                         &header_len,
+                                         &bundle) != PROTO_OK ||
+        header_len >= pending->payload_len) {
+        return false;
+    }
+    return bundle.bundle_crc == proto_crc16_ccitt_false(
+        &pending->payload[header_len],
+        pending->payload_len - header_len);
+}
+
 static void outbox_record_clear(struct mesh_relay *relay)
 {
     memset(&relay->outbox_record, 0, sizeof(relay->outbox_record));
@@ -4294,7 +4324,6 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
         pending->packet.src_id != relay->local_id ||
         pending->packet.dst_id != relay->gateway_id ||
         (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
-        pending->packet.msg_type != MSG_COMMAND_RESULT ||
         record->packet_id != outbox_packet_id_for(&pending->packet) ||
         record->session_id != pending->packet.session_id ||
         record->seq != pending->packet.seq ||
@@ -4304,7 +4333,11 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
                                                        pending->payload_len)) {
         return PROTO_ERR_MALFORMED;
     }
-    if (command_result_id_from_tlvs(pending->payload,
+    if (pending_is_result_bundle(relay, pending)) {
+        return PROTO_OK;
+    }
+    if (!pending_is_local_collection_result(relay, pending) ||
+        command_result_id_from_tlvs(pending->payload,
                                     pending->payload_len,
                                     &result_id) != PROTO_OK ||
         collection_epoch_id_from_payload(pending->payload,
@@ -4330,7 +4363,8 @@ int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
 
     memset(snapshot, 0, sizeof(*snapshot));
     if (!mesh_relay_tx_active(relay) ||
-        !pending_is_local_collection_result(relay, &relay->pending) ||
+        (!pending_is_local_collection_result(relay, &relay->pending) &&
+         !pending_is_result_bundle(relay, &relay->pending)) ||
         !relay->outbox_record.valid) {
         return PROTO_ERR_NOT_FOUND;
     }

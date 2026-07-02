@@ -355,8 +355,8 @@ Implemented behavior:
 Partial:
 
 - Parent-side reservation recovery is implemented, but in-flight upstream
-  custody/retry state after a forwarded large result is still not fully
-  restart-tolerant.
+  custody/retry state after a forwarded non-bundled child `MSG_COMMAND_RESULT`
+  is still not fully restart-tolerant.
 
 ## Implemented Result Bundling
 
@@ -375,12 +375,15 @@ Implemented behavior:
   Restore validates each record's result identity, collection epoch, payload
   length, and payload CRC, folds pre-reset queued time into `message_age_ms`,
   and resumes the remaining hold delay on the new boot uptime.
+- If a queued bundle has already been converted into an outbound
+  `MSG_RESULT_BUNDLE`, the normal relay outbox snapshot now stores and restores
+  that in-flight bundle with bundle-header and bundle-CRC validation.
 
 Partial:
 
-- Queued bundle state is restart-tolerant before outbound handoff. A bundle
-  that has already been handed to the next hop is still cleared on outbound
-  handoff, so broader upstream custody retry state is not fully durable.
+- Queued and in-flight `MSG_RESULT_BUNDLE` state is restart-tolerant. Forwarded
+  non-bundled child `MSG_COMMAND_RESULT` custody/retry state is not fully
+  durable.
 
 ## Implemented Telemetry
 
@@ -459,12 +462,13 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists and parent-side reservations are
-   anchor NVS-backed, but forwarded in-flight upstream custody/retry state is
-   not fully durable.
+   anchor NVS-backed, but forwarded non-bundled child `MSG_COMMAND_RESULT`
+   custody/retry state is not fully durable.
 
 5. Durable multi-hop child custody/storage-backed recovery is partial.
-   Queued child bundles are anchor NVS-backed before outbound handoff, but
-   broader upstream custody retry state after handoff is not fully durable.
+   Queued child bundles and in-flight `MSG_RESULT_BUNDLE` outbox state are
+   anchor NVS-backed, but forwarded non-bundled child `MSG_COMMAND_RESULT`
+   custody/retry state is not fully durable.
 
 6. App-integrated click-service preemption during collection still needs focused
    test coverage.

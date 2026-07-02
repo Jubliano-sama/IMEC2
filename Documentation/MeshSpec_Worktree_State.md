@@ -22,9 +22,10 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `b1a6f93` before the pending child-custody persistence commit
+- HEAD: `cdd1863` before the pending in-flight bundle outbox persistence commit
 - `git status --short` before this checkpoint edit:
-  - Tracked modifications for child-custody persistence are present.
+  - Tracked modifications for in-flight `MSG_RESULT_BUNDLE` outbox persistence
+    are present.
   - Untracked files only:
     - `Documentation/MeshSpec Addendum.md`
     - `logs/` directory with historical test logs and RTT sessions.
@@ -54,11 +55,12 @@ Current `get_goal()`:
 1. Source/retry persistence now has relay-level snapshot/restore APIs plus
    anchor-role Zephyr NVS save/restore for active relay outbox snapshots and
    pre-relay scheduled command results.
-2. Parent-side result-offer reservations and queued child result bundles now
-   have relay-level snapshot/restore APIs plus anchor-role Zephyr NVS
-   save/restore. In-flight upstream custody/retry state after a forwarded
-   bundle or large result is still incomplete versus the full persistence
-   target.
+2. Parent-side result-offer reservations, queued child result bundles, and
+   in-flight `MSG_RESULT_BUNDLE` outbox state now have relay-level
+   snapshot/restore coverage plus anchor-role Zephyr NVS save/restore through
+   existing outbox persistence. Forwarded non-bundled child
+   `MSG_COMMAND_RESULT` custody/retry state is still incomplete versus the full
+   persistence target.
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
    expected-node roster table is currently wired into collection state.
 4. App-level failure-mode coverage still needs one or more focused integration tests for
@@ -66,7 +68,7 @@ Current `get_goal()`:
 
 ## Latest verified change
 
-- Pending change after `b1a6f93`: `struct mesh_relay_child_custody_snapshot`
+- `cdd1863`: `struct mesh_relay_child_custody_snapshot`
   exports/restores parent-side result-offer reservation state and queued child
   result bundle state. Restore validates role/local/gateway identity, gateway
   epoch, result identity, collection epoch, payload length, and payload CRC.
@@ -77,6 +79,10 @@ Current `get_goal()`:
   hop ACKs, and clears/updates after outbound handoff. If anchor NVS child
   custody save fails, the app skips the result grant or hop ACK for that
   exchange.
+- Pending change after `cdd1863`: outbox snapshot validation/export now accepts
+  in-flight gateway-bound `MSG_RESULT_BUNDLE` pending TX state, validating the
+  bundle header, gateway epoch, record count, and bundle CRC. Native tests cover
+  restore after bundle forward handoff and corrupt bundle-payload rejection.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -110,8 +116,8 @@ forward-looking behavior as if it exists.
 ## Next actions
 
 1. Add/finalize app-integrated failure-mode test cases.
-2. Decide whether in-flight upstream custody/retry state after forwarded
-   bundles/large results should be implemented in this pass or left as the
+2. Decide whether forwarded non-bundled child `MSG_COMMAND_RESULT`
+   custody/retry state should be implemented in this pass or left as the
    remaining partial behavior.
 3. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
    actually implemented right now, including partial and missing behavior.
