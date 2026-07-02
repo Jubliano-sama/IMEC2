@@ -1540,6 +1540,180 @@ static void test_collection_result_timeout_uses_collection_retry_round(void)
     assert(selected->failure_count == 0u);
 }
 
+static void test_collection_outbox_snapshot_restores_after_reinit(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1008u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 75u,
+        .result_seq = 76u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_outbox_snapshot snapshot;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 13u, 90u);
+    struct proto_packet result_packet = {0};
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    uint8_t result_payload[128];
+    size_t result_payload_len = 0u;
+    uint32_t restore_ms = 100u;
+    uint32_t retry_ms = restore_ms + RELAY_BUSY_RETRY_MIN_MS;
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3010u,
+                                            &result_payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    result_id.command_seq,
+                                    result_id.result_seq,
+                                    (uint8_t)result_payload_len,
+                                    false) == PROTO_OK);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &result_packet,
+                               result_payload,
+                               result_payload_len,
+                               5000u,
+                               &tx) == PROTO_OK);
+    assert(mesh_relay_export_outbox_snapshot(&relay, 5100u, &snapshot) == PROTO_OK);
+    assert(snapshot.valid);
+    assert(snapshot.record.age_ms_saturating == 100u);
+    assert(snapshot.pending.packet.message_age_ms == 100u);
+    assert(snapshot.pending.payload_len == result_payload_len);
+    assert(memcmp(snapshot.pending.payload, result_payload, result_payload_len) == 0);
+
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(route_upsert_candidate(&restored.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_restore_outbox_snapshot(&restored,
+                                              &snapshot,
+                                              restore_ms) == PROTO_OK);
+    assert(mesh_relay_tx_active(&restored));
+    assert(restored.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    assert(restored.pending.retry_after_ms == retry_ms);
+    assert(restored.pending.next_hop_id == 0u);
+    assert(restored.pending.packet.message_age_ms == 100u);
+    assert(restored.outbox_record.valid);
+    assert(restored.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+
+    assert(mesh_relay_tick(&restored, retry_ms, &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    assert(result.retransmit.packet.msg_type == MSG_COMMAND_RESULT);
+    assert(result.retransmit.next_hop_id == GATEWAY);
+    assert(result.retransmit.payload_len == result_payload_len);
+    assert(memcmp(result.retransmit.payload, result_payload, result_payload_len) == 0);
+    assert(result.retransmit.packet.message_age_ms == 100u + RELAY_BUSY_RETRY_MIN_MS);
+}
+
+static void test_collection_outbox_snapshot_rejects_corrupt_payload(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1009u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 77u,
+        .result_seq = 78u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_outbox_snapshot snapshot;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 13u, 90u);
+    struct proto_packet result_packet = {0};
+    struct mesh_outbound tx;
+    uint8_t result_payload[128];
+    size_t result_payload_len = 0u;
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3011u,
+                                            &result_payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    result_id.command_seq,
+                                    result_id.result_seq,
+                                    (uint8_t)result_payload_len,
+                                    false) == PROTO_OK);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &result_packet,
+                               result_payload,
+                               result_payload_len,
+                               5000u,
+                               &tx) == PROTO_OK);
+    assert(mesh_relay_export_outbox_snapshot(&relay, 5100u, &snapshot) == PROTO_OK);
+
+    snapshot.pending.payload[0] ^= 0x01u;
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(mesh_relay_restore_outbox_snapshot(&restored, &snapshot, 100u) ==
+           PROTO_ERR_MALFORMED);
+    assert(!mesh_relay_tx_active(&restored));
+}
+
+static void test_collection_outbox_snapshot_rejects_completed_record(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 13u,
+        .command_seq = 1010u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 79u,
+        .result_seq = 80u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_outbox_snapshot snapshot;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 13u, 90u);
+    struct proto_packet result_packet = {0};
+    struct mesh_outbound tx;
+    uint8_t result_payload[128];
+    size_t result_payload_len = 0u;
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3012u,
+                                            &result_payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    result_id.command_seq,
+                                    result_id.result_seq,
+                                    (uint8_t)result_payload_len,
+                                    false) == PROTO_OK);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &result_packet,
+                               result_payload,
+                               result_payload_len,
+                               5000u,
+                               &tx) == PROTO_OK);
+    assert(mesh_relay_export_outbox_snapshot(&relay, 5100u, &snapshot) == PROTO_OK);
+
+    snapshot.record.gateway_acked = true;
+    snapshot.record.delivery_state = MESH_RELAY_DELIVERY_GATEWAY_ACKED;
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(mesh_relay_restore_outbox_snapshot(&restored, &snapshot, 100u) ==
+           PROTO_ERR_MALFORMED);
+    assert(!mesh_relay_tx_active(&restored));
+}
+
 static void test_collection_eack_broadcast_rejects_wrong_gateway_epoch(void)
 {
     const struct gateway_collection_eack eack = {
@@ -5413,6 +5587,9 @@ int main(void)
     test_collection_result_survives_route_loss_until_eack();
     test_click_preemption_preserves_pending_collection_result();
     test_collection_result_timeout_uses_collection_retry_round();
+    test_collection_outbox_snapshot_restores_after_reinit();
+    test_collection_outbox_snapshot_rejects_corrupt_payload();
+    test_collection_outbox_snapshot_rejects_completed_record();
     test_collection_eack_broadcast_rejects_wrong_gateway_epoch();
     test_busy_survey_discovery_broadcast_still_forwards();
     test_downlink_routes_survive_age_until_delivery_failure();

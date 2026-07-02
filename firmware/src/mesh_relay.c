@@ -4262,6 +4262,124 @@ void mesh_relay_result_bundle_note_forwarded(struct mesh_relay *relay,
     }
 }
 
+static int outbox_snapshot_validate(const struct mesh_relay *relay,
+                                    const struct mesh_relay_outbox_snapshot *snapshot)
+{
+    const struct persistent_outbox_record *record;
+    const struct mesh_pending_tx *pending;
+    struct command_result_id result_id;
+    uint32_t collection_epoch_id = 0u;
+
+    if (relay == NULL || snapshot == NULL || !snapshot->valid ||
+        snapshot->version != MESH_RELAY_OUTBOX_SNAPSHOT_VERSION) {
+        return PROTO_ERR_ARG;
+    }
+
+    record = &snapshot->record;
+    pending = &snapshot->pending;
+    if (!record->valid ||
+        record->gateway_acked ||
+        record->delivery_state == MESH_RELAY_DELIVERY_GATEWAY_ACKED ||
+        record->delivery_state == MESH_RELAY_DELIVERY_EXPIRED ||
+        record->delivery_state == MESH_RELAY_DELIVERY_COLLECTION_CLOSED ||
+        record->expiry_s == 0u ||
+        (record->age_ms_saturating / 1000u) >= record->expiry_s ||
+        snapshot->role != relay->role ||
+        snapshot->local_id != relay->local_id ||
+        snapshot->gateway_id != relay->gateway_id ||
+        record->gateway_id != relay->gateway_id ||
+        pending->state == MESH_RELAY_TX_IDLE ||
+        pending->payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
+        pending->packet.payload_len != pending->payload_len ||
+        pending->packet.src_id != relay->local_id ||
+        pending->packet.dst_id != relay->gateway_id ||
+        (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        pending->packet.msg_type != MSG_COMMAND_RESULT ||
+        record->packet_id != outbox_packet_id_for(&pending->packet) ||
+        record->session_id != pending->packet.session_id ||
+        record->seq != pending->packet.seq ||
+        record->packet_class != pending->packet.msg_type ||
+        record->payload_len != pending->payload_len ||
+        record->payload_crc != proto_crc16_ccitt_false(pending->payload,
+                                                       pending->payload_len)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (command_result_id_from_tlvs(pending->payload,
+                                    pending->payload_len,
+                                    &result_id) != PROTO_OK ||
+        collection_epoch_id_from_payload(pending->payload,
+                                         pending->payload_len,
+                                         &collection_epoch_id) != PROTO_OK ||
+        collection_epoch_id == 0u ||
+        result_id.gateway_id != relay->gateway_id ||
+        result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        result_id.node_id != relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    return PROTO_OK;
+}
+
+int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
+                                      uint32_t now_ms,
+                                      struct mesh_relay_outbox_snapshot *snapshot)
+{
+    if (relay == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (!mesh_relay_tx_active(relay) ||
+        !pending_is_local_collection_result(relay, &relay->pending) ||
+        !relay->outbox_record.valid) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    pending_refresh_age(&relay->pending, now_ms);
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    snapshot->version = MESH_RELAY_OUTBOX_SNAPSHOT_VERSION;
+    snapshot->role = relay->role;
+    snapshot->local_id = relay->local_id;
+    snapshot->gateway_id = relay->gateway_id;
+    snapshot->record = relay->outbox_record;
+    snapshot->pending = relay->pending;
+    snapshot->valid = true;
+    return PROTO_OK;
+}
+
+int mesh_relay_restore_outbox_snapshot(struct mesh_relay *relay,
+                                       const struct mesh_relay_outbox_snapshot *snapshot,
+                                       uint32_t now_ms)
+{
+    int ret;
+
+    if (relay == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (mesh_relay_tx_active(relay)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = outbox_snapshot_validate(relay, snapshot);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    relay->pending = snapshot->pending;
+    relay->outbox_record = snapshot->record;
+    relay->pending.packet.message_age_ms = relay->outbox_record.age_ms_saturating;
+    relay->pending.queued_at_ms = now_ms;
+    relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
+    relay->pending.gateway_ack_deadline_ms = 0u;
+    relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    relay->pending.next_hop_id = 0u;
+    relay->outbox_record.gateway_acked = false;
+    relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
+    relay->outbox_record.age_ms_saturating = relay->pending.packet.message_age_ms;
+    return PROTO_OK;
+}
+
 void mesh_relay_cancel_tx(struct mesh_relay *relay)
 {
     if (relay != NULL) {

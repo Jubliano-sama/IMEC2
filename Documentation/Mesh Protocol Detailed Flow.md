@@ -316,12 +316,15 @@ Implemented and tested for active pending results:
 - closed-collection stop,
 - deterministic jittered retry delay behavior,
 - route-loss preservation without treating missing EACK as route failure,
-- C5/click-style deferral preservation in native relay paths.
+- C5/click-style deferral preservation in native relay paths,
+- relay outbox snapshot/restore after `mesh_relay_init()` with command-result
+  identity, payload length, payload CRC, gateway/local identity, collection
+  epoch, gateway epoch, and completed-record validation.
 
 Partial:
 
-- Restart-tolerant persistent outbox is not implemented.
-- Full source retry-round persistence across reboot/reinit is not implemented.
+- Zephyr nonvolatile storage is not wired to the relay snapshot/restore API.
+- Full source retry-round persistence across real reboot is not implemented.
 
 ## Implemented Result Offer / Grant
 
@@ -419,12 +422,12 @@ Remaining partial test gap:
 
 These are the concrete gaps still present relative to `MeshSpec.md`:
 
-1. Restart-tolerant persistent outbox is not implemented.
-   `persistent_outbox_record` exists as metadata, but payload bytes and relay
-   state are not restored after `mesh_relay_init()`.
+1. Relay-level outbox snapshot/restore exists, but Zephyr nonvolatile storage
+   is not wired to it. The API can restore payload bytes and pending retry state
+   after `mesh_relay_init()`, but it is not yet persisted across real power loss.
 
-2. Source retry-round state for collection results is not fully persistent.
-   Active RAM behavior exists; reboot/reinit recovery does not.
+2. Source retry-round state for collection results is not fully persistent
+   across real reboot because there is no app/NVS storage integration yet.
 
 3. Gateway app scheduled EACKs currently use explicit received-list format.
    Missing-list EACK generation exists in native helpers/tests, but the app

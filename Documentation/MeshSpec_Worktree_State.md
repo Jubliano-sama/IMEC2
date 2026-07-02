@@ -19,7 +19,7 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `b0d4c5b`
+- HEAD: `adc6d78` before the current relay snapshot/restore work
 - `git status --short`:
   - No tracked modifications in code or headers.
   - Untracked files only:
@@ -51,7 +51,8 @@ Current `get_goal()`:
 
 ## Explicit remaining gaps
 
-1. Source/retry persistence after reboot is not restart-tolerant (no snapshot/restore path).
+1. Source/retry persistence now has relay-level snapshot/restore APIs, but Zephyr
+   nonvolatile storage integration is not wired yet.
 2. Large-result durability across restart and some multi-hop custody corner cases are still
    incomplete versus full persistence target.
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
@@ -63,8 +64,12 @@ Current `get_goal()`:
 
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
+- Relay outbox snapshot/restore now preserves local collection command results with payload
+  CRC/identity validation after `mesh_relay_init()` and restores them into retry-backoff state
+  instead of stale pre-reboot radio wait deadlines.
 - Native regression coverage: `test_collection_result_timeout_uses_collection_retry_round`
-  plus updated route-loss preservation expectations in `test_mesh_relay`.
+  plus outbox snapshot/restore tests and updated route-loss preservation expectations in
+  `test_mesh_relay`.
 - Verification run: `cmake --build firmware/build && ctest --test-dir firmware/build --output-on-failure`
   passed 13/13.
 - Zephyr role builds also passed after the change:

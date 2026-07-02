@@ -56,6 +56,7 @@ extern "C" {
 #define COLLECTION_BUNDLE_MAX_RECORDS 8u
 #define MESH_RELAY_RESULT_BUNDLE_RECORDS 2u
 #define MESH_RELAY_RESULT_BUNDLE_HOLD_MS 25u
+#define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 1u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
 #define FLOOD_BETTER_METRIC_MARGIN_PERCENT 10u
 
@@ -284,6 +285,16 @@ struct mesh_pending_tx {
     bool result_offer_active;
 };
 
+struct mesh_relay_outbox_snapshot {
+    uint16_t version;
+    enum mesh_relay_role role;
+    uint64_t local_id;
+    uint64_t gateway_id;
+    struct persistent_outbox_record record;
+    struct mesh_pending_tx pending;
+    bool valid;
+};
+
 struct mesh_route_discovery_state {
     uint64_t target_id;
     uint8_t attempts;
@@ -427,6 +438,12 @@ bool mesh_relay_result_bundle_pending(const struct mesh_relay *relay);
 uint32_t mesh_relay_result_bundle_due_ms(const struct mesh_relay *relay);
 void mesh_relay_result_bundle_note_forwarded(struct mesh_relay *relay,
                                              const struct mesh_outbound *out);
+int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
+                                      uint32_t now_ms,
+                                      struct mesh_relay_outbox_snapshot *snapshot);
+int mesh_relay_restore_outbox_snapshot(struct mesh_relay *relay,
+                                       const struct mesh_relay_outbox_snapshot *snapshot,
+                                       uint32_t now_ms);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
 bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms);
 int mesh_relay_start_tx(struct mesh_relay *relay,
