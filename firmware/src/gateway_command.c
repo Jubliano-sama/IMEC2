@@ -813,6 +813,23 @@ bool gateway_collection_contains_result(const struct gateway_collection_state *c
     return false;
 }
 
+static bool gateway_collection_has_node_result(const struct gateway_collection_state *collection,
+                                               uint64_t node_id)
+{
+    if (collection == NULL || node_id == 0u) {
+        return false;
+    }
+
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_entry *entry = &collection->results[i];
+
+        if (entry->valid && entry->id.node_id == node_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int gateway_collection_record_result(struct gateway_collection_state *collection,
                                      const struct proto_packet *result,
                                      const uint8_t *payload,
@@ -1082,6 +1099,84 @@ int gateway_collection_prepare_eack_outbound(const struct gateway_collection_sta
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    return PROTO_OK;
+}
+
+int gateway_collection_prepare_missing_eack_outbound(
+    const struct gateway_collection_state *collection,
+    const uint64_t *expected_node_ids,
+    size_t expected_node_count,
+    struct mesh_outbound *out,
+    uint16_t *missing_count)
+{
+    struct gateway_collection_eack eack;
+    size_t payload_len = 0u;
+    uint16_t missing = 0u;
+    int ret;
+
+    if (out == NULL || (expected_node_ids == NULL && expected_node_count != 0u) ||
+        expected_node_count > UINT16_MAX) {
+        return PROTO_ERR_ARG;
+    }
+    if (collection != NULL &&
+        collection->expected_count != 0u &&
+        expected_node_count != collection->expected_count) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = gateway_collection_build_eack(collection,
+                                        EACK_FORMAT_EXPLICIT_MISSING_LIST,
+                                        &eack);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(out, 0, sizeof(*out));
+    ret = gateway_collection_eack_append_tlvs(out->payload,
+                                              sizeof(out->payload),
+                                              &payload_len,
+                                              &eack);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    for (size_t i = 0u; i < expected_node_count; i++) {
+        uint64_t node_id = expected_node_ids[i];
+
+        if (node_id == 0u) {
+            return PROTO_ERR_ARG;
+        }
+        if (gateway_collection_has_node_result(collection, node_id)) {
+            continue;
+        }
+
+        ret = tlv_append_u64(out->payload,
+                             sizeof(out->payload),
+                             &payload_len,
+                             TLV_NODE_ID,
+                             node_id);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (missing < UINT16_MAX) {
+            missing++;
+        }
+    }
+
+    out->packet.msg_type = MSG_GATEWAY_COLLECTION_EACK;
+    out->packet.src_id = collection->gateway_id;
+    out->packet.dst_id = MESH_BROADCAST_ID;
+    out->packet.session_id = collection->command_seq;
+    out->packet.seq = collection->retry_round == 0u ? 1u : collection->retry_round;
+    out->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
+    out->packet.payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)payload_len;
+    out->next_hop_id = MESH_BROADCAST_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+
+    if (missing_count != NULL) {
+        *missing_count = missing;
+    }
     return PROTO_OK;
 }
 

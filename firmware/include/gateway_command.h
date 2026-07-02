@@ -159,6 +159,12 @@ int gateway_collection_build_eack(const struct gateway_collection_state *collect
 int gateway_collection_prepare_eack_outbound(const struct gateway_collection_state *collection,
                                              uint8_t eack_format,
                                              struct mesh_outbound *out);
+int gateway_collection_prepare_missing_eack_outbound(
+    const struct gateway_collection_state *collection,
+    const uint64_t *expected_node_ids,
+    size_t expected_node_count,
+    struct mesh_outbound *out,
+    uint16_t *missing_count);
 int gateway_collection_advance_retry_round(struct gateway_collection_state *collection);
 
 #ifdef __cplusplus

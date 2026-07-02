@@ -827,6 +827,106 @@ static void test_collection_prepares_eack_broadcast_outbound(void)
     assert(!listed);
 }
 
+static void test_collection_prepares_missing_list_from_roster(void)
+{
+    struct gateway_collection_state collection;
+    struct command_result_id id_a = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct command_result_id id_b = id_a;
+    const uint64_t roster[] = {
+        ANCHOR_ID_TEST,
+        0x3333444455556666ull,
+        0x4444555566667777ull,
+        0x5555666677778888ull,
+    };
+    struct proto_packet result_a;
+    struct proto_packet result_b;
+    struct mesh_outbound out;
+    struct gateway_collection_eack decoded;
+    uint8_t payload_a[96];
+    uint8_t payload_b[96];
+    size_t payload_a_len = 0u;
+    size_t payload_b_len = 0u;
+    uint16_t missing_count = 0u;
+    bool duplicate = false;
+    bool listed = true;
+
+    id_b.node_id = roster[1];
+    id_b.node_boot_counter = 78u;
+    id_b.result_seq = 2u;
+    make_collection_result_payload(payload_a, sizeof(payload_a), &payload_a_len, &id_a, 3003u);
+    make_collection_result_payload(payload_b, sizeof(payload_b), &payload_b_len, &id_b, 3003u);
+    result_a = make_collection_result_packet(&id_a, payload_a_len);
+    result_b = make_collection_result_packet(&id_b, payload_b_len);
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    4u,
+                                    2u,
+                                    COLLECTION_RETRY_ROUND_2_MS) == PROTO_OK);
+    assert(gateway_collection_record_result(&collection,
+                                            &result_a,
+                                            payload_a,
+                                            payload_a_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    assert(gateway_collection_record_result(&collection,
+                                            &result_b,
+                                            payload_b,
+                                            payload_b_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
+
+    assert(gateway_collection_prepare_missing_eack_outbound(&collection,
+                                                            roster,
+                                                            sizeof(roster) / sizeof(roster[0]),
+                                                            &out,
+                                                            &missing_count) == PROTO_OK);
+    assert(missing_count == 2u);
+    assert(out.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
+    assert(out.packet.dst_id == MESH_BROADCAST_ID);
+    assert(out.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+
+    assert(gateway_collection_eack_from_tlvs(out.payload,
+                                             out.payload_len,
+                                             &decoded) == PROTO_OK);
+    assert(decoded.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST);
+    assert(decoded.expected_count == 4u);
+    assert(decoded.received_count == 2u);
+    assert(decoded.collection_open);
+
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    roster[0],
+                                                    &listed) == PROTO_OK);
+    assert(!listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    roster[1],
+                                                    &listed) == PROTO_OK);
+    assert(!listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    roster[2],
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    roster[3],
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+}
+
 static void test_collection_records_result_bundle_and_dedupes_replay(void)
 {
     struct gateway_collection_state collection;
@@ -1419,6 +1519,7 @@ int main(void)
     test_append_collection_result_identity_requires_epoch();
     test_collection_records_unique_results_and_builds_eack();
     test_collection_prepares_eack_broadcast_outbound();
+    test_collection_prepares_missing_list_from_roster();
     test_collection_records_result_bundle_and_dedupes_replay();
     test_collection_rejects_corrupt_result_bundle();
     test_collection_rejects_wrong_result_identity();
