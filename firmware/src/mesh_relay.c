@@ -1161,6 +1161,19 @@ static void outbox_record_mark_collection_retry(struct mesh_relay *relay,
     relay->outbox_record.gateway_acked = false;
 }
 
+static void outbox_record_mark_collection_retry_round(struct mesh_relay *relay,
+                                                      uint8_t retry_round,
+                                                      uint32_t now_ms)
+{
+    if (!relay->outbox_record.valid) {
+        return;
+    }
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    relay->outbox_record.delivery_state = MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK;
+    relay->outbox_record.retry_round = retry_round;
+    relay->outbox_record.gateway_acked = false;
+}
+
 static void outbox_record_mark_collection_closed(struct mesh_relay *relay,
                                                  const struct gateway_collection_eack *eack,
                                                  uint32_t now_ms)
@@ -1205,6 +1218,71 @@ static bool preserve_pending_collection_result(struct mesh_relay *relay,
         relay->outbox_record.gateway_acked = false;
     }
     return true;
+}
+
+static uint32_t collection_retry_base_for_round(uint8_t retry_round)
+{
+    switch (retry_round) {
+    case 0u:
+    case 1u:
+        return COLLECTION_RETRY_ROUND_0_MS;
+    case 2u:
+        return COLLECTION_RETRY_ROUND_1_MS;
+    case 3u:
+        return COLLECTION_RETRY_ROUND_2_MS;
+    case 4u:
+        return COLLECTION_RETRY_ROUND_3_MS;
+    default:
+        return COLLECTION_RETRY_ROUND_STEADY_MS;
+    }
+}
+
+static int schedule_pending_collection_retry(struct mesh_relay *relay,
+                                             uint32_t now_ms,
+                                             struct mesh_relay_result *result)
+{
+    struct command_result_id pending_id;
+    uint32_t collection_epoch_id = 0u;
+    uint8_t retry_round;
+    uint32_t retry_base_ms;
+    uint32_t retry_seed;
+    int ret;
+
+    if (relay == NULL || result == NULL ||
+        !pending_is_local_collection_result(relay, &relay->pending)) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = command_result_id_from_tlvs(relay->pending.payload,
+                                      relay->pending.payload_len,
+                                      &pending_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = collection_epoch_id_from_payload(relay->pending.payload,
+                                           relay->pending.payload_len,
+                                           &collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    retry_round = relay->outbox_record.retry_round;
+    if (retry_round < UINT8_MAX) {
+        retry_round++;
+    }
+    retry_base_ms = collection_retry_base_for_round(retry_round);
+    retry_seed = collection_retry_seed(pending_id.node_id,
+                                       pending_id.command_seq,
+                                       collection_epoch_id,
+                                       retry_round);
+
+    pending_refresh_age(&relay->pending, now_ms);
+    relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    relay->pending.retry_after_ms =
+        now_ms + mesh_relay_collection_retry_delay_ms(retry_base_ms, retry_seed);
+    outbox_record_mark_collection_retry_round(relay, retry_round, now_ms);
+    result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_RETRY;
+    return PROTO_OK;
 }
 
 static bool result_bundle_key_matches(const struct mesh_result_bundle_queue *queue,
@@ -4547,6 +4625,15 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
 
     if (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
         deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
+        if (pending_is_local_collection_result(relay, &relay->pending)) {
+            ret = schedule_pending_collection_retry(relay, now_ms, result);
+            if (ret != PROTO_OK) {
+                result->status = ret;
+                return ret;
+            }
+            return PROTO_OK;
+        }
+
         pending_refresh_age(&relay->pending, now_ms);
         outbox_record_sync_age_from_pending(relay, now_ms);
         action = route_record_failure_at(&relay->upstream,
