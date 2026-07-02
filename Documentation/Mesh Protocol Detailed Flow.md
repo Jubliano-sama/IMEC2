@@ -351,12 +351,17 @@ Implemented behavior:
 - Anchor-role NVS stores and restores the parent-side result-offer reservation
   after restart. The restore path validates role/local/gateway identity,
   gateway epoch, child identity, result ID, result length, and result CRC.
+- The normal relay outbox snapshot stores and restores forwarded non-bundled
+  child `MSG_COMMAND_RESULT` custody/retry state before and after a
+  `RESULT_GRANT`. Restore validates the command-result identity, gateway epoch,
+  source node, payload length, and payload CRC, then resumes the pending offer or
+  payload in retry-backoff state.
 
 Partial:
 
-- Parent-side reservation recovery is implemented, but in-flight upstream
-  custody/retry state after a forwarded non-bundled child `MSG_COMMAND_RESULT`
-  is still not fully restart-tolerant.
+- The relay-level persistence path is covered by native tests. Broader
+  app-integrated coverage across every possible radio handoff/preemption point
+  is still partial.
 
 ## Implemented Result Bundling
 
@@ -382,8 +387,9 @@ Implemented behavior:
 Partial:
 
 - Queued and in-flight `MSG_RESULT_BUNDLE` state is restart-tolerant. Forwarded
-  non-bundled child `MSG_COMMAND_RESULT` custody/retry state is not fully
-  durable.
+  non-bundled child `MSG_COMMAND_RESULT` offer/payload custody-retry state is
+  also covered by relay outbox snapshot/restore. App-integrated coverage around
+  all possible handoff/preemption points is still partial.
 
 ## Implemented Telemetry
 
@@ -461,14 +467,17 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    does not yet choose missing-list EACKs from roster data.
 
 4. Durable large-result custody is partial.
-   Offer/grant/reservation validation exists and parent-side reservations are
-   anchor NVS-backed, but forwarded non-bundled child `MSG_COMMAND_RESULT`
-   custody/retry state is not fully durable.
+   Offer/grant/reservation validation exists, parent-side reservations are
+   anchor NVS-backed, and forwarded non-bundled child `MSG_COMMAND_RESULT`
+   offer/payload custody-retry state is relay-snapshot backed. The remaining
+   gap is app-integrated coverage across every radio handoff and preemption
+   point.
 
 5. Durable multi-hop child custody/storage-backed recovery is partial.
-   Queued child bundles and in-flight `MSG_RESULT_BUNDLE` outbox state are
-   anchor NVS-backed, but forwarded non-bundled child `MSG_COMMAND_RESULT`
-   custody/retry state is not fully durable.
+   Queued child bundles, in-flight `MSG_RESULT_BUNDLE` outbox state, and
+   forwarded non-bundled child `MSG_COMMAND_RESULT` offer/payload retry state
+   are restart-tolerant at the relay snapshot layer. Full app-integrated
+   multi-hop recovery coverage remains partial.
 
 6. App-integrated click-service preemption during collection still needs focused
    test coverage.

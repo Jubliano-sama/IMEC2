@@ -22,8 +22,8 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `557febd` after in-flight bundle outbox persistence was committed
-- `git status --short` before this checkpoint edit:
+- HEAD: `6feaf4c` after forwarded child result custody persistence was committed
+- `git status --short` after this checkpoint edit is expected to show:
   - No tracked modifications.
   - Untracked files only:
     - `Documentation/MeshSpec Addendum.md`
@@ -54,12 +54,13 @@ Current `get_goal()`:
 1. Source/retry persistence now has relay-level snapshot/restore APIs plus
    anchor-role Zephyr NVS save/restore for active relay outbox snapshots and
    pre-relay scheduled command results.
-2. Parent-side result-offer reservations, queued child result bundles, and
-   in-flight `MSG_RESULT_BUNDLE` outbox state now have relay-level
-   snapshot/restore coverage plus anchor-role Zephyr NVS save/restore through
-   existing outbox persistence. Forwarded non-bundled child
-   `MSG_COMMAND_RESULT` custody/retry state is still incomplete versus the full
-   persistence target.
+2. Parent-side result-offer reservations, queued child result bundles,
+   in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
+   `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
+   snapshot/restore coverage. Anchor-role Zephyr NVS save/restore uses the
+   existing outbox persistence path for active relay outbox snapshots. The
+   remaining gap is broader app-integrated recovery coverage across every radio
+   handoff and preemption path.
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
    expected-node roster table is currently wired into collection state.
 4. App-level failure-mode coverage still needs one or more focused integration tests for
@@ -82,6 +83,13 @@ Current `get_goal()`:
   in-flight gateway-bound `MSG_RESULT_BUNDLE` pending TX state, validating the
   bundle header, gateway epoch, record count, and bundle CRC. Native tests cover
   restore after bundle forward handoff and corrupt bundle-payload rejection.
+- `6feaf4c`: outbox snapshot validation/export
+  now accepts forwarded non-bundled child `MSG_COMMAND_RESULT` pending TX state
+  when the payload has a valid command-result identity for the child source.
+  Restore no longer requires the pending packet source to equal the local relay
+  ID. Native tests cover restore before `RESULT_GRANT` as a pending
+  `MSG_RESULT_OFFER` retry and restore after `RESULT_GRANT` as a pending child
+  `MSG_COMMAND_RESULT` retry.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -98,8 +106,9 @@ Current `get_goal()`:
   outbox snapshot/restore tests, child-custody bundle/reservation snapshot
   tests, no-state export coverage, corrupt bundle snapshot rejection, and
   updated route-loss preservation expectations in `test_mesh_relay`.
-- Verification run: `cmake --build firmware/build && ctest --test-dir firmware/build --output-on-failure`
-  passed 13/13.
+- Verification run after the pending forwarded-child slice:
+  `cmake --build firmware/build` passed and
+  `ctest --test-dir firmware/build --output-on-failure` passed 13/13.
 - Zephyr role builds also passed after the change:
   - `.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-clicker -- -DFIRMWARE_ROLE=clicker`
   - `.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-anchor -- -DFIRMWARE_ROLE=anchor`
@@ -115,8 +124,5 @@ forward-looking behavior as if it exists.
 ## Next actions
 
 1. Add/finalize app-integrated failure-mode test cases.
-2. Decide whether forwarded non-bundled child `MSG_COMMAND_RESULT`
-   custody/retry state should be implemented in this pass or left as the
-   remaining partial behavior.
-3. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
+2. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
    actually implemented right now, including partial and missing behavior.

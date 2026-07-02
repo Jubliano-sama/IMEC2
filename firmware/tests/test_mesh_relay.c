@@ -2743,6 +2743,181 @@ static void test_result_grant_releases_pending_command_result(void)
     assert(memcmp(grant_result.retransmit.payload, payload, payload_len) == 0);
 }
 
+static void test_forwarded_child_result_offer_snapshot_restores_after_reinit(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 3u,
+        .command_seq = 0x20212224u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 43u,
+        .result_seq = 45u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_outbox_snapshot snapshot;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
+    struct proto_packet result_packet;
+    struct mesh_outbound offer_tx;
+    struct mesh_relay_result tick_result;
+    struct result_offer decoded_offer = {0};
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    build_identity_command_result_payload(payload,
+                                          sizeof(payload),
+                                          64u,
+                                          &result_id,
+                                          &payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    97u,
+                                    14u,
+                                    (uint8_t)payload_len,
+                                    false) == PROTO_OK);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_result_offer(&relay,
+                                         &result_packet,
+                                         payload,
+                                         payload_len,
+                                         4400u,
+                                         &offer_tx) == PROTO_OK);
+    assert(relay.pending.result_offer_active);
+    assert(relay.outbox_record.valid);
+    assert(relay.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_LOCAL_CUSTODY_ACK);
+    assert(mesh_relay_export_outbox_snapshot(&relay,
+                                             4410u,
+                                             &snapshot) == PROTO_OK);
+
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&restored.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_restore_outbox_snapshot(&restored,
+                                              &snapshot,
+                                              5000u) == PROTO_OK);
+    assert(restored.pending.result_offer_active);
+    assert(restored.pending.packet.src_id == ANCHOR_A);
+    assert(restored.outbox_record.valid);
+    assert(restored.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_LOCAL_CUSTODY_ACK);
+
+    assert(mesh_relay_tick(&restored,
+                           5000u + RELAY_BUSY_RETRY_MIN_MS,
+                           &tick_result) == PROTO_OK);
+    assert(has_action(&tick_result, MESH_RELAY_ACTION_RETRANSMIT));
+    assert(tick_result.retransmit.packet.msg_type == MSG_RESULT_OFFER);
+    assert(tick_result.retransmit.packet.src_id == ANCHOR_B);
+    assert(tick_result.retransmit.packet.dst_id == GATEWAY);
+    assert(result_offer_from_tlvs(tick_result.retransmit.payload,
+                                  tick_result.retransmit.payload_len,
+                                  &decoded_offer) == PROTO_OK);
+    assert_command_result_id_equal(&decoded_offer.result_id, &result_id);
+}
+
+static void test_forwarded_child_result_payload_snapshot_restores_after_grant(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY,
+        .gateway_epoch = 3u,
+        .command_seq = 0x20212225u,
+        .node_id = ANCHOR_A,
+        .node_boot_counter = 43u,
+        .result_seq = 46u,
+    };
+    const struct result_grant grant = {
+        .result_id = result_id,
+        .granted_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .max_bytes = 64u,
+        .event_offset_hint = 0u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_outbox_snapshot snapshot;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 3u, 90u);
+    struct proto_packet result_packet;
+    struct proto_packet grant_packet = {
+        .msg_type = MSG_RESULT_GRANT,
+        .flags = 0u,
+        .src_id = GATEWAY,
+        .dst_id = ANCHOR_B,
+        .session_id = 98u,
+        .seq = 15u,
+        .ttl = 1u,
+    };
+    struct mesh_outbound offer_tx;
+    struct mesh_relay_result grant_result;
+    struct mesh_relay_result tick_result;
+    uint8_t payload[96];
+    uint8_t grant_payload[96];
+    size_t payload_len = 0u;
+    size_t grant_payload_len = 0u;
+
+    build_identity_command_result_payload(payload,
+                                          sizeof(payload),
+                                          64u,
+                                          &result_id,
+                                          &payload_len);
+    assert(mesh_init_command_result(&result_packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    98u,
+                                    15u,
+                                    (uint8_t)payload_len,
+                                    false) == PROTO_OK);
+    assert(result_grant_append_tlvs(grant_payload,
+                                    sizeof(grant_payload),
+                                    &grant_payload_len,
+                                    &grant) == PROTO_OK);
+    grant_packet.payload_len = (uint16_t)grant_payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_result_offer(&relay,
+                                         &result_packet,
+                                         payload,
+                                         payload_len,
+                                         4400u,
+                                         &offer_tx) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&relay,
+                                &grant_packet,
+                                grant_payload,
+                                grant_payload_len,
+                                GATEWAY,
+                                80u,
+                                4410u,
+                                &grant_result) == PROTO_OK);
+    assert(has_action(&grant_result, MESH_RELAY_ACTION_RETRANSMIT));
+    assert(!relay.pending.result_offer_active);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    assert(relay.outbox_record.valid);
+    assert(relay.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK);
+    assert(mesh_relay_export_outbox_snapshot(&relay,
+                                             4420u,
+                                             &snapshot) == PROTO_OK);
+
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
+    assert(route_upsert_candidate(&restored.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_restore_outbox_snapshot(&restored,
+                                              &snapshot,
+                                              5000u) == PROTO_OK);
+    assert(!restored.pending.result_offer_active);
+    assert(restored.pending.packet.src_id == ANCHOR_A);
+    assert(restored.outbox_record.valid);
+    assert(restored.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK);
+
+    assert(mesh_relay_tick(&restored,
+                           5000u + RELAY_BUSY_RETRY_MIN_MS,
+                           &tick_result) == PROTO_OK);
+    assert(has_action(&tick_result, MESH_RELAY_ACTION_RETRANSMIT));
+    assert(tick_result.retransmit.packet.msg_type == MSG_COMMAND_RESULT);
+    assert(tick_result.retransmit.packet.src_id == ANCHOR_A);
+    assert(tick_result.retransmit.packet.dst_id == GATEWAY);
+    assert(tick_result.retransmit.next_hop_id == GATEWAY);
+    assert(tick_result.retransmit.payload_len == payload_len);
+    assert(memcmp(tick_result.retransmit.payload, payload, payload_len) == 0);
+}
+
 static void test_result_busy_retries_result_offer_not_payload(void)
 {
     const struct command_result_id result_id = {
@@ -6017,6 +6192,8 @@ int main(void)
     test_result_offer_gets_result_busy_when_parent_busy();
     test_large_command_result_starts_result_offer();
     test_result_grant_releases_pending_command_result();
+    test_forwarded_child_result_offer_snapshot_restores_after_reinit();
+    test_forwarded_child_result_payload_snapshot_restores_after_grant();
     test_result_busy_retries_result_offer_not_payload();
     test_result_busy_ignores_mismatched_command_result_identity();
     test_relay_busy_defers_matching_pending_tx();

@@ -1060,14 +1060,33 @@ static enum mesh_relay_delivery_state outbox_delivery_state_for(
     return MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK;
 }
 
+static bool pending_has_valid_command_result_id(const struct mesh_relay *relay,
+                                                const struct mesh_pending_tx *pending)
+{
+    struct command_result_id result_id;
+
+    return relay != NULL &&
+           pending != NULL &&
+           pending->packet.msg_type == MSG_COMMAND_RESULT &&
+           pending->packet.dst_id == relay->gateway_id &&
+           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+           command_result_id_from_tlvs(pending->payload,
+                                       pending->payload_len,
+                                       &result_id) == PROTO_OK &&
+           result_id.gateway_id == relay->gateway_id &&
+           result_id.gateway_epoch == (uint16_t)relay->upstream.current_epoch &&
+           result_id.node_id == pending->packet.src_id;
+}
+
 static bool outbox_should_track_pending(const struct mesh_relay *relay,
                                         const struct mesh_pending_tx *pending)
 {
     return relay != NULL &&
            pending != NULL &&
-           pending->packet.src_id == relay->local_id &&
            pending->packet.dst_id == relay->gateway_id &&
-           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+           (pending->packet.src_id == relay->local_id ||
+            pending_has_valid_command_result_id(relay, pending));
 }
 
 static bool pending_is_local_collection_result(const struct mesh_relay *relay,
@@ -1076,6 +1095,7 @@ static bool pending_is_local_collection_result(const struct mesh_relay *relay,
     uint32_t collection_epoch_id = 0u;
 
     return outbox_should_track_pending(relay, pending) &&
+           pending->packet.src_id == relay->local_id &&
            pending->state != MESH_RELAY_TX_IDLE &&
            pending->packet.msg_type == MSG_COMMAND_RESULT &&
            collection_epoch_id_from_payload(pending->payload,
@@ -4321,7 +4341,6 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
         pending->state == MESH_RELAY_TX_IDLE ||
         pending->payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
         pending->packet.payload_len != pending->payload_len ||
-        pending->packet.src_id != relay->local_id ||
         pending->packet.dst_id != relay->gateway_id ||
         (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
         record->packet_id != outbox_packet_id_for(&pending->packet) ||
@@ -4336,17 +4355,19 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
     if (pending_is_result_bundle(relay, pending)) {
         return PROTO_OK;
     }
-    if (!pending_is_local_collection_result(relay, pending) ||
+    if (!pending_has_valid_command_result_id(relay, pending) ||
         command_result_id_from_tlvs(pending->payload,
                                     pending->payload_len,
                                     &result_id) != PROTO_OK ||
-        collection_epoch_id_from_payload(pending->payload,
-                                         pending->payload_len,
-                                         &collection_epoch_id) != PROTO_OK ||
-        collection_epoch_id == 0u ||
         result_id.gateway_id != relay->gateway_id ||
         result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
-        result_id.node_id != relay->local_id) {
+        result_id.node_id != pending->packet.src_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (collection_epoch_id_from_payload(pending->payload,
+                                         pending->payload_len,
+                                         &collection_epoch_id) == PROTO_OK &&
+        collection_epoch_id == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -4363,7 +4384,7 @@ int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
 
     memset(snapshot, 0, sizeof(*snapshot));
     if (!mesh_relay_tx_active(relay) ||
-        (!pending_is_local_collection_result(relay, &relay->pending) &&
+        (!pending_has_valid_command_result_id(relay, &relay->pending) &&
          !pending_is_result_bundle(relay, &relay->pending)) ||
         !relay->outbox_record.valid) {
         return PROTO_ERR_NOT_FOUND;
@@ -4916,7 +4937,8 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
         if (!deadline_reached(now_ms, relay->pending.retry_after_ms)) {
             return PROTO_OK;
         }
-        if (pending_is_local_collection_result(relay, &relay->pending)) {
+        if (relay->pending.packet.dst_id == relay->gateway_id &&
+            relay->outbox_record.valid) {
             pending_refresh_age(&relay->pending, now_ms);
             outbox_record_sync_age_from_pending(relay, now_ms);
             ret = mesh_relay_select_next_hop(relay,
