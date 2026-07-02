@@ -18,6 +18,7 @@
 LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 
 #define APP_MESH_NVS_OUTBOX_ID 0x0101u
+#define APP_MESH_NVS_COLLECTION_RESULT_ID 0x0102u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
@@ -28,6 +29,9 @@ BUILD_ASSERT(DT_REG_SIZE(DT_NODELABEL(storage_partition)) >=
 BUILD_ASSERT(sizeof(struct mesh_relay_outbox_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "mesh outbox snapshot must fit comfortably in one NVS sector");
+BUILD_ASSERT(sizeof(struct app_mesh_collection_result_snapshot) <
+             (APP_MESH_NVS_SECTOR_SIZE / 2u),
+             "mesh collection result snapshot must fit comfortably in one NVS sector");
 
 static struct nvs_fs mesh_nvs;
 static bool mesh_nvs_ready;
@@ -93,6 +97,20 @@ void app_mesh_persistence_clear_outbox(void)
     ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_OUTBOX_ID);
     if (ret < 0 && ret != -ENOENT) {
         LOG_WRN("mesh persisted outbox clear failed: %d", ret);
+    }
+}
+
+void app_mesh_persistence_clear_collection_result(void)
+{
+    int ret;
+
+    if (!mesh_persistence_ready()) {
+        return;
+    }
+
+    ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_COLLECTION_RESULT_ID);
+    if (ret < 0 && ret != -ENOENT) {
+        LOG_WRN("mesh persisted collection result clear failed: %d", ret);
     }
 }
 
@@ -175,6 +193,77 @@ int app_mesh_persistence_restore_outbox(struct mesh_relay *relay, uint32_t now_m
     return 0;
 }
 
+int app_mesh_persistence_save_collection_result(
+    const struct app_mesh_collection_result_snapshot *snapshot)
+{
+    struct app_mesh_collection_result_snapshot stored;
+    ssize_t written;
+
+    if (snapshot == NULL || !snapshot->valid ||
+        snapshot->version != APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION) {
+        return -EINVAL;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    stored = *snapshot;
+    written = nvs_write(&mesh_nvs,
+                        APP_MESH_NVS_COLLECTION_RESULT_ID,
+                        &stored,
+                        sizeof(stored));
+    if (written < 0) {
+        LOG_WRN("mesh collection result snapshot write failed: %d", (int)written);
+        return (int)written;
+    }
+    if ((size_t)written != sizeof(stored)) {
+        LOG_WRN("mesh collection result snapshot short write: %d/%u",
+                (int)written,
+                (unsigned int)sizeof(stored));
+        return -EIO;
+    }
+
+    return 0;
+}
+
+int app_mesh_persistence_restore_collection_result(
+    struct app_mesh_collection_result_snapshot *snapshot)
+{
+    ssize_t read_len;
+
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    read_len = nvs_read(&mesh_nvs,
+                        APP_MESH_NVS_COLLECTION_RESULT_ID,
+                        snapshot,
+                        sizeof(*snapshot));
+    if (read_len == -ENOENT) {
+        return 0;
+    }
+    if (read_len < 0) {
+        LOG_WRN("mesh collection result snapshot read failed: %d", (int)read_len);
+        return (int)read_len;
+    }
+    if ((size_t)read_len != sizeof(*snapshot) ||
+        snapshot->version != APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION ||
+        !snapshot->valid) {
+        LOG_WRN("mesh collection result snapshot rejected: size=%d version=%u valid=%u",
+                (int)read_len,
+                snapshot->version,
+                snapshot->valid ? 1u : 0u);
+        app_mesh_persistence_clear_collection_result();
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 #else
 
 #include <errno.h>
@@ -199,6 +288,24 @@ int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
 }
 
 void app_mesh_persistence_clear_outbox(void)
+{
+}
+
+int app_mesh_persistence_save_collection_result(
+    const struct app_mesh_collection_result_snapshot *snapshot)
+{
+    ARG_UNUSED(snapshot);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_restore_collection_result(
+    struct app_mesh_collection_result_snapshot *snapshot)
+{
+    ARG_UNUSED(snapshot);
+    return -ENOTSUP;
+}
+
+void app_mesh_persistence_clear_collection_result(void)
 {
 }
 

@@ -49,8 +49,8 @@ Current `get_goal()`:
 ## Explicit remaining gaps
 
 1. Source/retry persistence now has relay-level snapshot/restore APIs plus
-   anchor-role Zephyr NVS save/restore for active relay outbox snapshots.
-   Pre-relay scheduled command results are still not restart-tolerant.
+   anchor-role Zephyr NVS save/restore for active relay outbox snapshots and
+   pre-relay scheduled command results.
 2. Large-result durability across restart and some multi-hop custody corner cases are still
    incomplete versus full persistence target.
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
@@ -69,6 +69,9 @@ Current `get_goal()`:
   TX/defer/retry/busy/progress transitions, clears them on gateway confirmation,
   collection close, or true cancel, and restores valid snapshots after
   `mesh_relay_init()`.
+- Anchor-role app/NVS integration also saves scheduled command results before
+  relay handoff, restores them with the original collection result identity, and
+  clears the scheduled record when an active relay outbox snapshot supersedes it.
 - Native regression coverage: `test_collection_result_timeout_uses_collection_retry_round`
   plus outbox snapshot/restore tests and updated route-loss preservation expectations in
   `test_mesh_relay`.
@@ -82,8 +85,8 @@ Current `get_goal()`:
 ## Next actions
 
 1. Add/finalize app-integrated failure-mode test cases.
-2. Decide whether pre-relay scheduled command results need storage-backed
-   persistence or can remain outside the current implementation scope.
+2. Decide whether durable multi-hop child custody/storage-backed bundle recovery
+   should be implemented in this pass or left as the remaining partial behavior.
 3. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is actually implemented
    right now, including partial and missing behavior. Do not turn it into an idealized restatement
    of `Documentation/MeshSpec.md`.

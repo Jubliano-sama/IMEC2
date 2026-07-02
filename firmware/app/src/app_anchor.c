@@ -226,6 +226,88 @@ static void anchor_collection_result_clear(void)
     memset(&anchor_collection_result_pending, 0, sizeof(anchor_collection_result_pending));
 }
 
+static void anchor_collection_result_persist(uint32_t delay_ms)
+{
+    struct app_mesh_collection_result_snapshot snapshot = {
+        .version = APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION,
+        .local_id = DEVICE_ID,
+        .gateway_id = GATEWAY_ID,
+        .valid = anchor_collection_result_pending.active,
+    };
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_collection_result_pending.active) {
+        return;
+    }
+
+    snapshot.command = anchor_collection_result_pending.command;
+    snapshot.result_id = anchor_collection_result_pending.result_id;
+    snapshot.collection_epoch_id = anchor_collection_result_pending.collection_epoch_id;
+    snapshot.delay_ms = delay_ms == 0u ? 1u : delay_ms;
+    snapshot.command_id = anchor_collection_result_pending.command_id;
+    snapshot.status = anchor_collection_result_pending.status;
+    snapshot.reason = anchor_collection_result_pending.reason;
+    snapshot.force_rediscovery_after_result =
+        anchor_collection_result_pending.force_rediscovery_after_result;
+    snapshot.reboot_after_result =
+        anchor_collection_result_pending.reboot_after_result;
+
+    (void)app_mesh_persistence_save_collection_result(&snapshot);
+}
+
+static int anchor_collection_result_restore(void)
+{
+    struct app_mesh_collection_result_snapshot snapshot;
+    uint32_t delay_ms;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || anchor_collection_result_pending.active) {
+        return -EBUSY;
+    }
+
+    ret = app_mesh_persistence_restore_collection_result(&snapshot);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!snapshot.valid) {
+        return 0;
+    }
+    if (snapshot.local_id != DEVICE_ID ||
+        snapshot.gateway_id != GATEWAY_ID ||
+        snapshot.result_id.node_id != DEVICE_ID ||
+        snapshot.result_id.gateway_id != GATEWAY_ID ||
+        (snapshot.command.dst_id != DEVICE_ID &&
+         snapshot.command.dst_id != MESH_BROADCAST_ID)) {
+        app_mesh_persistence_clear_collection_result();
+        return -EINVAL;
+    }
+
+    anchor_collection_result_pending.command = snapshot.command;
+    anchor_collection_result_pending.result_id = snapshot.result_id;
+    anchor_collection_result_pending.collection_epoch_id = snapshot.collection_epoch_id;
+    anchor_collection_result_pending.command_id = snapshot.command_id;
+    anchor_collection_result_pending.status = snapshot.status;
+    anchor_collection_result_pending.reason = snapshot.reason;
+    anchor_collection_result_pending.force_rediscovery_after_result =
+        snapshot.force_rediscovery_after_result;
+    anchor_collection_result_pending.reboot_after_result =
+        snapshot.reboot_after_result;
+    anchor_collection_result_pending.active = true;
+
+    if (anchor_collection_node_boot_counter == 0u) {
+        anchor_collection_node_boot_counter = snapshot.result_id.node_boot_counter;
+    }
+    if (anchor_collection_result_seq < snapshot.result_id.result_seq) {
+        anchor_collection_result_seq = snapshot.result_id.result_seq;
+    }
+
+    delay_ms = snapshot.delay_ms == 0u ? 1u : snapshot.delay_ms;
+    (void)k_work_reschedule(&anchor_collection_result_work, K_MSEC(delay_ms));
+    LOG_INF("anchor collection command result restored: cmd=0x%04x delay_ms=%u",
+            (unsigned int)anchor_collection_result_pending.command_id,
+            delay_ms);
+    return 0;
+}
+
 static void anchor_collection_result_work_handler(struct k_work *work)
 {
     struct anchor_collection_result_pending pending;
@@ -255,9 +337,11 @@ static void anchor_collection_result_work_handler(struct k_work *work)
         anchor_collection_result_pending = pending;
         (void)k_work_reschedule(&anchor_collection_result_work,
                                 K_MSEC(COLLECTION_RETRY_ROUND_0_MS));
+        anchor_collection_result_persist(COLLECTION_RETRY_ROUND_0_MS);
         return;
     }
 
+    app_mesh_persistence_clear_collection_result();
     LOG_INF("anchor collection command result sent: cmd=0x%04x status=%u reason=%u",
             (unsigned int)pending.command_id,
             pending.status,
@@ -323,6 +407,7 @@ static int anchor_schedule_collection_command_result(
     anchor_collection_result_pending.reboot_after_result = reboot_after_result;
     anchor_collection_result_pending.active = true;
     (void)k_work_reschedule(&anchor_collection_result_work, K_MSEC(delay_ms));
+    anchor_collection_result_persist(delay_ms);
 
     LOG_INF("anchor collection command result scheduled: cmd=0x%04x due_ms=%u delay_ms=%u",
             (unsigned int)command_id,
@@ -4352,6 +4437,14 @@ int app_anchor_start_anchor_role(void)
     k_work_init_delayable(&anchor_survey_work, anchor_survey_work_handler);
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);
+    if (mesh_relay_tx_active(&mesh_runtime)) {
+        app_mesh_persistence_clear_collection_result();
+    } else {
+        ret = anchor_collection_result_restore();
+        if (ret < 0 && ret != -ENOENT && ret != -ENOTSUP) {
+            LOG_WRN("anchor collection result restore unavailable: %d", ret);
+        }
+    }
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (gateway_ble_transport_enabled()) {
         status_debug_note("DBG_ANCHOR_BLE_INIT_BEGIN\n");
