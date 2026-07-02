@@ -57,7 +57,8 @@ Current `get_goal()`:
    anchor-role Zephyr NVS save/restore for active relay outbox snapshots and
    pre-relay scheduled command results. Outbox snapshots carry export uptime
    and preserve the remaining retry-backoff delay for restored collection
-   retry-round state. `mesh_preemption` native coverage now covers the
+   retry-round state. Active command-result expiry stops retrying and marks the
+   delivery state expired. `mesh_preemption` native coverage now covers the
    accepted-click preemption decision used by `mesh_preempt_for_click_event()`.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
@@ -118,6 +119,10 @@ Current `get_goal()`:
   selection when the roster is count-matched, received-list fallback when no
   roster is supplied, and relay-side confirmation when an explicit missing-list
   EACK omits the local pending result node.
+- Current uncommitted slice: active pending `MSG_COMMAND_RESULT` outbox records
+  with expired `TLV_COMMAND_EXPIRY_S` stop retrying and mark
+  `MESH_RELAY_DELIVERY_EXPIRED`; native coverage:
+  `test_collection_result_expires_without_retrying_forever`.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload

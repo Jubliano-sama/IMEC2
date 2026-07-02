@@ -323,6 +323,7 @@ Implemented and tested for active pending results:
 - received-list absence retry,
 - explicit missing-list retry,
 - no-EACK timeout retry using collection retry rounds,
+- active command-result expiry stop,
 - closed-collection stop,
 - deterministic jittered retry delay behavior,
 - route-loss preservation without treating missing EACK as route failure,
@@ -471,8 +472,9 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
 
 2. Source retry-round state for collection results is not fully persistent
    across every app-integrated radio handoff/preemption point; scheduled source
-   results and active relay outbox snapshots are storage-backed, and retry-round
-   delay restore has native coverage.
+   results and active relay outbox snapshots are storage-backed, active
+   command-result expiry stops retrying, and retry-round delay restore has
+   native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
    active all-registered command supplied an explicit count-matched roster via

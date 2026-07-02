@@ -1238,6 +1238,36 @@ static void outbox_record_mark_collection_closed(struct mesh_relay *relay,
     }
 }
 
+static bool outbox_record_is_expired(struct mesh_relay *relay, uint32_t now_ms)
+{
+    uint32_t age_ms;
+
+    if (relay == NULL ||
+        !relay->outbox_record.valid ||
+        relay->outbox_record.packet_class != MSG_COMMAND_RESULT ||
+        relay->outbox_record.expiry_s == 0u ||
+        !mesh_relay_tx_active(relay)) {
+        return false;
+    }
+
+    age_ms = outbox_age_from_pending(&relay->pending, now_ms);
+    return (age_ms / 1000u) >= relay->outbox_record.expiry_s;
+}
+
+static void outbox_record_mark_expired(struct mesh_relay *relay, uint32_t now_ms)
+{
+    if (relay == NULL) {
+        return;
+    }
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    if (relay->outbox_record.valid ||
+        relay->outbox_record.delivery_state != MESH_RELAY_DELIVERY_NONE) {
+        relay->outbox_record.valid = false;
+        relay->outbox_record.delivery_state = MESH_RELAY_DELIVERY_EXPIRED;
+        relay->outbox_record.gateway_acked = false;
+    }
+}
+
 static void outbox_record_mark_custody_accepted(struct mesh_relay *relay,
                                                 uint64_t custody_parent,
                                                 uint32_t now_ms)
@@ -4953,6 +4983,13 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
                 result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
             }
         }
+        return PROTO_OK;
+    }
+
+    if (outbox_record_is_expired(relay, now_ms)) {
+        outbox_record_mark_expired(relay, now_ms);
+        relay->pending.state = MESH_RELAY_TX_IDLE;
+        result->status = PROTO_ERR_STALE;
         return PROTO_OK;
     }
 
