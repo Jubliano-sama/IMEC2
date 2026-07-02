@@ -982,6 +982,19 @@ static bool outbox_should_track_pending(const struct mesh_relay *relay,
            (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
 }
 
+static bool pending_is_local_collection_result(const struct mesh_relay *relay,
+                                               const struct mesh_pending_tx *pending)
+{
+    uint32_t collection_epoch_id = 0u;
+
+    return outbox_should_track_pending(relay, pending) &&
+           pending->state != MESH_RELAY_TX_IDLE &&
+           pending->packet.msg_type == MSG_COMMAND_RESULT &&
+           collection_epoch_id_from_payload(pending->payload,
+                                            pending->payload_len,
+                                            &collection_epoch_id) == PROTO_OK;
+}
+
 static void outbox_record_clear(struct mesh_relay *relay)
 {
     memset(&relay->outbox_record, 0, sizeof(relay->outbox_record));
@@ -1085,6 +1098,25 @@ static void outbox_record_mark_custody_accepted(struct mesh_relay *relay,
     relay->outbox_record.custody_accepted = true;
     relay->outbox_record.custody_parent = custody_parent;
     relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
+}
+
+static bool preserve_pending_collection_result(struct mesh_relay *relay,
+                                               uint32_t now_ms)
+{
+    if (relay == NULL ||
+        !pending_is_local_collection_result(relay, &relay->pending)) {
+        return false;
+    }
+
+    pending_refresh_age(&relay->pending, now_ms);
+    relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
+    if (relay->outbox_record.valid) {
+        relay->outbox_record.age_ms_saturating = relay->pending.packet.message_age_ms;
+        relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
+        relay->outbox_record.gateway_acked = false;
+    }
+    return true;
 }
 
 static bool result_bundle_key_matches(const struct mesh_result_bundle_queue *queue,
@@ -4042,6 +4074,11 @@ void mesh_relay_cancel_tx(struct mesh_relay *relay)
     }
 }
 
+bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms)
+{
+    return preserve_pending_collection_result(relay, now_ms);
+}
+
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,
                         const uint8_t *payload,
@@ -4348,6 +4385,20 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
         if (!deadline_reached(now_ms, relay->pending.retry_after_ms)) {
             return PROTO_OK;
         }
+        if (pending_is_local_collection_result(relay, &relay->pending)) {
+            pending_refresh_age(&relay->pending, now_ms);
+            outbox_record_sync_age_from_pending(relay, now_ms);
+            ret = mesh_relay_select_next_hop(relay,
+                                             relay->pending.packet.dst_id,
+                                             &next_hop_id);
+            if (ret != PROTO_OK) {
+                relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
+                result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
+                result->status = ret;
+                return PROTO_OK;
+            }
+            relay->pending.next_hop_id = next_hop_id;
+        }
         ret = outbound_from_pending(relay, &relay->pending, now_ms, &result->retransmit);
         if (ret != PROTO_OK) {
             result->status = ret;
@@ -4385,6 +4436,11 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
                                          now_ms);
         if (action == ROUTE_DELIVERY_DISCOVER ||
             mesh_relay_select_next_hop(relay, relay->pending.packet.dst_id, &next_hop_id) != PROTO_OK) {
+            if (preserve_pending_collection_result(relay, now_ms)) {
+                result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
+                result->status = PROTO_ERR_NOT_FOUND;
+                return PROTO_OK;
+            }
             relay->pending.state = MESH_RELAY_TX_IDLE;
             outbox_record_clear(relay);
             result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;

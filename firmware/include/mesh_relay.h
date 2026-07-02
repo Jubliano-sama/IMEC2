@@ -419,6 +419,7 @@ uint32_t mesh_relay_result_bundle_due_ms(const struct mesh_relay *relay);
 void mesh_relay_result_bundle_note_forwarded(struct mesh_relay *relay,
                                              const struct mesh_outbound *out);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
+bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms);
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,
                         const uint8_t *payload,

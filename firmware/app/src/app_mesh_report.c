@@ -213,6 +213,8 @@ static uint32_t mesh_route_embedded_reply_hold_until_ms;
 static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 static int mesh_submit_work(struct k_work *work);
 static void mesh_try_route_waiting_tx(void);
+static void mesh_schedule_tx_timeout(void);
+static bool mesh_defer_active_collection_result(const char *reason);
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
@@ -1324,8 +1326,10 @@ void mesh_preempt_for_click_event(void)
             }
             requeue_report = true;
         }
-        mesh_relay_cancel_tx(&mesh_runtime);
-        (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
+        if (!mesh_defer_active_collection_result("click-preempt")) {
+            mesh_relay_cancel_tx(&mesh_runtime);
+            (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
+        }
         LOG_INF("anchor click discovery preempted active mesh TX");
     }
 
@@ -1369,6 +1373,18 @@ static void mesh_schedule_tx_timeout(void)
     }
     delay_ms = uptime_ms_until_deadline(now, deadline);
     (void)mesh_reschedule_delayable(&mesh_tx_timeout_work, delay_ms);
+}
+
+static bool mesh_defer_active_collection_result(const char *reason)
+{
+    if (!mesh_relay_defer_tx(&mesh_runtime, k_uptime_get_32())) {
+        return false;
+    }
+
+    LOG_INF("mesh pending collection result deferred: reason=%s",
+            reason == NULL ? "defer" : reason);
+    mesh_schedule_tx_timeout();
+    return true;
 }
 
 static bool mesh_route_reply_handoff_applies(void)
@@ -5124,7 +5140,11 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
 	                                    tx.packet.seq);
 	            }
             if (!mesh_ch9_tx_fits_plan(&tx, &plan, fit_now_ms, &required_ms)) {
-                mesh_relay_cancel_tx(&mesh_runtime);
+                bool deferred = mesh_defer_active_collection_result("channel9-slot-full");
+
+                if (!deferred) {
+                    mesh_relay_cancel_tx(&mesh_runtime);
+                }
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_note("DBG_CH9_TX_SINGLE_SLOT_FULL\n");
                     status_debug_note("DBG_CH9_TX_SINGLE_MISSED_SLOT\n");
@@ -5141,7 +5161,7 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
                 mesh_relay_note_channel9_missed(&mesh_runtime,
                                                 tx.next_hop_id,
                                                 &mesh_event_stats);
-                return -EBUSY;
+                return deferred ? 0 : -EBUSY;
             }
             channel9_success_pending = true;
             channel9_report_latency_pending = aged_out.packet.msg_type == MSG_CLICK_REPORT;
@@ -5244,6 +5264,14 @@ send_prepared:
                                channel9_next_hop_id,
                                &plan,
                                reason);
+        }
+        if (mesh_defer_active_collection_result("send-failure")) {
+            if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
+                mesh_relay_note_delivery_failure(&mesh_runtime,
+                                                 mesh_runtime.pending.packet.dst_id);
+                (void)mesh_request_route(mesh_runtime.pending.packet.dst_id, reason);
+            }
+            return 0;
         }
         mesh_relay_cancel_tx(&mesh_runtime);
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
@@ -6351,9 +6379,11 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
         int route_ret;
 
-        mesh_store_route_waiting_tx(pending_waiting);
+        if (!mesh_relay_tx_active(&mesh_runtime)) {
+            mesh_store_route_waiting_tx(pending_waiting);
+        }
         route_ret = mesh_request_route(pending_waiting->packet.dst_id, "pending-tx-timeout");
-        if (route_ret == -ETIMEDOUT) {
+        if (route_ret == -ETIMEDOUT && !mesh_relay_tx_active(&mesh_runtime)) {
             mesh_drop_route_waiting_tx("pending-tx-route-exhausted");
         }
     }
