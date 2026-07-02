@@ -2729,6 +2729,65 @@ static void test_parent_relay_replies_without_child_route_discovery(void)
     assert(!relay.route_discovery.active);
 }
 
+static void test_dense_route_solicit_duplicates_are_bounded(void)
+{
+    const uint64_t extra_hops[] = {
+        ANCHOR_C,
+        0x3333444455556666ull,
+        0x4444555566667777ull,
+    };
+    struct mesh_relay origin;
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    struct mesh_relay_result result;
+    struct route_candidate parent = direct_gateway_route(GATEWAY, 21u, 88u);
+    uint8_t duplicate_count = 0u;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 21u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 21u);
+    assert(route_upsert_candidate(&relay.upstream, &parent) == PROTO_OK);
+    assert(mesh_relay_prepare_route_request(&origin,
+                                            GATEWAY,
+                                            2100u,
+                                            0u,
+                                            &route_req) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                2110u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+
+    for (size_t i = 0u; i < sizeof(extra_hops) / sizeof(extra_hops[0]); i++) {
+        assert(mesh_relay_handle_rx(&relay,
+                                    &route_req.packet,
+                                    route_req.payload,
+                                    route_req.payload_len,
+                                    extra_hops[i],
+                                    85u,
+                                    2120u + (uint32_t)i,
+                                    &result) == PROTO_OK);
+        assert(result.status == PROTO_ERR_STALE);
+        assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+        assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+        assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    }
+
+    for (size_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
+        if (relay.duplicates[i].valid) {
+            duplicate_count++;
+        }
+    }
+    assert(duplicate_count == 1u);
+    assert(!relay.route_discovery.active);
+}
+
 static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(void)
 {
     struct mesh_relay gateway;
@@ -4903,6 +4962,7 @@ int main(void)
     test_route_discovery_attempts_are_capped_with_backoff();
     test_route_solicit_flood_identity_is_preserved();
     test_parent_relay_replies_without_child_route_discovery();
+    test_dense_route_solicit_duplicates_are_bounded();
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
     test_route_discovery_ready_resets_attempt_budget();
     test_retry_and_route_discovery_backoff_apply_jitter();
