@@ -43,6 +43,11 @@ enum gateway_command_tracking_mode {
     GATEWAY_COMMAND_TRACK_COLLECTION = 2,
 };
 
+enum gateway_command_transport_mode {
+    GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED = 0,
+    GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST = 1,
+};
+
 struct gateway_collection_result_entry {
     struct command_result_id id;
     uint16_t payload_crc;
@@ -72,6 +77,8 @@ int gateway_command_extract_options(const uint8_t *payload,
                                     struct gateway_command_options *options);
 enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(
     const struct gateway_command_options *options);
+enum gateway_command_transport_mode gateway_command_transport_mode_from_outbound(
+    const struct mesh_outbound *out);
 uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count);
 uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms,
                                                   uint64_t node_id,

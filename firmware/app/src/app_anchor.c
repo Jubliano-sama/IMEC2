@@ -1979,7 +1979,15 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
         }
     }
 
-    ret = mesh_start_tracked_tx(&outbound, "ble-command");
+    if (gateway_command_transport_mode_from_outbound(&outbound) ==
+        GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST) {
+        ret = mesh_send_outbound(&outbound, "ble-command-broadcast");
+        if (ret == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime, &outbound, k_uptime_get_32());
+        }
+    } else {
+        ret = mesh_start_tracked_tx(&outbound, "ble-command");
+    }
     if (ret < 0) {
         LOG_WRN("gateway BLE command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
                 (unsigned int)command_id,

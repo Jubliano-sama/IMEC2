@@ -120,6 +120,8 @@ static void test_prepare_outbound_normalizes_host_command(void)
     assert(out.packet.seq == 9u);
     assert(out.packet.ttl == MESH_DEFAULT_TTL);
     assert(out.packet.flags == FLAG_DIAGNOSTIC);
+    assert(gateway_command_transport_mode_from_outbound(&out) ==
+           GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED);
     assert(out.payload_len == payload_len);
     assert(memcmp(out.payload, payload, payload_len) == 0);
 }
@@ -331,6 +333,10 @@ static void test_prepare_outbound_accepts_all_registered_command_flood(void)
     assert(out.packet.seq == 9u);
     assert(out.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
     assert(out.packet.flags == FLAG_DIAGNOSTIC);
+    assert(out.next_hop_id == MESH_BROADCAST_ID);
+    assert(out.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+    assert(gateway_command_transport_mode_from_outbound(&out) ==
+           GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST);
     assert(out.payload_len == payload_len);
     assert(memcmp(out.payload, payload, payload_len) == 0);
 }

@@ -361,6 +361,17 @@ enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(
     return GATEWAY_COMMAND_TRACK_NONE;
 }
 
+enum gateway_command_transport_mode gateway_command_transport_mode_from_outbound(
+    const struct mesh_outbound *out)
+{
+    if (out != NULL &&
+        out->packet.dst_id == MESH_BROADCAST_ID &&
+        out->next_hop_id == MESH_BROADCAST_ID) {
+        return GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST;
+    }
+    return GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED;
+}
+
 uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count)
 {
     uint32_t spread_ms;
@@ -563,6 +574,10 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
         memcpy(out->payload, payload, payload_len);
     }
     out->payload_len = (uint8_t)payload_len;
+    if (options.flood_required) {
+        out->next_hop_id = MESH_BROADCAST_ID;
+        out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    }
     return PROTO_OK;
 }
 
