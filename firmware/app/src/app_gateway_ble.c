@@ -127,6 +127,7 @@ void gateway_command_result_tracking_init(void)
 static struct gateway_command_pending gateway_command_pending_state;
 static struct gateway_collection_state gateway_collection_state;
 static struct k_work_delayable gateway_command_result_timeout_work;
+static struct k_work_delayable gateway_collection_eack_work;
 
 void gateway_command_timeout_side_effects(const struct proto_packet *command,
                                           enum command_id command_id);
@@ -143,13 +144,25 @@ static bool gateway_collection_tracking_active(void)
            gateway_collection_state.collection_epoch_id != 0u;
 }
 
-static void gateway_send_collection_eack(const char *reason)
+static void gateway_schedule_collection_eack_round(void)
+{
+    if (!gateway_collection_tracking_active() ||
+        !gateway_collection_state.collection_open) {
+        (void)k_work_cancel_delayable(&gateway_collection_eack_work);
+        return;
+    }
+
+    (void)k_work_reschedule(&gateway_collection_eack_work,
+                            K_MSEC(gateway_collection_state.next_retry_spread_ms));
+}
+
+static int gateway_send_collection_eack(const char *reason)
 {
     struct mesh_outbound eack = {0};
     int ret;
 
     if (!gateway_collection_tracking_active()) {
-        return;
+        return -ENOENT;
     }
 
     ret = gateway_collection_prepare_eack_outbound(&gateway_collection_state,
@@ -157,13 +170,13 @@ static void gateway_send_collection_eack(const char *reason)
                                                    &eack);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway collection EACK build failed: ret=%d", ret);
-        return;
+        return mesh_errno_from_proto(ret);
     }
 
     ret = mesh_send_outbound(&eack, reason);
     if (ret < 0) {
         LOG_WRN("gateway collection EACK send failed: ret=%d", ret);
-        return;
+        return ret;
     }
 
     mesh_relay_note_tx_sent(&mesh_runtime, &eack, k_uptime_get_32());
@@ -172,6 +185,35 @@ static void gateway_send_collection_eack(const char *reason)
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count,
             gateway_collection_state.collection_open ? 1u : 0u);
+    return 0;
+}
+
+static void gateway_collection_eack_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (!gateway_collection_tracking_active()) {
+        return;
+    }
+
+    ret = gateway_send_collection_eack("collection-eack-round");
+    if (ret < 0) {
+        (void)k_work_reschedule(&gateway_collection_eack_work,
+                                K_MSEC(RELAY_BUSY_RETRY_MIN_MS));
+        return;
+    }
+    if (!gateway_collection_state.collection_open) {
+        return;
+    }
+
+    ret = gateway_collection_advance_retry_round(&gateway_collection_state);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway collection retry round advance failed: ret=%d", ret);
+        return;
+    }
+    gateway_schedule_collection_eack_round();
 }
 
 static void gateway_note_collection_result(const struct proto_packet *packet,
@@ -206,7 +248,8 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
             gateway_collection_state.expected_count,
             duplicate ? 1u : 0u);
     if (!duplicate) {
-        gateway_send_collection_eack("collection-eack-result");
+        (void)gateway_send_collection_eack("collection-eack-result");
+        gateway_schedule_collection_eack_round();
     }
 }
 
@@ -245,7 +288,8 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count);
     if (accepted_count != 0u) {
-        gateway_send_collection_eack("collection-eack-bundle");
+        (void)gateway_send_collection_eack("collection-eack-bundle");
+        gateway_schedule_collection_eack_round();
     }
 }
 
@@ -514,6 +558,7 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
             gateway_collection_state.collection_epoch_id,
             gateway_collection_state.gateway_epoch,
             gateway_collection_state.expected_count);
+    gateway_schedule_collection_eack_round();
     return 0;
 }
 
@@ -529,6 +574,7 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
     }
 
     gateway_collection_clear(&gateway_collection_state);
+    (void)k_work_cancel_delayable(&gateway_collection_eack_work);
 }
 
 static void gateway_command_result_timeout_handler(struct k_work *work)
@@ -633,6 +679,8 @@ void gateway_command_result_tracking_init(void)
     gateway_collection_clear(&gateway_collection_state);
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
+    k_work_init_delayable(&gateway_collection_eack_work,
+                          gateway_collection_eack_work_handler);
 }
 #endif
 

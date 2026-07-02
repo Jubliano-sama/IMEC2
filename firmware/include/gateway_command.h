@@ -78,6 +78,7 @@ uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms
                                                   uint32_t command_seq,
                                                   uint32_t collection_slot_seed,
                                                   uint16_t expected_node_count);
+uint32_t gateway_command_collection_retry_spread_ms(uint8_t retry_round);
 int gateway_command_append_collection_result_identity(uint8_t *payload,
                                                       size_t payload_cap,
                                                       size_t *payload_len,
@@ -151,6 +152,7 @@ int gateway_collection_build_eack(const struct gateway_collection_state *collect
 int gateway_collection_prepare_eack_outbound(const struct gateway_collection_state *collection,
                                              uint8_t eack_format,
                                              struct mesh_outbound *out);
+int gateway_collection_advance_retry_round(struct gateway_collection_state *collection);
 
 #ifdef __cplusplus
 }

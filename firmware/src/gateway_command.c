@@ -390,6 +390,22 @@ uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms
     return command_flood_end_ms + (hash % spread_ms);
 }
 
+uint32_t gateway_command_collection_retry_spread_ms(uint8_t retry_round)
+{
+    switch (retry_round) {
+    case 0u:
+        return COLLECTION_RETRY_ROUND_0_MS;
+    case 1u:
+        return COLLECTION_RETRY_ROUND_1_MS;
+    case 2u:
+        return COLLECTION_RETRY_ROUND_2_MS;
+    case 3u:
+        return COLLECTION_RETRY_ROUND_3_MS;
+    default:
+        return COLLECTION_RETRY_ROUND_STEADY_MS;
+    }
+}
+
 int gateway_command_append_collection_result_identity(uint8_t *payload,
                                                       size_t payload_cap,
                                                       size_t *payload_len,
@@ -1051,5 +1067,26 @@ int gateway_collection_prepare_eack_outbound(const struct gateway_collection_sta
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    return PROTO_OK;
+}
+
+int gateway_collection_advance_retry_round(struct gateway_collection_state *collection)
+{
+    if (collection == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (collection->gateway_id == 0u ||
+        collection->command_seq == 0u ||
+        collection->collection_epoch_id == 0u ||
+        collection->membership_epoch == 0u ||
+        collection->expected_count == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    if (collection->retry_round < UINT8_MAX) {
+        collection->retry_round++;
+    }
+    collection->next_retry_spread_ms =
+        gateway_command_collection_retry_spread_ms(collection->retry_round);
     return PROTO_OK;
 }

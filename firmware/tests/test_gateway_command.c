@@ -558,6 +558,33 @@ static void test_collection_initial_due_is_deterministic_and_bounded(void)
     assert(due_other != due_a);
 }
 
+static void test_collection_retry_round_advances_spread(void)
+{
+    struct gateway_collection_state collection;
+
+    assert(gateway_command_collection_retry_spread_ms(0u) == COLLECTION_RETRY_ROUND_0_MS);
+    assert(gateway_command_collection_retry_spread_ms(1u) == COLLECTION_RETRY_ROUND_1_MS);
+    assert(gateway_command_collection_retry_spread_ms(2u) == COLLECTION_RETRY_ROUND_2_MS);
+    assert(gateway_command_collection_retry_spread_ms(3u) == COLLECTION_RETRY_ROUND_3_MS);
+    assert(gateway_command_collection_retry_spread_ms(4u) == COLLECTION_RETRY_ROUND_STEADY_MS);
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    12u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    assert(gateway_collection_advance_retry_round(&collection) == PROTO_OK);
+    assert(collection.retry_round == 1u);
+    assert(collection.next_retry_spread_ms == COLLECTION_RETRY_ROUND_1_MS);
+    assert(gateway_collection_advance_retry_round(&collection) == PROTO_OK);
+    assert(collection.retry_round == 2u);
+    assert(collection.next_retry_spread_ms == COLLECTION_RETRY_ROUND_2_MS);
+}
+
 static void test_append_collection_result_identity_requires_epoch(void)
 {
     const struct command_result_id id = {
@@ -1382,6 +1409,7 @@ int main(void)
     test_tracking_mode_skips_broadcast_no_response_wait();
     test_tracking_mode_uses_collection_for_broadcast_results();
     test_collection_initial_due_is_deterministic_and_bounded();
+    test_collection_retry_round_advances_spread();
     test_append_collection_result_identity_requires_epoch();
     test_collection_records_unique_results_and_builds_eack();
     test_collection_prepares_eack_broadcast_outbound();
