@@ -47,6 +47,11 @@ struct app_mesh_report_callbacks {
                                                    size_t payload_len);
 };
 
+enum mesh_c5_control_send_mode {
+    MESH_C5_CONTROL_WAKE_IF_NEEDED = 0,
+    MESH_C5_CONTROL_ACCEPTED_EXCHANGE = 1,
+};
+
 int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks);
 int anchor_append_sequence_time_tlvs(uint8_t *payload,
                                      size_t payload_cap,
@@ -66,6 +71,10 @@ void build_uwb_schedule_report_if_relevant(
 void mesh_stop_role_scan(void);
 void mesh_restart_role_scan(void);
 int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
+int mesh_send_c5_control(const struct mesh_outbound *out,
+                         uint8_t purpose,
+                         enum mesh_c5_control_send_mode mode,
+                         const char *reason);
 int mesh_request_route(uint64_t target_id, const char *reason);
 void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
 int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);

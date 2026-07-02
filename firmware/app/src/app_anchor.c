@@ -1326,7 +1326,10 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     gateway_survey_active = true;
 
-    ret = mesh_send_outbound(&outbound, "survey-discovery-start");
+    ret = mesh_send_c5_control(&outbound,
+                               C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                               MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                               "survey-discovery-start");
     if (ret < 0) {
         gateway_survey_active = false;
         (void)survey_gateway_auto_begin(&gateway_survey_auto);
@@ -1981,7 +1984,10 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
 
     if (gateway_command_transport_mode_from_outbound(&outbound) ==
         GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST) {
-        ret = mesh_send_outbound(&outbound, "ble-command-broadcast");
+        ret = mesh_send_c5_control(&outbound,
+                                   C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                   "ble-command-broadcast");
         if (ret == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &outbound, k_uptime_get_32());
         }

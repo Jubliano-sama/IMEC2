@@ -173,7 +173,10 @@ static int gateway_send_collection_eack(const char *reason)
         return mesh_errno_from_proto(ret);
     }
 
-    ret = mesh_send_outbound(&eack, reason);
+    ret = mesh_send_c5_control(&eack,
+                               C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
+                               MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                               reason);
     if (ret < 0) {
         LOG_WRN("gateway collection EACK send failed: ret=%d", ret);
         return ret;

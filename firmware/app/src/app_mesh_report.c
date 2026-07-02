@@ -522,6 +522,104 @@ static void mesh_c5_contact_exchange(uint64_t peer_id,
     }
 }
 
+static bool mesh_c5_contact_peer_active(uint64_t peer_id, uint32_t now_ms)
+{
+    if (mesh_c5_contact.state == C5_CONTACT_NONE ||
+        mesh_c5_contact.peer_id != peer_id) {
+        return false;
+    }
+    if (mesh_c5_contact.expires_at_ms != 0u &&
+        uptime_deadline_reached(now_ms, mesh_c5_contact.expires_at_ms)) {
+        mesh_c5_contact_clear("expired");
+        return false;
+    }
+    return mesh_c5_contact.accepted;
+}
+
+static uint32_t mesh_c5_exchange_duration_ms(uint8_t purpose)
+{
+    switch (purpose) {
+    case C5_CONTACT_PURPOSE_ROUTE_REPLY:
+        return (uint32_t)(RREP_RETRY_COUNT_PER_HOP + 1u) *
+               (RREP_ACK_TIMEOUT_MS + MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS +
+                MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS + 50u);
+    case C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD:
+    case C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD:
+        return FLOOD_WAVE_MS + FLOOD_RELAY_BURST_MS + FLOOD_POST_ROOT_GUARD_MS;
+    case C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT:
+    case C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION:
+    case C5_CONTACT_PURPOSE_ROUTE_SOLICIT:
+    case C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH:
+    default:
+        return MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS;
+    }
+}
+
+static uint32_t mesh_c5_exchange_expires_at(uint8_t purpose)
+{
+    return k_uptime_get_32() + mesh_c5_exchange_duration_ms(purpose);
+}
+
+static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)
+{
+    if (packet == NULL) {
+        return 0u;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_ROUTE_REQ:
+        return C5_CONTACT_PURPOSE_ROUTE_SOLICIT;
+    case MSG_ROUTE_REPLY:
+    case MSG_ROUTE_REPLY_ACK:
+        return C5_CONTACT_PURPOSE_ROUTE_REPLY;
+    case MSG_GATEWAY_ROUTE_ADV:
+    case MSG_GATEWAY_ACK:
+    case MSG_RELAY_BUSY:
+        return C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH;
+    case MSG_COMMAND:
+    case MSG_SURVEY_DISCOVERY_START:
+        return C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
+    case MSG_GATEWAY_COLLECTION_EACK:
+        return C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD;
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_OFFER:
+    case MSG_RESULT_GRANT:
+    case MSG_RESULT_BUSY:
+        return C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT;
+    case MSG_MESH_EVENT_PROPOSE:
+    case MSG_MESH_EVENT_ACCEPT:
+    case MSG_MESH_EVENT_UPDATE:
+    case MSG_MESH_EVENT_END:
+        return C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION;
+    default:
+        return 0u;
+    }
+}
+
+static void mesh_note_c5_control_rx(const struct proto_packet *packet,
+                                    uint64_t previous_hop_id,
+                                    uint8_t radio_channel,
+                                    const char *reason)
+{
+    uint8_t purpose;
+
+    if (radio_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        !mesh_id_is_unicast(previous_hop_id) ||
+        previous_hop_id == DEVICE_ID) {
+        return;
+    }
+
+    purpose = mesh_c5_purpose_for_packet(packet);
+    if (purpose == 0u) {
+        return;
+    }
+
+    mesh_c5_contact_accept(previous_hop_id,
+                           purpose,
+                           mesh_c5_exchange_expires_at(purpose),
+                           reason == NULL ? "c5-control-rx" : reason);
+}
+
 static const char *mesh_ch9_event_state_name(enum ch9_event_state state)
 {
     switch (state) {
@@ -1826,7 +1924,10 @@ static void gateway_route_adv_work_handler(struct k_work *work)
                                              now_ms,
                                              &adv);
     if (ret == PROTO_OK) {
-        ret = mesh_send_outbound(&adv, "gateway-route-adv");
+        ret = mesh_send_c5_control(&adv,
+                                   C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                   "gateway-route-adv");
         if (ret == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &adv, k_uptime_get_32());
             high_debug_log_event("GATEWAY_ROUTE_ADV",
@@ -2429,6 +2530,73 @@ out_unlock:
     return ret;
 }
 
+int mesh_send_c5_control(const struct mesh_outbound *out,
+                         uint8_t purpose,
+                         enum mesh_c5_control_send_mode mode,
+                         const char *reason)
+{
+    struct mesh_outbound tx;
+    uint64_t peer_id;
+    uint64_t wake_target_id;
+    bool active_exchange = false;
+    uint32_t now_ms;
+    int ret;
+
+    if (out == NULL || purpose == 0u ||
+        out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ||
+        (mode != MESH_C5_CONTROL_WAKE_IF_NEEDED &&
+         mode != MESH_C5_CONTROL_ACCEPTED_EXCHANGE)) {
+        return -EINVAL;
+    }
+
+    tx = *out;
+    tx.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    peer_id = mesh_id_is_unicast(tx.next_hop_id) ? tx.next_hop_id : 0u;
+    now_ms = k_uptime_get_32();
+    if (peer_id != 0u) {
+        active_exchange = mesh_c5_contact_peer_active(peer_id, now_ms);
+    }
+
+    if (mode == MESH_C5_CONTROL_ACCEPTED_EXCHANGE && !active_exchange) {
+        LOG_WRN("mesh C5 control send rejected without accepted exchange: msg=0x%02x next=0x%016llx purpose=%s reason=%s",
+                tx.packet.msg_type,
+                (unsigned long long)tx.next_hop_id,
+                mesh_c5_contact_purpose_name(purpose),
+                reason == NULL ? "c5-control" : reason);
+        return -ENOTCONN;
+    }
+
+    if (mode == MESH_C5_CONTROL_WAKE_IF_NEEDED && !active_exchange) {
+        wake_target_id = peer_id != 0u ? peer_id : MESH_BROADCAST_ID;
+        ret = mesh_send_route_wake_train(wake_target_id, NULL, NULL, reason);
+        if (ret < 0) {
+            mesh_restart_role_scan();
+            LOG_WRN("mesh C5 control wake train failed: msg=0x%02x next=0x%016llx ret=%d reason=%s",
+                    tx.packet.msg_type,
+                    (unsigned long long)tx.next_hop_id,
+                    ret,
+                    reason == NULL ? "c5-control" : reason);
+            return ret;
+        }
+    }
+
+    if (peer_id != 0u) {
+        mesh_c5_contact_exchange(peer_id,
+                                 purpose,
+                                 mesh_c5_exchange_expires_at(purpose),
+                                 reason == NULL ? "c5-control" : reason);
+    }
+
+    ret = mesh_send_outbound(&tx, reason == NULL ? "c5-control" : reason);
+    if (ret == 0 && peer_id != 0u) {
+        mesh_c5_contact_exchange(peer_id,
+                                 purpose,
+                                 mesh_c5_exchange_expires_at(purpose),
+                                 reason == NULL ? "c5-control" : reason);
+    }
+    return ret;
+}
+
 static bool mesh_same_tlv_value(const uint8_t *lhs,
                                 size_t lhs_len,
                                 const uint8_t *rhs,
@@ -2693,9 +2861,11 @@ static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
             k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS);
         }
 
-        last_ret = mesh_send_outbound(route_reply,
-                                      i == 0u ? "route-reply" :
-                                                "route-reply-repeat");
+        last_ret = mesh_send_c5_control(route_reply,
+                                        C5_CONTACT_PURPOSE_ROUTE_REPLY,
+                                        MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                        i == 0u ? "route-reply" :
+                                                  "route-reply-repeat");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             DEVICE_ROLE == ROLE_GATEWAY) {
             status_debug_printf("DBG_ROUTE_REPLY_TX_REPEAT attempt=%u idx=%u ret=%d sent=%u\n",
@@ -2714,21 +2884,12 @@ static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
 
 static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_reply)
 {
-    uint32_t exchange_deadline_ms;
     int last_ret = -EINVAL;
 
     if (route_reply == NULL) {
         return -EINVAL;
     }
 
-    exchange_deadline_ms = k_uptime_get_32() +
-        (uint32_t)(RREP_RETRY_COUNT_PER_HOP + 1u) *
-        (RREP_ACK_TIMEOUT_MS + MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS +
-         MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS + 50u);
-    mesh_c5_contact_exchange(route_reply->next_hop_id,
-                             C5_CONTACT_PURPOSE_ROUTE_REPLY,
-                             exchange_deadline_ms,
-                             "route-reply");
     for (uint8_t attempt = 0u; attempt <= RREP_RETRY_COUNT_PER_HOP; attempt++) {
         last_ret = mesh_send_route_reply_burst(route_reply, attempt, attempt == 0u);
         if (last_ret != 0) {
@@ -3450,11 +3611,8 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     if (embedded_sent != NULL) {
         *embedded_sent = false;
     }
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
-        DEVICE_ROLE == ROLE_GATEWAY) {
-        return 0;
-    }
-    if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
+    if (target_id != MESH_BROADCAST_ID &&
+        (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID)) {
         return -EINVAL;
     }
     if (DEVICE_ROLE == ROLE_ANCHOR && anchor_uwb_window_active()) {
@@ -3484,7 +3642,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
         return -EINVAL;
     }
 
-    if (embedded_route_req != NULL) {
+    if (embedded_route_req != NULL && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         ret = mesh_route_wake_encode_suffix(embedded_route_req,
                                             route_suffix,
                                             sizeof(route_suffix),
@@ -4336,12 +4494,6 @@ static int mesh_send_event_control(uint64_t peer_id,
     outbound.next_hop_id = peer_id;
     outbound.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
 
-    if (!close_event) {
-        mesh_c5_contact_exchange(peer_id,
-                                 C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION,
-                                 k_uptime_get_32() + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
-                                 reason == NULL ? "mesh-event-control" : reason);
-    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && !close_event) {
         status_debug_printf("DBG_EVENT_TX msg=%02x now=%u ref=%u next=%u cnt=%u txeven=%u\n",
                             msg_type,
@@ -4351,7 +4503,12 @@ static int mesh_send_event_control(uint64_t peer_id,
                             timing.event_counter,
                             timing.local_tx_on_even_events ? 1u : 0u);
     }
-    ret = mesh_send_outbound(&outbound, reason == NULL ? "mesh-event-control" : reason);
+    ret = close_event ?
+          mesh_send_outbound(&outbound, reason == NULL ? "mesh-event-control" : reason) :
+          mesh_send_c5_control(&outbound,
+                               C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION,
+                               MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                               reason == NULL ? "mesh-event-control" : reason);
     if (ret < 0) {
         return ret;
     }
@@ -4871,6 +5028,10 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
     uint64_t channel9_next_hop_id = 0u;
     bool channel9_success_pending = false;
     bool channel9_report_latency_pending = false;
+    bool send_prepared_c5_control = false;
+    uint8_t send_prepared_c5_purpose = 0u;
+    enum mesh_c5_control_send_mode send_prepared_c5_mode =
+        MESH_C5_CONTROL_WAKE_IF_NEEDED;
     int ret;
 
     if (out == NULL) {
@@ -4889,10 +5050,9 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
                                             now_ms,
                                             &tx);
         if (ret == PROTO_OK) {
-            mesh_c5_contact_exchange(tx.next_hop_id,
-                                     C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
-                                     now_ms + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
-                                     "result-offer");
+            send_prepared_c5_control = true;
+            send_prepared_c5_purpose = C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT;
+            send_prepared_c5_mode = MESH_C5_CONTROL_WAKE_IF_NEEDED;
             goto send_prepared;
         }
         if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
@@ -5048,29 +5208,37 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
             }
         }
         return mesh_errno_from_proto(ret);
-	    }
-		send_prepared:
+    }
+
+send_prepared:
+    if (channel9_success_pending) {
+        mesh_ch9_event_set(CH9_EVENT_TX_PAYLOAD,
+                           channel9_next_hop_id,
+                           &plan,
+                           reason);
+    }
+    if (send_prepared_c5_control) {
+        ret = mesh_send_c5_control(&tx,
+                                   send_prepared_c5_purpose,
+                                   send_prepared_c5_mode,
+                                   reason);
+    } else {
+        ret = mesh_send_outbound(&tx, reason);
+    }
+    if (ret < 0) {
+        if (channel9_success_pending && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_CH9_TX_SINGLE_SEND_FAIL\n");
+            status_debug_printf("DBG_CH9_TX_SINGLE_FAIL ret=%d seq=%u\n",
+                                ret,
+                                tx.packet.seq);
+        }
         if (channel9_success_pending) {
-            mesh_ch9_event_set(CH9_EVENT_TX_PAYLOAD,
+            mesh_ch9_event_set(CH9_EVENT_BUSY_RETRY_LATER,
                                channel9_next_hop_id,
                                &plan,
                                reason);
         }
-		    ret = mesh_send_outbound(&tx, reason);
-		    if (ret < 0) {
-		        if (channel9_success_pending && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-		            status_debug_note("DBG_CH9_TX_SINGLE_SEND_FAIL\n");
-		            status_debug_printf("DBG_CH9_TX_SINGLE_FAIL ret=%d seq=%u\n",
-		                                ret,
-		                                tx.packet.seq);
-		        }
-            if (channel9_success_pending) {
-                mesh_ch9_event_set(CH9_EVENT_BUSY_RETRY_LATER,
-                                   channel9_next_hop_id,
-                                   &plan,
-                                   reason);
-            }
-		        mesh_relay_cancel_tx(&mesh_runtime);
+        mesh_relay_cancel_tx(&mesh_runtime);
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
             int route_ret;
 
@@ -5084,16 +5252,17 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
         }
         return ret;
     }
-	    mesh_relay_note_tx_sent(&mesh_runtime, &tx, k_uptime_get_32());
-		    if (channel9_success_pending) {
-		        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-		            status_debug_note("DBG_CH9_TX_SINGLE_SEND_OK\n");
-		        }
-            mesh_ch9_event_set(CH9_EVENT_COMPLETE,
-                               channel9_next_hop_id,
-                               &plan,
-                               reason);
-		        mesh_note_channel9_local_tx(channel9_next_hop_id, channel9_event_start_ms);
+
+    mesh_relay_note_tx_sent(&mesh_runtime, &tx, k_uptime_get_32());
+    if (channel9_success_pending) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_CH9_TX_SINGLE_SEND_OK\n");
+        }
+        mesh_ch9_event_set(CH9_EVENT_COMPLETE,
+                           channel9_next_hop_id,
+                           &plan,
+                           reason);
+        mesh_note_channel9_local_tx(channel9_next_hop_id, channel9_event_start_ms);
         if (channel9_report_latency_pending) {
             mesh_event_note_report_latency(&mesh_event_stats,
                                            channel9_event_start_ms > now_ms ?
@@ -5681,7 +5850,10 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                         (unsigned long long)gateway_ack->next_hop_id,
                         ret);
                 gateway_ack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-                if (mesh_send_outbound(gateway_ack, "gateway-ack-channel5") == 0) {
+                if (mesh_send_c5_control(gateway_ack,
+                                         C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                         MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                         "gateway-ack-channel5") == 0) {
                     mesh_relay_note_tx_sent(&mesh_runtime, gateway_ack, k_uptime_get_32());
                 } else {
                     mesh_store_route_waiting_tx(gateway_ack);
@@ -5702,7 +5874,10 @@ after_gateway_ack:
         int ret;
 
         if (result->forward.packet.dst_id == MESH_BROADCAST_ID) {
-            ret = mesh_send_outbound(&result->forward, "broadcast-forward");
+            ret = mesh_send_c5_control(&result->forward,
+                                       mesh_c5_purpose_for_packet(&result->forward.packet),
+                                       MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                       "broadcast-forward");
         } else {
             ret = mesh_start_tracked_tx(&result->forward, "forward");
         }
@@ -5734,11 +5909,10 @@ after_gateway_ack:
         int ret;
 
         *route_reply_ack = result->route_reply_ack;
-        mesh_c5_contact_exchange(route_reply_ack->next_hop_id,
-                                 C5_CONTACT_PURPOSE_ROUTE_REPLY,
-                                 k_uptime_get_32() + RREP_ACK_TIMEOUT_MS,
-                                 "route-reply-ack");
-        ret = mesh_send_outbound(route_reply_ack, "route-reply-ack");
+        ret = mesh_send_c5_control(route_reply_ack,
+                                   C5_CONTACT_PURPOSE_ROUTE_REPLY,
+                                   MESH_C5_CONTROL_ACCEPTED_EXCHANGE,
+                                   "route-reply-ack");
         if (ret == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime,
                                     route_reply_ack,
@@ -5748,27 +5922,38 @@ after_gateway_ack:
                                        "route-reply-ack-failed");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
-        (void)mesh_send_outbound(&result->route_request, "route-request-forward");
+        (void)mesh_send_c5_control(&result->route_request,
+                                   C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
+                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                   "route-request-forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
-        (void)mesh_send_outbound(&result->gateway_route_adv, "gateway-route-adv-forward");
+        (void)mesh_send_c5_control(&result->gateway_route_adv,
+                                   C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                   "gateway-route-adv-forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_RELAY_BUSY) {
-        if (mesh_send_outbound(&result->busy, "relay-busy") == 0) {
+        if (mesh_send_c5_control(&result->busy,
+                                 C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                 MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                 "relay-busy") == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
         }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_BUSY) {
-        if (mesh_send_outbound(&result->busy, "result-busy") == 0) {
+        if (mesh_send_c5_control(&result->busy,
+                                 C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+                                 MESH_C5_CONTROL_WAKE_IF_NEEDED,
+                                 "result-busy") == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
         }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) {
-        mesh_c5_contact_exchange(result->result_grant.next_hop_id,
+        if (mesh_send_c5_control(&result->result_grant,
                                  C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
-                                 k_uptime_get_32() + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
-                                 "result-grant");
-        if (mesh_send_outbound(&result->result_grant, "result-grant") == 0) {
+                                 MESH_C5_CONTROL_ACCEPTED_EXCHANGE,
+                                 "result-grant") == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime,
                                     &result->result_grant,
                                     k_uptime_get_32());
@@ -6222,6 +6407,10 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                   pending.previous_hop_id,
                                   pending.link_quality,
                                   radio_channel);
+    mesh_note_c5_control_rx(&pending.packet,
+                            pending.previous_hop_id,
+                            radio_channel,
+                            "c5-control-rx");
 
     ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
     if (ret < 0) {
