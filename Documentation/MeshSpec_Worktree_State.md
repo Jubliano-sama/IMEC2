@@ -22,8 +22,7 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `063692b` after app-used accepted-click preemption decision coverage
-  was committed
+- HEAD: current `Add gateway collection roster EACK` commit
 - `git status --short` after this checkpoint edit is expected to show:
   - No tracked modifications.
   - Untracked files only:
@@ -46,7 +45,9 @@ Current `get_goal()`:
 - Route reply ACK/retry reverse-path behavior and backup metadata exists.
 - Bounded flood controls, duplicate suppression, flood identity handling, and no recursive child
   route discovery for the same request.
-- Gateway route advertisement, command flood scopes, collection EACK + missing-list support.
+- Gateway route advertisement, command flood scopes, collection EACK +
+  missing-list support, and gateway app missing-list EACK selection when an
+  explicit count-matched command roster is present.
 - Relay capacity states and busy responses with `retry_after`.
 - C5 contact-state model and channel-9 finite event state semantics.
 
@@ -65,8 +66,12 @@ Current `get_goal()`:
    existing outbox persistence path for active relay outbox snapshots. The
    remaining gap is broader app-integrated recovery coverage across every radio
    handoff and preemption path.
-3. Gateway app collection EACKs still send explicit received-list format because no app-side
-   expected-node roster table is currently wired into collection state.
+3. Gateway app collection EACKs now select explicit missing-list format when an
+   active all-registered command supplied a count-matched `TLV_EXPECTED_NODE_ID`
+   roster. Without that roster, the app still sends explicit received-list EACKs
+   because no persistent membership table is wired into collection state. It
+   also falls back to received-list if the explicit missing-list payload does
+   not fit.
 4. App-level failure-mode coverage still needs one or more focused integration tests for
    Zephyr runtime side effects during real-time preemption/retry behavior.
 
@@ -99,7 +104,7 @@ Current `get_goal()`:
   remaining retry-backoff delay when the saved pending TX was already waiting
   for a collection retry round. Native coverage:
   `test_collection_outbox_snapshot_preserves_retry_round_delay`.
-- `063692b`: `mesh_prepare_click_preemption()`
+- `4cea71d`: `mesh_prepare_click_preemption()`
   extracts the app-used accepted-click preemption decision into a
   platform-independent helper. `mesh_preempt_for_click_event()` now applies the
   helper's plan for NVS save/clear, delayable timeout schedule/cancel, RX queue
@@ -107,6 +112,12 @@ Current `get_goal()`:
   `test_mesh_preemption` verifies collection-result deferral, non-collection TX
   cancel, and local click-report requeue. Zephyr runtime side effects are still
   build-proven rather than runtime-tested.
+- Current `Add gateway collection roster EACK` commit: `TLV_EXPECTED_NODE_ID`
+  command roster parsing,
+  gateway app roster storage for active collection, explicit missing-list EACK
+  selection when the roster is count-matched, received-list fallback when no
+  roster is supplied, and relay-side confirmation when an explicit missing-list
+  EACK omits the local pending result node.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload

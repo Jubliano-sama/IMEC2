@@ -14,6 +14,7 @@ extern "C" {
 
 #define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
 #define GATEWAY_COLLECTION_RESULT_CACHE_SIZE 64u
+#define GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP GATEWAY_COLLECTION_RESULT_CACHE_SIZE
 
 struct gateway_command_pending {
     struct proto_packet command;
@@ -33,6 +34,8 @@ struct gateway_command_options {
     uint32_t command_expiry_s;
     uint16_t membership_epoch;
     uint16_t expected_node_count;
+    uint16_t expected_node_id_count;
+    uint64_t expected_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
     bool collection_required;
     bool flood_required;
 };

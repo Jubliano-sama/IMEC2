@@ -161,6 +161,43 @@ static int extract_required_u32(const uint8_t *payload,
     return PROTO_OK;
 }
 
+static int extract_expected_node_roster(const uint8_t *payload,
+                                        size_t payload_len,
+                                        struct gateway_command_options *options)
+{
+    size_t offset = 0u;
+
+    if (options == NULL || (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+
+    while (offset < payload_len) {
+        uint8_t type;
+        uint8_t value_len;
+
+        if (payload_len - offset < 2u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = payload[offset++];
+        value_len = payload[offset++];
+        if ((size_t)value_len > payload_len - offset) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        if (type == TLV_EXPECTED_NODE_ID) {
+            if (value_len != sizeof(uint64_t) ||
+                options->expected_node_id_count >= GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP) {
+                return PROTO_ERR_MALFORMED;
+            }
+            options->expected_node_ids[options->expected_node_id_count++] =
+                proto_get_u64_le(&payload[offset]);
+        }
+        offset += value_len;
+    }
+
+    return PROTO_OK;
+}
+
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id)
@@ -318,6 +355,16 @@ int gateway_command_extract_options(const uint8_t *payload,
         return ret;
     }
     options->expected_node_count = present ? value_u16 : 0u;
+
+    ret = extract_expected_node_roster(payload, payload_len, options);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (options->expected_node_id_count != 0u &&
+        (options->scope != CMD_SCOPE_ALL_REGISTERED ||
+         options->expected_node_id_count != options->expected_node_count)) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     options->flood_required = options->scope != CMD_SCOPE_SINGLE_NODE;
     options->collection_required =

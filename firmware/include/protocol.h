@@ -253,6 +253,7 @@ enum tlv_type {
     TLV_FLOOD_SUPPRESSION_COUNT = 0x93,
     TLV_ROUTE_REPLY_RETRY_COUNT = 0x94,
     TLV_BUSY_RESPONSE_COUNT = 0x95,
+    TLV_EXPECTED_NODE_ID = 0x96,
 };
 
 enum status_bit {

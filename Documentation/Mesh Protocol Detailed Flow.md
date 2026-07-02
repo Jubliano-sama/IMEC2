@@ -15,6 +15,9 @@ Reading rule: this document records the protocol surface that exists in the
 firmware tree now. It is not a statement of desired MeshSpec behavior unless the
 behavior is also present in code or tests. Unimplemented and partially
 implemented items are listed as gaps rather than described as operational flow.
+The flowcharts at the end are implementation snapshots too: they summarize
+currently wired/native-covered paths and must not be read as acceptance criteria
+for behavior that is still listed as partial.
 
 ## Current Scope
 
@@ -297,16 +300,16 @@ Implemented in native code:
 - Result dedupe.
 - Received-list EACK payloads.
 - Missing-list EACK payload helpers from roster data.
+- Gateway app missing-list EACK selection when the command options include an
+  explicit `TLV_EXPECTED_NODE_ID` roster whose count matches
+  `TLV_EXPECTED_NODE_COUNT`.
+- Gateway app received-list EACK fallback when no explicit roster is present or
+  the missing-list payload would not fit.
 - Collection-open state.
 - Timed retry-round EACK broadcasts.
 - Source behavior for received-list hit, received-list miss, explicit
-  missing-list retry, and closed-collection stop.
-
-Current app gap:
-
-- The gateway app scheduled EACK path currently sends explicit received-list
-  EACKs. Missing-list helper support exists in native code, but the app does
-  not currently select missing-list EACKs when roster data is available.
+  missing-list retry, explicit missing-list absence confirmation, and
+  closed-collection stop.
 
 ## Implemented Collection Result Scheduling
 
@@ -471,9 +474,12 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    results and active relay outbox snapshots are storage-backed, and retry-round
    delay restore has native coverage.
 
-3. Gateway app scheduled EACKs currently use explicit received-list format.
-   Missing-list EACK generation exists in native helpers/tests, but the app
-   does not yet choose missing-list EACKs from roster data.
+3. Gateway app scheduled EACKs use explicit missing-list format only when the
+   active all-registered command supplied an explicit count-matched roster via
+   `TLV_EXPECTED_NODE_ID`. Without that roster, the app intentionally falls back
+   to explicit received-list EACKs because there is no app-side membership table
+   to derive strict missing nodes from. It also falls back if the missing-list
+   payload would exceed the packet payload capacity.
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are
@@ -494,6 +500,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
 
 ## Current Flow: Direct Gateway Link
 
+Evidence scope: this is the currently implemented mesh-test direct-link path
+for synthetic gateway-bound packets. It has been exercised in the dedicated
+mesh-test firmware/tooling, including batched ACK IDs and partial ACK behavior.
+
 ```mermaid
 sequenceDiagram
     participant T as Transmitter
@@ -509,6 +519,11 @@ sequenceDiagram
 ```
 
 ## Current Flow: One Relay Hop
+
+Evidence scope: this combines the route-discovery, route-reply, parent-candidate
+and finite channel-9 event behavior that exists in code/native tests. It is not
+a claim that every app-integrated multi-hop recovery and preemption path is
+runtime-tested; those remaining gaps are listed above.
 
 ```mermaid
 flowchart TD
@@ -527,6 +542,14 @@ flowchart TD
 ```
 
 ## Current Flow: All-Node Command Collection
+
+Evidence scope: this is the implemented command/result collection state shape.
+Native code covers collection state, result identity, spread/retry timing,
+received-list and missing-list behavior, offer/grant, bundle handling, and relay
+snapshot restore. The gateway app selects missing-list EACKs only for explicit
+count-matched command rosters and otherwise falls back to received-list EACKs.
+Full Zephyr runtime side-effect coverage around every handoff/preemption point
+is still partial.
 
 ```mermaid
 flowchart TD

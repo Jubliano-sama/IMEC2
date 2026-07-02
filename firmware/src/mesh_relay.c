@@ -2466,6 +2466,14 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         route_record_success_at(&relay->upstream, now_ms);
         return PROTO_OK;
     }
+    if (eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && !listed) {
+        result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+        mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
+        outbox_record_mark_gateway_acked(relay, now_ms);
+        relay->pending.state = MESH_RELAY_TX_IDLE;
+        route_record_success_at(&relay->upstream, now_ms);
+        return PROTO_OK;
+    }
 
     if (!eack.collection_open) {
         result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
