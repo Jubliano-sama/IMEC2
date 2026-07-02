@@ -14,6 +14,7 @@ target_sources(app PRIVATE
     src/main.c
     ../../src/app_mesh_persistence.c
     ../../src/app_mesh_preemption.c
+    ../../src/app_mesh_result_handoff.c
     ../../../src/debug_log.c
     ../../../src/protocol.c
     ../../../src/gateway_command.c

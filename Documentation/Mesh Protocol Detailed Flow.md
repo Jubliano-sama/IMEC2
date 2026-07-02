@@ -371,6 +371,11 @@ Implemented behavior:
 - Current `native_sim/native/64` Zephyr coverage exercises that parent-side
   reservation through the app persistence save/restore/clear path after a real
   relay `RESULT_OFFER` receive path.
+- The same app/NVS coverage also exercises the accepted-C5 failure case for
+  `RESULT_GRANT`: the parent saves the reservation, the send callback returns
+  `-ENOTCONN`, the grant is not marked TX-sent, the reservation restores after
+  `mesh_relay_init()`, and an identical retried child offer receives another
+  `RESULT_GRANT` rather than `RESULT_BUSY` or drop.
 - The app result-handoff bridge is factored into a focused helper. Current
   `native_sim/native/64` Zephyr coverage verifies that result grants save child
   custody before the accepted C5 send, suppress the grant when that save fails,
@@ -530,8 +535,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    anchor NVS-backed, and forwarded non-bundled child `MSG_COMMAND_RESULT`
    offer/payload custody-retry state is relay-snapshot backed. The parent
    reservation path, queued child bundle path, and after-grant forwarded
-   payload path now have app/NVS round-trip coverage. The remaining gap is
-   app-integrated coverage across every radio handoff and preemption point.
+   payload path now have app/NVS round-trip coverage. Parent reservation
+   recovery after `RESULT_GRANT` send failure is also app-tested. The remaining
+   gap is app-integrated coverage across every radio handoff and preemption
+   point.
 
 5. Durable multi-hop child custody/storage-backed recovery is partial.
    Queued child bundles, in-flight `MSG_RESULT_BUNDLE` outbox state, and

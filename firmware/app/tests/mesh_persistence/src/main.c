@@ -1,5 +1,6 @@
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_result_handoff.h"
 #include "mesh.h"
 #include "protocol.h"
 #include "route.h"
@@ -21,6 +22,15 @@ struct preempt_save_ctx {
     uint8_t schedule_count;
 };
 
+struct result_grant_send_ctx {
+    struct mesh_relay *relay;
+    uint32_t now_ms;
+    int send_ret;
+    uint8_t save_count;
+    uint8_t send_count;
+    uint8_t note_count;
+};
+
 static void timeout_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
@@ -40,6 +50,35 @@ static int schedule_timeout_for_preempt(void *opaque)
 
     ctx->schedule_count++;
     return k_work_reschedule(&test_tx_timeout_work, K_MSEC(1000));
+}
+
+static int save_child_custody_for_grant(void *opaque)
+{
+    struct result_grant_send_ctx *ctx = opaque;
+
+    ctx->save_count++;
+    return app_mesh_persistence_save_child_custody(ctx->relay, ctx->now_ms);
+}
+
+static int send_result_grant_for_test(const struct mesh_outbound *out,
+                                      void *opaque)
+{
+    struct result_grant_send_ctx *ctx = opaque;
+
+    ARG_UNUSED(out);
+
+    ctx->send_count++;
+    return ctx->send_ret;
+}
+
+static void note_tx_sent_for_grant(const struct mesh_outbound *out,
+                                   void *opaque)
+{
+    struct result_grant_send_ctx *ctx = opaque;
+
+    ARG_UNUSED(out);
+
+    ctx->note_count++;
 }
 
 static bool has_action(const struct mesh_relay_result *result,
@@ -595,6 +634,104 @@ ZTEST(mesh_persistence, test_child_custody_reservation_round_trip_and_clear)
     mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
     zassert_ok(app_mesh_persistence_restore_child_custody(&restored, 6000u));
     zassert_false(restored.result_offer_reservation.valid);
+}
+
+ZTEST(mesh_persistence, test_result_grant_send_failure_restores_reservation_for_retry)
+{
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = GATEWAY_ID,
+            .gateway_epoch = 13u,
+            .command_seq = 0x22334466u,
+            .node_id = CHILD_ID,
+            .node_boot_counter = 23u,
+            .result_seq = 24u,
+        },
+        .result_len = UWB_MESH_MAX_PAYLOAD_LEN,
+        .result_crc = 0x55aau,
+        .priority = 4u,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_OFFER,
+        .src_id = CHILD_ID,
+        .dst_id = LOCAL_ID,
+        .session_id = 93u,
+        .seq = 9u,
+        .ttl = 1u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_result first_result;
+    struct mesh_relay_result retry_result;
+    struct result_grant_send_ctx ctx;
+    struct app_mesh_result_handoff_ops ops;
+    struct app_mesh_result_handoff_status status;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_child_custody();
+
+    zassert_ok(result_offer_append_tlvs(payload,
+                                        sizeof(payload),
+                                        &payload_len,
+                                        &offer));
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(mesh_relay_handle_rx(&relay,
+                                    &packet,
+                                    payload,
+                                    payload_len,
+                                    CHILD_ID,
+                                    80u,
+                                    4300u,
+                                    &first_result));
+    zassert_true(has_action(&first_result, MESH_RELAY_ACTION_SEND_RESULT_GRANT));
+    zassert_false(has_action(&first_result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+    zassert_true(relay.result_offer_reservation.valid);
+
+    ctx = (struct result_grant_send_ctx) {
+        .relay = &relay,
+        .now_ms = 4301u,
+        .send_ret = -ENOTCONN,
+    };
+    ops = (struct app_mesh_result_handoff_ops) {
+        .save_child_custody = save_child_custody_for_grant,
+        .send_result_grant = send_result_grant_for_test,
+        .note_tx_sent = note_tx_sent_for_grant,
+        .ctx = &ctx,
+    };
+    app_mesh_result_handoff_result_grant(&first_result, true, &ops, &status);
+    zassert_true(status.child_custody_saved);
+    zassert_true(status.child_custody_ready);
+    zassert_false(status.result_grant_sent);
+    zassert_false(status.result_grant_suppressed);
+    zassert_equal(status.send_ret, -ENOTCONN);
+    zassert_equal(ctx.save_count, 1u);
+    zassert_equal(ctx.send_count, 1u);
+    zassert_equal(ctx.note_count, 0u);
+    zassert_true(relay.result_offer_reservation.valid);
+
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(app_mesh_persistence_restore_child_custody(&restored, 5000u));
+    zassert_true(restored.result_offer_reservation.valid);
+    zassert_equal(restored.result_offer_reservation.child_id, CHILD_ID);
+    assert_result_id_equal(&restored.result_offer_reservation.result_id,
+                           &offer.result_id);
+
+    zassert_ok(mesh_relay_handle_rx(&restored,
+                                    &packet,
+                                    payload,
+                                    payload_len,
+                                    CHILD_ID,
+                                    80u,
+                                    5001u,
+                                    &retry_result));
+    zassert_true(has_action(&retry_result, MESH_RELAY_ACTION_SEND_RESULT_GRANT));
+    zassert_false(has_action(&retry_result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+    zassert_false(has_action(&retry_result, MESH_RELAY_ACTION_DROP));
+    zassert_true(restored.result_offer_reservation.valid);
 }
 
 ZTEST(mesh_persistence, test_child_result_bundle_round_trip_and_flush_after_restore)

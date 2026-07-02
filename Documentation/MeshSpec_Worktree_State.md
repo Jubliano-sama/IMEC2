@@ -78,8 +78,10 @@ Current `get_goal()`:
    existing outbox persistence path for active relay outbox snapshots, and
    `firmware/app/tests/mesh_persistence` verifies parent-side result-offer
    reservation save/restore/clear and queued child result bundle
-   save/restore/flush through the app NVS child-custody path plus after-grant
-   forwarded child payload restore through the app NVS outbox path.
+   save/restore/flush through the app NVS child-custody path, parent reservation
+   restore after `RESULT_GRANT` accepted-C5 send failure and identical retried
+   offer, plus after-grant forwarded child payload restore through the app NVS
+   outbox path.
    `firmware/app/tests/mesh_result_handoff` verifies the app bridge that saves
    child custody before result grants, suppresses grants on save failure, reports
    grant-send failure without marking TX sent, notes forwarded bundles before
@@ -156,6 +158,12 @@ Current `get_goal()`:
   verifies parent-side `RESULT_OFFER` reservation save/restore/clear and queued
   child `MSG_COMMAND_RESULT` bundle save/restore/flush through the app NVS
   child-custody path under `native_sim/native/64`.
+- Latest result-grant failure persistence test slice:
+  `firmware/app/tests/mesh_persistence` verifies that if a parent saves a child
+  `RESULT_OFFER` reservation but the `RESULT_GRANT` accepted-C5 send returns
+  `-ENOTCONN`, the grant is not marked TX-sent, the reservation restores from
+  NVS after `mesh_relay_init()`, and an identical retried offer receives another
+  `RESULT_GRANT` instead of `RESULT_BUSY` or drop.
 - Latest result-handoff app test slice: `firmware/app/src/app_mesh_result_handoff.*`
   applies the app bridge around child-custody persistence and result-grant
   sends, and `firmware/app/tests/mesh_result_handoff` verifies save-before-grant,
