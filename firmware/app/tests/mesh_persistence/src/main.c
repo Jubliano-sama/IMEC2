@@ -263,6 +263,119 @@ ZTEST(mesh_persistence, test_active_collection_retry_outbox_round_trip)
                       result_payload_len);
 }
 
+ZTEST(mesh_persistence, test_forwarded_child_result_payload_outbox_round_trip_after_grant)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = 0x20212225u,
+        .node_id = CHILD_ID,
+        .node_boot_counter = 43u,
+        .result_seq = 46u,
+    };
+    const struct result_grant grant = {
+        .result_id = result_id,
+        .granted_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .max_bytes = 64u,
+        .event_offset_hint = 0u,
+    };
+    struct route_candidate route = direct_gateway_route(90u);
+    struct proto_packet result_packet = {0};
+    struct proto_packet grant_packet = {
+        .msg_type = MSG_RESULT_GRANT,
+        .src_id = GATEWAY_ID,
+        .dst_id = LOCAL_ID,
+        .session_id = 98u,
+        .seq = 15u,
+        .ttl = 1u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_outbound offer_tx;
+    struct mesh_relay_result grant_result;
+    struct mesh_relay_result tick_result;
+    uint8_t result_payload[96];
+    uint8_t grant_payload[96];
+    size_t result_payload_len = 0u;
+    size_t grant_payload_len = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_outbox();
+
+    build_identity_command_result_payload(result_payload,
+                                          sizeof(result_payload),
+                                          64u,
+                                          &result_id,
+                                          &result_payload_len);
+    zassert_ok(mesh_init_command_result(&result_packet,
+                                        CHILD_ID,
+                                        GATEWAY_ID,
+                                        98u,
+                                        15u,
+                                        (uint8_t)result_payload_len,
+                                        false));
+    zassert_ok(result_grant_append_tlvs(grant_payload,
+                                        sizeof(grant_payload),
+                                        &grant_payload_len,
+                                        &grant));
+    grant_packet.payload_len = (uint16_t)grant_payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(route_upsert_candidate(&relay.upstream, &route));
+    zassert_ok(mesh_relay_start_result_offer(&relay,
+                                             &result_packet,
+                                             result_payload,
+                                             result_payload_len,
+                                             4400u,
+                                             &offer_tx));
+    zassert_ok(mesh_relay_handle_rx(&relay,
+                                    &grant_packet,
+                                    grant_payload,
+                                    grant_payload_len,
+                                    GATEWAY_ID,
+                                    80u,
+                                    4410u,
+                                    &grant_result));
+    zassert_true(has_action(&grant_result, MESH_RELAY_ACTION_RETRANSMIT));
+    zassert_false(relay.pending.result_offer_active);
+    zassert_equal(relay.pending.packet.msg_type, MSG_COMMAND_RESULT);
+    zassert_equal(relay.pending.packet.src_id, CHILD_ID);
+    zassert_equal(relay.pending.packet.dst_id, GATEWAY_ID);
+    zassert_equal(relay.pending.state, MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    zassert_equal(relay.outbox_record.delivery_state,
+                  MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK);
+    zassert_ok(app_mesh_persistence_save_outbox(&relay, 4420u));
+
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_ok(app_mesh_persistence_restore_outbox(&restored, 5000u));
+
+    zassert_false(restored.pending.result_offer_active);
+    zassert_equal(restored.pending.packet.msg_type, MSG_COMMAND_RESULT);
+    zassert_equal(restored.pending.packet.src_id, CHILD_ID);
+    zassert_equal(restored.pending.packet.dst_id, GATEWAY_ID);
+    zassert_equal(restored.pending.state, MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    zassert_equal(restored.outbox_record.delivery_state,
+                  MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK);
+
+    zassert_ok(mesh_relay_tick(&restored,
+                               5000u + RELAY_BUSY_RETRY_MIN_MS,
+                               &tick_result));
+    zassert_true(has_action(&tick_result, MESH_RELAY_ACTION_RETRANSMIT));
+    zassert_equal(tick_result.retransmit.packet.msg_type, MSG_COMMAND_RESULT);
+    zassert_equal(tick_result.retransmit.packet.src_id, CHILD_ID);
+    zassert_equal(tick_result.retransmit.packet.dst_id, GATEWAY_ID);
+    zassert_equal(tick_result.retransmit.next_hop_id, GATEWAY_ID);
+    zassert_equal(tick_result.retransmit.payload_len, result_payload_len);
+    zassert_mem_equal(tick_result.retransmit.payload,
+                      result_payload,
+                      result_payload_len);
+}
+
 ZTEST(mesh_persistence, test_child_custody_reservation_round_trip_and_clear)
 {
     const struct result_offer offer = {

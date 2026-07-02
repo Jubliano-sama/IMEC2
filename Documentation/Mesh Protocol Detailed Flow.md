@@ -378,6 +378,10 @@ Implemented behavior:
   `RESULT_GRANT`. Restore validates the command-result identity, gateway epoch,
   source node, payload length, and payload CRC, then resumes the pending offer or
   payload in retry-backoff state.
+- Current `native_sim/native/64` Zephyr coverage verifies the after-grant
+  forwarded child payload path through app outbox persistence: the restored
+  relay retransmits `MSG_COMMAND_RESULT`, not `MSG_RESULT_OFFER`, with the
+  original child source, gateway destination, next hop, and payload bytes.
 
 Partial:
 
@@ -507,9 +511,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are
    anchor NVS-backed, and forwarded non-bundled child `MSG_COMMAND_RESULT`
-   offer/payload custody-retry state is relay-snapshot backed. The remaining
-   gap is app-integrated coverage across every radio handoff and preemption
-   point.
+   offer/payload custody-retry state is relay-snapshot backed. The parent
+   reservation path and after-grant forwarded payload path now have app/NVS
+   round-trip coverage. The remaining gap is app-integrated coverage across
+   every radio handoff and preemption point.
 
 5. Durable multi-hop child custody/storage-backed recovery is partial.
    Queued child bundles, in-flight `MSG_RESULT_BUNDLE` outbox state, and

@@ -22,8 +22,8 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: current MeshSpec implementation commits through the active collection
-  retry outbox persistence test slice
+- HEAD: current MeshSpec implementation commits through the forwarded child
+  result payload outbox persistence test slice
 - `git status --short` after this checkpoint edit is expected to show:
   - No tracked modifications after the current slice is committed.
   - Untracked files only:
@@ -73,7 +73,8 @@ Current `get_goal()`:
    snapshot/restore coverage. Anchor-role Zephyr NVS save/restore uses the
    existing outbox persistence path for active relay outbox snapshots, and
    `firmware/app/tests/mesh_persistence` verifies parent-side result-offer
-   reservation save/restore/clear through the app NVS child-custody path.
+   reservation save/restore/clear through the app NVS child-custody path plus
+   after-grant forwarded child payload restore through the app NVS outbox path.
    `firmware/app/tests/mesh_result_handoff` verifies the app bridge that saves
    child custody before result grants, suppresses grants on save failure, and
    updates custody after forwarded child-result handoff. The remaining gap is
@@ -157,6 +158,13 @@ Current `get_goal()`:
   saved to Zephyr NVS, restored after `mesh_relay_init()`, keep retry round 1,
   preserve the remaining retry delay, avoid retransmit before the restored
   deadline, and retransmit the same payload to the gateway at the deadline.
+- Latest forwarded child payload persistence test slice:
+  `firmware/app/tests/mesh_persistence` verifies a forwarded child
+  `MSG_COMMAND_RESULT` that has received `RESULT_GRANT` can be saved through the
+  app outbox NVS path, restored after `mesh_relay_init()`, remain gateway-ACK
+  tracked, resume in retry-backoff instead of a stale radio wait, and
+  retransmit the original child payload to the gateway rather than re-sending
+  `MSG_RESULT_OFFER`.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -173,7 +181,7 @@ Current `get_goal()`:
   outbox snapshot/restore tests, child-custody bundle/reservation snapshot
   tests, no-state export coverage, corrupt bundle snapshot rejection, and
   updated route-loss preservation expectations in `test_mesh_relay`.
-- Verification run after the active collection retry persistence slice:
+- Verification run after the forwarded child payload persistence slice:
   `cmake --build firmware/build` passed and
   `ctest --test-dir firmware/build --output-on-failure` passed 14/14.
 - Zephyr role builds also passed after the change:
