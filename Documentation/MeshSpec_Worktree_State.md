@@ -71,6 +71,9 @@ Current `get_goal()`:
    also covers accepted-click preemption of an active collection-result outbox
    through the app helper, real NVS save/restore, preserved retry-backoff,
    same-payload retransmit, and no route failure/hold-down from the preemption.
+   Native relay coverage also verifies that a closed collection EACK terminates
+   pending source delivery even when the EACK uses roster-bitmap format and
+   carries no explicit node list.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level

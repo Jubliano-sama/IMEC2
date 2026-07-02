@@ -320,6 +320,8 @@ Implemented in native code:
 - Gateway app received-list EACK fallback remains for best-effort
   `CMD_SCOPE_ALL_HEARD` collection or when a missing-list payload would not fit.
 - Collection-open state.
+- Source-side closed-collection handling, including roster-bitmap-format EACKs
+  that close the collection without carrying an explicit node list.
 - Timed retry-round EACK broadcasts.
 - Source behavior for received-list hit, received-list miss, explicit
   missing-list retry, explicit missing-list absence confirmation, and

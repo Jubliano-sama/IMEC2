@@ -2455,11 +2455,6 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (eack.eack_format != EACK_FORMAT_EXPLICIT_RECEIVED_LIST &&
-        eack.eack_format != EACK_FORMAT_EXPLICIT_MISSING_LIST) {
-        return PROTO_OK;
-    }
-
     ret = command_result_id_from_tlvs(relay->pending.payload,
                                       relay->pending.payload_len,
                                       &pending_id);
@@ -2478,6 +2473,18 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         eack.command_seq != pending_id.command_seq ||
         eack.collection_epoch_id != collection_epoch_id ||
         pending_id.node_id != relay->local_id) {
+        return PROTO_OK;
+    }
+
+    if (!eack.collection_open) {
+        result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
+        outbox_record_mark_collection_closed(relay, &eack, now_ms);
+        relay->pending.state = MESH_RELAY_TX_IDLE;
+        return PROTO_OK;
+    }
+
+    if (eack.eack_format != EACK_FORMAT_EXPLICIT_RECEIVED_LIST &&
+        eack.eack_format != EACK_FORMAT_EXPLICIT_MISSING_LIST) {
         return PROTO_OK;
     }
 
@@ -2502,13 +2509,6 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         outbox_record_mark_gateway_acked(relay, now_ms);
         relay->pending.state = MESH_RELAY_TX_IDLE;
         route_record_success_at(&relay->upstream, now_ms);
-        return PROTO_OK;
-    }
-
-    if (!eack.collection_open) {
-        result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
-        outbox_record_mark_collection_closed(relay, &eack, now_ms);
-        relay->pending.state = MESH_RELAY_TX_IDLE;
         return PROTO_OK;
     }
 
