@@ -22,8 +22,8 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: current MeshSpec implementation commits through the forwarded child
-  result payload outbox persistence test slice
+- HEAD: current MeshSpec implementation commits through the strict
+  all-registered collection roster test slice
 - `git status --short` after this checkpoint edit is expected to show:
   - No tracked modifications after the current slice is committed.
   - Untracked files only:
@@ -47,8 +47,9 @@ Current `get_goal()`:
 - Bounded flood controls, duplicate suppression, flood identity handling, and no recursive child
   route discovery for the same request.
 - Gateway route advertisement, command flood scopes, collection EACK +
-  missing-list support, and gateway app missing-list EACK selection when an
-  explicit count-matched command roster is present.
+  missing-list support, strict `CMD_SCOPE_ALL_REGISTERED` collection rejection
+  without a full explicit roster, and gateway app missing-list EACK selection
+  when a count-matched command roster is present.
 - Relay capacity states and busy responses with `retry_after`.
 - C5 contact-state model and channel-9 finite event state semantics.
 
@@ -80,12 +81,13 @@ Current `get_goal()`:
    updates custody after forwarded child-result handoff. The remaining gap is
    broader app-integrated recovery coverage across every radio handoff and
    preemption path.
-3. Gateway app collection EACKs now select explicit missing-list format when an
-   active all-registered command supplied a count-matched `TLV_EXPECTED_NODE_ID`
-   roster. Without that roster, the app still sends explicit received-list EACKs
-   because no persistent membership table is wired into collection state. It
-   also falls back to received-list if the explicit missing-list payload does
-   not fit.
+3. Gateway app collection EACKs now select explicit missing-list format when the
+   active collection state has a count-matched `TLV_EXPECTED_NODE_ID` roster.
+   `CMD_SCOPE_ALL_REGISTERED` collection commands without that full roster are
+   rejected instead of being downgraded to best-effort membership. The gateway
+   still has no persistent membership table; `CMD_SCOPE_ALL_HEARD` remains the
+   best-effort collection mode and received-list fallback is still used when a
+   missing-list payload does not fit.
 4. App-level failure-mode coverage still needs broader integration tests for
    full radio handoff/retry behavior across real-time preemption points.
 
@@ -129,9 +131,10 @@ Current `get_goal()`:
 - Current `Add gateway collection roster EACK` commit: `TLV_EXPECTED_NODE_ID`
   command roster parsing,
   gateway app roster storage for active collection, explicit missing-list EACK
-  selection when the roster is count-matched, received-list fallback when no
-  roster is supplied, and relay-side confirmation when an explicit missing-list
-  EACK omits the local pending result node.
+  selection when the roster is count-matched, and relay-side confirmation when
+  an explicit missing-list EACK omits the local pending result node. The newer
+  strict collection slice rejects `CMD_SCOPE_ALL_REGISTERED` collection commands
+  when that full roster is not supplied.
 - Latest expiry slice: active pending `MSG_COMMAND_RESULT` outbox records
   with expired `TLV_COMMAND_EXPIRY_S` stop retrying and mark
   `MESH_RELAY_DELIVERY_EXPIRED`; native coverage:
@@ -165,6 +168,13 @@ Current `get_goal()`:
   tracked, resume in retry-backoff instead of a stale radio wait, and
   retransmit the original child payload to the gateway rather than re-sending
   `MSG_RESULT_OFFER`.
+- Latest strict all-registered collection slice:
+  `gateway_command_extract_options()` rejects collection-required
+  `CMD_SCOPE_ALL_REGISTERED` commands unless `TLV_EXPECTED_NODE_ID` entries
+  exactly match `TLV_EXPECTED_NODE_COUNT`. `CMD_SCOPE_ALL_HEARD` is the
+  best-effort collection mode without a strict roster. The gateway app keeps
+  the command-supplied explicit roster only for the active collection and uses
+  it for missing-list EACKs when the payload fits.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -181,7 +191,7 @@ Current `get_goal()`:
   outbox snapshot/restore tests, child-custody bundle/reservation snapshot
   tests, no-state export coverage, corrupt bundle snapshot rejection, and
   updated route-loss preservation expectations in `test_mesh_relay`.
-- Verification run after the forwarded child payload persistence slice:
+- Verification run after the strict all-registered collection slice:
   `cmake --build firmware/build` passed and
   `ctest --test-dir firmware/build --output-on-failure` passed 14/14.
 - Zephyr role builds also passed after the change:

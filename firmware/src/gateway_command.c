@@ -386,6 +386,11 @@ int gateway_command_extract_options(const uint8_t *payload,
          options->expected_node_count == 0u)) {
         return PROTO_ERR_MALFORMED;
     }
+    if (options->collection_required &&
+        options->scope == CMD_SCOPE_ALL_REGISTERED &&
+        options->expected_node_id_count != options->expected_node_count) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     return PROTO_OK;
 }

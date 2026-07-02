@@ -244,9 +244,9 @@ static void test_extract_options_defaults_to_single_node_small_result(void)
     assert(!options.collection_required);
 }
 
-static void test_prepare_outbound_accepts_all_registered_command_flood(void)
+static void test_prepare_outbound_accepts_all_registered_command_flood_with_roster(void)
 {
-    uint8_t payload[96];
+    uint8_t payload[128];
     size_t payload_len = 0u;
     struct proto_packet host = {
         .msg_type = MSG_COMMAND,
@@ -291,7 +291,7 @@ static void test_prepare_outbound_accepts_all_registered_command_flood(void)
                           sizeof(payload),
                           &payload_len,
                           TLV_EXPECTED_NODE_COUNT,
-                          12u) == PROTO_OK);
+                          2u) == PROTO_OK);
     assert(tlv_append_u32(payload,
                           sizeof(payload),
                           &payload_len,
@@ -302,6 +302,16 @@ static void test_prepare_outbound_accepts_all_registered_command_flood(void)
                           &payload_len,
                           TLV_COLLECTION_SLOT_SEED,
                           4004u) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_ID,
+                          ANCHOR_ID_TEST) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_ID,
+                          0x5555666677778888ull) == PROTO_OK);
     host.payload_len = (uint8_t)payload_len;
 
     assert(gateway_command_extract_options(payload,
@@ -312,7 +322,8 @@ static void test_prepare_outbound_accepts_all_registered_command_flood(void)
     assert(options.command_seq == 1001u);
     assert(options.flood_epoch_id == 2002u);
     assert(options.membership_epoch == 3u);
-    assert(options.expected_node_count == 12u);
+    assert(options.expected_node_count == 2u);
+    assert(options.expected_node_id_count == 2u);
     assert(options.collection_epoch_id == 3003u);
     assert(options.collection_slot_seed == 4004u);
     assert(options.flood_required);
@@ -339,6 +350,59 @@ static void test_prepare_outbound_accepts_all_registered_command_flood(void)
            GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST);
     assert(out.payload_len == payload_len);
     assert(memcmp(out.payload, payload, payload_len) == 0);
+}
+
+static void test_extract_options_rejects_all_registered_collection_without_roster(void)
+{
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_GET_STATUS);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_SMALL_RESULT) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MEMBERSHIP_EPOCH,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXPECTED_NODE_COUNT,
+                          2u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          3003u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_SLOT_SEED,
+                          4004u) == PROTO_OK);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_ERR_MALFORMED);
 }
 
 static void test_command_flood_requires_collection_identity_for_responses(void)
@@ -609,7 +673,7 @@ static void test_tracking_mode_uses_collection_for_broadcast_results(void)
                          sizeof(payload),
                          &payload_len,
                          TLV_COMMAND_SCOPE,
-                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
     assert(tlv_append_u8(payload,
                          sizeof(payload),
                          &payload_len,
@@ -1698,7 +1762,8 @@ int main(void)
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
     test_extract_options_defaults_to_single_node_small_result();
-    test_prepare_outbound_accepts_all_registered_command_flood();
+    test_prepare_outbound_accepts_all_registered_command_flood_with_roster();
+    test_extract_options_rejects_all_registered_collection_without_roster();
     test_command_flood_requires_collection_identity_for_responses();
     test_extract_options_accepts_all_registered_roster();
     test_extract_options_rejects_mismatched_roster();

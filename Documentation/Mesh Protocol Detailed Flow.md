@@ -300,11 +300,13 @@ Implemented in native code:
 - Result dedupe.
 - Received-list EACK payloads.
 - Missing-list EACK payload helpers from roster data.
-- Gateway app missing-list EACK selection when the command options include an
-  explicit `TLV_EXPECTED_NODE_ID` roster whose count matches
+- `CMD_SCOPE_ALL_REGISTERED` collection commands are accepted only when the
+  command carries an explicit `TLV_EXPECTED_NODE_ID` roster whose count matches
   `TLV_EXPECTED_NODE_COUNT`.
-- Gateway app received-list EACK fallback when no explicit roster is present or
-  the missing-list payload would not fit.
+- Gateway app stores that command roster for the active collection and selects
+  missing-list EACKs from it when the payload fits.
+- Gateway app received-list EACK fallback remains for best-effort
+  `CMD_SCOPE_ALL_HEARD` collection or when a missing-list payload would not fit.
 - Collection-open state.
 - Timed retry-round EACK broadcasts.
 - Source behavior for received-list hit, received-list miss, explicit
@@ -502,11 +504,13 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    delay restore has native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
-   active all-registered command supplied an explicit count-matched roster via
-   `TLV_EXPECTED_NODE_ID`. Without that roster, the app intentionally falls back
-   to explicit received-list EACKs because there is no app-side membership table
-   to derive strict missing nodes from. It also falls back if the missing-list
-   payload would exceed the packet payload capacity.
+   active collection state has an explicit count-matched roster from
+   `TLV_EXPECTED_NODE_ID`. `CMD_SCOPE_ALL_REGISTERED` collection commands
+   without that full roster are rejected rather than treated as provable
+   membership. `CMD_SCOPE_ALL_HEARD` remains best-effort and uses received-list
+   EACKs unless a strict roster is available. The gateway still has no
+   persistent membership table, and it falls back to received-list EACKs if the
+   missing-list payload would exceed packet capacity.
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are
