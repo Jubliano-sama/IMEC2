@@ -348,12 +348,15 @@ Implemented behavior:
 - Original payload is released after `RESULT_GRANT`.
 - Mismatched payload identity, length, or CRC is rejected before custody/forward.
 - Mismatched `RESULT_BUSY` identities are ignored.
+- Anchor-role NVS stores and restores the parent-side result-offer reservation
+  after restart. The restore path validates role/local/gateway identity,
+  gateway epoch, child identity, result ID, result length, and result CRC.
 
 Partial:
 
-- Durable multi-hop child custody and storage-backed recovery are not
-  implemented. Reservation, custody state, pending payload, and result bundle
-  queue are RAM-only.
+- Parent-side reservation recovery is implemented, but in-flight upstream
+  custody/retry state after a forwarded large result is still not fully
+  restart-tolerant.
 
 ## Implemented Result Bundling
 
@@ -363,14 +366,21 @@ Implemented behavior:
 
 - Gateway accepts and dedupes `MSG_RESULT_BUNDLE`.
 - Relays queue small collection results.
-- Relays custody-ACK after local storage in RAM.
+- Relays custody-ACK after local storage in RAM and, for anchor firmware, after
+  the queued child bundle can be exported to NVS.
 - Relays flush on hold deadline or queue fill.
 - Relays send bundles over channel 9.
 - Relays retain custody until outbound handoff succeeds.
+- Anchor-role NVS stores and restores queued child bundle state after restart.
+  Restore validates each record's result identity, collection epoch, payload
+  length, and payload CRC, folds pre-reset queued time into `message_age_ms`,
+  and resumes the remaining hold delay on the new boot uptime.
 
 Partial:
 
-- Bundle custody and queue state are not restart-tolerant.
+- Queued bundle state is restart-tolerant before outbound handoff. A bundle
+  that has already been handed to the next hop is still cleared on outbound
+  handoff, so broader upstream custody retry state is not fully durable.
 
 ## Implemented Telemetry
 
@@ -447,11 +457,14 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    Missing-list EACK generation exists in native helpers/tests, but the app
    does not yet choose missing-list EACKs from roster data.
 
-4. Durable large-result custody is not implemented.
-   Offer/grant/reservation validation exists, but reservation, pending payload,
-   custody state, and bundle queues are RAM-only.
+4. Durable large-result custody is partial.
+   Offer/grant/reservation validation exists and parent-side reservations are
+   anchor NVS-backed, but forwarded in-flight upstream custody/retry state is
+   not fully durable.
 
-5. Durable multi-hop child custody/storage-backed recovery is not implemented.
+5. Durable multi-hop child custody/storage-backed recovery is partial.
+   Queued child bundles are anchor NVS-backed before outbound handoff, but
+   broader upstream custody retry state after handoff is not fully durable.
 
 6. App-integrated click-service preemption during collection still needs focused
    test coverage.
@@ -486,7 +499,7 @@ flowchart TD
     H --> I[Origin installs parent candidate]
     I --> J[Refresh or negotiate C9 timing]
     J --> K[Send payload in finite C9 event]
-    K --> L[Next hop custody ACKs after RAM storage/queue]
+    K --> L[Next hop custody ACKs after validated local queue]
     L --> M[Source waits for gateway ACK/EACK in delivery state]
 ```
 

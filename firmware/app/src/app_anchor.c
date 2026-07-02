@@ -4426,6 +4426,11 @@ int app_anchor_start_anchor_role(void)
     if (ret < 0) {
         LOG_WRN("anchor mesh outbox restore unavailable: %d", ret);
     }
+    ret = app_mesh_persistence_restore_child_custody(&mesh_runtime,
+                                                    k_uptime_get_32());
+    if (ret < 0) {
+        LOG_WRN("anchor mesh child custody restore unavailable: %d", ret);
+    }
     ret = uwb_anchor_session_init(&anchor_uwb_session, &anchor_config);
     if (ret < 0) {
         LOG_ERR("anchor UWB session init failed: %d", ret);

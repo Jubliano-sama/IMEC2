@@ -6,8 +6,11 @@ Location: `/home/tommie/Projects/IMEC2`
 ## Active objective
 
 Implement `Documentation/MeshSpec.md` as closely as possible without modifying the
-spec itself, using separable subagents for implementation work, and finish with a
-single full protocol narrative markdown artifact.
+spec itself, using separable subagents for implementation work. The final
+Markdown artifact must describe the mesh protocol that is actually implemented
+in the current firmware tree, with partial or missing MeshSpec behavior called
+out explicitly. It must not be an idealized protocol proposal, a restatement of
+the spec, or an explanation of the agent's intended design.
 
 ## Goal state
 
@@ -19,9 +22,9 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `002daa9` after relay snapshot/restore work
-- `git status --short`:
-  - No tracked modifications in code or headers.
+- HEAD: `b1a6f93` before the pending child-custody persistence commit
+- `git status --short` before this checkpoint edit:
+  - Tracked modifications for child-custody persistence are present.
   - Untracked files only:
     - `Documentation/MeshSpec Addendum.md`
     - `logs/` directory with historical test logs and RTT sessions.
@@ -51,8 +54,11 @@ Current `get_goal()`:
 1. Source/retry persistence now has relay-level snapshot/restore APIs plus
    anchor-role Zephyr NVS save/restore for active relay outbox snapshots and
    pre-relay scheduled command results.
-2. Large-result durability across restart and some multi-hop custody corner cases are still
-   incomplete versus full persistence target.
+2. Parent-side result-offer reservations and queued child result bundles now
+   have relay-level snapshot/restore APIs plus anchor-role Zephyr NVS
+   save/restore. In-flight upstream custody/retry state after a forwarded
+   bundle or large result is still incomplete versus the full persistence
+   target.
 3. Gateway app collection EACKs still send explicit received-list format because no app-side
    expected-node roster table is currently wired into collection state.
 4. App-level failure-mode coverage still needs one or more focused integration tests for
@@ -60,6 +66,17 @@ Current `get_goal()`:
 
 ## Latest verified change
 
+- Pending change after `b1a6f93`: `struct mesh_relay_child_custody_snapshot`
+  exports/restores parent-side result-offer reservation state and queued child
+  result bundle state. Restore validates role/local/gateway identity, gateway
+  epoch, result identity, collection epoch, payload length, and payload CRC.
+  Bundle restore folds pre-reset queued time into `message_age_ms` and resumes
+  the remaining hold delay on current boot uptime.
+- Anchor-role NVS now stores child-custody snapshots under a separate record,
+  restores after `mesh_relay_init()`, saves before result grants and custody
+  hop ACKs, and clears/updates after outbound handoff. If anchor NVS child
+  custody save fails, the app skips the result grant or hop ACK for that
+  exchange.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -72,9 +89,10 @@ Current `get_goal()`:
 - Anchor-role app/NVS integration also saves scheduled command results before
   relay handoff, restores them with the original collection result identity, and
   clears the scheduled record when an active relay outbox snapshot supersedes it.
-- Native regression coverage: `test_collection_result_timeout_uses_collection_retry_round`
-  plus outbox snapshot/restore tests and updated route-loss preservation expectations in
-  `test_mesh_relay`.
+- Native regression coverage: `test_collection_result_timeout_uses_collection_retry_round`,
+  outbox snapshot/restore tests, child-custody bundle/reservation snapshot
+  tests, no-state export coverage, corrupt bundle snapshot rejection, and
+  updated route-loss preservation expectations in `test_mesh_relay`.
 - Verification run: `cmake --build firmware/build && ctest --test-dir firmware/build --output-on-failure`
   passed 13/13.
 - Zephyr role builds also passed after the change:
@@ -82,11 +100,18 @@ Current `get_goal()`:
   - `.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-anchor -- -DFIRMWARE_ROLE=anchor`
   - `.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-gateway -- -DFIRMWARE_ROLE=gateway`
 
+## Documentation rule after user correction
+
+`Documentation/Mesh Protocol Detailed Flow.md` is an implementation snapshot.
+It should answer "what does the code do right now?" If a MeshSpec feature is
+only partially implemented or unimplemented, document it as a gap. Do not write
+forward-looking behavior as if it exists.
+
 ## Next actions
 
 1. Add/finalize app-integrated failure-mode test cases.
-2. Decide whether durable multi-hop child custody/storage-backed bundle recovery
-   should be implemented in this pass or left as the remaining partial behavior.
-3. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is actually implemented
-   right now, including partial and missing behavior. Do not turn it into an idealized restatement
-   of `Documentation/MeshSpec.md`.
+2. Decide whether in-flight upstream custody/retry state after forwarded
+   bundles/large results should be implemented in this pass or left as the
+   remaining partial behavior.
+3. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
+   actually implemented right now, including partial and missing behavior.

@@ -19,6 +19,7 @@ LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 
 #define APP_MESH_NVS_OUTBOX_ID 0x0101u
 #define APP_MESH_NVS_COLLECTION_RESULT_ID 0x0102u
+#define APP_MESH_NVS_CHILD_CUSTODY_ID 0x0103u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
@@ -32,6 +33,9 @@ BUILD_ASSERT(sizeof(struct mesh_relay_outbox_snapshot) <
 BUILD_ASSERT(sizeof(struct app_mesh_collection_result_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "mesh collection result snapshot must fit comfortably in one NVS sector");
+BUILD_ASSERT(sizeof(struct mesh_relay_child_custody_snapshot) <
+             (APP_MESH_NVS_SECTOR_SIZE / 2u),
+             "mesh child custody snapshot must fit comfortably in one NVS sector");
 
 static struct nvs_fs mesh_nvs;
 static bool mesh_nvs_ready;
@@ -114,6 +118,20 @@ void app_mesh_persistence_clear_collection_result(void)
     }
 }
 
+void app_mesh_persistence_clear_child_custody(void)
+{
+    int ret;
+
+    if (!mesh_persistence_ready()) {
+        return;
+    }
+
+    ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_CHILD_CUSTODY_ID);
+    if (ret < 0 && ret != -ENOENT) {
+        LOG_WRN("mesh persisted child custody clear failed: %d", ret);
+    }
+}
+
 int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
 {
     struct mesh_relay_outbox_snapshot snapshot;
@@ -144,6 +162,45 @@ int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
     }
     if ((size_t)written != sizeof(snapshot)) {
         LOG_WRN("mesh outbox snapshot short write: %d/%u",
+                (int)written,
+                (unsigned int)sizeof(snapshot));
+        return -EIO;
+    }
+
+    return 0;
+}
+
+int app_mesh_persistence_save_child_custody(struct mesh_relay *relay,
+                                            uint32_t now_ms)
+{
+    struct mesh_relay_child_custody_snapshot snapshot;
+    ssize_t written;
+    int ret;
+
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    ret = mesh_relay_export_child_custody_snapshot(relay, now_ms, &snapshot);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        app_mesh_persistence_clear_child_custody();
+        return 0;
+    }
+    if (ret != PROTO_OK) {
+        LOG_WRN("mesh child custody snapshot export failed: %d", ret);
+        return -EINVAL;
+    }
+
+    written = nvs_write(&mesh_nvs,
+                        APP_MESH_NVS_CHILD_CUSTODY_ID,
+                        &snapshot,
+                        sizeof(snapshot));
+    if (written < 0) {
+        LOG_WRN("mesh child custody snapshot write failed: %d", (int)written);
+        return (int)written;
+    }
+    if ((size_t)written != sizeof(snapshot)) {
+        LOG_WRN("mesh child custody snapshot short write: %d/%u",
                 (int)written,
                 (unsigned int)sizeof(snapshot));
         return -EIO;
@@ -190,6 +247,48 @@ int app_mesh_persistence_restore_outbox(struct mesh_relay *relay, uint32_t now_m
     }
 
     LOG_INF("mesh outbox snapshot restored");
+    return 0;
+}
+
+int app_mesh_persistence_restore_child_custody(struct mesh_relay *relay,
+                                               uint32_t now_ms)
+{
+    struct mesh_relay_child_custody_snapshot snapshot;
+    ssize_t read_len;
+    int ret;
+
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    memset(&snapshot, 0, sizeof(snapshot));
+    read_len = nvs_read(&mesh_nvs,
+                        APP_MESH_NVS_CHILD_CUSTODY_ID,
+                        &snapshot,
+                        sizeof(snapshot));
+    if (read_len == -ENOENT) {
+        return 0;
+    }
+    if (read_len < 0) {
+        LOG_WRN("mesh child custody snapshot read failed: %d", (int)read_len);
+        return (int)read_len;
+    }
+    if ((size_t)read_len != sizeof(snapshot)) {
+        LOG_WRN("mesh child custody snapshot has wrong size: %d/%u",
+                (int)read_len,
+                (unsigned int)sizeof(snapshot));
+        app_mesh_persistence_clear_child_custody();
+        return -EINVAL;
+    }
+
+    ret = mesh_relay_restore_child_custody_snapshot(relay, &snapshot, now_ms);
+    if (ret != PROTO_OK) {
+        LOG_WRN("mesh child custody snapshot restore rejected: %d", ret);
+        app_mesh_persistence_clear_child_custody();
+        return -EINVAL;
+    }
+
+    LOG_INF("mesh child custody snapshot restored");
     return 0;
 }
 
@@ -288,6 +387,26 @@ int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
 }
 
 void app_mesh_persistence_clear_outbox(void)
+{
+}
+
+int app_mesh_persistence_restore_child_custody(struct mesh_relay *relay,
+                                               uint32_t now_ms)
+{
+    ARG_UNUSED(relay);
+    ARG_UNUSED(now_ms);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_save_child_custody(struct mesh_relay *relay,
+                                            uint32_t now_ms)
+{
+    ARG_UNUSED(relay);
+    ARG_UNUSED(now_ms);
+    return -ENOTSUP;
+}
+
+void app_mesh_persistence_clear_child_custody(void)
 {
 }
 

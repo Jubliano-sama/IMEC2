@@ -5825,6 +5825,7 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                                        const struct mesh_rx_pending *rx)
 {
     bool forward_sent = false;
+    bool child_custody_ready = true;
 
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
         struct mesh_outbound *gateway_ack = &mesh_result_action_tx;
@@ -5926,8 +5927,32 @@ after_gateway_ack:
         if (forward_sent && result->forward.packet.msg_type == MSG_RESULT_BUNDLE) {
             mesh_relay_result_bundle_note_forwarded(&mesh_runtime, &result->forward);
         }
+        if (forward_sent) {
+            (void)app_mesh_persistence_save_child_custody(&mesh_runtime,
+                                                          k_uptime_get_32());
+        }
+    }
+    if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) {
+        child_custody_ready = DEVICE_ROLE != ROLE_ANCHOR ||
+                              app_mesh_persistence_save_child_custody(
+                                  &mesh_runtime,
+                                  k_uptime_get_32()) == 0;
+        if (!child_custody_ready) {
+            LOG_WRN("mesh result grant skipped: child custody snapshot unavailable");
+        }
+    }
+    if (child_custody_ready &&
+        (result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) != 0u) {
+        child_custody_ready = DEVICE_ROLE != ROLE_ANCHOR ||
+                              app_mesh_persistence_save_child_custody(
+                                  &mesh_runtime,
+                                  k_uptime_get_32()) == 0;
+        if (!child_custody_ready) {
+            LOG_WRN("mesh hop ACK skipped: child custody snapshot unavailable");
+        }
     }
     if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) &&
+        child_custody_ready &&
         (forward_sent || (result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) != 0u)) {
         struct mesh_outbound *hop_ack = &mesh_result_action_tx;
 
@@ -5990,7 +6015,8 @@ after_gateway_ack:
             mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
         }
     }
-    if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) {
+    if ((result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) &&
+        child_custody_ready) {
         if (mesh_send_c5_control(&result->result_grant,
                                  C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
                                  MESH_C5_CONTROL_ACCEPTED_EXCHANGE,

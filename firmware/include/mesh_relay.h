@@ -57,6 +57,7 @@ extern "C" {
 #define MESH_RELAY_RESULT_BUNDLE_RECORDS 2u
 #define MESH_RELAY_RESULT_BUNDLE_HOLD_MS 25u
 #define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 1u
+#define MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION 1u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
 #define FLOOD_BETTER_METRIC_MARGIN_PERCENT 10u
 
@@ -331,6 +332,17 @@ struct mesh_result_offer_reservation {
     bool valid;
 };
 
+struct mesh_relay_child_custody_snapshot {
+    uint16_t version;
+    enum mesh_relay_role role;
+    uint64_t local_id;
+    uint64_t gateway_id;
+    uint32_t snapshot_at_ms;
+    struct mesh_result_bundle_queue result_bundle;
+    struct mesh_result_offer_reservation result_offer_reservation;
+    bool valid;
+};
+
 struct mesh_relay_diagnostics {
     uint8_t flood_suppression_count;
     uint8_t route_reply_retry_count;
@@ -444,6 +456,14 @@ int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
 int mesh_relay_restore_outbox_snapshot(struct mesh_relay *relay,
                                        const struct mesh_relay_outbox_snapshot *snapshot,
                                        uint32_t now_ms);
+int mesh_relay_export_child_custody_snapshot(
+    const struct mesh_relay *relay,
+    uint32_t now_ms,
+    struct mesh_relay_child_custody_snapshot *snapshot);
+int mesh_relay_restore_child_custody_snapshot(
+    struct mesh_relay *relay,
+    const struct mesh_relay_child_custody_snapshot *snapshot,
+    uint32_t now_ms);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
 bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms);
 int mesh_relay_start_tx(struct mesh_relay *relay,

@@ -4380,6 +4380,189 @@ int mesh_relay_restore_outbox_snapshot(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+static int child_custody_bundle_validate(
+    const struct mesh_relay *relay,
+    const struct mesh_result_bundle_queue *queue)
+{
+    if (relay == NULL || queue == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!queue->active) {
+        return queue->record_count == 0u ? PROTO_OK : PROTO_ERR_MALFORMED;
+    }
+    if (queue->gateway_id != relay->gateway_id ||
+        queue->gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        queue->command_seq == 0u ||
+        queue->collection_epoch_id == 0u ||
+        queue->record_count == 0u ||
+        queue->record_count > MESH_RELAY_RESULT_BUNDLE_RECORDS) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_RESULT_BUNDLE_RECORDS; i++) {
+        const struct mesh_result_bundle_entry *entry = &queue->records[i];
+        struct command_result_id result_id;
+        uint32_t collection_epoch_id = 0u;
+
+        if (i >= queue->record_count) {
+            if (entry->valid) {
+                return PROTO_ERR_MALFORMED;
+            }
+            continue;
+        }
+        if (!entry->valid ||
+            entry->payload_len == 0u ||
+            entry->payload_len > RESULT_BUNDLE_RECORD_MAX_PAYLOAD_LEN ||
+            entry->payload_crc != proto_crc16_ccitt_false(entry->payload,
+                                                          entry->payload_len) ||
+            command_result_id_from_tlvs(entry->payload,
+                                        entry->payload_len,
+                                        &result_id) != PROTO_OK ||
+            collection_epoch_id_from_payload(entry->payload,
+                                             entry->payload_len,
+                                             &collection_epoch_id) != PROTO_OK ||
+            collection_epoch_id != queue->collection_epoch_id ||
+            !command_result_id_matches(&result_id, &entry->result_id) ||
+            entry->result_id.gateway_id != queue->gateway_id ||
+            entry->result_id.gateway_epoch != queue->gateway_epoch ||
+            entry->result_id.command_seq != queue->command_seq ||
+            !id_is_unicast(entry->result_id.node_id)) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+
+    return PROTO_OK;
+}
+
+static int child_custody_reservation_validate(
+    const struct mesh_relay *relay,
+    const struct mesh_result_offer_reservation *reservation)
+{
+    if (relay == NULL || reservation == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!reservation->valid) {
+        return PROTO_OK;
+    }
+    if (!id_is_unicast(reservation->child_id) ||
+        reservation->result_len == 0u ||
+        reservation->result_len > UWB_MESH_MAX_PAYLOAD_LEN ||
+        reservation->result_id.gateway_id != relay->gateway_id ||
+        reservation->result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        reservation->result_id.command_seq == 0u ||
+        reservation->result_id.node_id != reservation->child_id ||
+        !id_is_unicast(reservation->result_id.node_id)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
+static int child_custody_snapshot_validate(
+    const struct mesh_relay *relay,
+    const struct mesh_relay_child_custody_snapshot *snapshot)
+{
+    int ret;
+
+    if (relay == NULL || snapshot == NULL || !snapshot->valid ||
+        snapshot->version != MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION ||
+        snapshot->role != relay->role ||
+        snapshot->local_id != relay->local_id ||
+        snapshot->gateway_id != relay->gateway_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = child_custody_bundle_validate(relay, &snapshot->result_bundle);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = child_custody_reservation_validate(relay,
+                                             &snapshot->result_offer_reservation);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!snapshot->result_bundle.active &&
+        !snapshot->result_offer_reservation.valid) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    return PROTO_OK;
+}
+
+int mesh_relay_export_child_custody_snapshot(
+    const struct mesh_relay *relay,
+    uint32_t now_ms,
+    struct mesh_relay_child_custody_snapshot *snapshot)
+{
+    int ret;
+
+    if (relay == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (!mesh_relay_result_bundle_pending(relay) &&
+        !relay->result_offer_reservation.valid) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    snapshot->version = MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION;
+    snapshot->role = relay->role;
+    snapshot->local_id = relay->local_id;
+    snapshot->gateway_id = relay->gateway_id;
+    snapshot->snapshot_at_ms = now_ms;
+    snapshot->result_bundle = relay->result_bundle;
+    snapshot->result_offer_reservation = relay->result_offer_reservation;
+    snapshot->valid = true;
+
+    ret = child_custody_snapshot_validate(relay, snapshot);
+    if (ret != PROTO_OK) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return ret;
+    }
+    return PROTO_OK;
+}
+
+int mesh_relay_restore_child_custody_snapshot(
+    struct mesh_relay *relay,
+    const struct mesh_relay_child_custody_snapshot *snapshot,
+    uint32_t now_ms)
+{
+    uint32_t exported_at_ms;
+    uint32_t remaining_hold_ms = 1u;
+    int ret;
+
+    if (relay == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (mesh_relay_result_bundle_pending(relay) ||
+        relay->result_offer_reservation.valid) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = child_custody_snapshot_validate(relay, snapshot);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    exported_at_ms = snapshot->snapshot_at_ms;
+    relay->result_bundle = snapshot->result_bundle;
+    relay->result_offer_reservation = snapshot->result_offer_reservation;
+
+    if (relay->result_bundle.active) {
+        if (!deadline_reached(exported_at_ms, relay->result_bundle.due_ms)) {
+            remaining_hold_ms = relay->result_bundle.due_ms - exported_at_ms;
+        }
+        relay->result_bundle.due_ms = now_ms + remaining_hold_ms;
+        for (uint8_t i = 0u; i < relay->result_bundle.record_count; i++) {
+            struct mesh_result_bundle_entry *entry = &relay->result_bundle.records[i];
+            uint32_t elapsed_ms = exported_at_ms - entry->queued_at_ms;
+
+            entry->message_age_ms = packet_age_add(entry->message_age_ms, elapsed_ms);
+            entry->queued_at_ms = now_ms;
+        }
+    }
+    return PROTO_OK;
+}
+
 void mesh_relay_cancel_tx(struct mesh_relay *relay)
 {
     if (relay != NULL) {
