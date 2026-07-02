@@ -22,10 +22,9 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: `cdd1863` before the pending in-flight bundle outbox persistence commit
+- HEAD: `557febd` after in-flight bundle outbox persistence was committed
 - `git status --short` before this checkpoint edit:
-  - Tracked modifications for in-flight `MSG_RESULT_BUNDLE` outbox persistence
-    are present.
+  - No tracked modifications.
   - Untracked files only:
     - `Documentation/MeshSpec Addendum.md`
     - `logs/` directory with historical test logs and RTT sessions.
@@ -79,7 +78,7 @@ Current `get_goal()`:
   hop ACKs, and clears/updates after outbound handoff. If anchor NVS child
   custody save fails, the app skips the result grant or hop ACK for that
   exchange.
-- Pending change after `cdd1863`: outbox snapshot validation/export now accepts
+- `557febd`: outbox snapshot validation/export now accepts
   in-flight gateway-bound `MSG_RESULT_BUNDLE` pending TX state, validating the
   bundle header, gateway epoch, record count, and bundle CRC. Native tests cover
   restore after bundle forward handoff and corrupt bundle-payload rejection.
