@@ -153,8 +153,10 @@ Current `get_goal()`:
 - Latest result-handoff app test slice: `firmware/app/src/app_mesh_result_handoff.*`
   applies the app bridge around child-custody persistence and result-grant
   sends, and `firmware/app/tests/mesh_result_handoff` verifies save-before-grant,
-  grant suppression on save failure, and child-custody update after forwarded
-  child-result handoff under `native_sim/native/64`.
+  grant suppression on save failure, send-failure reporting without TX-sent
+  notation, child-custody update after forwarded child-result handoff,
+  bundle-forward notation before custody save, and save-failure reporting after
+  forwarded handoff under `native_sim/native/64`.
 - Latest active collection retry persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a real active
   `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be

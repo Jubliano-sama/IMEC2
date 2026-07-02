@@ -374,7 +374,10 @@ Implemented behavior:
 - The app result-handoff bridge is factored into a focused helper. Current
   `native_sim/native/64` Zephyr coverage verifies that result grants save child
   custody before the accepted C5 send, suppress the grant when that save fails,
-  and update child-custody persistence after a forwarded child result handoff.
+  report a send failure without marking the grant as sent, update
+  child-custody persistence after a forwarded child result handoff, note
+  forwarded result bundles before saving custody, and report save failure after
+  a forwarded handoff.
 - The normal relay outbox snapshot stores and restores forwarded non-bundled
   child `MSG_COMMAND_RESULT` custody/retry state before and after a
   `RESULT_GRANT`. Restore validates the command-result identity, gateway epoch,
@@ -389,9 +392,9 @@ Partial:
 
 - The relay-level persistence path is covered by native tests. The parent-side
   result-offer reservation has focused app/NVS coverage, and the result-grant
-  handoff bridge has focused Zephyr helper coverage. Broader app-integrated
-  coverage across every possible radio handoff/preemption point is still
-  partial.
+  handoff bridge has focused Zephyr helper coverage for success and failure
+  branches. Broader app-integrated coverage across every possible radio
+  handoff/preemption point is still partial.
 
 ## Implemented Result Bundling
 
