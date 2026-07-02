@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
+#include "app_mesh_ch9_ack.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
 #include "app_mesh_result_handoff.h"
@@ -3074,86 +3075,6 @@ static bool mesh_payload_find_u32(const uint8_t *payload,
     return true;
 }
 
-static int mesh_ack_payload_contains_packet(const struct proto_packet *ack_packet,
-                                            const uint8_t *payload,
-                                            size_t payload_len,
-                                            uint32_t requested_session_id,
-                                            uint16_t requested_seq,
-                                            bool *contains)
-{
-    const uint8_t *seq_value = NULL;
-    const uint8_t *session_value = NULL;
-    uint8_t seq_value_len = 0u;
-    uint8_t session_value_len = 0u;
-    uint8_t seq_count;
-    int ret;
-    int session_ret;
-
-    if (contains == NULL) {
-        return PROTO_ERR_ARG;
-    }
-    *contains = false;
-
-    ret = tlv_find(payload, payload_len, TLV_MESH_ACK_SEQ_LIST,
-                   &seq_value, &seq_value_len);
-    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
-        return ret;
-    }
-    session_ret = tlv_find(payload, payload_len, TLV_MESH_ACK_SESSION_LIST,
-                           &session_value, &session_value_len);
-    if (session_ret != PROTO_OK && session_ret != PROTO_ERR_NOT_FOUND) {
-        return session_ret;
-    }
-
-    if (ret == PROTO_OK) {
-        if ((seq_value_len % sizeof(uint16_t)) != 0u) {
-            return PROTO_ERR_MALFORMED;
-        }
-        seq_count = seq_value_len / sizeof(uint16_t);
-        if (session_ret == PROTO_OK &&
-            session_value_len != seq_count * sizeof(uint32_t)) {
-            return PROTO_ERR_MALFORMED;
-        }
-
-        for (uint8_t i = 0u; i < seq_count; i++) {
-            uint16_t seq = proto_get_u16_le(&seq_value[i * sizeof(uint16_t)]);
-
-            if (seq != requested_seq) {
-                continue;
-            }
-            if (session_ret == PROTO_OK) {
-                uint32_t session_id =
-                    proto_get_u32_le(&session_value[i * sizeof(uint32_t)]);
-
-                if (session_id != requested_session_id) {
-                    continue;
-                }
-            }
-            *contains = true;
-            return PROTO_OK;
-        }
-        return PROTO_OK;
-    }
-
-    ret = tlv_find(payload, payload_len, TLV_REQUESTED_MSG_SEQ,
-                   &seq_value, &seq_value_len);
-    if (ret == PROTO_ERR_NOT_FOUND) {
-        return PROTO_OK;
-    }
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (seq_value_len != sizeof(uint16_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    if (proto_get_u16_le(seq_value) == requested_seq &&
-        ack_packet != NULL &&
-        ack_packet->session_id == requested_session_id) {
-        *contains = true;
-    }
-    return PROTO_OK;
-}
-
 static int mesh_ack_payload_packet_id_summary(const uint8_t *payload,
                                               size_t payload_len,
                                               uint8_t *count,
@@ -3532,8 +3453,10 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len)
 {
+    struct app_mesh_ch9_tx_ack_entry ack_entries[MESH_CH9_TX_BATCH_MAX];
+    struct app_mesh_ch9_tx_ack_result ack_result;
     uint64_t ack_peer_id = 0u;
-    uint8_t acked_now = 0u;
+    int ret;
 
 	    if (packet == NULL) {
 	        return false;
@@ -3585,34 +3508,32 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     }
 
     for (uint8_t i = 0u; i < mesh_ch9_tx_pending.count; i++) {
-        bool contains = false;
-        int ret;
-
-        if (mesh_ch9_tx_pending.entries[i].acked) {
-            continue;
+        ack_entries[i].session_id =
+            mesh_ch9_tx_pending.entries[i].outbound.packet.session_id;
+        ack_entries[i].seq = mesh_ch9_tx_pending.entries[i].outbound.packet.seq;
+        ack_entries[i].acked = mesh_ch9_tx_pending.entries[i].acked;
+    }
+    ret = app_mesh_ch9_tx_ack_apply(packet,
+                                    payload,
+                                    payload_len,
+                                    ack_entries,
+                                    mesh_ch9_tx_pending.count,
+                                    &ack_result);
+    if (ret != PROTO_OK) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_CH9_TX_ACK_MALFORMED\n");
+            status_debug_printf("DBG_CH9_TX_ACK_BAD_PAYLOAD ret=%d seq=%u\n",
+                                ret,
+                                mesh_ch9_tx_pending.count == 0u ? 0u :
+                                mesh_ch9_tx_pending.entries[0].outbound.packet.seq);
         }
-        ret = mesh_ack_payload_contains_packet(packet,
-                                               payload,
-                                               payload_len,
-                                               mesh_ch9_tx_pending.entries[i].outbound.packet.session_id,
-                                               mesh_ch9_tx_pending.entries[i].outbound.packet.seq,
-                                               &contains);
-        if (ret != PROTO_OK) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_note("DBG_CH9_TX_ACK_MALFORMED\n");
-                status_debug_printf("DBG_CH9_TX_ACK_BAD_PAYLOAD ret=%d seq=%u\n",
-                                    ret,
-                                    mesh_ch9_tx_pending.entries[i].outbound.packet.seq);
-            }
-            return false;
-        }
-        if (contains) {
-            mesh_ch9_tx_pending.entries[i].acked = true;
-            acked_now++;
-        }
+        return false;
+    }
+    for (uint8_t i = 0u; i < mesh_ch9_tx_pending.count; i++) {
+        mesh_ch9_tx_pending.entries[i].acked = ack_entries[i].acked;
     }
 
-	    if (acked_now == 0u) {
+	    if (!ack_result.any_match) {
 	        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
 	            status_debug_note("DBG_CH9_TX_ACK_NO_MATCH\n");
 	            status_debug_printf("DBG_CH9_TX_ACK_NO_MATCH n=%u first=%u ackseq=%u\n",
@@ -3624,15 +3545,14 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
 	        return false;
 	    }
 
-    for (uint8_t i = 0u; i < mesh_ch9_tx_pending.count; i++) {
-        if (!mesh_ch9_tx_pending.entries[i].acked) {
+    if (!ack_result.all_acked) {
             uint8_t pending_count = mesh_ch9_tx_pending.count;
             uint8_t requeued;
 
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_note("DBG_CH9_TX_ACK_PARTIAL\n");
                 status_debug_printf("DBG_CH9_TX_ACK_PARTIAL acked=%u n=%u\n",
-                                    acked_now,
+                                    ack_result.acked_now,
                                     pending_count);
             }
             requeued = mesh_ch9_tx_pending_requeue_unacked(k_uptime_get_32());
@@ -3642,16 +3562,15 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
                 report_tx_schedule(0u);
             }
             return true;
-        }
     }
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_CH9_TX_ACK_COMPLETE acked=%u n=%u\n",
-                            acked_now,
+                            ack_result.acked_now,
                             mesh_ch9_tx_pending.count);
         if (report_tx_queue_used() > 0u) {
             status_debug_printf("DBG_CH9_TX_ACK_QUEUE_PARTIAL acked=%u queued=%u\n",
-                                acked_now,
+                                ack_result.acked_now,
                                 report_tx_queue_used());
         }
     }

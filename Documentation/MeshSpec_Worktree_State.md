@@ -174,6 +174,14 @@ Current `get_goal()`:
   hop/custody ACKs on child-custody save, and the same test target verifies ACK
   allowed after save success/forward success and suppressed after save failure
   under `native_sim/native/64`.
+- Latest channel-9 ACK matching slice: `firmware/app/src/app_mesh_ch9_ack.*`
+  factors route-test channel-9 batch ACK matching into a caller-owned helper.
+  `firmware/app/tests/mesh_ch9_ack_handoff` verifies partial ACKs mark only the
+  matching pending entry, complete ACKs use session lists to disambiguate equal
+  sequence numbers, legacy requested-sequence ACKs still require matching ACK
+  packet session, and malformed ACK lists are rejected. The actual app
+  report-queue requeue side effect for partial ACK recovery remains app-owned
+  and still lacks a full Zephyr queue-side integration test.
 - Latest active collection retry persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a real active
   `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be

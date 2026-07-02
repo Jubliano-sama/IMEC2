@@ -167,12 +167,23 @@ Current behavior:
 - Event/window closure is separate from channel-9 timing validity.
 - Timing can remain valid after a payload window completes.
 - ACK/EACK can arrive later through a later event or refreshed contact path.
+- Route-test channel-9 batch ACK matching is factored into a caller-owned
+  helper. Focused Zephyr coverage verifies partial ACKs mark only matching
+  pending entries, complete ACKs use session lists to disambiguate equal
+  sequence numbers, legacy single requested-sequence ACKs still require the ACK
+  packet session to match, and malformed ACK list payloads are rejected.
 
 The direct mesh-test path uses alternating channel-9 TX/RX windows. The
 initiator starts with a TX slot and the downstream peer starts with RX. Relay
 nodes have room for an upstream and downstream connection. The gateway is a
 special case and only needs upstream slots because it does not originate route
 requests toward anchors.
+
+Remaining gap:
+
+- The route-test app still owns the actual report-queue requeue side effect for
+  partial ACK recovery; that queue side effect is not yet covered by a Zephyr
+  app test.
 
 ## Implemented Parent Candidate And Capacity Model
 
