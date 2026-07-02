@@ -7,6 +7,7 @@
 #include "app_high_debug.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_result_handoff.h"
 #include "app_mesh_test.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
@@ -221,6 +222,13 @@ static bool mesh_defer_active_collection_result(const char *reason);
 static int mesh_preempt_save_outbox(void *ctx);
 static void mesh_preempt_clear_outbox(void *ctx);
 static int mesh_preempt_schedule_timeout(void *ctx);
+static int mesh_handoff_save_child_custody(void *ctx);
+static void mesh_handoff_note_result_bundle_forwarded(const struct mesh_outbound *out,
+                                                      void *ctx);
+static int mesh_handoff_send_result_grant(const struct mesh_outbound *out,
+                                          void *ctx);
+static void mesh_handoff_note_tx_sent(const struct mesh_outbound *out,
+                                      void *ctx);
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
@@ -1368,6 +1376,41 @@ static int mesh_preempt_schedule_timeout(void *ctx)
 
     mesh_schedule_tx_timeout();
     return 0;
+}
+
+static int mesh_handoff_save_child_custody(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return app_mesh_persistence_save_child_custody(&mesh_runtime,
+                                                  k_uptime_get_32());
+}
+
+static void mesh_handoff_note_result_bundle_forwarded(const struct mesh_outbound *out,
+                                                      void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    mesh_relay_result_bundle_note_forwarded(&mesh_runtime, out);
+}
+
+static int mesh_handoff_send_result_grant(const struct mesh_outbound *out,
+                                          void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return mesh_send_c5_control(out,
+                                C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+                                MESH_C5_CONTROL_ACCEPTED_EXCHANGE,
+                                "result-grant");
+}
+
+static void mesh_handoff_note_tx_sent(const struct mesh_outbound *out,
+                                      void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    mesh_relay_note_tx_sent(&mesh_runtime, out, k_uptime_get_32());
 }
 
 static void mesh_schedule_tx_timeout(void)
@@ -5853,6 +5896,13 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
 {
     bool forward_sent = false;
     bool child_custody_ready = true;
+    struct app_mesh_result_handoff_ops handoff_ops = {
+        .save_child_custody = mesh_handoff_save_child_custody,
+        .note_result_bundle_forwarded = mesh_handoff_note_result_bundle_forwarded,
+        .send_result_grant = mesh_handoff_send_result_grant,
+        .note_tx_sent = mesh_handoff_note_tx_sent,
+    };
+    struct app_mesh_result_handoff_status handoff_status;
 
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
         struct mesh_outbound *gateway_ack = &mesh_result_action_tx;
@@ -5951,21 +6001,13 @@ after_gateway_ack:
             ret = mesh_start_tracked_tx(&result->forward, "forward");
         }
         forward_sent = ret == 0;
-        if (forward_sent && result->forward.packet.msg_type == MSG_RESULT_BUNDLE) {
-            mesh_relay_result_bundle_note_forwarded(&mesh_runtime, &result->forward);
-        }
-        if (forward_sent) {
-            (void)app_mesh_persistence_save_child_custody(&mesh_runtime,
-                                                          k_uptime_get_32());
-        }
-    }
-    if (result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) {
-        child_custody_ready = DEVICE_ROLE != ROLE_ANCHOR ||
-                              app_mesh_persistence_save_child_custody(
-                                  &mesh_runtime,
-                                  k_uptime_get_32()) == 0;
-        if (!child_custody_ready) {
-            LOG_WRN("mesh result grant skipped: child custody snapshot unavailable");
+        app_mesh_result_handoff_after_forward(result,
+                                              forward_sent,
+                                              DEVICE_ROLE == ROLE_ANCHOR,
+                                              &handoff_ops,
+                                              &handoff_status);
+        if (handoff_status.child_custody_save_failed) {
+            LOG_WRN("mesh child custody snapshot update failed after forward");
         }
     }
     if (child_custody_ready &&
@@ -6042,15 +6084,14 @@ after_gateway_ack:
             mesh_relay_note_tx_sent(&mesh_runtime, &result->busy, k_uptime_get_32());
         }
     }
-    if ((result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT) &&
-        child_custody_ready) {
-        if (mesh_send_c5_control(&result->result_grant,
-                                 C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
-                                 MESH_C5_CONTROL_ACCEPTED_EXCHANGE,
-                                 "result-grant") == 0) {
-            mesh_relay_note_tx_sent(&mesh_runtime,
-                                    &result->result_grant,
-                                    k_uptime_get_32());
+    if (child_custody_ready &&
+        (result->actions & MESH_RELAY_ACTION_SEND_RESULT_GRANT)) {
+        app_mesh_result_handoff_result_grant(result,
+                                             DEVICE_ROLE == ROLE_ANCHOR,
+                                             &handoff_ops,
+                                             &handoff_status);
+        if (handoff_status.result_grant_suppressed) {
+            LOG_WRN("mesh result grant skipped: child custody snapshot unavailable");
         }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {

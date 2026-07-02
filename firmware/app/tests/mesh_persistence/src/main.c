@@ -7,6 +7,18 @@
 
 #define LOCAL_ID 0x1111222233334444ull
 #define GATEWAY_ID 0x9999888877776666ull
+#define CHILD_ID 0x5555666677778888ull
+
+static void assert_result_id_equal(const struct command_result_id *actual,
+                                   const struct command_result_id *expected)
+{
+    zassert_equal(actual->gateway_id, expected->gateway_id);
+    zassert_equal(actual->gateway_epoch, expected->gateway_epoch);
+    zassert_equal(actual->command_seq, expected->command_seq);
+    zassert_equal(actual->node_id, expected->node_id);
+    zassert_equal(actual->node_boot_counter, expected->node_boot_counter);
+    zassert_equal(actual->result_seq, expected->result_seq);
+}
 
 static struct app_mesh_collection_result_snapshot make_snapshot(void)
 {
@@ -75,6 +87,71 @@ ZTEST(mesh_persistence, test_collection_result_snapshot_rejects_invalid_save)
     zassert_equal(app_mesh_persistence_save_collection_result(&snapshot), -EINVAL);
 
     zassert_equal(app_mesh_persistence_save_collection_result(NULL), -EINVAL);
+}
+
+ZTEST(mesh_persistence, test_child_custody_reservation_round_trip_and_clear)
+{
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = GATEWAY_ID,
+            .gateway_epoch = 13u,
+            .command_seq = 0x22334455u,
+            .node_id = CHILD_ID,
+            .node_boot_counter = 21u,
+            .result_seq = 22u,
+        },
+        .result_len = UWB_MESH_MAX_PAYLOAD_LEN,
+        .result_crc = 0x789au,
+        .priority = 4u,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_OFFER,
+        .src_id = CHILD_ID,
+        .dst_id = LOCAL_ID,
+        .session_id = 91u,
+        .seq = 7u,
+        .ttl = 1u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_result result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_child_custody();
+
+    zassert_ok(result_offer_append_tlvs(payload,
+                                        sizeof(payload),
+                                        &payload_len,
+                                        &offer));
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(mesh_relay_handle_rx(&relay,
+                                    &packet,
+                                    payload,
+                                    payload_len,
+                                    CHILD_ID,
+                                    80u,
+                                    4300u,
+                                    &result));
+    zassert_true(relay.result_offer_reservation.valid);
+    zassert_ok(app_mesh_persistence_save_child_custody(&relay, 4301u));
+
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(app_mesh_persistence_restore_child_custody(&restored, 5000u));
+    zassert_true(restored.result_offer_reservation.valid);
+    zassert_equal(restored.result_offer_reservation.child_id, CHILD_ID);
+    assert_result_id_equal(&restored.result_offer_reservation.result_id,
+                           &offer.result_id);
+    zassert_equal(restored.result_offer_reservation.result_len, offer.result_len);
+    zassert_equal(restored.result_offer_reservation.result_crc, offer.result_crc);
+
+    app_mesh_persistence_clear_child_custody();
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(app_mesh_persistence_restore_child_custody(&restored, 6000u));
+    zassert_false(restored.result_offer_reservation.valid);
 }
 
 ZTEST_SUITE(mesh_persistence, NULL, NULL, NULL, NULL, NULL);

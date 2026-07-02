@@ -362,6 +362,13 @@ Implemented behavior:
 - Anchor-role NVS stores and restores the parent-side result-offer reservation
   after restart. The restore path validates role/local/gateway identity,
   gateway epoch, child identity, result ID, result length, and result CRC.
+- Current `native_sim/native/64` Zephyr coverage exercises that parent-side
+  reservation through the app persistence save/restore/clear path after a real
+  relay `RESULT_OFFER` receive path.
+- The app result-handoff bridge is factored into a focused helper. Current
+  `native_sim/native/64` Zephyr coverage verifies that result grants save child
+  custody before the accepted C5 send, suppress the grant when that save fails,
+  and update child-custody persistence after a forwarded child result handoff.
 - The normal relay outbox snapshot stores and restores forwarded non-bundled
   child `MSG_COMMAND_RESULT` custody/retry state before and after a
   `RESULT_GRANT`. Restore validates the command-result identity, gateway epoch,
@@ -370,9 +377,11 @@ Implemented behavior:
 
 Partial:
 
-- The relay-level persistence path is covered by native tests. Broader
-  app-integrated coverage across every possible radio handoff/preemption point
-  is still partial.
+- The relay-level persistence path is covered by native tests. The parent-side
+  result-offer reservation has focused app/NVS coverage, and the result-grant
+  handoff bridge has focused Zephyr helper coverage. Broader app-integrated
+  coverage across every possible radio handoff/preemption point is still
+  partial.
 
 ## Implemented Result Bundling
 

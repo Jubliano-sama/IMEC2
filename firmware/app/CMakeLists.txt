@@ -333,6 +333,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_test.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c
+    src/app_mesh_result_handoff.c
     src/app_mesh_report.c
     src/app_stack_diag.c
     src/app_anchor.c
