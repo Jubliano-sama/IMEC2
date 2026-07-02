@@ -781,6 +781,94 @@ static bool command_result_id_matches(const struct command_result_id *a,
            a->result_seq == b->result_seq;
 }
 
+static void result_offer_reservation_clear(struct mesh_relay *relay)
+{
+    if (relay != NULL) {
+        memset(&relay->result_offer_reservation, 0,
+               sizeof(relay->result_offer_reservation));
+    }
+}
+
+static bool result_offer_reservation_matches_offer(
+    const struct mesh_relay *relay,
+    uint64_t child_id,
+    const struct result_offer *offer)
+{
+    const struct mesh_result_offer_reservation *reservation;
+
+    if (relay == NULL || offer == NULL) {
+        return false;
+    }
+    reservation = &relay->result_offer_reservation;
+    return reservation->valid &&
+           reservation->child_id == child_id &&
+           reservation->result_len == offer->result_len &&
+           reservation->result_crc == offer->result_crc &&
+           command_result_id_matches(&reservation->result_id, &offer->result_id);
+}
+
+static int result_offer_reserve(struct mesh_relay *relay,
+                                uint64_t child_id,
+                                const struct result_offer *offer)
+{
+    struct mesh_result_offer_reservation *reservation;
+
+    if (relay == NULL || offer == NULL || !id_is_unicast(child_id)) {
+        return PROTO_ERR_ARG;
+    }
+    if (relay->result_offer_reservation.valid) {
+        return result_offer_reservation_matches_offer(relay, child_id, offer) ?
+               PROTO_OK :
+               PROTO_ERR_BUSY;
+    }
+
+    reservation = &relay->result_offer_reservation;
+    memset(reservation, 0, sizeof(*reservation));
+    reservation->valid = true;
+    reservation->child_id = child_id;
+    reservation->result_id = offer->result_id;
+    reservation->result_len = offer->result_len;
+    reservation->result_crc = offer->result_crc;
+    return PROTO_OK;
+}
+
+static int result_offer_reservation_matches_payload(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    const struct mesh_result_offer_reservation *reservation;
+    struct command_result_id result_id;
+    uint16_t payload_crc;
+    int ret;
+
+    if (relay == NULL || packet == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    reservation = &relay->result_offer_reservation;
+    if (!reservation->valid || reservation->child_id != packet->src_id) {
+        return PROTO_OK;
+    }
+    if (payload == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (payload_len != reservation->result_len) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = command_result_id_from_tlvs(payload, payload_len, &result_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    payload_crc = proto_crc16_ccitt_false(payload, payload_len);
+    if (!command_result_id_matches(&result_id, &reservation->result_id) ||
+        payload_crc != reservation->result_crc) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
 static int build_result_offer_from_pending(const struct mesh_relay *relay,
                                            const struct mesh_pending_tx *pending,
                                            uint32_t now_ms,
@@ -1737,7 +1825,6 @@ static int build_result_grant_response(struct mesh_relay *relay,
 {
     struct result_grant grant;
     size_t payload_len = 0u;
-    uint16_t max_bytes;
     int ret;
 
     if (relay == NULL || packet == NULL || offer == NULL || out == NULL ||
@@ -1748,18 +1835,11 @@ static int build_result_grant_response(struct mesh_relay *relay,
         return PROTO_ERR_MALFORMED;
     }
 
-    max_bytes = offer->result_len > COLLECTION_BUNDLE_TARGET_BYTES ?
-                COLLECTION_BUNDLE_TARGET_BYTES :
-                offer->result_len;
-    if (max_bytes == 0u) {
-        return PROTO_ERR_MALFORMED;
-    }
-
     memset(out, 0, sizeof(*out));
     memset(&grant, 0, sizeof(grant));
     grant.result_id = offer->result_id;
     grant.granted_channel = UWB_CHANNEL_MESH_PAYLOAD;
-    grant.max_bytes = max_bytes;
+    grant.max_bytes = offer->result_len;
     grant.event_offset_hint = 0u;
 
     ret = result_grant_append_tlvs(out->payload, sizeof(out->payload), &payload_len, &grant);
@@ -1809,7 +1889,8 @@ static int handle_result_offer(struct mesh_relay *relay,
         return PROTO_ERR_MALFORMED;
     }
 
-    if (mesh_relay_tx_active(relay) || relay_current_capacity_state(relay) >= RELAY_CAP_RED) {
+    if (mesh_relay_tx_active(relay) ||
+        relay_current_capacity_state(relay) >= RELAY_CAP_RED) {
         ret = build_result_offer_busy_response(relay,
                                                packet,
                                                &offer,
@@ -1821,6 +1902,25 @@ static int handle_result_offer(struct mesh_relay *relay,
             result->status = PROTO_ERR_BUSY;
             relay_diag_inc_u8(&relay->diagnostics.busy_response_count);
         }
+        return ret;
+    }
+
+    ret = result_offer_reserve(relay, previous_hop_id, &offer);
+    if (ret == PROTO_ERR_BUSY) {
+        ret = build_result_offer_busy_response(relay,
+                                               packet,
+                                               &offer,
+                                               previous_hop_id,
+                                               &result->busy);
+        if (ret == PROTO_OK) {
+            result->actions |= MESH_RELAY_ACTION_SEND_RESULT_BUSY |
+                               MESH_RELAY_ACTION_DROP;
+            result->status = PROTO_ERR_BUSY;
+            relay_diag_inc_u8(&relay->diagnostics.busy_response_count);
+        }
+        return ret;
+    }
+    if (ret != PROTO_OK) {
         return ret;
     }
 
@@ -1928,6 +2028,24 @@ static int handle_local_busy(struct mesh_relay *relay,
         fields.requested_session_id != relay->pending.packet.session_id ||
         fields.requested_seq != relay->pending.packet.seq) {
         return PROTO_OK;
+    }
+    if (packet->msg_type == MSG_RESULT_BUSY &&
+        relay->pending.packet.msg_type == MSG_COMMAND_RESULT &&
+        relay->pending.result_offer_active) {
+        struct result_busy busy;
+        struct command_result_id pending_id;
+
+        ret = result_busy_from_tlvs(payload, payload_len, &busy);
+        if (ret != PROTO_OK) {
+            return PROTO_OK;
+        }
+        ret = command_result_id_from_tlvs(relay->pending.payload,
+                                          relay->pending.payload_len,
+                                          &pending_id);
+        if (ret != PROTO_OK ||
+            !command_result_id_matches(&busy.result_id, &pending_id)) {
+            return PROTO_OK;
+        }
     }
 
     retry_after_ms = fields.retry_after_ms;
@@ -4710,7 +4828,16 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     if (packet->msg_type == MSG_COMMAND_RESULT) {
         struct command_result_id result_id;
         uint32_t collection_epoch_id = 0u;
+        bool reservation_applies =
+            relay->result_offer_reservation.valid &&
+            relay->result_offer_reservation.child_id == packet->src_id;
 
+        ret = result_offer_reservation_matches_payload(relay, packet, payload, payload_len);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+            return PROTO_OK;
+        }
         if (command_result_can_bundle(relay,
                                       packet,
                                       payload,
@@ -4726,6 +4853,9 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                                                        now_ms);
             if (ret == PROTO_OK || ret == PROTO_ERR_STALE) {
                 duplicate_store(relay, packet, now_ms);
+                if (reservation_applies) {
+                    result_offer_reservation_clear(relay);
+                }
                 add_hop_ack_action(relay, packet, previous_hop_id, result);
                 result->actions |= MESH_RELAY_ACTION_CUSTODY_ACCEPTED;
                 result->status = ret;
@@ -4746,6 +4876,10 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     ret = build_forward(relay, packet, payload, payload_len, &result->forward);
     if (ret == PROTO_OK) {
         duplicate_store(relay, packet, now_ms);
+        if (relay->result_offer_reservation.valid &&
+            relay->result_offer_reservation.child_id == packet->src_id) {
+            result_offer_reservation_clear(relay);
+        }
         result->actions |= MESH_RELAY_ACTION_FORWARD;
         add_hop_ack_action(relay, packet, previous_hop_id, result);
         return PROTO_OK;

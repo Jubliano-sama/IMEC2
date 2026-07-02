@@ -312,6 +312,14 @@ struct mesh_result_bundle_queue {
     struct mesh_result_bundle_entry records[MESH_RELAY_RESULT_BUNDLE_RECORDS];
 };
 
+struct mesh_result_offer_reservation {
+    struct command_result_id result_id;
+    uint64_t child_id;
+    uint16_t result_len;
+    uint16_t result_crc;
+    bool valid;
+};
+
 struct mesh_relay_diagnostics {
     uint8_t flood_suppression_count;
     uint8_t route_reply_retry_count;
@@ -330,6 +338,7 @@ struct mesh_relay {
     struct persistent_outbox_record outbox_record;
     struct mesh_route_discovery_state route_discovery;
     struct mesh_result_bundle_queue result_bundle;
+    struct mesh_result_offer_reservation result_offer_reservation;
     struct mesh_relay_diagnostics diagnostics;
     uint8_t duplicate_next;
     uint16_t next_seq;

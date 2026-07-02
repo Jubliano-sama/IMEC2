@@ -72,11 +72,11 @@ This checklist tracks implementation progress against `Documentation/MeshSpec.md
 | Completed | C5 contact state model | App-level C5 contact state tracks peer, purpose, accepted exchange, last frame, and expiry, so accepted exchanges do not require a full wake train before every individual frame |
 | Completed | Sleeping-peer wake train audit for all C5 control paths | App-level C5 control sends now route through `mesh_send_c5_control()`: gateway command/survey floods, collection EACK floods, broadcast forwards, gateway route advertisements, route-request forwards, result offers/busy replies, gateway ACK C5 fallback, and channel-9 event negotiation use the existing UWB wake train when no accepted contact is active; route-reply ACK and result grant require an accepted C5 exchange before direct send |
 | Partial | Collection result source persistence/retry schedule | Gateway collection/EACK exists and relay custody state exists; source-side received-list completion, received-list absence retry, explicit missing-list retry, closed-collection stop, deterministic ± jitter retry delay behavior, route-loss preservation, and portable click/C5 preemption deferral for pending collection results have native coverage; restart-tolerant persistent outbox and full source retry-round persistence still need code and tests |
-| Partial | Result offer/grant large-result flow | Result offer/grant/busy exists and large command results start with an offer; full storage-backed custody reservation and multi-hop collection retry behavior still need broader coverage |
+| Partial | Result offer/grant large-result flow | Result offer/grant/busy exists, large command results start with an offer, grants can cover the full reserved result length, a parent keeps a single metadata reservation for result ID/length/CRC/child peer before granting, later payloads must match before custody/forward actions, and mismatched `RESULT_BUSY` identities are ignored; durable multi-hop child custody and storage-backed restart recovery still need broader implementation |
 | Completed | Telemetry coverage | C5/C9 preemption and timing diagnostics exist; relay status TLVs now expose duplicate-cache count, collection-pending count, parent hold-down count, route-discovery attempts, outbox delivery state, flood suppression count, route-reply retry count, and busy-response count; native tests cover status serialization plus live duplicate-flood suppression and busy-response increments |
 | Partial | Spec failure-mode tests | Cold mesh, dense flood duplicate suppression, duplicate route identity, relay busy, duplicate command/result, capacity expiry, channel-9 local completion with later gateway ACK, missing EACK, bundle dedupe, all-node collection spread, route-loss preservation, and portable click/C5 preemption during collection have coverage; app-integrated click-service preemption during collection still needs focused tests |
 
-Current focused verification for MeshSpec collection result preservation:
+Current focused verification for MeshSpec result offer/grant reservation:
 
 - `git diff --check`
 - `cmake --build firmware/build`
@@ -88,7 +88,7 @@ Current focused verification for MeshSpec collection result preservation:
 - `cmake --build build/mesh-transmitter`
 - `cmake --build build/mesh-anchor-1`
 
-Native coverage is in `test_mesh_relay`; pending local collection results survive route-loss rediscovery and portable click/C5 preemption defers them instead of clearing the outbox.
+Native coverage is in `test_mesh_relay`; tests cover full-length grants, metadata reservation, mismatched payload rejection before custody/forward, successful retry clearing the reservation, and mismatched `RESULT_BUSY` identity being ignored.
 
 ### Packet-Age and Survey-Discovery Refactor
 
