@@ -8,6 +8,18 @@ static bool return_target_valid(uint64_t next_hop_id)
     return next_hop_id != 0u && next_hop_id != MESH_BROADCAST_ID;
 }
 
+static bool return_target_already_tried(const uint64_t *return_next_hop_ids,
+                                        size_t candidate_index,
+                                        uint64_t next_hop_id)
+{
+    for (size_t i = 0u; i < candidate_index; i++) {
+        if (return_next_hop_ids[i] == next_hop_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void result_init(struct app_gateway_eack_policy_result *result)
 {
     if (result != NULL) {
@@ -48,6 +60,28 @@ static void result_note_c5_send(struct app_gateway_eack_policy_result *result,
     }
 }
 
+static void result_note_channel9_candidate(struct app_gateway_eack_policy_result *result)
+{
+    if (result != NULL && result->channel9_candidate_count < UINT8_MAX) {
+        result->channel9_candidate_count++;
+    }
+}
+
+static void result_note_channel9_attempt(struct app_gateway_eack_policy_result *result)
+{
+    if (result != NULL && result->channel9_attempt_count < UINT8_MAX) {
+        result->channel9_attempt_count++;
+    }
+}
+
+static void result_note_channel9_next_hop(struct app_gateway_eack_policy_result *result,
+                                          uint64_t next_hop_id)
+{
+    if (result != NULL) {
+        result->channel9_next_hop_id = next_hop_id;
+    }
+}
+
 static void result_note_mode(struct app_gateway_eack_policy_result *result,
                              enum app_gateway_eack_send_mode mode)
 {
@@ -56,12 +90,12 @@ static void result_note_mode(struct app_gateway_eack_policy_result *result,
     }
 }
 
-int app_gateway_eack_send(struct mesh_outbound *eack,
-                          uint64_t return_next_hop_id,
-                          const struct app_gateway_eack_policy_ops *ops,
-                          struct app_gateway_eack_policy_result *result)
+int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
+                                        const uint64_t *return_next_hop_ids,
+                                        size_t return_next_hop_count,
+                                        const struct app_gateway_eack_policy_ops *ops,
+                                        struct app_gateway_eack_policy_result *result)
 {
-    struct mesh_event_plan plan = {0};
     int ret;
 
     result_init(result);
@@ -69,24 +103,42 @@ int app_gateway_eack_send(struct mesh_outbound *eack,
         return -EINVAL;
     }
 
-    if (return_target_valid(return_next_hop_id) &&
-        ops->plan_channel9 != NULL &&
+    if (return_next_hop_count > 0u && return_next_hop_ids == NULL) {
+        return -EINVAL;
+    }
+
+    if (ops->plan_channel9 != NULL &&
         ops->prepare_channel9 != NULL &&
         ops->send_channel9 != NULL) {
-        ret = ops->plan_channel9(return_next_hop_id, &plan, ops->ctx);
-        result_note_channel9_plan(result, ret);
-        if (ret == 0) {
+        for (size_t i = 0u; i < return_next_hop_count; i++) {
+            struct mesh_event_plan plan = {0};
+            const uint64_t return_next_hop_id = return_next_hop_ids[i];
+
+            if (!return_target_valid(return_next_hop_id) ||
+                return_target_already_tried(return_next_hop_ids, i, return_next_hop_id)) {
+                continue;
+            }
+
+            result_note_channel9_candidate(result);
+            result_note_channel9_attempt(result);
+            ret = ops->plan_channel9(return_next_hop_id, &plan, ops->ctx);
+            result_note_channel9_plan(result, ret);
+            if (ret != 0) {
+                continue;
+            }
+
             eack->next_hop_id = return_next_hop_id;
             eack->radio_channel = MESH_EVENT_CHANNEL;
             ret = ops->prepare_channel9(eack, &plan, ops->ctx);
             result_note_channel9_prepare(result, ret);
             if (ret != 0) {
-                goto c5_fallback;
+                continue;
             }
             ret = ops->send_channel9(eack, ops->ctx);
             result_note_channel9_send(result, ret);
             if (ret == 0) {
                 result_note_mode(result, APP_GATEWAY_EACK_SEND_CHANNEL9);
+                result_note_channel9_next_hop(result, return_next_hop_id);
                 if (ops->note_tx_sent != NULL) {
                     ops->note_tx_sent(eack, ops->ctx);
                 }
@@ -100,7 +152,6 @@ int app_gateway_eack_send(struct mesh_outbound *eack,
         }
     }
 
-c5_fallback:
     eack->next_hop_id = MESH_BROADCAST_ID;
     eack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     eack->earliest_tx_ms = 0u;
@@ -113,4 +164,12 @@ c5_fallback:
         }
     }
     return ret;
+}
+
+int app_gateway_eack_send(struct mesh_outbound *eack,
+                          uint64_t return_next_hop_id,
+                          const struct app_gateway_eack_policy_ops *ops,
+                          struct app_gateway_eack_policy_result *result)
+{
+    return app_gateway_eack_send_to_candidates(eack, &return_next_hop_id, 1u, ops, result);
 }

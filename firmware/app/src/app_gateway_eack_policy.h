@@ -5,6 +5,7 @@
 #include "mesh_relay.h"
 
 #include <stdint.h>
+#include <stddef.h>
 
 enum app_gateway_eack_send_mode {
     APP_GATEWAY_EACK_SEND_NONE = 0,
@@ -34,7 +35,16 @@ struct app_gateway_eack_policy_result {
     int channel9_prepare_ret;
     int channel9_send_ret;
     int c5_send_ret;
+    uint64_t channel9_next_hop_id;
+    uint8_t channel9_candidate_count;
+    uint8_t channel9_attempt_count;
 };
+
+int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
+                                        const uint64_t *return_next_hop_ids,
+                                        size_t return_next_hop_count,
+                                        const struct app_gateway_eack_policy_ops *ops,
+                                        struct app_gateway_eack_policy_result *result);
 
 int app_gateway_eack_send(struct mesh_outbound *eack,
                           uint64_t return_next_hop_id,
