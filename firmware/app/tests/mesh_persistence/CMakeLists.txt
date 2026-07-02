@@ -13,10 +13,12 @@ target_include_directories(app PRIVATE
 target_sources(app PRIVATE
     src/main.c
     ../../src/app_mesh_persistence.c
+    ../../src/app_mesh_preemption.c
     ../../../src/debug_log.c
     ../../../src/protocol.c
     ../../../src/gateway_command.c
     ../../../src/mesh.c
+    ../../../src/mesh_preemption.c
     ../../../src/mesh_relay.c
     ../../../src/route.c
 )

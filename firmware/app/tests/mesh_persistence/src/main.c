@@ -1,4 +1,5 @@
 #include "app_mesh_persistence.h"
+#include "app_mesh_preemption.h"
 #include "mesh.h"
 #include "protocol.h"
 #include "route.h"
@@ -9,6 +10,37 @@
 #define LOCAL_ID 0x1111222233334444ull
 #define GATEWAY_ID 0x9999888877776666ull
 #define CHILD_ID 0x5555666677778888ull
+
+K_MSGQ_DEFINE(test_mesh_rx_msgq, sizeof(uint32_t), 2, 4);
+static struct k_work_delayable test_tx_timeout_work;
+
+struct preempt_save_ctx {
+    struct mesh_relay *relay;
+    uint32_t now_ms;
+    uint8_t save_count;
+    uint8_t schedule_count;
+};
+
+static void timeout_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+}
+
+static int save_outbox_for_preempt(void *opaque)
+{
+    struct preempt_save_ctx *ctx = opaque;
+
+    ctx->save_count++;
+    return app_mesh_persistence_save_outbox(ctx->relay, ctx->now_ms);
+}
+
+static int schedule_timeout_for_preempt(void *opaque)
+{
+    struct preempt_save_ctx *ctx = opaque;
+
+    ctx->schedule_count++;
+    return k_work_reschedule(&test_tx_timeout_work, K_MSEC(1000));
+}
 
 static bool has_action(const struct mesh_relay_result *result,
                        enum mesh_relay_action action)
@@ -263,6 +295,130 @@ ZTEST(mesh_persistence, test_active_collection_retry_outbox_round_trip)
                       result_payload_len);
 }
 
+ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_restore)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = 0x1019u,
+        .node_id = LOCAL_ID,
+        .node_boot_counter = 87u,
+        .result_seq = 88u,
+    };
+    struct route_candidate route = direct_gateway_route(90u);
+    struct proto_packet packet = {0};
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    struct mesh_click_preempt_plan plan;
+    struct app_mesh_click_preempt_result preempt_result;
+    struct preempt_save_ctx save_ctx;
+    struct app_mesh_click_preempt_ops ops;
+    const uint32_t start_ms = 5000u;
+    const uint32_t preempt_ms = 5033u;
+    const uint32_t restore_ms = 7000u;
+    uint32_t restored_retry_ms;
+    uint32_t rx_marker = 0xA5A55A5Au;
+    uint8_t result_payload[128];
+    size_t result_payload_len = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_outbox();
+    k_msgq_purge(&test_mesh_rx_msgq);
+    (void)k_work_cancel_delayable(&test_tx_timeout_work);
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3019u,
+                                            &result_payload_len);
+    zassert_ok(mesh_init_command_result(&packet,
+                                        LOCAL_ID,
+                                        GATEWAY_ID,
+                                        result_id.command_seq,
+                                        result_id.result_seq,
+                                        (uint8_t)result_payload_len,
+                                        false));
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(route_upsert_candidate(&relay.upstream, &route));
+    zassert_ok(mesh_relay_start_tx(&relay,
+                                   &packet,
+                                   result_payload,
+                                   result_payload_len,
+                                   start_ms,
+                                   &tx));
+    zassert_equal(relay.pending.state, MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    zassert_equal(relay.outbox_record.delivery_state,
+                  MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+
+    zassert_ok(k_msgq_put(&test_mesh_rx_msgq, &rx_marker, K_NO_WAIT));
+    zassert_ok(mesh_prepare_click_preemption(&relay,
+                                             LOCAL_ID,
+                                             preempt_ms,
+                                             &plan));
+    zassert_true(plan.purge_rx_queue);
+    zassert_true(plan.save_outbox);
+    zassert_true(plan.schedule_timeout);
+    zassert_false(plan.clear_outbox);
+    zassert_false(plan.cancel_timeout);
+    zassert_equal(relay.pending.state, MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    zassert_equal(relay.pending.retry_after_ms,
+                  preempt_ms + RELAY_BUSY_RETRY_MIN_MS);
+
+    save_ctx = (struct preempt_save_ctx) {
+        .relay = &relay,
+        .now_ms = preempt_ms,
+    };
+    ops = (struct app_mesh_click_preempt_ops) {
+        .mesh_rx_msgq = &test_mesh_rx_msgq,
+        .tx_timeout_work = &test_tx_timeout_work,
+        .save_outbox = save_outbox_for_preempt,
+        .schedule_timeout = schedule_timeout_for_preempt,
+        .ctx = &save_ctx,
+    };
+    zassert_ok(app_mesh_apply_click_preempt_plan(&plan, &ops, &preempt_result));
+    zassert_true(preempt_result.outbox_saved);
+    zassert_true(preempt_result.timeout_scheduled);
+    zassert_true(preempt_result.rx_queue_purged);
+    zassert_false(preempt_result.outbox_cleared);
+    zassert_false(preempt_result.timeout_cancelled);
+    zassert_equal(save_ctx.save_count, 1u);
+    zassert_equal(save_ctx.schedule_count, 1u);
+    zassert_equal(k_msgq_num_used_get(&test_mesh_rx_msgq), 0u);
+    zassert_true(k_work_delayable_is_pending(&test_tx_timeout_work));
+
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_ok(app_mesh_persistence_restore_outbox(&restored, restore_ms));
+
+    restored_retry_ms = restore_ms + RELAY_BUSY_RETRY_MIN_MS;
+    zassert_true(mesh_relay_tx_active(&restored));
+    zassert_equal(restored.pending.state, MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    zassert_equal(restored.pending.retry_after_ms, restored_retry_ms);
+    zassert_equal(restored.outbox_record.delivery_state,
+                  MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+    zassert_equal(restored.upstream.candidates[0].failure_count, 0u);
+    zassert_equal(restored.upstream.candidates[0].hold_down_until_ms, 0u);
+
+    zassert_ok(mesh_relay_tick(&restored, restored_retry_ms - 1u, &result));
+    zassert_false(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    zassert_ok(mesh_relay_tick(&restored, restored_retry_ms, &result));
+    zassert_true(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    zassert_equal(result.retransmit.packet.msg_type, MSG_COMMAND_RESULT);
+    zassert_equal(result.retransmit.next_hop_id, GATEWAY_ID);
+    zassert_equal(result.retransmit.payload_len, result_payload_len);
+    zassert_mem_equal(result.retransmit.payload,
+                      result_payload,
+                      result_payload_len);
+}
+
 ZTEST(mesh_persistence, test_forwarded_child_result_payload_outbox_round_trip_after_grant)
 {
     const struct command_result_id result_id = {
@@ -442,3 +598,11 @@ ZTEST(mesh_persistence, test_child_custody_reservation_round_trip_and_clear)
 }
 
 ZTEST_SUITE(mesh_persistence, NULL, NULL, NULL, NULL, NULL);
+
+static int main_init(void)
+{
+    k_work_init_delayable(&test_tx_timeout_work, timeout_handler);
+    return 0;
+}
+
+SYS_INIT(main_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);

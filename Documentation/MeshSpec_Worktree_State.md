@@ -67,7 +67,10 @@ Current `get_goal()`:
    covers the accepted-click preemption decision used by
    `mesh_preempt_for_click_event()`, and `firmware/app/tests/mesh_preemption`
    covers the app-used Zephyr preemption side-effect helper for queue
-   purge/requeue plus delayable timeout schedule/cancel.
+   purge/requeue plus delayable timeout schedule/cancel. `firmware/app/tests/mesh_persistence`
+   also covers accepted-click preemption of an active collection-result outbox
+   through the app helper, real NVS save/restore, preserved retry-backoff,
+   same-payload retransmit, and no route failure/hold-down from the preemption.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -77,10 +80,11 @@ Current `get_goal()`:
    reservation save/restore/clear through the app NVS child-custody path plus
    after-grant forwarded child payload restore through the app NVS outbox path.
    `firmware/app/tests/mesh_result_handoff` verifies the app bridge that saves
-   child custody before result grants, suppresses grants on save failure, and
-   updates custody after forwarded child-result handoff. The remaining gap is
-   broader app-integrated recovery coverage across every radio handoff and
-   preemption path.
+   child custody before result grants, suppresses grants on save failure, reports
+   grant-send failure without marking TX sent, notes forwarded bundles before
+   saving custody, and updates custody after forwarded child-result handoff. The
+   remaining gap is broader app-integrated recovery coverage across every radio
+   handoff and preemption path.
 3. Gateway app collection EACKs now select explicit missing-list format when the
    active collection state has a count-matched `TLV_EXPECTED_NODE_ID` roster.
    `CMD_SCOPE_ALL_REGISTERED` collection commands without that full roster are
@@ -163,6 +167,14 @@ Current `get_goal()`:
   saved to Zephyr NVS, restored after `mesh_relay_init()`, keep retry round 1,
   preserve the remaining retry delay, avoid retransmit before the restored
   deadline, and retransmit the same payload to the gateway at the deadline.
+- Latest active collection click-preemption persistence test slice:
+  `firmware/app/tests/mesh_persistence` verifies accepted-click preemption of a
+  live `MSG_COMMAND_RESULT` collection outbox through
+  `mesh_prepare_click_preemption()` and `app_mesh_apply_click_preempt_plan()`;
+  the path purges RX, saves the outbox to Zephyr NVS, schedules the retry
+  timeout, restores after `mesh_relay_init()`, retransmits the same payload only
+  after the restored retry deadline, and leaves the selected route without
+  failure count or hold-down.
 - Latest forwarded child payload persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a forwarded child
   `MSG_COMMAND_RESULT` that has received `RESULT_GRANT` can be saved through the

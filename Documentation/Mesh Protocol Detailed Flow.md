@@ -478,11 +478,15 @@ The tasklist marks the following as covered by native tests:
 - App-used accepted-click preemption decision for collection-result deferral,
   non-collection cancellation, and local click-report requeue.
 
-Remaining partial test gap:
+Current test coverage and remaining gap:
 
-- Zephyr runtime side effects for accepted-click preemption during collection:
-  msgq purge/requeue, delayable timeout scheduling/cancel, and NVS save/clear
-  calls are not covered by a Zephyr app test.
+- Zephyr runtime side effects for accepted-click preemption during collection
+  now have focused app coverage: msgq purge, delayable timeout scheduling, NVS
+  save, restore after `mesh_relay_init()`, preserved retry-backoff, no early
+  retransmit, retry retransmit of the same command-result payload, and no route
+  hold-down/failure from the click preemption.
+- Broader app-integrated coverage across every possible radio
+  handoff/preemption point is still partial.
 
 ## Current Not-Implemented / Partial Summary
 
@@ -502,9 +506,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    results and active relay outbox snapshots are storage-backed, scheduled
    collection-result snapshot persistence has Zephyr/NVS round-trip coverage,
    active collection-result retry-backoff outbox persistence has Zephyr/NVS
-   round-trip coverage, app-used preemption side effects have focused Zephyr
-   helper coverage, active command-result expiry stops retrying, and retry-round
-   delay restore has native coverage.
+   round-trip coverage, accepted-click preemption of an active collection-result
+   outbox has app-integrated NVS save/restore/retry coverage, active
+   command-result expiry stops retrying, and retry-round delay restore has
+   native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
    active collection state has an explicit count-matched roster from
