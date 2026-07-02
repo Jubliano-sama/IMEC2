@@ -22,8 +22,8 @@ Current `get_goal()`:
 ## Repo snapshot
 
 - Branch: `master`
-- HEAD: current MeshSpec implementation commits through the app preemption
-  side-effect test slice
+- HEAD: current MeshSpec implementation commits through the active collection
+  retry outbox persistence test slice
 - `git status --short` after this checkpoint edit is expected to show:
   - No tracked modifications after the current slice is committed.
   - Untracked files only:
@@ -59,13 +59,14 @@ Current `get_goal()`:
    pre-relay scheduled command results. Outbox snapshots carry export uptime
    and preserve the remaining retry-backoff delay for restored collection
    retry-round state. Active command-result expiry stops retrying and marks the
-   delivery state expired. A `native_sim/native/64` Zephyr test now covers
-   scheduled collection-result snapshot save/restore/clear and invalid-save
-   rejection against real NVS. `mesh_preemption` native coverage now covers the
-   accepted-click preemption decision used by `mesh_preempt_for_click_event()`,
-   and `firmware/app/tests/mesh_preemption` covers the app-used Zephyr
-   preemption side-effect helper for queue purge/requeue plus delayable timeout
-   schedule/cancel.
+   delivery state expired. `native_sim/native/64` Zephyr tests now cover
+   scheduled collection-result snapshot save/restore/clear, invalid-save
+   rejection, and active collection-result outbox restore while already waiting
+   in retry-backoff against real NVS. `mesh_preemption` native coverage now
+   covers the accepted-click preemption decision used by
+   `mesh_preempt_for_click_event()`, and `firmware/app/tests/mesh_preemption`
+   covers the app-used Zephyr preemption side-effect helper for queue
+   purge/requeue plus delayable timeout schedule/cancel.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -150,6 +151,12 @@ Current `get_goal()`:
   sends, and `firmware/app/tests/mesh_result_handoff` verifies save-before-grant,
   grant suppression on save failure, and child-custody update after forwarded
   child-result handoff under `native_sim/native/64`.
+- Latest active collection retry persistence test slice:
+  `firmware/app/tests/mesh_persistence` verifies a real active
+  `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be
+  saved to Zephyr NVS, restored after `mesh_relay_init()`, keep retry round 1,
+  preserve the remaining retry delay, avoid retransmit before the restored
+  deadline, and retransmit the same payload to the gateway at the deadline.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload
@@ -166,9 +173,9 @@ Current `get_goal()`:
   outbox snapshot/restore tests, child-custody bundle/reservation snapshot
   tests, no-state export coverage, corrupt bundle snapshot rejection, and
   updated route-loss preservation expectations in `test_mesh_relay`.
-- Verification run after the pending forwarded-child slice:
+- Verification run after the active collection retry persistence slice:
   `cmake --build firmware/build` passed and
-  `ctest --test-dir firmware/build --output-on-failure` passed 13/13.
+  `ctest --test-dir firmware/build --output-on-failure` passed 14/14.
 - Zephyr role builds also passed after the change:
   - `.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-clicker -- -DFIRMWARE_ROLE=clicker`
   - `.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-anchor -- -DFIRMWARE_ROLE=anchor`

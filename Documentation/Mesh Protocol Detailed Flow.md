@@ -333,6 +333,10 @@ Implemented and tested for active pending results:
   epoch, gateway epoch, and completed-record validation,
 - anchor-role Zephyr NVS persistence for active relay outbox snapshots using
   the board `storage_partition`,
+- `native_sim/native/64` Zephyr test coverage for restoring an active
+  collection-result outbox that is already waiting in collection retry-backoff,
+  preserving the retry round, remaining retry delay, payload, and gateway next
+  hop,
 - anchor-role Zephyr NVS persistence for scheduled command results before they
   become active relay outbox state; the restored record preserves the original
   collection result identity,
@@ -488,9 +492,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    across every app-integrated radio handoff/preemption point; scheduled source
    results and active relay outbox snapshots are storage-backed, scheduled
    collection-result snapshot persistence has Zephyr/NVS round-trip coverage,
-   app-used preemption side effects have focused Zephyr helper coverage, active
-   command-result expiry stops retrying, and retry-round delay restore has
-   native coverage.
+   active collection-result retry-backoff outbox persistence has Zephyr/NVS
+   round-trip coverage, app-used preemption side effects have focused Zephyr
+   helper coverage, active command-result expiry stops retrying, and retry-round
+   delay restore has native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
    active all-registered command supplied an explicit count-matched roster via
@@ -513,8 +518,11 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    multi-hop recovery coverage remains partial.
 
 6. Accepted-click preemption during collection has native coverage for the
-   decision used by `mesh_preempt_for_click_event()`, but still needs Zephyr
-   runtime coverage for msgq, delayable work, and NVS side effects.
+   decision used by `mesh_preempt_for_click_event()`, plus focused
+   `native_sim/native/64` Zephyr helper coverage for msgq purge/requeue,
+   delayable timeout schedule/cancel, and save/clear callback dispatch. Full
+   app-integrated radio handoff coverage around every preemption point remains
+   partial.
 
 ## Current Flow: Direct Gateway Link
 

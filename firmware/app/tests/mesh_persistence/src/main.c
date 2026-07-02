@@ -1,6 +1,7 @@
 #include "app_mesh_persistence.h"
 #include "mesh.h"
 #include "protocol.h"
+#include "route.h"
 
 #include <string.h>
 #include <zephyr/ztest.h>
@@ -8,6 +9,26 @@
 #define LOCAL_ID 0x1111222233334444ull
 #define GATEWAY_ID 0x9999888877776666ull
 #define CHILD_ID 0x5555666677778888ull
+
+static bool has_action(const struct mesh_relay_result *result,
+                       enum mesh_relay_action action)
+{
+    return (result->actions & action) != 0u;
+}
+
+static struct route_candidate direct_gateway_route(uint8_t quality)
+{
+    return (struct route_candidate) {
+        .next_hop_id = GATEWAY_ID,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = 13u,
+        .last_seen_ms = 1000u,
+        .hop_count = 0u,
+        .link_quality = quality,
+        .failure_count = 0u,
+        .valid = true,
+    };
+}
 
 static void assert_result_id_equal(const struct command_result_id *actual,
                                    const struct command_result_id *expected)
@@ -18,6 +39,69 @@ static void assert_result_id_equal(const struct command_result_id *actual,
     zassert_equal(actual->node_id, expected->node_id);
     zassert_equal(actual->node_boot_counter, expected->node_boot_counter);
     zassert_equal(actual->result_seq, expected->result_seq);
+}
+
+static void build_identity_command_result_payload(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t target_len,
+    const struct command_result_id *result_id,
+    size_t *payload_len)
+{
+    uint8_t padding[24];
+
+    zassert_not_null(payload);
+    zassert_not_null(result_id);
+    zassert_not_null(payload_len);
+    zassert_true(target_len <= payload_cap);
+
+    *payload_len = 0u;
+    zassert_ok(command_result_id_append_tlvs(payload,
+                                             payload_cap,
+                                             payload_len,
+                                             result_id));
+    zassert_ok(mesh_append_command_result(payload,
+                                          payload_cap,
+                                          payload_len,
+                                          CMD_GET_STATUS,
+                                          COMMAND_OK,
+                                          0u));
+    memset(padding, 0xA5, sizeof(padding));
+    while (*payload_len < target_len) {
+        const size_t remaining = target_len - *payload_len;
+        const uint8_t chunk_len = remaining > sizeof(padding) + 2u ?
+                                  (uint8_t)sizeof(padding) :
+                                  (uint8_t)(remaining > 2u ? remaining - 2u : 0u);
+
+        zassert_true(chunk_len > 0u);
+        zassert_ok(tlv_append_bytes(payload,
+                                    payload_cap,
+                                    payload_len,
+                                    TLV_MESH_TEST_PADDING,
+                                    padding,
+                                    chunk_len));
+    }
+    zassert_equal(*payload_len, target_len);
+}
+
+static void build_collection_command_result_payload(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t target_len,
+    const struct command_result_id *result_id,
+    uint32_t collection_epoch_id,
+    size_t *payload_len)
+{
+    build_identity_command_result_payload(payload,
+                                          payload_cap,
+                                          target_len,
+                                          result_id,
+                                          payload_len);
+    zassert_ok(tlv_append_u32(payload,
+                              payload_cap,
+                              payload_len,
+                              TLV_COLLECTION_EPOCH_ID,
+                              collection_epoch_id));
 }
 
 static struct app_mesh_collection_result_snapshot make_snapshot(void)
@@ -87,6 +171,96 @@ ZTEST(mesh_persistence, test_collection_result_snapshot_rejects_invalid_save)
     zassert_equal(app_mesh_persistence_save_collection_result(&snapshot), -EINVAL);
 
     zassert_equal(app_mesh_persistence_save_collection_result(NULL), -EINVAL);
+}
+
+ZTEST(mesh_persistence, test_active_collection_retry_outbox_round_trip)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = 0x1009u,
+        .node_id = LOCAL_ID,
+        .node_boot_counter = 77u,
+        .result_seq = 78u,
+    };
+    struct route_candidate route = direct_gateway_route(90u);
+    struct proto_packet packet = {0};
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_outbound tx;
+    struct mesh_relay_result result;
+    uint8_t result_payload[128];
+    size_t result_payload_len = 0u;
+    uint32_t timeout_ms;
+    uint32_t original_retry_ms;
+    uint32_t snapshot_ms;
+    uint32_t restore_ms = 250u;
+    uint32_t restored_retry_ms;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_outbox();
+
+    build_collection_command_result_payload(result_payload,
+                                            sizeof(result_payload),
+                                            64u,
+                                            &result_id,
+                                            3011u,
+                                            &result_payload_len);
+    zassert_ok(mesh_init_command_result(&packet,
+                                        LOCAL_ID,
+                                        GATEWAY_ID,
+                                        result_id.command_seq,
+                                        result_id.result_seq,
+                                        (uint8_t)result_payload_len,
+                                        false));
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(route_upsert_candidate(&relay.upstream, &route));
+    zassert_ok(mesh_relay_start_tx(&relay,
+                                   &packet,
+                                   result_payload,
+                                   result_payload_len,
+                                   5000u,
+                                   &tx));
+
+    timeout_ms = relay.pending.gateway_ack_deadline_ms + 1u;
+    zassert_ok(mesh_relay_tick(&relay, timeout_ms, &result));
+    zassert_true(has_action(&result, MESH_RELAY_ACTION_TX_COLLECTION_RETRY));
+    zassert_equal(relay.pending.state, MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    zassert_equal(relay.outbox_record.delivery_state,
+                  MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+    zassert_equal(relay.outbox_record.retry_round, 1u);
+    original_retry_ms = relay.pending.retry_after_ms;
+
+    snapshot_ms = timeout_ms + 100u;
+    zassert_ok(app_mesh_persistence_save_outbox(&relay, snapshot_ms));
+
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_ok(app_mesh_persistence_restore_outbox(&restored, restore_ms));
+
+    restored_retry_ms = restore_ms + (original_retry_ms - snapshot_ms);
+    zassert_true(mesh_relay_tx_active(&restored));
+    zassert_equal(restored.pending.state, MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    zassert_equal(restored.pending.retry_after_ms, restored_retry_ms);
+    zassert_equal(restored.outbox_record.retry_round, 1u);
+    zassert_equal(restored.outbox_record.delivery_state,
+                  MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+
+    zassert_ok(mesh_relay_tick(&restored, restored_retry_ms - 1u, &result));
+    zassert_false(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    zassert_ok(mesh_relay_tick(&restored, restored_retry_ms, &result));
+    zassert_true(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    zassert_equal(result.retransmit.packet.msg_type, MSG_COMMAND_RESULT);
+    zassert_equal(result.retransmit.next_hop_id, GATEWAY_ID);
+    zassert_equal(result.retransmit.payload_len, result_payload_len);
+    zassert_mem_equal(result.retransmit.payload,
+                      result_payload,
+                      result_payload_len);
 }
 
 ZTEST(mesh_persistence, test_child_custody_reservation_round_trip_and_clear)
