@@ -139,3 +139,61 @@ int app_mesh_ch9_tx_ack_apply(const struct proto_packet *ack_packet,
     }
     return PROTO_OK;
 }
+
+int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
+                                    uint8_t entry_count,
+                                    uint32_t now_ms,
+                                    const struct app_mesh_ch9_tx_retry_ops *ops,
+                                    struct app_mesh_ch9_tx_retry_result *result)
+{
+    struct app_mesh_ch9_tx_retry_result local_result;
+    struct mesh_outbound rotate;
+
+    if ((entry_count > 0u && entries == NULL) ||
+        ops == NULL ||
+        ops->put == NULL ||
+        ops->get == NULL ||
+        ops->queue_used == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(&local_result, 0, sizeof(local_result));
+    local_result.queued_before = ops->queue_used(ops->ctx);
+
+    for (uint8_t i = 0u; i < entry_count; i++) {
+        if (entries[i].acked) {
+            continue;
+        }
+
+        entries[i].outbound.queued_at_ms = now_ms;
+        if (ops->put(&entries[i].outbound, ops->ctx) == 0) {
+            local_result.requeued++;
+        } else {
+            local_result.dropped++;
+            if (ops->note_drop != NULL) {
+                ops->note_drop(ops->ctx);
+            }
+        }
+    }
+
+    for (uint8_t i = 0u;
+         i < local_result.queued_before && local_result.requeued > 0u;
+         i++) {
+        if (ops->get(&rotate, ops->ctx) != 0) {
+            break;
+        }
+        if (ops->put(&rotate, ops->ctx) != 0) {
+            local_result.dropped++;
+            if (ops->note_drop != NULL) {
+                ops->note_drop(ops->ctx);
+            }
+            break;
+        }
+    }
+
+    local_result.queued_after = ops->queue_used(ops->ctx);
+    if (result != NULL) {
+        *result = local_result;
+    }
+    return PROTO_OK;
+}

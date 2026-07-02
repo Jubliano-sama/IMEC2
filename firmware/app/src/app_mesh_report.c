@@ -3341,48 +3341,70 @@ static void mesh_ch9_tx_pending_clear(void)
     memset(&mesh_ch9_tx_pending, 0, sizeof(mesh_ch9_tx_pending));
 }
 
+static int mesh_ch9_tx_retry_queue_put(const struct mesh_outbound *outbound,
+                                       void *ctx)
+{
+    struct k_msgq *queue = (struct k_msgq *)ctx;
+
+    return k_msgq_put(queue, outbound, K_NO_WAIT);
+}
+
+static int mesh_ch9_tx_retry_queue_get(struct mesh_outbound *outbound,
+                                       void *ctx)
+{
+    struct k_msgq *queue = (struct k_msgq *)ctx;
+
+    return k_msgq_get(queue, outbound, K_NO_WAIT);
+}
+
+static uint8_t mesh_ch9_tx_retry_queue_used(void *ctx)
+{
+    struct k_msgq *queue = (struct k_msgq *)ctx;
+
+    return (uint8_t)k_msgq_num_used_get(queue);
+}
+
+static void mesh_ch9_tx_retry_note_drop(void *ctx)
+{
+    ARG_UNUSED(ctx);
+    HIGH_DEBUG_COUNTER_INC(mesh_drop);
+}
+
 static uint8_t mesh_ch9_tx_pending_requeue_unacked(uint32_t now_ms)
 {
-    struct mesh_outbound rotate;
-    uint8_t queued_before = (uint8_t)k_msgq_num_used_get(&report_tx_msgq);
-    uint8_t requeued = 0u;
-    uint8_t dropped = 0u;
+    struct app_mesh_ch9_tx_retry_entry retry_entries[MESH_CH9_TX_BATCH_MAX];
+    const struct app_mesh_ch9_tx_retry_ops ops = {
+        .put = mesh_ch9_tx_retry_queue_put,
+        .get = mesh_ch9_tx_retry_queue_get,
+        .queue_used = mesh_ch9_tx_retry_queue_used,
+        .note_drop = mesh_ch9_tx_retry_note_drop,
+        .ctx = &report_tx_msgq,
+    };
+    struct app_mesh_ch9_tx_retry_result result;
+    int ret;
 
     for (uint8_t i = 0u; i < mesh_ch9_tx_pending.count; i++) {
-        struct mesh_ch9_tx_pending_entry *entry = &mesh_ch9_tx_pending.entries[i];
-
-        if (entry->acked) {
-            continue;
-        }
-
-        entry->outbound.queued_at_ms = now_ms;
-        if (k_msgq_put(&report_tx_msgq, &entry->outbound, K_NO_WAIT) == 0) {
-            requeued++;
-        } else {
-            dropped++;
-            HIGH_DEBUG_COUNTER_INC(mesh_drop);
-        }
+        retry_entries[i].outbound = mesh_ch9_tx_pending.entries[i].outbound;
+        retry_entries[i].acked = mesh_ch9_tx_pending.entries[i].acked;
     }
 
-    for (uint8_t i = 0u; i < queued_before && requeued > 0u; i++) {
-        if (k_msgq_get(&report_tx_msgq, &rotate, K_NO_WAIT) != 0) {
-            break;
-        }
-        if (k_msgq_put(&report_tx_msgq, &rotate, K_NO_WAIT) != 0) {
-            dropped++;
-            HIGH_DEBUG_COUNTER_INC(mesh_drop);
-            break;
-        }
+    ret = app_mesh_ch9_tx_requeue_unacked(retry_entries,
+                                          mesh_ch9_tx_pending.count,
+                                          now_ms,
+                                          &ops,
+                                          &result);
+    if (ret != PROTO_OK) {
+        memset(&result, 0, sizeof(result));
     }
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_CH9_TX_ACK_REQUEUE_PARTIAL requeued=%u dropped=%u q_before=%u q_after=%u\n",
-                            requeued,
-                            dropped,
-                            queued_before,
-                            k_msgq_num_used_get(&report_tx_msgq));
+                            result.requeued,
+                            result.dropped,
+                            result.queued_before,
+                            result.queued_after);
     }
-    return requeued;
+    return result.requeued;
 }
 
 static bool mesh_ch9_tx_pending_can_start(void)

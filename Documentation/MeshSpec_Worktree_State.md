@@ -175,13 +175,15 @@ Current `get_goal()`:
   allowed after save success/forward success and suppressed after save failure
   under `native_sim/native/64`.
 - Latest channel-9 ACK matching slice: `firmware/app/src/app_mesh_ch9_ack.*`
-  factors route-test channel-9 batch ACK matching into a caller-owned helper.
+  factors route-test channel-9 batch ACK matching and partial-ACK requeue
+  behavior into caller-owned helpers.
   `firmware/app/tests/mesh_ch9_ack_handoff` verifies partial ACKs mark only the
   matching pending entry, complete ACKs use session lists to disambiguate equal
   sequence numbers, legacy requested-sequence ACKs still require matching ACK
-  packet session, and malformed ACK lists are rejected. The actual app
-  report-queue requeue side effect for partial ACK recovery remains app-owned
-  and still lacks a full Zephyr queue-side integration test.
+  packet session, malformed ACK lists are rejected, partial recovery requeues
+  only unACKed packets ahead of pre-existing queued work, and a full queue
+  reports the retry drop path. Full radio/runtime integration coverage around
+  route-test partial ACK recovery remains a gap.
 - Latest active collection retry persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a real active
   `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be

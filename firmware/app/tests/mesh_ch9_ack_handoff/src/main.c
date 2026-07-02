@@ -4,6 +4,12 @@
 
 #include <zephyr/ztest.h>
 
+struct fake_retry_queue {
+    struct mesh_outbound entries[4];
+    uint8_t count;
+    uint8_t drop_notes;
+};
+
 static struct proto_packet gateway_ack_packet(void)
 {
     return (struct proto_packet) {
@@ -44,6 +50,62 @@ static void append_ack_lists(uint8_t *payload,
                                 TLV_MESH_ACK_SEQ_LIST,
                                 seq_list,
                                 (uint8_t)(count * sizeof(uint16_t))));
+}
+
+static int fake_retry_put(const struct mesh_outbound *outbound, void *ctx)
+{
+    struct fake_retry_queue *queue = ctx;
+
+    if (queue->count >= ARRAY_SIZE(queue->entries)) {
+        return -ENOMEM;
+    }
+    queue->entries[queue->count++] = *outbound;
+    return 0;
+}
+
+static int fake_retry_get(struct mesh_outbound *outbound, void *ctx)
+{
+    struct fake_retry_queue *queue = ctx;
+
+    if (queue->count == 0u) {
+        return -ENOMSG;
+    }
+    *outbound = queue->entries[0];
+    for (uint8_t i = 1u; i < queue->count; i++) {
+        queue->entries[i - 1u] = queue->entries[i];
+    }
+    queue->count--;
+    return 0;
+}
+
+static uint8_t fake_retry_used(void *ctx)
+{
+    const struct fake_retry_queue *queue = ctx;
+
+    return queue->count;
+}
+
+static void fake_retry_note_drop(void *ctx)
+{
+    struct fake_retry_queue *queue = ctx;
+
+    queue->drop_notes++;
+}
+
+static struct mesh_outbound fake_outbound(uint16_t seq, uint32_t queued_at_ms)
+{
+    return (struct mesh_outbound) {
+        .packet = {
+            .msg_type = MSG_COMMAND_RESULT,
+            .seq = seq,
+            .session_id = 1000u + seq,
+            .src_id = 0x1111222233334444ull,
+            .dst_id = 0x9999888877776666ull,
+            .ttl = MESH_DEFAULT_TTL,
+        },
+        .queued_at_ms = queued_at_ms,
+        .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+    };
 }
 
 ZTEST(mesh_ch9_ack_handoff, test_partial_ack_marks_only_matching_entry)
@@ -202,6 +264,86 @@ ZTEST(mesh_ch9_ack_handoff, test_malformed_session_list_is_rejected)
                                             &result),
                   PROTO_ERR_MALFORMED);
     zassert_false(entry.acked);
+}
+
+ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeues_only_unacked_before_existing_queue)
+{
+    struct fake_retry_queue queue = {
+        .entries = {
+            fake_outbound(80u, 10u),
+        },
+        .count = 1u,
+    };
+    const struct app_mesh_ch9_tx_retry_ops ops = {
+        .put = fake_retry_put,
+        .get = fake_retry_get,
+        .queue_used = fake_retry_used,
+        .note_drop = fake_retry_note_drop,
+        .ctx = &queue,
+    };
+    struct app_mesh_ch9_tx_retry_entry entries[] = {
+        {
+            .outbound = fake_outbound(11u, 20u),
+            .acked = true,
+        },
+        {
+            .outbound = fake_outbound(12u, 30u),
+        },
+    };
+    struct app_mesh_ch9_tx_retry_result result;
+
+    zassert_ok(app_mesh_ch9_tx_requeue_unacked(entries,
+                                               ARRAY_SIZE(entries),
+                                               1234u,
+                                               &ops,
+                                               &result));
+
+    zassert_equal(result.requeued, 1u);
+    zassert_equal(result.dropped, 0u);
+    zassert_equal(result.queued_before, 1u);
+    zassert_equal(result.queued_after, 2u);
+    zassert_equal(queue.count, 2u);
+    zassert_equal(queue.drop_notes, 0u);
+    zassert_equal(queue.entries[0].packet.seq, 12u);
+    zassert_equal(queue.entries[0].queued_at_ms, 1234u);
+    zassert_equal(queue.entries[1].packet.seq, 80u);
+    zassert_equal(queue.entries[1].queued_at_ms, 10u);
+}
+
+ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeue_reports_drop_when_queue_full)
+{
+    struct fake_retry_queue queue = {
+        .entries = {
+            fake_outbound(80u, 10u),
+            fake_outbound(81u, 11u),
+            fake_outbound(82u, 12u),
+            fake_outbound(83u, 13u),
+        },
+        .count = 4u,
+    };
+    const struct app_mesh_ch9_tx_retry_ops ops = {
+        .put = fake_retry_put,
+        .get = fake_retry_get,
+        .queue_used = fake_retry_used,
+        .note_drop = fake_retry_note_drop,
+        .ctx = &queue,
+    };
+    struct app_mesh_ch9_tx_retry_entry entry = {
+        .outbound = fake_outbound(12u, 30u),
+    };
+    struct app_mesh_ch9_tx_retry_result result;
+
+    zassert_ok(app_mesh_ch9_tx_requeue_unacked(&entry,
+                                               1u,
+                                               1234u,
+                                               &ops,
+                                               &result));
+
+    zassert_equal(result.requeued, 0u);
+    zassert_equal(result.dropped, 1u);
+    zassert_equal(result.queued_before, 4u);
+    zassert_equal(result.queued_after, 4u);
+    zassert_equal(queue.drop_notes, 1u);
 }
 
 ZTEST_SUITE(mesh_ch9_ack_handoff, NULL, NULL, NULL, NULL, NULL);

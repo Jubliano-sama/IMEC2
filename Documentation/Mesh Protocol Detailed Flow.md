@@ -179,11 +179,12 @@ nodes have room for an upstream and downstream connection. The gateway is a
 special case and only needs upstream slots because it does not originate route
 requests toward anchors.
 
-Remaining gap:
+Current coverage boundary:
 
-- The route-test app still owns the actual report-queue requeue side effect for
-  partial ACK recovery; that queue side effect is not yet covered by a Zephyr
-  app test.
+- The route-test app uses caller-owned helpers for ACK matching and partial-ACK
+  retry requeue. Focused Zephyr app tests cover unACKed-only requeue ahead of
+  pre-existing queued work and full-queue retry drops. Broader radio/runtime
+  integration coverage for partial-ACK recovery is still not claimed.
 
 ## Implemented Parent Candidate And Capacity Model
 
@@ -565,6 +566,11 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    delayable timeout schedule/cancel, and save/clear callback dispatch. Full
    app-integrated radio handoff coverage around every preemption point remains
    partial.
+
+7. Route-test partial channel-9 ACK recovery has focused Zephyr helper coverage
+   for requeueing only unACKed packets ahead of existing queued work and for
+   reporting full-queue retry drops. Full radio/runtime partial-ACK recovery
+   coverage remains partial.
 
 ## Current Flow: Direct Gateway Link
 
