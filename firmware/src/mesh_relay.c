@@ -1878,6 +1878,72 @@ static bool collection_eack_broadcast_valid(const struct mesh_relay *relay,
     return true;
 }
 
+static int handle_collection_eack_for_pending(struct mesh_relay *relay,
+                                              const uint8_t *payload,
+                                              size_t payload_len,
+                                              uint32_t now_ms,
+                                              struct mesh_relay_result *result)
+{
+    struct gateway_collection_eack eack;
+    struct command_result_id pending_id;
+    uint32_t collection_epoch_id = 0u;
+    bool received = false;
+    int ret;
+
+    if (relay == NULL || result == NULL || payload == NULL ||
+        relay->pending.state == MESH_RELAY_TX_IDLE ||
+        relay->pending.packet.msg_type != MSG_COMMAND_RESULT ||
+        relay->pending.packet.dst_id != relay->gateway_id) {
+        return PROTO_OK;
+    }
+
+    ret = gateway_collection_eack_from_tlvs(payload, payload_len, &eack);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (eack.eack_format != EACK_FORMAT_EXPLICIT_RECEIVED_LIST) {
+        return PROTO_OK;
+    }
+
+    ret = command_result_id_from_tlvs(relay->pending.payload,
+                                      relay->pending.payload_len,
+                                      &pending_id);
+    if (ret != PROTO_OK) {
+        return PROTO_OK;
+    }
+    ret = collection_epoch_id_from_payload(relay->pending.payload,
+                                           relay->pending.payload_len,
+                                           &collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return PROTO_OK;
+    }
+
+    if (eack.gateway_id != pending_id.gateway_id ||
+        eack.gateway_epoch != pending_id.gateway_epoch ||
+        eack.command_seq != pending_id.command_seq ||
+        eack.collection_epoch_id != collection_epoch_id ||
+        pending_id.node_id != relay->local_id) {
+        return PROTO_OK;
+    }
+
+    ret = gateway_collection_eack_contains_node_id(payload,
+                                                   payload_len,
+                                                   pending_id.node_id,
+                                                   &received);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!received) {
+        return PROTO_OK;
+    }
+
+    result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+    mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
+    relay->pending.state = MESH_RELAY_TX_IDLE;
+    route_record_success_at(&relay->upstream, now_ms);
+    return PROTO_OK;
+}
+
 static bool broadcast_packet_needs_forward(const struct mesh_relay *relay,
                                            const struct proto_packet *packet,
                                            const uint8_t *payload,
@@ -4148,11 +4214,22 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     }
 
     if (packet->msg_type == MSG_GATEWAY_COLLECTION_EACK &&
-        packet->dst_id == MESH_BROADCAST_ID &&
-        !collection_eack_broadcast_valid(relay, packet, payload, payload_len)) {
-        result->status = PROTO_ERR_MALFORMED;
-        result->actions |= MESH_RELAY_ACTION_DROP;
-        return PROTO_OK;
+        packet->dst_id == MESH_BROADCAST_ID) {
+        if (!collection_eack_broadcast_valid(relay, packet, payload, payload_len)) {
+            result->status = PROTO_ERR_MALFORMED;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+            return PROTO_OK;
+        }
+        ret = handle_collection_eack_for_pending(relay,
+                                                 payload,
+                                                 payload_len,
+                                                 now_ms,
+                                                 result);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
+            return PROTO_OK;
+        }
     }
 
     if (packet->dst_id == relay->local_id) {
