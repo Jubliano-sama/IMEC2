@@ -215,7 +215,7 @@ static struct mesh_route_embedded_rx_state mesh_route_embedded_rx;
 static uint64_t mesh_route_embedded_reply_peer_id;
 static uint32_t mesh_route_embedded_reply_hold_until_ms;
 
-static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
+void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 static int mesh_submit_work(struct k_work *work);
 static void mesh_try_route_waiting_tx(void);
 static void mesh_schedule_tx_timeout(void);
@@ -4344,6 +4344,7 @@ static bool mesh_packet_prefers_channel9(const struct proto_packet *packet)
     case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_GATEWAY_ACK:
+    case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
@@ -4367,7 +4368,7 @@ static bool mesh_outbound_needs_result_offer(const struct mesh_outbound *out)
            command_result_id_from_tlvs(out->payload, out->payload_len, &result_id) == PROTO_OK;
 }
 
-static void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements)
+void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements)
 {
     uint32_t now_ms;
 
@@ -4893,6 +4894,23 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
                        needed_ms;
     }
     return available_ms >= needed_ms;
+}
+
+int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
+                                   const struct mesh_event_plan *plan,
+                                   uint32_t now_ms,
+                                   uint32_t *required_ms)
+{
+    if (out == NULL || plan == NULL) {
+        return -EINVAL;
+    }
+
+    out->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    out->earliest_tx_ms = mesh_ch9_slot_send_start_ms(out, plan, now_ms);
+    if (!mesh_ch9_tx_fits_plan(out, plan, now_ms, required_ms)) {
+        return -EBUSY;
+    }
+    return 0;
 }
 
 static bool mesh_ch9_tx_fits_configured_slot(const struct mesh_outbound *out,
@@ -6283,7 +6301,13 @@ static void mesh_rx_work_handler(struct k_work *work)
             if (pending->packet.msg_type == MSG_COMMAND_RESULT) {
                 gateway_note_command_result(&pending->packet,
                                             pending->payload,
-                                            pending->payload_len);
+                                            pending->payload_len,
+                                            pending->previous_hop_id);
+            } else if (pending->packet.msg_type == MSG_RESULT_BUNDLE) {
+                gateway_note_command_result_bundle(&pending->packet,
+                                                   pending->payload,
+                                                   pending->payload_len,
+                                                   pending->previous_hop_id);
             }
             mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
                                                    pending->payload,

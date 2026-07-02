@@ -323,6 +323,17 @@ Implemented in native code:
 - Source-side closed-collection handling, including roster-bitmap-format EACKs
   that close the collection without carrying an explicit node list.
 - Timed retry-round EACK broadcasts.
+- Gateway app remembers one volatile collection return peer from accepted
+  collection result/result-bundle traffic. Collection EACK send attempts prefer
+  existing channel-9 TX timing to that peer and fall back to bounded channel-5
+  flood when no return peer or usable channel-9 event is available.
+- This is not full MeshSpec EACK routing yet: the gateway does not keep
+  per-result reverse-path state or multiple parent return paths for EACK
+  delivery.
+- RAM impact for the current EACK return slice is one volatile
+  `uint64_t gateway_collection_return_next_hop_id` plus stack locals. Latest
+  measured role-build RAM, not remeasured in this document edit, was clicker
+  81936 B 62.51%, anchor 94848 B 72.36%, gateway 101708 B 77.60%.
 - Source behavior for received-list hit, received-list miss, explicit
   missing-list retry, explicit missing-list absence confirmation, and
   closed-collection stop.
@@ -544,6 +555,12 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    EACKs unless a strict roster is available. The gateway still has no
    persistent membership table, and it falls back to received-list EACKs if the
    missing-list payload would exceed packet capacity.
+
+   The EACK return path is also still partial. Current code keeps only one
+   volatile previous-hop return peer from accepted collection result or bundle
+   traffic, then tries a channel-9 EACK send to that peer before falling back
+   to channel-5 collection EACK flood. Per-result reverse paths, multiple
+   return parents, and durable EACK return state are not implemented.
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are

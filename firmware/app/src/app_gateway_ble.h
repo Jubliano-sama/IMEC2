@@ -44,7 +44,12 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
 void gateway_clear_command_collection(const struct gateway_command_options *options);
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
-                                 size_t payload_len);
+                                 size_t payload_len,
+                                 uint64_t previous_hop_id);
+void gateway_note_command_result_bundle(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len,
+                                        uint64_t previous_hop_id);
 void gateway_command_result_tracking_init(void);
 
 #endif

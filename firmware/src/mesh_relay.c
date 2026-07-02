@@ -2322,6 +2322,7 @@ static bool packet_requires_channel9_payload_event(const struct proto_packet *pa
     case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_GATEWAY_ACK:
+    case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:

@@ -75,6 +75,11 @@ int mesh_send_c5_control(const struct mesh_outbound *out,
                          uint8_t purpose,
                          enum mesh_c5_control_send_mode mode,
                          const char *reason);
+void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
+int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
+                                   const struct mesh_event_plan *plan,
+                                   uint32_t now_ms,
+                                   uint32_t *required_ms);
 int mesh_request_route(uint64_t target_id, const char *reason);
 void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
 int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
