@@ -984,6 +984,46 @@ int gateway_collection_eack_from_tlvs(const uint8_t *payload,
     return PROTO_OK;
 }
 
+int gateway_collection_eack_contains_node_id(const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t node_id,
+                                             bool *contains)
+{
+    size_t offset = 0u;
+
+    if (payload == NULL || contains == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    *contains = false;
+    while (offset < payload_len) {
+        if (payload_len - offset < 2u) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        const uint8_t current_type = payload[offset];
+        const uint8_t current_len = payload[offset + 1u];
+        offset += 2u;
+        if (payload_len - offset < current_len) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        if (current_type == TLV_NODE_ID) {
+            if (current_len != sizeof(uint64_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            if (proto_get_u64_le(&payload[offset]) == node_id) {
+                *contains = true;
+                return PROTO_OK;
+            }
+        }
+
+        offset += current_len;
+    }
+
+    return PROTO_OK;
+}
+
 int proto_cobs_encode(const uint8_t *input, size_t input_len, uint8_t *out, size_t out_cap, size_t *written)
 {
     size_t read_index = 0u;

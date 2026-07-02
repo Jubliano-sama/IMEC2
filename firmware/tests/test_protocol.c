@@ -539,6 +539,16 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
                                                sizeof(payload),
                                                &payload_len,
                                                &eack) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          0x1001ull) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          0x1002ull) == PROTO_OK);
     assert(gateway_collection_eack_from_tlvs(payload,
                                              payload_len,
                                              &decoded_eack) == PROTO_OK);
@@ -553,11 +563,41 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
     assert(decoded_eack.retry_round == eack.retry_round);
     assert(decoded_eack.next_retry_spread_ms == eack.next_retry_spread_ms);
     assert(decoded_eack.collection_open == eack.collection_open);
+    bool listed = false;
+    assert(gateway_collection_eack_contains_node_id(payload,
+                                                    payload_len,
+                                                    0x1002ull,
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+    assert(gateway_collection_eack_contains_node_id(payload,
+                                                    payload_len,
+                                                    0x9999ull,
+                                                    &listed) == PROTO_OK);
+    assert(!listed);
 
+    payload_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(payload,
+                                               sizeof(payload),
+                                               &payload_len,
+                                               &eack) == PROTO_OK);
     payload[payload_len - 1u] = 2u;
     assert(gateway_collection_eack_from_tlvs(payload,
                                              payload_len,
                                              &decoded_eack) == PROTO_ERR_MALFORMED);
+    payload_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(payload,
+                                               sizeof(payload),
+                                               &payload_len,
+                                               &eack) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_NODE_ID,
+                         0x12u) == PROTO_OK);
+    assert(gateway_collection_eack_contains_node_id(payload,
+                                                    payload_len,
+                                                    0x12u,
+                                                    &listed) == PROTO_ERR_MALFORMED);
 }
 
 static void test_cobs_round_trip(void)

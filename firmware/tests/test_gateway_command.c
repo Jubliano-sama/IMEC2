@@ -698,6 +698,35 @@ static void test_collection_prepares_eack_broadcast_outbound(void)
     struct gateway_collection_state collection;
     struct mesh_outbound out = {0};
     struct gateway_collection_eack decoded = {0};
+    struct command_result_id id_a = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = 0xAAA1u,
+        .node_boot_counter = 0x01020304u,
+        .result_seq = 1u,
+    };
+    struct command_result_id id_b = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = 0xBBB2u,
+        .node_boot_counter = 0x05060708u,
+        .result_seq = 1u,
+    };
+    struct proto_packet result_a;
+    struct proto_packet result_b;
+    uint8_t payload_a[96];
+    uint8_t payload_b[96];
+    size_t payload_a_len = 0u;
+    size_t payload_b_len = 0u;
+    bool duplicate = false;
+    bool listed = false;
+
+    make_collection_result_payload(payload_a, sizeof(payload_a), &payload_a_len, &id_a, 3003u);
+    make_collection_result_payload(payload_b, sizeof(payload_b), &payload_b_len, &id_b, 3003u);
+    result_a = make_collection_result_packet(&id_a, payload_a_len);
+    result_b = make_collection_result_packet(&id_b, payload_b_len);
 
     assert(gateway_collection_start(&collection,
                                     GATEWAY_ID_TEST,
@@ -708,10 +737,21 @@ static void test_collection_prepares_eack_broadcast_outbound(void)
                                     12u,
                                     2u,
                                     COLLECTION_RETRY_ROUND_2_MS) == PROTO_OK);
-    collection.received_count = 5u;
+    assert(gateway_collection_record_result(&collection,
+                                            &result_a,
+                                            payload_a,
+                                            payload_a_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    assert(gateway_collection_record_result(&collection,
+                                            &result_b,
+                                            payload_b,
+                                            payload_b_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
 
     assert(gateway_collection_prepare_eack_outbound(&collection,
-                                                    EACK_FORMAT_EXPLICIT_MISSING_LIST,
+                                                    EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
                                                     &out) == PROTO_OK);
     assert(out.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
     assert(out.packet.src_id == GATEWAY_ID_TEST);
@@ -732,11 +772,26 @@ static void test_collection_prepares_eack_broadcast_outbound(void)
     assert(decoded.collection_epoch_id == 3003u);
     assert(decoded.membership_epoch == 4u);
     assert(decoded.expected_count == 12u);
-    assert(decoded.received_count == 5u);
-    assert(decoded.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST);
+    assert(decoded.received_count == 2u);
+    assert(decoded.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST);
     assert(decoded.retry_round == 2u);
     assert(decoded.next_retry_spread_ms == COLLECTION_RETRY_ROUND_2_MS);
     assert(decoded.collection_open);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    id_a.node_id,
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    id_b.node_id,
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    0xCCC3u,
+                                                    &listed) == PROTO_OK);
+    assert(!listed);
 }
 
 static void test_collection_records_result_bundle_and_dedupes_replay(void)

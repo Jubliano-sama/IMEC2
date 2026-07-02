@@ -490,6 +490,10 @@ int gateway_collection_eack_append_tlvs(uint8_t *payload,
 int gateway_collection_eack_from_tlvs(const uint8_t *payload,
                                       size_t payload_len,
                                       struct gateway_collection_eack *eack);
+int gateway_collection_eack_contains_node_id(const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t node_id,
+                                             bool *contains);
 
 uint16_t proto_get_u16_le(const uint8_t *data);
 uint32_t proto_get_u32_le(const uint8_t *data);

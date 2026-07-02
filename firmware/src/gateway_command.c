@@ -1025,6 +1025,21 @@ int gateway_collection_prepare_eack_outbound(const struct gateway_collection_sta
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST) {
+        for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+            if (!collection->results[i].valid) {
+                continue;
+            }
+            ret = tlv_append_u64(out->payload,
+                                 sizeof(out->payload),
+                                 &payload_len,
+                                 TLV_NODE_ID,
+                                 collection->results[i].id.node_id);
+            if (ret != PROTO_OK) {
+                return ret;
+            }
+        }
+    }
 
     out->packet.msg_type = MSG_GATEWAY_COLLECTION_EACK;
     out->packet.src_id = collection->gateway_id;
