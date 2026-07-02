@@ -275,4 +275,81 @@ ZTEST(mesh_result_handoff,
     zassert_equal(ctx.events[0], EVENT_SAVE);
 }
 
+ZTEST(mesh_result_handoff,
+      test_hop_ack_requires_saved_child_custody_for_accepted_result)
+{
+    struct mesh_relay_result result = {
+        .actions = MESH_RELAY_ACTION_SEND_HOP_ACK |
+                   MESH_RELAY_ACTION_CUSTODY_ACCEPTED,
+    };
+    struct test_ctx ctx;
+    struct app_mesh_result_handoff_ops ops = make_ops(&ctx);
+    struct app_mesh_result_handoff_status status;
+
+    init_ctx(&ctx);
+    ctx.save_ret = 0;
+    app_mesh_result_handoff_prepare_hop_ack(&result,
+                                            false,
+                                            true,
+                                            &ops,
+                                            &status);
+
+    zassert_true(status.child_custody_ready);
+    zassert_true(status.child_custody_saved);
+    zassert_true(status.hop_ack_allowed);
+    zassert_equal(ctx.event_count, 1u);
+    zassert_equal(ctx.events[0], EVENT_SAVE);
+}
+
+ZTEST(mesh_result_handoff,
+      test_hop_ack_save_failure_suppresses_custody_ack)
+{
+    struct mesh_relay_result result = {
+        .actions = MESH_RELAY_ACTION_SEND_HOP_ACK |
+                   MESH_RELAY_ACTION_CUSTODY_ACCEPTED,
+    };
+    struct test_ctx ctx;
+    struct app_mesh_result_handoff_ops ops = make_ops(&ctx);
+    struct app_mesh_result_handoff_status status;
+
+    init_ctx(&ctx);
+    ctx.save_ret = -EIO;
+    app_mesh_result_handoff_prepare_hop_ack(&result,
+                                            false,
+                                            true,
+                                            &ops,
+                                            &status);
+
+    zassert_false(status.child_custody_ready);
+    zassert_true(status.child_custody_save_failed);
+    zassert_false(status.hop_ack_allowed);
+    zassert_equal(status.save_ret, -EIO);
+    zassert_equal(ctx.event_count, 1u);
+    zassert_equal(ctx.events[0], EVENT_SAVE);
+}
+
+ZTEST(mesh_result_handoff,
+      test_forwarded_packet_hop_ack_allowed_after_forward_send)
+{
+    struct mesh_relay_result result = {
+        .actions = MESH_RELAY_ACTION_SEND_HOP_ACK |
+                   MESH_RELAY_ACTION_FORWARD,
+    };
+    struct test_ctx ctx;
+    struct app_mesh_result_handoff_ops ops = make_ops(&ctx);
+    struct app_mesh_result_handoff_status status;
+
+    init_ctx(&ctx);
+    app_mesh_result_handoff_prepare_hop_ack(&result,
+                                            true,
+                                            true,
+                                            &ops,
+                                            &status);
+
+    zassert_true(status.child_custody_ready);
+    zassert_false(status.child_custody_saved);
+    zassert_true(status.hop_ack_allowed);
+    zassert_equal(ctx.event_count, 0u);
+}
+
 ZTEST_SUITE(mesh_result_handoff, NULL, NULL, NULL, NULL, NULL);

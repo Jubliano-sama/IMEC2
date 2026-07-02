@@ -381,8 +381,9 @@ Implemented behavior:
   custody before the accepted C5 send, suppress the grant when that save fails,
   report a send failure without marking the grant as sent, update
   child-custody persistence after a forwarded child result handoff, note
-  forwarded result bundles before saving custody, and report save failure after
-  a forwarded handoff.
+  forwarded result bundles before saving custody, report save failure after a
+  forwarded handoff, and gate hop/custody ACKs on successful child-custody save
+  before the ACK is allowed.
 - The normal relay outbox snapshot stores and restores forwarded non-bundled
   child `MSG_COMMAND_RESULT` custody/retry state before and after a
   `RESULT_GRANT`. Restore validates the command-result identity, gateway epoch,

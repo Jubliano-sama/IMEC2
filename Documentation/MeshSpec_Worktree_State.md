@@ -170,7 +170,10 @@ Current `get_goal()`:
   grant suppression on save failure, send-failure reporting without TX-sent
   notation, child-custody update after forwarded child-result handoff,
   bundle-forward notation before custody save, and save-failure reporting after
-  forwarded handoff under `native_sim/native/64`.
+  forwarded handoff. The app dispatcher now also uses the helper to gate
+  hop/custody ACKs on child-custody save, and the same test target verifies ACK
+  allowed after save success/forward success and suppressed after save failure
+  under `native_sim/native/64`.
 - Latest active collection retry persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a real active
   `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be

@@ -6011,18 +6011,19 @@ after_gateway_ack:
         }
     }
     if (child_custody_ready &&
-        (result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) != 0u) {
-        child_custody_ready = DEVICE_ROLE != ROLE_ANCHOR ||
-                              app_mesh_persistence_save_child_custody(
-                                  &mesh_runtime,
-                                  k_uptime_get_32()) == 0;
-        if (!child_custody_ready) {
+        (result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) != 0u) {
+        app_mesh_result_handoff_prepare_hop_ack(result,
+                                                forward_sent,
+                                                DEVICE_ROLE == ROLE_ANCHOR,
+                                                &handoff_ops,
+                                                &handoff_status);
+        child_custody_ready = handoff_status.child_custody_ready;
+        if (handoff_status.child_custody_save_failed) {
             LOG_WRN("mesh hop ACK skipped: child custody snapshot unavailable");
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) &&
-        child_custody_ready &&
-        (forward_sent || (result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) != 0u)) {
+        handoff_status.hop_ack_allowed) {
         struct mesh_outbound *hop_ack = &mesh_result_action_tx;
 
         *hop_ack = result->hop_ack;

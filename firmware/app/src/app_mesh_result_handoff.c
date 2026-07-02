@@ -104,3 +104,33 @@ void app_mesh_result_handoff_result_grant(
         ops->note_tx_sent(&result->result_grant, ops->ctx);
     }
 }
+
+void app_mesh_result_handoff_prepare_hop_ack(
+    const struct mesh_relay_result *result,
+    bool forward_sent,
+    bool anchor_role,
+    const struct app_mesh_result_handoff_ops *ops,
+    struct app_mesh_result_handoff_status *status)
+{
+    bool custody_accepted;
+    int ret;
+
+    status_init(status);
+    if (result == NULL ||
+        (result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) == 0u) {
+        return;
+    }
+
+    custody_accepted =
+        (result->actions & MESH_RELAY_ACTION_CUSTODY_ACCEPTED) != 0u;
+    if (custody_accepted) {
+        ret = save_child_custody_if_needed(anchor_role, ops, status);
+        if (ret != 0) {
+            return;
+        }
+    }
+
+    if (status != NULL) {
+        status->hop_ack_allowed = forward_sent || custody_accepted;
+    }
+}
