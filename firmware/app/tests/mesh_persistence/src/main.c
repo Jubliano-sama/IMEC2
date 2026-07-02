@@ -597,6 +597,78 @@ ZTEST(mesh_persistence, test_child_custody_reservation_round_trip_and_clear)
     zassert_false(restored.result_offer_reservation.valid);
 }
 
+ZTEST(mesh_persistence, test_child_result_bundle_round_trip_and_flush_after_restore)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = 0x33445566u,
+        .node_id = CHILD_ID,
+        .node_boot_counter = 31u,
+        .result_seq = 32u,
+    };
+    struct route_candidate route = direct_gateway_route(90u);
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = CHILD_ID,
+        .dst_id = GATEWAY_ID,
+        .session_id = 92u,
+        .seq = 8u,
+        .ttl = MESH_DEFAULT_TTL,
+        .message_age_ms = 10u,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct mesh_relay_result result;
+    struct result_bundle_header bundle;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_child_custody();
+
+    build_collection_command_result_payload(payload,
+                                            sizeof(payload),
+                                            64u,
+                                            &result_id,
+                                            3012u,
+                                            &payload_len);
+    packet.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(route_upsert_candidate(&relay.upstream, &route));
+    zassert_ok(mesh_relay_handle_rx(&relay,
+                                    &packet,
+                                    payload,
+                                    payload_len,
+                                    CHILD_ID,
+                                    90u,
+                                    1000u,
+                                    &result));
+    zassert_true(mesh_relay_result_bundle_pending(&relay));
+    zassert_ok(app_mesh_persistence_save_child_custody(&relay, 1010u));
+
+    mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, LOCAL_ID, GATEWAY_ID, 13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_ok(app_mesh_persistence_restore_child_custody(&restored, 2000u));
+    zassert_true(mesh_relay_result_bundle_pending(&restored));
+    zassert_equal(mesh_relay_result_bundle_due_ms(&restored), 2015u);
+
+    zassert_ok(mesh_relay_tick(&restored, 2014u, &result));
+    zassert_false(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    zassert_ok(mesh_relay_tick(&restored, 2015u, &result));
+    zassert_true(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    zassert_equal(result.forward.packet.msg_type, MSG_RESULT_BUNDLE);
+    zassert_equal(result.forward.packet.message_age_ms, 35u);
+    zassert_ok(result_bundle_header_from_tlvs(result.forward.payload,
+                                              result.forward.payload_len,
+                                              &bundle));
+    zassert_equal(bundle.record_count, 1u);
+    mesh_relay_result_bundle_note_forwarded(&restored, &result.forward);
+    zassert_false(mesh_relay_result_bundle_pending(&restored));
+}
+
 ZTEST_SUITE(mesh_persistence, NULL, NULL, NULL, NULL, NULL);
 
 static int main_init(void)

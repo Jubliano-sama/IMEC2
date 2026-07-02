@@ -413,6 +413,11 @@ Implemented behavior:
   Restore validates each record's result identity, collection epoch, payload
   length, and payload CRC, folds pre-reset queued time into `message_age_ms`,
   and resumes the remaining hold delay on the new boot uptime.
+- Current `native_sim/native/64` Zephyr coverage verifies the app
+  child-custody NVS path for a queued child `MSG_COMMAND_RESULT` bundle:
+  restore after `mesh_relay_init()`, no flush before the restored hold deadline,
+  `MSG_RESULT_BUNDLE` flush at the deadline, preserved accumulated packet age,
+  and queue clear after `mesh_relay_result_bundle_note_forwarded()`.
 - If a queued bundle has already been converted into an outbound
   `MSG_RESULT_BUNDLE`, the normal relay outbox snapshot now stores and restores
   that in-flight bundle with bundle-header and bundle-CRC validation.
@@ -524,14 +529,15 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    Offer/grant/reservation validation exists, parent-side reservations are
    anchor NVS-backed, and forwarded non-bundled child `MSG_COMMAND_RESULT`
    offer/payload custody-retry state is relay-snapshot backed. The parent
-   reservation path and after-grant forwarded payload path now have app/NVS
-   round-trip coverage. The remaining gap is app-integrated coverage across
-   every radio handoff and preemption point.
+   reservation path, queued child bundle path, and after-grant forwarded
+   payload path now have app/NVS round-trip coverage. The remaining gap is
+   app-integrated coverage across every radio handoff and preemption point.
 
 5. Durable multi-hop child custody/storage-backed recovery is partial.
    Queued child bundles, in-flight `MSG_RESULT_BUNDLE` outbox state, and
    forwarded non-bundled child `MSG_COMMAND_RESULT` offer/payload retry state
-   are restart-tolerant at the relay snapshot layer. Full app-integrated
+   are restart-tolerant at the relay snapshot layer; queued child bundles also
+   have focused app/NVS restore-and-flush coverage. Full app-integrated
    multi-hop recovery coverage remains partial.
 
 6. Accepted-click preemption during collection has native coverage for the

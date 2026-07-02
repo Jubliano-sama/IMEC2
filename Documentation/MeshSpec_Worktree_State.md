@@ -77,8 +77,9 @@ Current `get_goal()`:
    snapshot/restore coverage. Anchor-role Zephyr NVS save/restore uses the
    existing outbox persistence path for active relay outbox snapshots, and
    `firmware/app/tests/mesh_persistence` verifies parent-side result-offer
-   reservation save/restore/clear through the app NVS child-custody path plus
-   after-grant forwarded child payload restore through the app NVS outbox path.
+   reservation save/restore/clear and queued child result bundle
+   save/restore/flush through the app NVS child-custody path plus after-grant
+   forwarded child payload restore through the app NVS outbox path.
    `firmware/app/tests/mesh_result_handoff` verifies the app bridge that saves
    child custody before result grants, suppresses grants on save failure, reports
    grant-send failure without marking TX sent, notes forwarded bundles before
@@ -152,8 +153,9 @@ Current `get_goal()`:
   delayable timeout schedule/cancel, and save/clear callback dispatch using
   real Zephyr objects under `native_sim/native/64`.
 - Latest child-custody persistence test slice: `firmware/app/tests/mesh_persistence`
-  verifies parent-side `RESULT_OFFER` reservation save/restore/clear through
-  the app NVS child-custody path under `native_sim/native/64`.
+  verifies parent-side `RESULT_OFFER` reservation save/restore/clear and queued
+  child `MSG_COMMAND_RESULT` bundle save/restore/flush through the app NVS
+  child-custody path under `native_sim/native/64`.
 - Latest result-handoff app test slice: `firmware/app/src/app_mesh_result_handoff.*`
   applies the app bridge around child-custody persistence and result-grant
   sends, and `firmware/app/tests/mesh_result_handoff` verifies save-before-grant,
