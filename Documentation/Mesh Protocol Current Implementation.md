@@ -367,6 +367,12 @@ Current ACK/EACK handling:
 - `MSG_GATEWAY_ACK` is end-to-end delivery confirmation for important
   gateway-bound packets.
 - `MSG_GATEWAY_COLLECTION_EACK` is collection-level status and retry guidance.
+- When a collection result or bundle is newly accepted on
+  `UWB_CHANNEL_MESH_PAYLOAD` from a valid previous hop, the gateway first tries
+  to return the collection EACK immediately on the current channel-9 event to
+  that hop. If that send fails, the original EACK state is restored and the
+  existing planned channel-9 candidate and bounded channel-5 fallback policy
+  continues.
 - Channel-9 route-test ACK batching carries explicit packet/session/sequence
   lists and keeps the legacy requested-sequence TLV for compatibility.
 - Partial ACK matching requeues only unACKed packets ahead of later queued work;
@@ -664,6 +670,8 @@ channel-9 payload windows.
 4. Route state is not immediately invalidated.
 5. Collection-result state can be saved/deferred; ordinary pending TX may be
    canceled or requeued according to the current preemption helper.
+   The app helper preserves save/schedule return codes and marks
+   `outbox_saved` or `timeout_scheduled` only when those side effects succeed.
 6. Later channel-9 windows or C5 refresh resume delivery according to timing
    supervision and retry policy.
 

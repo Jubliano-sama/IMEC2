@@ -133,23 +133,27 @@ void gateway_clear_registered_membership_roster(void)
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
-                                 uint64_t previous_hop_id)
+                                 uint64_t previous_hop_id,
+                                 uint8_t received_radio_channel)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
     ARG_UNUSED(payload_len);
     ARG_UNUSED(previous_hop_id);
+    ARG_UNUSED(received_radio_channel);
 }
 
 void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len,
-                                        uint64_t previous_hop_id)
+                                        uint64_t previous_hop_id,
+                                        uint8_t received_radio_channel)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
     ARG_UNUSED(payload_len);
     ARG_UNUSED(previous_hop_id);
+    ARG_UNUSED(received_radio_channel);
 }
 
 void gateway_command_result_tracking_init(void)
@@ -174,6 +178,19 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason);
 
 static bool gateway_collection_tracking_active(void);
+
+static uint64_t gateway_collection_current_channel9_return_hop(uint64_t previous_hop_id,
+                                                               uint8_t received_radio_channel)
+{
+    if (received_radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        previous_hop_id == 0u ||
+        previous_hop_id == MESH_BROADCAST_ID ||
+        previous_hop_id == DEVICE_ID) {
+        return 0u;
+    }
+
+    return previous_hop_id;
+}
 
 static void gateway_persist_collection_state(const char *reason)
 {
@@ -287,7 +304,15 @@ static void gateway_eack_note_channel9_tx(uint64_t next_hop_id,
     }
 }
 
-static int gateway_send_collection_eack(const char *reason)
+static uint32_t gateway_eack_now_ms(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return k_uptime_get_32();
+}
+
+static int gateway_send_collection_eack(const char *reason,
+                                        uint64_t current_channel9_next_hop_id)
 {
     struct mesh_outbound eack = {0};
     const struct app_gateway_eack_policy_ops ops = {
@@ -297,6 +322,7 @@ static int gateway_send_collection_eack(const char *reason)
         .send_c5_flood = gateway_eack_send_c5_flood,
         .note_tx_sent = gateway_eack_note_tx_sent,
         .note_channel9_tx = gateway_eack_note_channel9_tx,
+        .now_ms = gateway_eack_now_ms,
     };
     struct app_gateway_eack_policy_result policy_result;
     uint64_t return_next_hop_ids[GATEWAY_COLLECTION_RETURN_TARGET_CAP] = {0};
@@ -335,8 +361,9 @@ static int gateway_send_collection_eack(const char *reason)
         &gateway_collection_state,
         return_next_hop_ids,
         ARRAY_SIZE(return_next_hop_ids));
-    ret = app_gateway_eack_send_to_candidates(
+    ret = app_gateway_eack_send_to_candidates_with_current_channel9(
         &eack,
+        current_channel9_next_hop_id,
         return_next_hop_ids,
         return_target_count,
         &ops,
@@ -378,7 +405,7 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
         return;
     }
 
-    ret = gateway_send_collection_eack("collection-eack-round");
+    ret = gateway_send_collection_eack("collection-eack-round", 0u);
     if (ret < 0) {
         (void)k_work_reschedule(&gateway_collection_eack_work,
                                 K_MSEC(RELAY_BUSY_RETRY_MIN_MS));
@@ -400,9 +427,11 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
 static void gateway_note_collection_result(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
-                                           uint64_t previous_hop_id)
+                                           uint64_t previous_hop_id,
+                                           uint8_t received_radio_channel)
 {
     bool duplicate = false;
+    uint64_t current_channel9_next_hop_id;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
@@ -431,8 +460,12 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
             gateway_collection_state.expected_count,
             duplicate ? 1u : 0u);
     if (!duplicate) {
+        current_channel9_next_hop_id =
+            gateway_collection_current_channel9_return_hop(previous_hop_id,
+                                                           received_radio_channel);
         gateway_persist_collection_state("collection-result");
-        (void)gateway_send_collection_eack("collection-eack-result");
+        (void)gateway_send_collection_eack("collection-eack-result",
+                                           current_channel9_next_hop_id);
         gateway_schedule_collection_eack_round();
     }
 }
@@ -440,10 +473,12 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
 static void gateway_note_collection_bundle(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
-                                           uint64_t previous_hop_id)
+                                           uint64_t previous_hop_id,
+                                           uint8_t received_radio_channel)
 {
     uint16_t accepted_count = 0u;
     uint16_t duplicate_count = 0u;
+    uint64_t current_channel9_next_hop_id;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
@@ -474,8 +509,12 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count);
     if (accepted_count != 0u) {
+        current_channel9_next_hop_id =
+            gateway_collection_current_channel9_return_hop(previous_hop_id,
+                                                           received_radio_channel);
         gateway_persist_collection_state("collection-bundle");
-        (void)gateway_send_collection_eack("collection-eack-bundle");
+        (void)gateway_send_collection_eack("collection-eack-bundle",
+                                           current_channel9_next_hop_id);
         gateway_schedule_collection_eack_round();
     }
 }
@@ -851,7 +890,8 @@ static void gateway_command_result_timeout_handler(struct k_work *work)
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
-                                 uint64_t previous_hop_id)
+                                 uint64_t previous_hop_id,
+                                 uint8_t received_radio_channel)
 {
     struct proto_packet command;
     enum command_id pending_command_id;
@@ -864,7 +904,11 @@ void gateway_note_command_result(const struct proto_packet *packet,
         return;
     }
 
-    gateway_note_collection_result(packet, payload, payload_len, previous_hop_id);
+    gateway_note_collection_result(packet,
+                                   payload,
+                                   payload_len,
+                                   previous_hop_id,
+                                   received_radio_channel);
 
     if (!gateway_command_pending_matches_result(&gateway_command_pending_state, packet)) {
         return;
@@ -898,13 +942,18 @@ void gateway_note_command_result(const struct proto_packet *packet,
 void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len,
-                                        uint64_t previous_hop_id)
+                                        uint64_t previous_hop_id,
+                                        uint8_t received_radio_channel)
 {
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
     }
 
-    gateway_note_collection_bundle(packet, payload, payload_len, previous_hop_id);
+    gateway_note_collection_bundle(packet,
+                                   payload,
+                                   payload_len,
+                                   previous_hop_id,
+                                   received_radio_channel);
 }
 
 int gateway_begin_command_result_wait(const struct proto_packet *command,

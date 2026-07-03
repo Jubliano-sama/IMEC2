@@ -90,11 +90,21 @@ static void result_note_mode(struct app_gateway_eack_policy_result *result,
     }
 }
 
-int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
-                                        const uint64_t *return_next_hop_ids,
-                                        size_t return_next_hop_count,
-                                        const struct app_gateway_eack_policy_ops *ops,
-                                        struct app_gateway_eack_policy_result *result)
+static uint32_t ops_now_ms(const struct app_gateway_eack_policy_ops *ops)
+{
+    if (ops != NULL && ops->now_ms != NULL) {
+        return ops->now_ms(ops->ctx);
+    }
+    return 0u;
+}
+
+int app_gateway_eack_send_to_candidates_with_current_channel9(
+    struct mesh_outbound *eack,
+    uint64_t current_channel9_next_hop_id,
+    const uint64_t *return_next_hop_ids,
+    size_t return_next_hop_count,
+    const struct app_gateway_eack_policy_ops *ops,
+    struct app_gateway_eack_policy_result *result)
 {
     struct mesh_outbound original_eack;
     int ret;
@@ -109,6 +119,30 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
     }
 
     original_eack = *eack;
+    if (return_target_valid(current_channel9_next_hop_id) &&
+        ops->send_channel9 != NULL) {
+        *eack = original_eack;
+        eack->next_hop_id = current_channel9_next_hop_id;
+        eack->radio_channel = MESH_EVENT_CHANNEL;
+        eack->earliest_tx_ms = 0u;
+        result_note_channel9_attempt(result);
+        ret = ops->send_channel9(eack, ops->ctx);
+        result_note_channel9_send(result, ret);
+        if (ret == 0) {
+            result_note_mode(result, APP_GATEWAY_EACK_SEND_CURRENT_CHANNEL9);
+            result_note_channel9_next_hop(result, current_channel9_next_hop_id);
+            if (ops->note_tx_sent != NULL) {
+                ops->note_tx_sent(eack, ops->ctx);
+            }
+            if (ops->note_channel9_tx != NULL) {
+                ops->note_channel9_tx(current_channel9_next_hop_id,
+                                      ops_now_ms(ops),
+                                      ops->ctx);
+            }
+            return 0;
+        }
+    }
+
     if (ops->plan_channel9 != NULL &&
         ops->prepare_channel9 != NULL &&
         ops->send_channel9 != NULL) {
@@ -168,6 +202,21 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
         }
     }
     return ret;
+}
+
+int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
+                                        const uint64_t *return_next_hop_ids,
+                                        size_t return_next_hop_count,
+                                        const struct app_gateway_eack_policy_ops *ops,
+                                        struct app_gateway_eack_policy_result *result)
+{
+    return app_gateway_eack_send_to_candidates_with_current_channel9(
+        eack,
+        0u,
+        return_next_hop_ids,
+        return_next_hop_count,
+        ops,
+        result);
 }
 
 int app_gateway_eack_send(struct mesh_outbound *eack,

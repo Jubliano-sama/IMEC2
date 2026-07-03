@@ -6513,12 +6513,14 @@ static void mesh_rx_work_handler(struct k_work *work)
                 gateway_note_command_result(&pending->packet,
                                             pending->payload,
                                             pending->payload_len,
-                                            pending->previous_hop_id);
+                                            pending->previous_hop_id,
+                                            pending->radio_channel);
             } else if (pending->packet.msg_type == MSG_RESULT_BUNDLE) {
                 gateway_note_command_result_bundle(&pending->packet,
                                                    pending->payload,
                                                    pending->payload_len,
-                                                   pending->previous_hop_id);
+                                                   pending->previous_hop_id,
+                                                   pending->radio_channel);
             }
             mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
                                                    pending->payload,

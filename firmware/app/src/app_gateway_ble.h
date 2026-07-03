@@ -49,11 +49,13 @@ void gateway_clear_registered_membership_roster(void);
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
-                                 uint64_t previous_hop_id);
+                                 uint64_t previous_hop_id,
+                                 uint8_t received_radio_channel);
 void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len,
-                                        uint64_t previous_hop_id);
+                                        uint64_t previous_hop_id,
+                                        uint8_t received_radio_channel);
 void gateway_command_result_tracking_init(void);
 
 #endif

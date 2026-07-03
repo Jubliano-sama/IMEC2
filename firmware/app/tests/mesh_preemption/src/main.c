@@ -3,6 +3,7 @@
 #include "mesh.h"
 #include "protocol.h"
 
+#include <errno.h>
 #include <string.h>
 #include <zephyr/init.h>
 #include <zephyr/ztest.h>
@@ -14,6 +15,8 @@ static struct k_work_delayable test_timeout_work;
 static uint8_t save_count;
 static uint8_t clear_count;
 static uint8_t schedule_count;
+static int save_outbox_ret;
+static int schedule_timeout_ret;
 
 static void timeout_handler(struct k_work *work)
 {
@@ -25,7 +28,7 @@ static int save_outbox(void *ctx)
     ARG_UNUSED(ctx);
 
     save_count++;
-    return 0;
+    return save_outbox_ret;
 }
 
 static void clear_outbox(void *ctx)
@@ -40,6 +43,9 @@ static int schedule_timeout(void *ctx)
     ARG_UNUSED(ctx);
 
     schedule_count++;
+    if (schedule_timeout_ret < 0) {
+        return schedule_timeout_ret;
+    }
     return k_work_reschedule(&test_timeout_work, K_MSEC(1000));
 }
 
@@ -51,6 +57,8 @@ static void reset_runtime_objects(void)
     save_count = 0u;
     clear_count = 0u;
     schedule_count = 0u;
+    save_outbox_ret = 0;
+    schedule_timeout_ret = 0;
 }
 
 static void reset_runtime_objects_after(void *fixture)
@@ -93,10 +101,72 @@ ZTEST(mesh_preemption_app, test_collection_preempt_saves_purges_and_schedules)
     zassert_true(result.rx_queue_purged);
     zassert_false(result.outbox_cleared);
     zassert_false(result.timeout_cancelled);
+    zassert_equal(result.save_outbox_ret, 0);
+    zassert_true(result.schedule_timeout_ret >= 0,
+                 "schedule timeout ret: %d",
+                 result.schedule_timeout_ret);
     zassert_equal(save_count, 1u);
     zassert_equal(clear_count, 0u);
     zassert_equal(schedule_count, 1u);
     zassert_true(k_work_delayable_is_pending(&test_timeout_work));
+    zassert_equal(k_msgq_num_used_get(&test_mesh_rx_msgq), 0u);
+}
+
+ZTEST(mesh_preemption_app, test_collection_c9_preempt_reports_failed_outbox_save)
+{
+    struct mesh_click_preempt_plan plan = {
+        .purge_rx_queue = true,
+        .save_outbox = true,
+        .schedule_timeout = true,
+    };
+    struct app_mesh_click_preempt_ops ops = make_ops();
+    struct app_mesh_click_preempt_result result;
+    uint32_t rx_marker = 0xDEADBEEFu;
+
+    reset_runtime_objects();
+    save_outbox_ret = -EIO;
+    zassert_ok(k_msgq_put(&test_mesh_rx_msgq, &rx_marker, K_NO_WAIT));
+
+    zassert_ok(app_mesh_apply_click_preempt_plan(&plan, &ops, &result));
+
+    zassert_false(result.outbox_saved);
+    zassert_true(result.timeout_scheduled);
+    zassert_true(result.rx_queue_purged);
+    zassert_equal(result.save_outbox_ret, -EIO);
+    zassert_true(result.schedule_timeout_ret >= 0,
+                 "schedule timeout ret: %d",
+                 result.schedule_timeout_ret);
+    zassert_equal(save_count, 1u);
+    zassert_equal(schedule_count, 1u);
+    zassert_true(k_work_delayable_is_pending(&test_timeout_work));
+    zassert_equal(k_msgq_num_used_get(&test_mesh_rx_msgq), 0u);
+}
+
+ZTEST(mesh_preemption_app, test_collection_c9_preempt_reports_failed_timeout_schedule)
+{
+    struct mesh_click_preempt_plan plan = {
+        .purge_rx_queue = true,
+        .save_outbox = true,
+        .schedule_timeout = true,
+    };
+    struct app_mesh_click_preempt_ops ops = make_ops();
+    struct app_mesh_click_preempt_result result;
+    uint32_t rx_marker = 0xC001C0DEu;
+
+    reset_runtime_objects();
+    schedule_timeout_ret = -EAGAIN;
+    zassert_ok(k_msgq_put(&test_mesh_rx_msgq, &rx_marker, K_NO_WAIT));
+
+    zassert_ok(app_mesh_apply_click_preempt_plan(&plan, &ops, &result));
+
+    zassert_true(result.outbox_saved);
+    zassert_false(result.timeout_scheduled);
+    zassert_true(result.rx_queue_purged);
+    zassert_equal(result.save_outbox_ret, 0);
+    zassert_equal(result.schedule_timeout_ret, -EAGAIN);
+    zassert_equal(save_count, 1u);
+    zassert_equal(schedule_count, 1u);
+    zassert_false(k_work_delayable_is_pending(&test_timeout_work));
     zassert_equal(k_msgq_num_used_get(&test_mesh_rx_msgq), 0u);
 }
 

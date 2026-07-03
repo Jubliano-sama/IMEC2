@@ -68,7 +68,9 @@ Current `get_goal()`:
    covers the accepted-click preemption decision used by
    `mesh_preempt_for_click_event()`, and `firmware/app/tests/mesh_preemption`
    covers the app-used Zephyr preemption side-effect helper for queue
-   purge/requeue plus delayable timeout schedule/cancel. `firmware/app/tests/mesh_persistence`
+   purge/requeue plus delayable timeout schedule/cancel, including failed
+   outbox-save and timeout-schedule callbacks reporting false success flags
+   while preserving their return codes. `firmware/app/tests/mesh_persistence`
    also covers accepted-click preemption of an active collection-result outbox
    through the app helper, real NVS save/restore, preserved retry-backoff,
    same-payload retransmit, and no route failure/hold-down from the preemption.
@@ -83,16 +85,20 @@ Current `get_goal()`:
    Gateway collection state now has per-result previous-hop metadata on
    `gateway_collection_result_entry`, previous-hop-aware result/bundle record
    APIs, and `gateway_collection_return_candidates()` for distinct return
-   candidates. Gateway app result and bundle handlers populate that metadata
-   from the UWB previous hop; app collection EACK sends derive up to two
-   candidates from collection state, try valid candidates for channel-9 EACK
-   return over existing timing, and fall back to channel-5 flood when no
-   candidate can be used. Focused native policy coverage now proves
-   channel-9-first success through a later candidate, duplicate/invalid
-   return-hop suppression, C5 fallback only after channel-9 candidate failures,
-   no-candidate bounded C5 recovery, and C5 fallback preserving the original
-   collection EACK header/payload state after a failed channel-9 preparation
-   path. Core `gateway_collection_export_snapshot()` and
+   candidates. Gateway app result and bundle handlers pass the inbound UWB
+   radio channel and previous hop; if a newly accepted result or bundle arrived
+   on `UWB_CHANNEL_MESH_PAYLOAD` from a valid previous hop, app collection EACK
+   sends first try the immediate current-channel-9 return to that hop, restore
+   the original EACK state on failure, then derive up to two candidates from
+   collection state, try valid candidates for planned channel-9 EACK return
+   over existing timing, and fall back to channel-5 flood when no candidate can
+   be used. Focused native policy coverage now proves immediate current-C9
+   success, current-C9 failure followed by existing candidate/C5 fallback with
+   header/payload preservation, channel-9-first success through a later
+   candidate, duplicate/invalid return-hop suppression, C5 fallback only after
+   channel-9 candidate failures, no-candidate bounded C5 recovery, and C5
+   fallback preserving the original collection EACK header/payload state after a
+   failed channel-9 preparation path. Core `gateway_collection_export_snapshot()` and
    `gateway_collection_restore_snapshot()` now preserve active
    `gateway_collection_state`, including per-result `previous_hop_id`
    reverse-path metadata. Gateway app persistence now saves/restores/clears that
@@ -101,9 +107,9 @@ Current `get_goal()`:
    enable the same generated persistence Kconfig fragment used by anchors. This
    is still not full MeshSpec EACK routing: durable return state exists, but the
    remaining collection routing and app/radio handoff behavior is not complete.
-   Latest measured role builds after bounded C5 flood
-   and anchor command execution changes: clicker 234592 B FLASH / 84624 B RAM,
-   anchor 181836 B FLASH / 96896 B RAM, gateway 291692 B FLASH / 103564 B RAM.
+   Latest measured role builds after current-channel-9 EACK preference:
+   clicker 234784 B FLASH / 85136 B RAM, anchor 181868 B FLASH / 97408 B RAM,
+   gateway 293352 B FLASH / 104076 B RAM.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -284,6 +290,10 @@ Current `get_goal()`:
   channel-9 return-candidate sends fail, the helper tries each candidate, falls
   back to bounded channel-5 EACK, does not call channel-9 TX notation, and notes
   only the bounded C5 fallback transmit.
+- Focused gateway EACK policy coverage now proves that a valid current-channel-9
+  return hop from a just-received collection result/bundle is attempted before
+  later planned candidates, and that failed current-C9 sends restore the
+  original EACK header/payload before existing candidate/C5 fallback.
 - Verification run after the all-channel-9-send-failed EACK fallback slice:
   `.venv/bin/west build --no-sysbuild -s firmware/app/tests/gateway_eack_policy -b native_sim/native/64 --build-dir build/test-gateway-eack-policy-native64 --target run`
   passed (`gateway_eack_policy`: pass = 9, fail = 0), and

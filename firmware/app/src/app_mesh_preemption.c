@@ -18,7 +18,7 @@ int app_mesh_apply_click_preempt_plan(
 
     if (plan->save_outbox && ops->save_outbox != NULL) {
         local_result.save_outbox_ret = ops->save_outbox(ops->ctx);
-        local_result.outbox_saved = true;
+        local_result.outbox_saved = local_result.save_outbox_ret == 0;
     }
     if (plan->clear_outbox && ops->clear_outbox != NULL) {
         ops->clear_outbox(ops->ctx);
@@ -31,7 +31,7 @@ int app_mesh_apply_click_preempt_plan(
     }
     if (plan->schedule_timeout && ops->schedule_timeout != NULL) {
         local_result.schedule_timeout_ret = ops->schedule_timeout(ops->ctx);
-        local_result.timeout_scheduled = true;
+        local_result.timeout_scheduled = local_result.schedule_timeout_ret >= 0;
     }
     if (plan->purge_rx_queue && ops->mesh_rx_msgq != NULL) {
         k_msgq_purge(ops->mesh_rx_msgq);
