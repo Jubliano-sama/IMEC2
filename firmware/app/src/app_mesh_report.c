@@ -8,6 +8,7 @@
 #include "app_mesh_flood.h"
 #include "app_mesh_ch9_ack.h"
 #include "app_mesh_collection_deferral.h"
+#include "app_mesh_gateway_ack_policy.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
 #include "app_mesh_route_reply_ack.h"
@@ -5301,6 +5302,58 @@ bool mesh_route_waiting_tx_active(void)
     return mesh_route_waiting_tx_valid;
 }
 
+static int mesh_try_deferred_gateway_ack_on_channel9(const struct mesh_outbound *pending,
+                                                     const char *reason)
+{
+    struct mesh_outbound ack;
+    struct mesh_channel5_requirements requirements;
+    struct mesh_event_plan plan = {0};
+    uint32_t now_ms;
+    int ret;
+
+    if (pending == NULL ||
+        pending->packet.msg_type != MSG_GATEWAY_ACK ||
+        !mesh_id_is_unicast(pending->next_hop_id)) {
+        return -EINVAL;
+    }
+
+    ack = *pending;
+    mesh_fill_channel5_requirements(&requirements);
+    now_ms = k_uptime_get_32();
+    (void)mesh_expire_channel9_timings(now_ms, reason);
+    ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
+                                               ack.next_hop_id,
+                                               &requirements,
+                                               now_ms,
+                                               &plan);
+    if (ret != PROTO_ERR_STALE) {
+        mesh_event_note_plan_action(&mesh_event_stats, plan.action);
+    }
+    mesh_debug_channel5_preemption("gateway-ack",
+                                   reason,
+                                   ack.next_hop_id,
+                                   &requirements,
+                                   &plan,
+                                   now_ms);
+    if (ret == PROTO_ERR_STALE || ret == PROTO_ERR_NOT_FOUND) {
+        return -EHOSTUNREACH;
+    }
+    if (ret == PROTO_ERR_BUSY) {
+        return -EBUSY;
+    }
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    ack.radio_channel = MESH_EVENT_CHANNEL;
+    ret = mesh_send_outbound(&ack, reason);
+    if (ret == 0) {
+        mesh_relay_note_tx_sent(&mesh_runtime, &ack, k_uptime_get_32());
+        mesh_note_channel9_local_tx(ack.next_hop_id, plan.start_ms);
+    }
+    return ret;
+}
+
 static void mesh_try_route_waiting_tx(void)
 {
     struct mesh_outbound pending;
@@ -5375,6 +5428,38 @@ static void mesh_try_route_waiting_tx(void)
     pending = mesh_route_waiting_tx;
     now_ms = k_uptime_get_32();
     wait_state.outbound_ready = mesh_outbound_ready_for_tx(&pending, now_ms);
+    if (pending.packet.msg_type == MSG_GATEWAY_ACK &&
+        mesh_id_is_unicast(pending.next_hop_id)) {
+        if (!wait_state.outbound_ready) {
+            mesh_schedule_route_waiting_retry("gateway-ack-not-ready");
+            return;
+        }
+
+        ret = mesh_try_deferred_gateway_ack_on_channel9(&pending,
+                                                        "gateway-ack-deferred");
+        if (ret == 0) {
+            mesh_route_waiting_tx_valid = false;
+            return;
+        }
+        if (ret == -EHOSTUNREACH) {
+            (void)mesh_propose_event_after_channel5_contact(
+                pending.next_hop_id,
+                "gateway-ack-channel9-refresh");
+            mesh_schedule_route_waiting_retry_after("gateway-ack-channel9-refresh",
+                                                    MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+            return;
+        }
+        if (ret == -EBUSY) {
+            mesh_schedule_route_waiting_retry_after("gateway-ack-channel9-wait",
+                                                    MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+            return;
+        }
+
+        mesh_schedule_route_waiting_retry_after("gateway-ack-send-retry",
+                                                REPORT_TX_RETRY_DELAY_MS);
+        return;
+    }
+
     if (wait_state.outbound_ready) {
         wait_state.tx_ret = mesh_start_tracked_tx(&pending, "route-discovered-packet");
     }
@@ -6245,22 +6330,29 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
         struct mesh_outbound *gateway_ack = &mesh_result_action_tx;
         struct mesh_channel5_requirements requirements;
         struct mesh_event_plan plan = {0};
-        bool sent_on_current_channel9 = false;
+        struct app_mesh_gateway_ack_state ack_state = {
+            .route_test_enabled = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST),
+            .gateway_role = DEVICE_ROLE == ROLE_GATEWAY,
+            .received_on_channel9 = received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD,
+            .channel9_require_ret = PROTO_ERR_BUSY,
+            .channel9_retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+        };
+        struct app_mesh_gateway_ack_decision ack_decision;
         uint32_t now_ms;
         int ret;
 
         *gateway_ack = result->gateway_ack;
-        if (received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
-            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
+        if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_QUEUE_ROUTE_TEST_ACK) {
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
             mesh_ch9_ack_batch_queue(gateway_ack, rx);
             goto after_gateway_ack;
         }
 
-        if (DEVICE_ROLE == ROLE_GATEWAY &&
-            received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9) {
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
-            if (mesh_send_outbound(gateway_ack, "gateway-ack-current-channel9") == 0) {
+            ret = mesh_send_outbound(gateway_ack, ack_decision.reason);
+            if (ret == 0) {
                 mesh_relay_note_tx_sent(&mesh_runtime, gateway_ack, k_uptime_get_32());
                 mesh_note_channel9_local_tx(gateway_ack->next_hop_id, k_uptime_get_32());
                 high_debug_log_event("GATEWAY_ACK_TX",
@@ -6272,57 +6364,63 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                         (unsigned long long)gateway_ack->packet.dst_id,
                         (unsigned long long)gateway_ack->next_hop_id,
                         gateway_ack->packet.seq);
-                sent_on_current_channel9 = true;
+                goto after_gateway_ack;
             } else {
                 LOG_WRN("gateway ACK current channel-9 send failed; will retry on channel-9 event: next=0x%016llx",
                         (unsigned long long)gateway_ack->next_hop_id);
+                ack_state.current_channel9_attempted = true;
+                ack_state.current_channel9_ret = ret;
+                app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
                 mesh_store_route_waiting_tx(gateway_ack);
-                mesh_schedule_route_waiting_retry_after("gateway-ack-current-channel9",
-                                                        MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
-                sent_on_current_channel9 = true;
+                mesh_schedule_route_waiting_retry_after(ack_decision.reason,
+                                                        ack_decision.delay_ms);
+                goto after_gateway_ack;
             }
         }
 
-        if (!sent_on_current_channel9) {
-            mesh_fill_channel5_requirements(&requirements);
-            now_ms = k_uptime_get_32();
-            (void)mesh_expire_channel9_timings(now_ms, "gateway-ack");
-            ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
-                                                       gateway_ack->next_hop_id,
-                                                       &requirements,
-                                                       now_ms,
-                                                       &plan);
-            if (ret != PROTO_ERR_STALE) {
-                mesh_event_note_plan_action(&mesh_event_stats, plan.action);
+        mesh_fill_channel5_requirements(&requirements);
+        now_ms = k_uptime_get_32();
+        (void)mesh_expire_channel9_timings(now_ms, "gateway-ack");
+        ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
+                                                   gateway_ack->next_hop_id,
+                                                   &requirements,
+                                                   now_ms,
+                                                   &plan);
+        ack_state.channel9_require_ret = ret;
+        app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
+        if (ret != PROTO_ERR_STALE) {
+            mesh_event_note_plan_action(&mesh_event_stats, plan.action);
+        }
+        mesh_debug_channel5_preemption("gateway-ack",
+                                       "gateway-ack",
+                                       gateway_ack->next_hop_id,
+                                       &requirements,
+                                       &plan,
+                                       now_ms);
+        if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_SEND_PLANNED_CHANNEL9) {
+            gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
+            if (mesh_send_outbound(gateway_ack, ack_decision.reason) == 0) {
+                mesh_relay_note_tx_sent(&mesh_runtime, gateway_ack, k_uptime_get_32());
+                mesh_note_channel9_local_tx(gateway_ack->next_hop_id, plan.start_ms);
             }
-            mesh_debug_channel5_preemption("gateway-ack",
-                                           "gateway-ack",
-                                           gateway_ack->next_hop_id,
-                                           &requirements,
-                                           &plan,
-                                           now_ms);
-            if (ret != PROTO_OK) {
-                LOG_WRN("gateway ACK falling back to channel-5 contact: next=0x%016llx ret=%d",
-                        (unsigned long long)gateway_ack->next_hop_id,
-                        ret);
-                gateway_ack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-                if (mesh_send_c5_control(gateway_ack,
-                                         C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
-                                         MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                         "gateway-ack-channel5") == 0) {
-                    mesh_relay_note_tx_sent(&mesh_runtime, gateway_ack, k_uptime_get_32());
-                } else {
-                    mesh_store_route_waiting_tx(gateway_ack);
-                    (void)mesh_request_route(gateway_ack->packet.dst_id,
-                                             "gateway-ack-channel9-refresh");
-                }
-            } else {
-                gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
-                if (mesh_send_outbound(gateway_ack, "gateway-ack") == 0) {
-                    mesh_relay_note_tx_sent(&mesh_runtime, gateway_ack, k_uptime_get_32());
-                    mesh_note_channel9_local_tx(gateway_ack->next_hop_id, plan.start_ms);
-                }
-            }
+        } else if (ack_decision.action ==
+                   APP_MESH_GATEWAY_ACK_ACTION_STORE_WAITING_REFRESH_CHANNEL9) {
+            LOG_WRN("gateway ACK deferred until channel-9 timing refresh: next=0x%016llx ret=%d",
+                    (unsigned long long)gateway_ack->next_hop_id,
+                    ret);
+            mesh_store_route_waiting_tx(gateway_ack);
+            (void)mesh_propose_event_after_channel5_contact(gateway_ack->next_hop_id,
+                                                            ack_decision.reason);
+            mesh_schedule_route_waiting_retry_after(ack_decision.reason,
+                                                    MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+        } else if (ack_decision.action ==
+                   APP_MESH_GATEWAY_ACK_ACTION_STORE_WAITING_FIXED_RETRY) {
+            LOG_WRN("gateway ACK waiting for channel-9 event: next=0x%016llx ret=%d",
+                    (unsigned long long)gateway_ack->next_hop_id,
+                    ret);
+            mesh_store_route_waiting_tx(gateway_ack);
+            mesh_schedule_route_waiting_retry_after(ack_decision.reason,
+                                                    ack_decision.delay_ms);
         }
     }
 after_gateway_ack:

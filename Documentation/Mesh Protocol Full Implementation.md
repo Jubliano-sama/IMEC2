@@ -100,7 +100,7 @@ This C5 path is used for:
 - gateway command and survey floods,
 - collection EACK fallback floods,
 - result offer/grant/busy control,
-- gateway ACK C5 fallback,
+- gateway ACK route/contact refresh before renewed channel-9 timing,
 - channel-9 event propose/accept negotiation.
 
 ## Route Discovery
@@ -270,6 +270,11 @@ Gateway ACK/EACK return priority is:
 3. Channel-5 contact refresh followed by channel-9 timing negotiation.
 4. Bounded channel-5 control flood only when timing is unavailable, broad
    route-wide suppression is needed, or missing-node recovery requires reach.
+
+Ordinary `MSG_GATEWAY_ACK` is not sent as the channel-5 refresh payload. If
+current or planned channel 9 is unavailable, the ACK is stored for retry and the
+app requests route/contact refresh so a later channel-9 opportunity can carry
+the ACK.
 
 Gateway collection state keeps previous-hop metadata for accepted results and
 bundles. EACK routing derives distinct return candidates from that state, tries

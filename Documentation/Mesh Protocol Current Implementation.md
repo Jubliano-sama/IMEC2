@@ -376,6 +376,10 @@ Current ACK/EACK handling:
 - `MSG_GATEWAY_ACK` is end-to-end delivery confirmation for important
   gateway-bound packets.
 - `MSG_GATEWAY_COLLECTION_EACK` is collection-level status and retry guidance.
+- Ordinary `MSG_GATEWAY_ACK` return is channel-9-first. Current channel-9 RX at
+  the gateway tries the same event immediately; otherwise a planned channel-9
+  TX event is required. Stale or missing channel-9 timing stores the ACK and
+  requests route/contact refresh instead of sending the ACK itself on channel 5.
 - When a collection result or bundle is newly accepted on
   `UWB_CHANNEL_MESH_PAYLOAD` from a valid previous hop, the gateway first tries
   to return the collection EACK immediately on the current channel-9 event to
