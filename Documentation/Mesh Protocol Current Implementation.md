@@ -323,6 +323,10 @@ Current route solicitation behavior:
 7. The origin installs the resulting route as a parent candidate, not as a
    single permanent route.
 
+Focused native app-policy coverage verifies route-reply send-failure retry,
+ACK-listen timeout retry, final timeout failure, backup-hop selection, and
+ACK-listen timeout extension after accepted channel-5 preemption.
+
 Gateway route advertisement is a maintenance optimization. The gateway can send
 bounded `MSG_GATEWAY_ROUTE_ADV` floods at startup, on request, after route/profile
 changes, or at a low maintenance cadence. Anchors treat advertisements as

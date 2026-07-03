@@ -148,6 +148,10 @@ Within one accepted route-reply exchange, the ACK and backup retry metadata are
 normal control frames. They do not each require a separate wake train unless the
 accepted C5 contact has expired.
 
+Focused native app-policy coverage verifies send-failure retry, ACK-listen
+timeout retry, final timeout failure, backup-hop selection, and ACK-listen
+timeout extension after accepted channel-5 preemption.
+
 ## Gateway Route Advertisements
 
 The gateway can flood route advertisements at startup or after route/profile

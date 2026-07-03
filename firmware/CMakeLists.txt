@@ -113,6 +113,14 @@ target_include_directories(test_app_mesh_route_ready_handoff PRIVATE app/src)
 target_link_libraries(test_app_mesh_route_ready_handoff PRIVATE core)
 add_test(NAME app_mesh_route_ready_handoff COMMAND test_app_mesh_route_ready_handoff)
 
+add_executable(test_app_mesh_route_reply_ack
+    tests/test_app_mesh_route_reply_ack.c
+    app/src/app_mesh_route_reply_ack.c
+)
+target_include_directories(test_app_mesh_route_reply_ack PRIVATE app/src)
+target_link_libraries(test_app_mesh_route_reply_ack PRIVATE core)
+add_test(NAME app_mesh_route_reply_ack COMMAND test_app_mesh_route_reply_ack)
+
 add_executable(test_app_mesh_route_wait_tx
     tests/test_app_mesh_route_wait_tx.c
     app/src/app_mesh_route_wait_tx.c

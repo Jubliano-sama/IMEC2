@@ -10,6 +10,7 @@
 #include "app_mesh_collection_deferral.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_route_reply_ack.h"
 #include "app_mesh_route_ready_handoff.h"
 #include "app_mesh_route_wait_tx.h"
 #include "app_mesh_result_handoff.h"
@@ -3081,7 +3082,9 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
             if (mesh_handle_channel5_wake_claim(frame, frame_len, quality)) {
                 uint32_t preempted_at_ms = k_uptime_get_32();
 
-                deadline_ms = preempted_at_ms + RREP_ACK_TIMEOUT_MS;
+                deadline_ms = app_mesh_route_reply_ack_deadline_after_preemption(
+                    preempted_at_ms,
+                    RREP_ACK_TIMEOUT_MS);
                 status_debug_note("DBG_ROUTE_REPLY_ACK_PREEMPT_EXTEND\n");
                 high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
                                      "phase=c5-preempt-click next=0x%016llx seq=%u attempt=%u extended_deadline=%u",
@@ -3240,21 +3243,32 @@ static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_
     }
 
     for (uint8_t attempt = 0u; attempt <= RREP_RETRY_COUNT_PER_HOP; attempt++) {
+        struct app_mesh_route_reply_ack_attempt_state attempt_state = {
+            .attempt = attempt,
+            .max_retries = RREP_RETRY_COUNT_PER_HOP,
+        };
+        struct app_mesh_route_reply_ack_attempt_result attempt_result;
+
         last_ret = mesh_send_route_reply_burst(route_reply, attempt, attempt == 0u);
-        if (last_ret != 0) {
-            if (attempt < RREP_RETRY_COUNT_PER_HOP) {
-                mesh_relay_note_route_reply_retry(&mesh_runtime);
-            }
-            continue;
+        attempt_state.send_ret = last_ret;
+        if (last_ret == 0) {
+            last_ret = mesh_listen_for_route_reply_ack(route_reply, attempt);
+            attempt_state.listen_attempted = true;
+            attempt_state.listen_ret = last_ret;
         }
 
-        last_ret = mesh_listen_for_route_reply_ack(route_reply, attempt);
-        if (last_ret == 0) {
-            return 0;
+        app_mesh_route_reply_ack_decide_attempt(&attempt_state, &attempt_result);
+        if (attempt_result.action == APP_MESH_ROUTE_REPLY_ACK_ATTEMPT_SUCCESS) {
+            return attempt_result.return_ret;
         }
-        if (attempt < RREP_RETRY_COUNT_PER_HOP) {
+        last_ret = attempt_result.return_ret;
+        if (attempt_result.note_retry) {
             mesh_relay_note_route_reply_retry(&mesh_runtime);
         }
+        if (attempt_result.action == APP_MESH_ROUTE_REPLY_ACK_ATTEMPT_RETRY) {
+            continue;
+        }
+        break;
     }
 
     high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
@@ -3272,6 +3286,8 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
                                        uint64_t *acked_next_hop_id)
 {
     struct mesh_outbound backup_route_reply;
+    struct app_mesh_route_reply_ack_backup_state backup_state;
+    struct app_mesh_route_reply_ack_backup_result backup_result;
     int ret;
 
     if (acked_next_hop_id != NULL) {
@@ -3290,20 +3306,25 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
         return 0;
     }
 
-    if (!backup_valid ||
-        !mesh_id_is_unicast(backup_next_hop_id) ||
-        backup_next_hop_id == route_reply->next_hop_id) {
-        mesh_c5_contact_clear("route-reply-failed");
+    backup_state.primary_ret = ret;
+    backup_state.backup_valid = backup_valid;
+    backup_state.primary_next_hop_id = route_reply->next_hop_id;
+    backup_state.backup_next_hop_id = backup_next_hop_id;
+    app_mesh_route_reply_ack_decide_backup(&backup_state, &backup_result);
+    if (!backup_result.try_backup) {
+        mesh_c5_contact_clear(backup_result.clear_reason);
         return ret;
     }
 
     backup_route_reply = *route_reply;
-    backup_route_reply.next_hop_id = backup_next_hop_id;
-    mesh_relay_note_route_reply_retry(&mesh_runtime);
+    backup_route_reply.next_hop_id = backup_result.backup_next_hop_id;
+    if (backup_result.note_retry) {
+        mesh_relay_note_route_reply_retry(&mesh_runtime);
+    }
     high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
                          "phase=backup primary=0x%016llx backup=0x%016llx seq=%u primary_ret=%d",
                          (unsigned long long)route_reply->next_hop_id,
-                         (unsigned long long)backup_next_hop_id,
+                         (unsigned long long)backup_result.backup_next_hop_id,
                          route_reply->packet.seq,
                          ret);
 
