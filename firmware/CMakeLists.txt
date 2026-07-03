@@ -43,6 +43,14 @@ add_executable(test_gateway_command tests/test_gateway_command.c)
 target_link_libraries(test_gateway_command PRIVATE core)
 add_test(NAME gateway_command COMMAND test_gateway_command)
 
+add_executable(test_gateway_eack_policy
+    tests/test_gateway_eack_policy.c
+    app/src/app_gateway_eack_policy.c
+)
+target_include_directories(test_gateway_eack_policy PRIVATE app/src)
+target_link_libraries(test_gateway_eack_policy PRIVATE core)
+add_test(NAME gateway_eack_policy COMMAND test_gateway_eack_policy)
+
 add_executable(test_uwb tests/test_uwb.c)
 target_link_libraries(test_uwb PRIVATE core)
 add_test(NAME uwb COMMAND test_uwb)
