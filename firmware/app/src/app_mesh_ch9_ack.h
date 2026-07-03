@@ -54,4 +54,7 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
                                     const struct app_mesh_ch9_tx_retry_ops *ops,
                                     struct app_mesh_ch9_tx_retry_result *result);
 
+bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
+                                      bool relay_collection_result_active);
+
 #endif

@@ -116,10 +116,12 @@ Current `get_goal()`:
 3. Gateway app collection EACKs now select explicit missing-list format when the
    active collection state has a count-matched `TLV_EXPECTED_NODE_ID` roster.
    `CMD_SCOPE_ALL_REGISTERED` collection commands without that full roster are
-   rejected instead of being downgraded to best-effort membership. The gateway
-   still has no persistent membership table; `CMD_SCOPE_ALL_HEARD` remains the
-   best-effort collection mode and received-list fallback is still used when a
-   missing-list payload does not fit.
+   rejected instead of being downgraded to best-effort membership. A core
+   preserve-order `gateway_membership` roster and snapshot model now exists, but
+   gateway app/NVS wiring and parser relaxation for rosterless
+   `ALL_REGISTERED` commands are not implemented yet. `CMD_SCOPE_ALL_HEARD`
+   remains the best-effort collection mode and received-list fallback is still
+   used when a missing-list payload does not fit.
 4. App-level failure-mode coverage still needs broader integration tests for
    full radio handoff/retry behavior across real-time preemption points.
 
@@ -285,48 +287,27 @@ forward-looking behavior as if it exists.
 
 ## Next actions
 
-Current integration checkpoint:
+Current dirty integration patches:
 
-- `7e5a08c Cover gateway EACK return policy`
-- This commit adds focused native coverage for channel-9-first collection EACK
-  return candidate behavior, duplicate/invalid return-hop suppression, fallback
-  to bounded channel-5 recovery only after channel-9 send failures, and
-  no-candidate channel-5 recovery.
-- Local verification for that commit: `./firmware/build/test_gateway_eack_policy`
-  passed, `ctest --test-dir firmware/build --output-on-failure` passed 15/15,
-  and `git diff --check` passed.
-- Previous clean config checkpoint: `dd67448 Enable gateway collection
-  persistence config`.
-- Gateway persistence config audit confirmed default gateway plus
-  `gateway_stage3_highdebug`, `gateway_ble_connectivity_test`, and
-  `mesh_gateway` presets build with the NVS backend rather than persistence
-  stubs.
+1. Core gateway membership provider:
+   `gateway_membership` adds a bounded preserve-order roster keyed by
+   `membership_epoch`, rejects zero/duplicate/over-capacity entries, provides
+   epoch-aware lookup/export helpers, and has a versioned snapshot
+   export/restore shape. App/NVS integration is intentionally not included yet.
+2. Collection-result source handoff preservation:
+   active local `MSG_COMMAND_RESULT` collection sends stay relay-owned during
+   channel-9 ACK handoff instead of being moved to app ACK-pending state.
+3. Forwarded child bundle custody recovery:
+   pending `MSG_RESULT_BUNDLE` outbox custody is preserved on gateway-ACK
+   timeout/route rediscovery, can be exported/restored from the relay outbox
+   snapshot, and retransmits after restore.
 
-Integrated worker slices pending commit:
+Verification already run on the dirty patches:
 
-1. Bounded channel-5 flood scheduler and politeness:
-   route solicitation, gateway route advertisements, gateway command floods,
-   collection EACK C5 fallback, and relay broadcast forwards now use bounded
-   C5 flood sends with `FLOOD_RELAY_REPEAT_MS`, `C5_POLITE_SNIFF_MS`, busy-repeat
-   skipping, one-slot deferral for C5 preemption, and relay `earliest_tx_ms`
-   forward-due timing.
-2. Anchor all-node command execution contract:
-   anchor broadcast command receive now rejects expired floods, suppresses
-   duplicate `command_seq` replays through a bounded RX cache, honors
-   packet-age-adjusted `execute_delay_ms`, and schedules collection results only
-   when `response_mode` requires them.
-3. Collection EACK return/fallback behavior:
-   focused native policy coverage is committed in `7e5a08c`. Remaining work is
-   broader app/radio integration proof if needed.
-
-Main-agent verification for the integrated worker slices:
-
-1. `git diff -- Documentation/MeshSpec.md` was empty.
-2. `git diff --check` passed.
-3. `cmake --build firmware/build` passed.
-4. `ctest --test-dir firmware/build --output-on-failure` passed 15/15.
-5. `build/mesh-flood-test-64/zephyr/zephyr.exe` passed 4/4.
-6. Zephyr role builds passed:
-   - clicker: 234592 B FLASH / 84624 B RAM
-   - anchor: 181836 B FLASH / 96896 B RAM
-   - gateway: 291692 B FLASH / 103564 B RAM
+1. `git diff --check` passed.
+2. `cmake --build firmware/build` passed.
+3. `ctest --test-dir firmware/build --output-on-failure` passed 16/16.
+4. `./firmware/build/test_gateway_membership` passed.
+5. `./firmware/build/test_mesh_relay` passed.
+6. `.venv/bin/west build --no-sysbuild -s firmware/app/tests/mesh_ch9_ack_handoff -b native_sim/native/64 --build-dir build/mesh_ch9_ack_handoff_test` passed.
+7. `build/mesh_ch9_ack_handoff_test/zephyr/zephyr.exe` passed 7/7.

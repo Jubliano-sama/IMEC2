@@ -447,6 +447,7 @@ int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   size_t payload_cap,
                                   size_t *offset);
 bool mesh_relay_tx_active(const struct mesh_relay *relay);
+bool mesh_relay_tx_active_local_collection_result(const struct mesh_relay *relay);
 bool mesh_relay_result_bundle_pending(const struct mesh_relay *relay);
 uint32_t mesh_relay_result_bundle_due_ms(const struct mesh_relay *relay);
 void mesh_relay_result_bundle_note_forwarded(struct mesh_relay *relay,

@@ -346,4 +346,22 @@ ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeue_reports_drop_when_queue_ful
     zassert_equal(queue.drop_notes, 1u);
 }
 
+ZTEST(mesh_ch9_ack_handoff,
+      test_collection_result_stays_relay_owned_instead_of_ack_handoff)
+{
+    struct proto_packet collection_result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+    };
+    struct proto_packet click_report = {
+        .msg_type = MSG_CLICK_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+    };
+
+    zassert_false(app_mesh_ch9_tx_should_track_ack(&collection_result, true));
+    zassert_true(app_mesh_ch9_tx_should_track_ack(&collection_result, false));
+    zassert_true(app_mesh_ch9_tx_should_track_ack(&click_report, true));
+    zassert_false(app_mesh_ch9_tx_should_track_ack(NULL, true));
+}
+
 ZTEST_SUITE(mesh_ch9_ack_handoff, NULL, NULL, NULL, NULL, NULL);

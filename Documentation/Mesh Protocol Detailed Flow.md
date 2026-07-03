@@ -369,6 +369,22 @@ Implemented in native code:
   missing-list retry, explicit missing-list absence confirmation, and
   closed-collection stop.
 
+## Implemented Gateway Membership Core
+
+The gateway now has a core-only registered-membership roster model:
+
+- `gateway_membership` stores a bounded preserve-order node roster keyed by
+  `membership_epoch`.
+- The roster rejects zero node IDs, duplicate node IDs, zero epochs, and
+  over-capacity input.
+- Lookup and export helpers require an epoch match.
+- Versioned snapshot export/restore exists with validation for future app/NVS
+  persistence.
+
+This core model is not wired into gateway app command handling yet. Current
+`CMD_SCOPE_ALL_REGISTERED` collection still requires an explicit command-carried
+roster before the gateway can send strict missing-list EACKs.
+
 ## Implemented Anchor Command Execution
 
 Anchor broadcast command receive handling now uses packet-age-aware command
@@ -591,17 +607,20 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    active collection-result retry-backoff outbox persistence has Zephyr/NVS
    round-trip coverage, accepted-click preemption of an active collection-result
    outbox has app-integrated NVS save/restore/retry coverage, active
-   command-result expiry stops retrying, and retry-round delay restore has
-   native coverage.
+   command-result expiry stops retrying, channel-9 ACK handoff keeps active
+   local collection-result sends relay-owned instead of moving them into app
+   ACK-pending state, and retry-round delay restore has native coverage.
 
 3. Gateway app scheduled EACKs use explicit missing-list format only when the
    active collection state has an explicit count-matched roster from
    `TLV_EXPECTED_NODE_ID`. `CMD_SCOPE_ALL_REGISTERED` collection commands
    without that full roster are rejected rather than treated as provable
    membership. `CMD_SCOPE_ALL_HEARD` remains best-effort and uses received-list
-   EACKs unless a strict roster is available. The gateway still has no
-   persistent membership table, and it falls back to received-list EACKs if the
-   missing-list payload would exceed packet capacity.
+   EACKs unless a strict roster is available. A core gateway membership roster
+   and snapshot model now exists, but app/NVS wiring and parser relaxation for
+   rosterless `ALL_REGISTERED` commands are still missing. The gateway falls
+   back to received-list EACKs if the missing-list payload would exceed packet
+   capacity.
 
    The EACK return path is also still partial. Collection state now has
    per-result previous-hop metadata, previous-hop-aware record APIs, and a
@@ -620,9 +639,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    offer/payload custody-retry state is relay-snapshot backed. The parent
    reservation path, queued child bundle path, and after-grant forwarded
    payload path now have app/NVS round-trip coverage. Parent reservation
-   recovery after `RESULT_GRANT` send failure is also app-tested. The remaining
-   gap is app-integrated coverage across every radio handoff and preemption
-   point.
+   recovery after `RESULT_GRANT` send failure is also app-tested. Forwarded
+   child `MSG_RESULT_BUNDLE` gateway-ACK timeout is preserved through route
+   rediscovery, snapshot restore, and retransmit. The remaining gap is
+   app-integrated coverage across every radio handoff and preemption point.
 
 5. Durable multi-hop child custody/storage-backed recovery is partial.
    Queued child bundles, in-flight `MSG_RESULT_BUNDLE` outbox state, and

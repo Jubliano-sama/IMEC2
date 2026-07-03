@@ -1307,11 +1307,12 @@ static void outbox_record_mark_custody_accepted(struct mesh_relay *relay,
     relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
 }
 
-static bool preserve_pending_collection_result(struct mesh_relay *relay,
-                                               uint32_t now_ms)
+static bool preserve_pending_gateway_result(struct mesh_relay *relay,
+                                            uint32_t now_ms)
 {
     if (relay == NULL ||
-        !pending_is_local_collection_result(relay, &relay->pending)) {
+        (!pending_is_local_collection_result(relay, &relay->pending) &&
+         !pending_is_result_bundle(relay, &relay->pending))) {
         return false;
     }
 
@@ -4363,6 +4364,12 @@ bool mesh_relay_tx_active(const struct mesh_relay *relay)
     return relay != NULL && relay->pending.state != MESH_RELAY_TX_IDLE;
 }
 
+bool mesh_relay_tx_active_local_collection_result(const struct mesh_relay *relay)
+{
+    return relay != NULL &&
+           pending_is_local_collection_result(relay, &relay->pending);
+}
+
 bool mesh_relay_result_bundle_pending(const struct mesh_relay *relay)
 {
     return relay != NULL &&
@@ -4735,7 +4742,7 @@ void mesh_relay_cancel_tx(struct mesh_relay *relay)
 
 bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms)
 {
-    return preserve_pending_collection_result(relay, now_ms);
+    return preserve_pending_gateway_result(relay, now_ms);
 }
 
 int mesh_relay_start_tx(struct mesh_relay *relay,
@@ -5112,7 +5119,7 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
                                          now_ms);
         if (action == ROUTE_DELIVERY_DISCOVER ||
             mesh_relay_select_next_hop(relay, relay->pending.packet.dst_id, &next_hop_id) != PROTO_OK) {
-            if (preserve_pending_collection_result(relay, now_ms)) {
+            if (preserve_pending_gateway_result(relay, now_ms)) {
                 result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
                 result->status = PROTO_ERR_NOT_FOUND;
                 return PROTO_OK;

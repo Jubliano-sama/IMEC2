@@ -3622,6 +3622,12 @@ static bool mesh_ch9_tx_pending_track_sent(const struct mesh_outbound *sent,
         return false;
     }
 
+    if (!app_mesh_ch9_tx_should_track_ack(
+            &sent->packet,
+            mesh_relay_tx_active_local_collection_result(&mesh_runtime))) {
+        return false;
+    }
+
     if (!mesh_ch9_tx_pending_add(sent, deadline_ms)) {
         return false;
     }
