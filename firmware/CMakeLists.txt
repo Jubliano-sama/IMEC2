@@ -9,6 +9,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(core
     src/debug_log.c
     src/protocol.c
+    src/gateway_membership.c
     src/gateway_command.c
     src/uwb.c
     src/uwb_ble_courtesy.c
@@ -42,6 +43,10 @@ add_test(NAME status COMMAND test_status)
 add_executable(test_gateway_command tests/test_gateway_command.c)
 target_link_libraries(test_gateway_command PRIVATE core)
 add_test(NAME gateway_command COMMAND test_gateway_command)
+
+add_executable(test_gateway_membership tests/test_gateway_membership.c)
+target_link_libraries(test_gateway_membership PRIVATE core)
+add_test(NAME gateway_membership COMMAND test_gateway_membership)
 
 add_executable(test_gateway_eack_policy
     tests/test_gateway_eack_policy.c
