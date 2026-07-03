@@ -93,6 +93,12 @@ Current `get_goal()`:
    queued state is kept, retry is scheduled with the existing
    `MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS`, and non-blocked queued work is allowed
    through.
+   `app_mesh_route_ready_handoff` now covers route-ready RX-drain deferred
+   proposal decisions: a selected route with queued RX clears route-reply
+   handoff, stores only the deferred next-hop peer, and schedules drain retry;
+   once RX drains it proposes once before waiting TX resumes; proposal failure
+   schedules event-accept wait; and no-selected-route cases clear the handoff
+   and try waiting TX without proposing.
    Gateway collection state now has per-result previous-hop metadata on
    `gateway_collection_result_entry`, previous-hop-aware result/bundle record
    APIs, and `gateway_collection_return_candidates()` for distinct return

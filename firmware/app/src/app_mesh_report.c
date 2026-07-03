@@ -10,6 +10,7 @@
 #include "app_mesh_collection_deferral.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_route_ready_handoff.h"
 #include "app_mesh_result_handoff.h"
 #include "app_mesh_test.h"
 #include "app_mesh_tx_handoff_gate.h"
@@ -5282,6 +5283,7 @@ static void mesh_try_route_waiting_tx(void)
 {
     struct mesh_outbound pending;
     struct app_mesh_tx_handoff_result handoff_result;
+    struct app_mesh_route_ready_handoff_result route_ready_result;
     uint32_t now_ms;
     int ret;
 
@@ -5301,30 +5303,49 @@ static void mesh_try_route_waiting_tx(void)
         return;
     }
 
-    pending = mesh_route_waiting_tx;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         mesh_id_is_unicast(mesh_route_ready_event_peer_id)) {
-        uint64_t peer_id = mesh_route_ready_event_peer_id;
+        const struct app_mesh_route_ready_handoff_state route_ready_state = {
+            .rx_queue_pending = k_msgq_num_used_get(&mesh_rx_msgq) > 0u,
+            .deferred_peer_valid = true,
+            .deferred_peer_id = mesh_route_ready_event_peer_id,
+        };
 
-        if (k_msgq_num_used_get(&mesh_rx_msgq) > 0u) {
+        app_mesh_route_ready_handoff_on_waiting_tx(&route_ready_state,
+                                                   &route_ready_result);
+        if (route_ready_result.schedule_propose_wait_rx) {
             status_debug_note("DBG_ROUTE_READY_PROPOSE_WAIT_RX\n");
             mesh_schedule_route_waiting_retry("route-ready-propose-wait-rx");
             return;
         }
 
-        status_debug_note("DBG_ROUTE_READY_PROPOSE_DRAINED\n");
-        LOG_INF("mesh route-ready deferred proposal after RX drain: next=0x%016llx delay_ms=%u",
-                (unsigned long long)peer_id,
-                MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
-        mesh_route_ready_event_peer_id = 0u;
-        k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
-        if (mesh_propose_event_after_channel5_contact(peer_id,
-                                                      "route-ready-drained-event-propose") < 0) {
+        if (route_ready_result.propose_deferred) {
+            int propose_ret;
+
+            status_debug_note("DBG_ROUTE_READY_PROPOSE_DRAINED\n");
+            LOG_INF("mesh route-ready deferred proposal after RX drain: next=0x%016llx delay_ms=%u",
+                    (unsigned long long)route_ready_result.peer_id,
+                    MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
+            if (route_ready_result.clear_deferred_peer) {
+                mesh_route_ready_event_peer_id = 0u;
+            }
+            k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
+            propose_ret = mesh_propose_event_after_channel5_contact(
+                route_ready_result.peer_id,
+                "route-ready-drained-event-propose");
+            app_mesh_route_ready_handoff_after_proposal(propose_ret,
+                                                        &route_ready_result);
+        }
+        if (route_ready_result.schedule_event_accept_wait) {
             mesh_schedule_route_waiting_retry("route-ready-event-accept-wait");
+            return;
+        }
+        if (!route_ready_result.allow_waiting_tx) {
             return;
         }
     }
 
+    pending = mesh_route_waiting_tx;
     now_ms = k_uptime_get_32();
     if (!mesh_outbound_ready_for_tx(&pending, now_ms)) {
         mesh_schedule_route_waiting_retry("route-waiting-not-ready");
@@ -6464,43 +6485,56 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY) {
         const struct route_candidate *selected = route_selected(&mesh_runtime.upstream);
-        bool rx_queue_pending = k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
+        const struct app_mesh_route_ready_handoff_state route_ready_state = {
+            .selected_route_valid = selected != NULL,
+            .rx_queue_pending = k_msgq_num_used_get(&mesh_rx_msgq) > 0u,
+            .deferred_peer_valid = mesh_id_is_unicast(mesh_route_ready_event_peer_id),
+            .selected_peer_id = selected != NULL ? selected->next_hop_id : 0u,
+            .deferred_peer_id = mesh_route_ready_event_peer_id,
+        };
+        struct app_mesh_route_ready_handoff_result route_ready_result;
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_ROUTE_READY\n");
         }
-        mesh_route_reply_handoff_clear("route-ready");
+        app_mesh_route_ready_handoff_on_ready(&route_ready_state,
+                                              &route_ready_result);
+        if (route_ready_result.clear_route_reply_handoff) {
+            mesh_route_reply_handoff_clear("route-ready");
+        }
+        if (route_ready_result.clear_deferred_peer) {
+            mesh_route_ready_event_peer_id = 0u;
+        }
         LOG_INF("mesh reactive route ready");
-        if (selected != NULL && !rx_queue_pending) {
+        if (route_ready_result.propose_now) {
             int propose_ret;
 
-            if (mesh_route_ready_event_peer_id == selected->next_hop_id) {
-                mesh_route_ready_event_peer_id = 0u;
-            }
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_note("DBG_ROUTE_READY_PROPOSE_NOW\n");
                 LOG_INF("mesh route-ready to event-control gap: next=0x%016llx delay_ms=%u",
-                        (unsigned long long)selected->next_hop_id,
+                        (unsigned long long)route_ready_result.peer_id,
                         MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
                 k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
             }
-            propose_ret = mesh_propose_event_after_channel5_contact(selected->next_hop_id,
+            propose_ret = mesh_propose_event_after_channel5_contact(route_ready_result.peer_id,
                                                                     "route-ready-event-propose");
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && propose_ret < 0) {
-                mesh_schedule_route_waiting_retry("route-ready-event-accept-wait");
-                return;
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                app_mesh_route_ready_handoff_after_proposal(propose_ret,
+                                                            &route_ready_result);
+                if (route_ready_result.schedule_event_accept_wait) {
+                    mesh_schedule_route_waiting_retry("route-ready-event-accept-wait");
+                    return;
+                }
             }
         }
-        if (rx_queue_pending) {
+        if (route_ready_result.schedule_rx_drain) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_note("DBG_ROUTE_READY_RX_PENDING\n");
-                if (selected != NULL) {
-                    mesh_route_ready_event_peer_id = selected->next_hop_id;
-                }
+                mesh_route_ready_event_peer_id = route_ready_result.peer_id;
             }
             LOG_INF("mesh route ready deferred until queued RX control frames drain");
             mesh_schedule_route_waiting_retry("route-ready-rx-drain");
-        } else {
+        } else if (route_ready_result.try_waiting_tx) {
             mesh_try_route_waiting_tx();
         }
     }
