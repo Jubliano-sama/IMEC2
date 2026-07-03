@@ -15,6 +15,7 @@ extern "C" {
 #define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
 #define GATEWAY_COLLECTION_RESULT_CACHE_SIZE 64u
 #define GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP GATEWAY_COLLECTION_RESULT_CACHE_SIZE
+#define GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION 1u
 
 struct gateway_command_pending {
     struct proto_packet command;
@@ -67,6 +68,23 @@ struct gateway_collection_state {
     uint16_t membership_epoch;
     uint16_t expected_count;
     uint16_t received_count;
+    uint8_t retry_round;
+    uint32_t next_retry_spread_ms;
+    bool collection_open;
+    struct gateway_collection_result_entry results[GATEWAY_COLLECTION_RESULT_CACHE_SIZE];
+};
+
+struct gateway_collection_state_snapshot {
+    uint8_t version;
+    bool valid;
+    uint64_t gateway_id;
+    uint16_t gateway_epoch;
+    uint32_t command_seq;
+    uint32_t collection_epoch_id;
+    uint16_t membership_epoch;
+    uint16_t expected_count;
+    uint16_t received_count;
+    uint16_t result_count;
     uint8_t retry_round;
     uint32_t next_retry_spread_ms;
     bool collection_open;
@@ -173,6 +191,12 @@ bool gateway_collection_contains_result(const struct gateway_collection_state *c
 size_t gateway_collection_return_candidates(const struct gateway_collection_state *collection,
                                             uint64_t *out,
                                             size_t out_cap);
+int gateway_collection_export_snapshot(
+    const struct gateway_collection_state *collection,
+    struct gateway_collection_state_snapshot *snapshot);
+int gateway_collection_restore_snapshot(
+    struct gateway_collection_state *collection,
+    const struct gateway_collection_state_snapshot *snapshot);
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,
                                   uint8_t eack_format,
                                   struct gateway_collection_eack *eack);

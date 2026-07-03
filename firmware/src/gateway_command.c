@@ -1144,6 +1144,164 @@ size_t gateway_collection_return_candidates(const struct gateway_collection_stat
     return count;
 }
 
+static int gateway_collection_snapshot_validate(
+    const struct gateway_collection_state_snapshot *snapshot,
+    struct gateway_collection_state *restored)
+{
+    struct gateway_collection_state tmp;
+    uint16_t valid_count = 0u;
+
+    if (snapshot == NULL || restored == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (snapshot->version != GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION) {
+        return PROTO_ERR_BAD_VERSION;
+    }
+    if (!snapshot->valid) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (snapshot->gateway_id == 0u ||
+        snapshot->command_seq == 0u ||
+        snapshot->collection_epoch_id == 0u ||
+        snapshot->membership_epoch == 0u ||
+        snapshot->expected_count == 0u ||
+        snapshot->received_count > snapshot->expected_count ||
+        snapshot->received_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
+        snapshot->result_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
+        snapshot->result_count != snapshot->received_count ||
+        (snapshot->received_count >= snapshot->expected_count && snapshot->collection_open)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.gateway_id = snapshot->gateway_id;
+    tmp.gateway_epoch = snapshot->gateway_epoch;
+    tmp.command_seq = snapshot->command_seq;
+    tmp.collection_epoch_id = snapshot->collection_epoch_id;
+    tmp.membership_epoch = snapshot->membership_epoch;
+    tmp.expected_count = snapshot->expected_count;
+    tmp.received_count = snapshot->received_count;
+    tmp.retry_round = snapshot->retry_round;
+    tmp.next_retry_spread_ms = snapshot->next_retry_spread_ms;
+    tmp.collection_open = snapshot->collection_open;
+
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_entry *entry = &snapshot->results[i];
+
+        if (!entry->valid) {
+            continue;
+        }
+        if (entry->id.gateway_id != snapshot->gateway_id ||
+            entry->id.gateway_epoch != snapshot->gateway_epoch ||
+            entry->id.command_seq != snapshot->command_seq ||
+            entry->id.node_id == 0u ||
+            gateway_collection_contains_result(&tmp, &entry->id)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (valid_count >= snapshot->result_count) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        tmp.results[i] = *entry;
+        valid_count++;
+    }
+    if (valid_count != snapshot->result_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *restored = tmp;
+    return PROTO_OK;
+}
+
+int gateway_collection_export_snapshot(
+    const struct gateway_collection_state *collection,
+    struct gateway_collection_state_snapshot *snapshot)
+{
+    struct gateway_collection_state_snapshot tmp;
+    uint16_t result_count = 0u;
+
+    if (collection == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (collection->gateway_id == 0u ||
+        collection->command_seq == 0u ||
+        collection->collection_epoch_id == 0u ||
+        collection->membership_epoch == 0u ||
+        collection->expected_count == 0u ||
+        collection->received_count > collection->expected_count ||
+        collection->received_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
+        (collection->received_count >= collection->expected_count && collection->collection_open)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.version = GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION;
+    tmp.valid = true;
+    tmp.gateway_id = collection->gateway_id;
+    tmp.gateway_epoch = collection->gateway_epoch;
+    tmp.command_seq = collection->command_seq;
+    tmp.collection_epoch_id = collection->collection_epoch_id;
+    tmp.membership_epoch = collection->membership_epoch;
+    tmp.expected_count = collection->expected_count;
+    tmp.received_count = collection->received_count;
+    tmp.retry_round = collection->retry_round;
+    tmp.next_retry_spread_ms = collection->next_retry_spread_ms;
+    tmp.collection_open = collection->collection_open;
+
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_entry *entry = &collection->results[i];
+
+        if (!entry->valid) {
+            continue;
+        }
+        if (entry->id.gateway_id != collection->gateway_id ||
+            entry->id.gateway_epoch != collection->gateway_epoch ||
+            entry->id.command_seq != collection->command_seq ||
+            entry->id.node_id == 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            const struct gateway_collection_result_entry *prior = &collection->results[j];
+
+            if (prior->valid && command_result_id_equal(&prior->id, &entry->id)) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+        if (result_count >= collection->received_count) {
+            return PROTO_ERR_MALFORMED;
+        }
+        tmp.results[i] = *entry;
+        result_count++;
+    }
+    if (result_count != collection->received_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    tmp.result_count = result_count;
+
+    *snapshot = tmp;
+    return PROTO_OK;
+}
+
+int gateway_collection_restore_snapshot(
+    struct gateway_collection_state *collection,
+    const struct gateway_collection_state_snapshot *snapshot)
+{
+    struct gateway_collection_state restored;
+    int ret;
+
+    if (collection == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = gateway_collection_snapshot_validate(snapshot, &restored);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    *collection = restored;
+    return PROTO_OK;
+}
+
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,
                                   uint8_t eack_format,
                                   struct gateway_collection_eack *eack)

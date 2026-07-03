@@ -1355,6 +1355,217 @@ static void test_collection_return_candidates_from_direct_results(void)
     assert(candidates[1] == 0xAAAABBBBCCCC0001ull);
 }
 
+static void test_collection_snapshot_round_trips_return_hops(void)
+{
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    struct gateway_collection_state_snapshot snapshot;
+    struct command_result_id id_a = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct command_result_id id_b = id_a;
+    struct proto_packet result_a;
+    struct proto_packet result_b;
+    uint8_t payload_a[96];
+    uint8_t payload_b[96];
+    uint64_t candidates[2] = {0};
+    size_t payload_a_len = 0u;
+    size_t payload_b_len = 0u;
+    bool duplicate = false;
+
+    id_b.node_id = 0x2222333344445555ull;
+    id_b.node_boot_counter = 78u;
+    id_b.result_seq = 2u;
+    make_collection_result_payload(payload_a, sizeof(payload_a), &payload_a_len, &id_a, 3003u);
+    make_collection_result_payload(payload_b, sizeof(payload_b), &payload_b_len, &id_b, 3003u);
+    result_a = make_collection_result_packet(&id_a, payload_a_len);
+    result_b = make_collection_result_packet(&id_b, payload_b_len);
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    3u,
+                                    1u,
+                                    1200u) == PROTO_OK);
+    assert(gateway_collection_record_result_from_hop(&collection,
+                                                     &result_a,
+                                                     payload_a,
+                                                     payload_a_len,
+                                                     0xAAAABBBBCCCC0001ull,
+                                                     &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    assert(gateway_collection_record_result_from_hop(&collection,
+                                                     &result_b,
+                                                     payload_b,
+                                                     payload_b_len,
+                                                     0xAAAABBBBCCCC0002ull,
+                                                     &duplicate) == PROTO_OK);
+    assert(!duplicate);
+
+    memset(&snapshot, 0xA5, sizeof(snapshot));
+    assert(gateway_collection_export_snapshot(&collection, &snapshot) == PROTO_OK);
+    assert(snapshot.version == GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION);
+    assert(snapshot.valid);
+    assert(snapshot.result_count == 2u);
+    assert(snapshot.results[0].previous_hop_id == 0xAAAABBBBCCCC0001ull);
+    assert(snapshot.results[1].previous_hop_id == 0xAAAABBBBCCCC0002ull);
+
+    memset(&restored, 0, sizeof(restored));
+    assert(gateway_collection_restore_snapshot(&restored, &snapshot) == PROTO_OK);
+    assert(restored.gateway_id == collection.gateway_id);
+    assert(restored.gateway_epoch == collection.gateway_epoch);
+    assert(restored.command_seq == collection.command_seq);
+    assert(restored.collection_epoch_id == collection.collection_epoch_id);
+    assert(restored.membership_epoch == collection.membership_epoch);
+    assert(restored.expected_count == collection.expected_count);
+    assert(restored.received_count == collection.received_count);
+    assert(restored.retry_round == collection.retry_round);
+    assert(restored.next_retry_spread_ms == collection.next_retry_spread_ms);
+    assert(restored.collection_open);
+    assert_command_result_id_equal(&restored.results[0].id, &id_a);
+    assert_command_result_id_equal(&restored.results[1].id, &id_b);
+    assert(restored.results[0].previous_hop_id == 0xAAAABBBBCCCC0001ull);
+    assert(restored.results[1].previous_hop_id == 0xAAAABBBBCCCC0002ull);
+    assert(gateway_collection_return_candidates(&restored,
+                                                candidates,
+                                                sizeof(candidates) / sizeof(candidates[0])) == 2u);
+    assert(candidates[0] == 0xAAAABBBBCCCC0002ull);
+    assert(candidates[1] == 0xAAAABBBBCCCC0001ull);
+}
+
+static void test_collection_snapshot_round_trips_closed_collection(void)
+{
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    struct gateway_collection_state_snapshot snapshot;
+    struct command_result_id id = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct proto_packet result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    bool duplicate = false;
+
+    make_collection_result_payload(payload, sizeof(payload), &payload_len, &id, 3003u);
+    result = make_collection_result_packet(&id, payload_len);
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    1u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    assert(gateway_collection_record_result_from_hop(&collection,
+                                                     &result,
+                                                     payload,
+                                                     payload_len,
+                                                     0xAAAABBBBCCCC0001ull,
+                                                     &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    assert(collection.received_count == collection.expected_count);
+    assert(!collection.collection_open);
+
+    assert(gateway_collection_export_snapshot(&collection, &snapshot) == PROTO_OK);
+    memset(&restored, 0, sizeof(restored));
+    assert(gateway_collection_restore_snapshot(&restored, &snapshot) == PROTO_OK);
+    assert(restored.received_count == 1u);
+    assert(restored.expected_count == 1u);
+    assert(!restored.collection_open);
+    assert(restored.results[0].previous_hop_id == 0xAAAABBBBCCCC0001ull);
+}
+
+static void test_collection_snapshot_rejects_corrupt_without_partial_restore(void)
+{
+    struct gateway_collection_state collection;
+    struct gateway_collection_state target;
+    struct gateway_collection_state_snapshot snapshot;
+    struct command_result_id id = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct proto_packet result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    bool duplicate = false;
+
+    make_collection_result_payload(payload, sizeof(payload), &payload_len, &id, 3003u);
+    result = make_collection_result_packet(&id, payload_len);
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    2u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    assert(gateway_collection_record_result_from_hop(&collection,
+                                                     &result,
+                                                     payload,
+                                                     payload_len,
+                                                     0xAAAABBBBCCCC0001ull,
+                                                     &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    assert(gateway_collection_export_snapshot(&collection, &snapshot) == PROTO_OK);
+
+    assert(gateway_collection_start(&target,
+                                    0x8888777766665555ull,
+                                    3u,
+                                    42u,
+                                    55u,
+                                    6u,
+                                    1u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+
+    snapshot.version = GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION + 1u;
+    assert(gateway_collection_restore_snapshot(&target, &snapshot) == PROTO_ERR_BAD_VERSION);
+    assert(target.gateway_id == 0x8888777766665555ull);
+    assert(target.command_seq == 42u);
+    assert(target.collection_epoch_id == 55u);
+    assert(target.received_count == 0u);
+
+    snapshot.version = GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION;
+    snapshot.valid = false;
+    assert(gateway_collection_restore_snapshot(&target, &snapshot) == PROTO_ERR_MALFORMED);
+    assert(target.gateway_id == 0x8888777766665555ull);
+    assert(target.command_seq == 42u);
+    assert(target.collection_epoch_id == 55u);
+    assert(target.received_count == 0u);
+
+    snapshot.valid = true;
+    snapshot.received_count = snapshot.expected_count + 1u;
+    assert(gateway_collection_restore_snapshot(&target, &snapshot) == PROTO_ERR_MALFORMED);
+    assert(target.gateway_id == 0x8888777766665555ull);
+    assert(target.command_seq == 42u);
+    assert(target.collection_epoch_id == 55u);
+    assert(target.received_count == 0u);
+
+    assert(gateway_collection_export_snapshot(NULL, &snapshot) == PROTO_ERR_ARG);
+    assert(gateway_collection_export_snapshot(&collection, NULL) == PROTO_ERR_ARG);
+    assert(gateway_collection_restore_snapshot(NULL, &snapshot) == PROTO_ERR_ARG);
+    assert(gateway_collection_restore_snapshot(&target, NULL) == PROTO_ERR_ARG);
+}
+
 static void test_collection_bundle_records_return_hop(void)
 {
     struct gateway_collection_state collection;
@@ -2020,6 +2231,9 @@ int main(void)
     test_collection_prepares_missing_list_from_roster();
     test_collection_records_result_bundle_and_dedupes_replay();
     test_collection_return_candidates_from_direct_results();
+    test_collection_snapshot_round_trips_return_hops();
+    test_collection_snapshot_round_trips_closed_collection();
+    test_collection_snapshot_rejects_corrupt_without_partial_restore();
     test_collection_bundle_records_return_hop();
     test_collection_return_candidates_suppress_duplicates();
     test_collection_rejects_corrupt_result_bundle();
