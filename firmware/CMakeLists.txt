@@ -56,6 +56,15 @@ target_include_directories(test_gateway_eack_policy PRIVATE app/src)
 target_link_libraries(test_gateway_eack_policy PRIVATE core)
 add_test(NAME gateway_eack_policy COMMAND test_gateway_eack_policy)
 
+add_executable(test_gateway_collection_eack
+    tests/test_gateway_collection_eack.c
+    app/src/app_gateway_collection_eack.c
+    app/src/app_gateway_eack_policy.c
+)
+target_include_directories(test_gateway_collection_eack PRIVATE app/src)
+target_link_libraries(test_gateway_collection_eack PRIVATE core)
+add_test(NAME gateway_collection_eack COMMAND test_gateway_collection_eack)
+
 add_executable(test_uwb tests/test_uwb.c)
 target_link_libraries(test_uwb PRIVATE core)
 add_test(NAME uwb COMMAND test_uwb)

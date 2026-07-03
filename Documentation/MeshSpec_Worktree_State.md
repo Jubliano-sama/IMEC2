@@ -86,8 +86,9 @@ Current `get_goal()`:
    `gateway_collection_result_entry`, previous-hop-aware result/bundle record
    APIs, and `gateway_collection_return_candidates()` for distinct return
    candidates. Gateway app result and bundle handlers pass the inbound UWB
-   radio channel and previous hop; if a newly accepted result or bundle arrived
-   on `UWB_CHANNEL_MESH_PAYLOAD` from a valid previous hop, app collection EACK
+   radio channel and previous hop into a metadata-only collection EACK
+   orchestration helper; if a newly accepted result or bundle arrived on
+   `UWB_CHANNEL_MESH_PAYLOAD` from a valid previous hop, app collection EACK
    sends first try the immediate current-channel-9 return to that hop, restore
    the original EACK state on failure, then derive up to two candidates from
    collection state, try valid candidates for planned channel-9 EACK return
@@ -98,7 +99,11 @@ Current `get_goal()`:
    candidate, duplicate/invalid return-hop suppression, C5 fallback only after
    channel-9 candidate failures, no-candidate bounded C5 recovery, and C5
    fallback preserving the original collection EACK header/payload state after a
-   failed channel-9 preparation path. Core `gateway_collection_export_snapshot()` and
+   failed channel-9 preparation path. Focused native app-orchestration coverage
+   now proves strict-roster missing-list EACK selection, current-C9 hop
+   derivation from inbound radio metadata, invalid current-hop filtering,
+   return-candidate derivation, and preserved EACK payload shape through policy
+   dispatch. Core `gateway_collection_export_snapshot()` and
    `gateway_collection_restore_snapshot()` now preserve active
    `gateway_collection_state`, including per-result `previous_hop_id`
    reverse-path metadata. Gateway app persistence now saves/restores/clears that
@@ -107,9 +112,9 @@ Current `get_goal()`:
    enable the same generated persistence Kconfig fragment used by anchors. This
    is still not full MeshSpec EACK routing: durable return state exists, but the
    remaining collection routing and app/radio handoff behavior is not complete.
-   Latest measured role builds after current-channel-9 EACK preference:
+   Latest measured role builds after EACK orchestration helper:
    clicker 234784 B FLASH / 85136 B RAM, anchor 181868 B FLASH / 97408 B RAM,
-   gateway 293352 B FLASH / 104076 B RAM.
+   gateway 293452 B FLASH / 104076 B RAM.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level

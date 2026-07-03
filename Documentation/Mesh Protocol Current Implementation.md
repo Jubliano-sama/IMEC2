@@ -373,6 +373,10 @@ Current ACK/EACK handling:
   that hop. If that send fails, the original EACK state is restored and the
   existing planned channel-9 candidate and bounded channel-5 fallback policy
   continues.
+- Gateway EACK app orchestration is factored through a metadata-only helper
+  that selects strict-roster missing-list versus received-list EACK payloads,
+  derives the current channel-9 return hop from inbound radio metadata, derives
+  stored return candidates, and dispatches through the common EACK policy.
 - Channel-9 route-test ACK batching carries explicit packet/session/sequence
   lists and keeps the legacy requested-sequence TLV for compatibility.
 - Partial ACK matching requeues only unACKed packets ahead of later queued work;

@@ -2,6 +2,7 @@
 
 #include "app_anchor.h"
 #include "app_config.h"
+#include "app_gateway_collection_eack.h"
 #include "app_gateway_eack_policy.h"
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
@@ -160,8 +161,6 @@ void gateway_command_result_tracking_init(void)
 {
 }
 #else
-#define GATEWAY_COLLECTION_RETURN_TARGET_CAP 2u
-
 static struct gateway_command_pending gateway_command_pending_state;
 static struct gateway_collection_state gateway_collection_state;
 static struct gateway_membership_roster gateway_membership_roster_state;
@@ -178,19 +177,6 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason);
 
 static bool gateway_collection_tracking_active(void);
-
-static uint64_t gateway_collection_current_channel9_return_hop(uint64_t previous_hop_id,
-                                                               uint8_t received_radio_channel)
-{
-    if (received_radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
-        previous_hop_id == 0u ||
-        previous_hop_id == MESH_BROADCAST_ID ||
-        previous_hop_id == DEVICE_ID) {
-        return 0u;
-    }
-
-    return previous_hop_id;
-}
 
 static void gateway_persist_collection_state(const char *reason)
 {
@@ -312,9 +298,18 @@ static uint32_t gateway_eack_now_ms(void *ctx)
 }
 
 static int gateway_send_collection_eack(const char *reason,
-                                        uint64_t current_channel9_next_hop_id)
+                                        uint64_t previous_hop_id,
+                                        uint8_t received_radio_channel)
 {
     struct mesh_outbound eack = {0};
+    struct app_gateway_collection_eack_input input = {
+        .collection = &gateway_collection_state,
+        .expected_node_ids = gateway_collection_expected_node_ids,
+        .expected_node_id_count = gateway_collection_expected_node_id_count,
+        .previous_hop_id = previous_hop_id,
+        .received_radio_channel = received_radio_channel,
+        .self_id = DEVICE_ID,
+    };
     const struct app_gateway_eack_policy_ops ops = {
         .plan_channel9 = gateway_eack_plan_channel9,
         .prepare_channel9 = gateway_eack_prepare_channel9,
@@ -324,61 +319,29 @@ static int gateway_send_collection_eack(const char *reason,
         .note_channel9_tx = gateway_eack_note_channel9_tx,
         .now_ms = gateway_eack_now_ms,
     };
-    struct app_gateway_eack_policy_result policy_result;
-    uint64_t return_next_hop_ids[GATEWAY_COLLECTION_RETURN_TARGET_CAP] = {0};
-    uint16_t missing_count = 0u;
-    size_t return_target_count;
+    struct app_gateway_collection_eack_result result;
     int ret;
 
     if (!gateway_collection_tracking_active()) {
         return -ENOENT;
     }
 
-    if (gateway_collection_expected_node_id_count == gateway_collection_state.expected_count) {
-        ret = gateway_collection_prepare_missing_eack_outbound(
-            &gateway_collection_state,
-            gateway_collection_expected_node_ids,
-            gateway_collection_expected_node_id_count,
-            &eack,
-            &missing_count);
-        if (ret == PROTO_ERR_NO_SPACE) {
-            missing_count = 0u;
-            ret = gateway_collection_prepare_eack_outbound(&gateway_collection_state,
-                                                           EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
-                                                           &eack);
-        }
-    } else {
-        ret = gateway_collection_prepare_eack_outbound(&gateway_collection_state,
-                                                       EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
-                                                       &eack);
-    }
-    if (ret != PROTO_OK) {
-        LOG_WRN("gateway collection EACK build failed: ret=%d", ret);
-        return mesh_errno_from_proto(ret);
-    }
-
-    return_target_count = gateway_collection_return_candidates(
-        &gateway_collection_state,
-        return_next_hop_ids,
-        ARRAY_SIZE(return_next_hop_ids));
-    ret = app_gateway_eack_send_to_candidates_with_current_channel9(
+    ret = app_gateway_collection_eack_send(
         &eack,
-        current_channel9_next_hop_id,
-        return_next_hop_ids,
-        return_target_count,
+        &input,
         &ops,
-        &policy_result);
+        &result);
     if (ret < 0) {
-        LOG_WRN("gateway collection EACK send failed: ret=%d candidates=%u mode=%u c9_candidates=%u c9_attempts=%u c9_plan=%d c9_prepare=%d c9_send=%d c5_send=%d",
+        LOG_WRN("gateway collection EACK build/send failed: ret=%d candidates=%u mode=%u c9_candidates=%u c9_attempts=%u c9_plan=%d c9_prepare=%d c9_send=%d c5_send=%d",
                 ret,
-                (unsigned int)return_target_count,
-                (unsigned int)policy_result.mode,
-                (unsigned int)policy_result.channel9_candidate_count,
-                (unsigned int)policy_result.channel9_attempt_count,
-                policy_result.channel9_plan_ret,
-                policy_result.channel9_prepare_ret,
-                policy_result.channel9_send_ret,
-                policy_result.c5_send_ret);
+                (unsigned int)result.return_target_count,
+                (unsigned int)result.policy.mode,
+                (unsigned int)result.policy.channel9_candidate_count,
+                (unsigned int)result.policy.channel9_attempt_count,
+                result.policy.channel9_plan_ret,
+                result.policy.channel9_prepare_ret,
+                result.policy.channel9_send_ret,
+                result.policy.c5_send_ret);
         return ret;
     }
 
@@ -386,11 +349,11 @@ static int gateway_send_collection_eack(const char *reason,
             gateway_collection_state.command_seq,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count,
-            missing_count,
+            result.missing_count,
             gateway_collection_state.collection_open ? 1u : 0u,
-            (unsigned int)return_target_count,
-            (unsigned int)policy_result.mode,
-            (unsigned long long)policy_result.channel9_next_hop_id,
+            (unsigned int)result.return_target_count,
+            (unsigned int)result.policy.mode,
+            (unsigned long long)result.policy.channel9_next_hop_id,
             reason == NULL ? "" : reason);
     return 0;
 }
@@ -405,7 +368,7 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
         return;
     }
 
-    ret = gateway_send_collection_eack("collection-eack-round", 0u);
+    ret = gateway_send_collection_eack("collection-eack-round", 0u, 0u);
     if (ret < 0) {
         (void)k_work_reschedule(&gateway_collection_eack_work,
                                 K_MSEC(RELAY_BUSY_RETRY_MIN_MS));
@@ -431,7 +394,6 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
                                            uint8_t received_radio_channel)
 {
     bool duplicate = false;
-    uint64_t current_channel9_next_hop_id;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
@@ -460,12 +422,10 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
             gateway_collection_state.expected_count,
             duplicate ? 1u : 0u);
     if (!duplicate) {
-        current_channel9_next_hop_id =
-            gateway_collection_current_channel9_return_hop(previous_hop_id,
-                                                           received_radio_channel);
         gateway_persist_collection_state("collection-result");
         (void)gateway_send_collection_eack("collection-eack-result",
-                                           current_channel9_next_hop_id);
+                                           previous_hop_id,
+                                           received_radio_channel);
         gateway_schedule_collection_eack_round();
     }
 }
@@ -478,7 +438,6 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
 {
     uint16_t accepted_count = 0u;
     uint16_t duplicate_count = 0u;
-    uint64_t current_channel9_next_hop_id;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
@@ -509,12 +468,10 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count);
     if (accepted_count != 0u) {
-        current_channel9_next_hop_id =
-            gateway_collection_current_channel9_return_hop(previous_hop_id,
-                                                           received_radio_channel);
         gateway_persist_collection_state("collection-bundle");
         (void)gateway_send_collection_eack("collection-eack-bundle",
-                                           current_channel9_next_hop_id);
+                                           previous_hop_id,
+                                           received_radio_channel);
         gateway_schedule_collection_eack_round();
     }
 }

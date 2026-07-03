@@ -328,6 +328,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_state.c
     src/app_board.c
     src/app_gateway_ble.c
+    src/app_gateway_collection_eack.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
     src/app_ml.c
