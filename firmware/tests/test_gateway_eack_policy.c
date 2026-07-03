@@ -173,6 +173,12 @@ static void test_current_channel9_success_preempts_later_candidates(void)
     struct app_gateway_eack_policy_result result;
     const struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
     const uint64_t candidates[] = {HOP_B};
+    const struct mesh_event_plan current_plan = {
+        .action = MESH_EVENT_PLAN_START,
+        .start_ms = 900u,
+        .end_ms = 920u,
+        .window_ms = 20u,
+    };
 
     init_eack(&eack);
     eack.packet.session_id = 0x01020304u;
@@ -184,20 +190,21 @@ static void test_current_channel9_success_preempts_later_candidates(void)
     assert(app_gateway_eack_send_to_candidates_with_current_channel9(
                &eack,
                HOP_A,
+               &current_plan,
                candidates,
                sizeof(candidates) / sizeof(candidates[0]),
                &ops,
                &result) == 0);
     assert(ctx.plan_count == 0);
-    assert(ctx.prepare_count == 0);
+    assert(ctx.prepare_count == 1);
     assert(ctx.send_channel9_count == 1);
     assert(ctx.send_c5_count == 0);
     assert(ctx.note_tx_count == 1);
     assert(ctx.note_channel9_count == 1);
-    assert(ctx.now_count == 1);
+    assert(ctx.now_count == 0);
     assert(ctx.sent_channel9.next_hop_id == HOP_A);
     assert(ctx.sent_channel9.radio_channel == MESH_EVENT_CHANNEL);
-    assert(ctx.sent_channel9.earliest_tx_ms == 0u);
+    assert(ctx.sent_channel9.earliest_tx_ms == current_plan.start_ms + 3u);
     assert(ctx.sent_channel9.packet.session_id == 0x01020304u);
     assert(ctx.sent_channel9.packet.seq == 0x1122u);
     assert(ctx.sent_channel9.payload_len == 2u);
@@ -209,23 +216,29 @@ static void test_current_channel9_success_preempts_later_candidates(void)
     assert(result.channel9_send_ret == 0);
     assert(result.channel9_next_hop_id == HOP_A);
     assert(ctx.noted_channel9_hop == HOP_A);
-    assert(ctx.noted_channel9_start == ctx.now_ms);
+    assert(ctx.noted_channel9_start == current_plan.start_ms);
     assert(eack.next_hop_id == HOP_A);
     assert(eack.radio_channel == MESH_EVENT_CHANNEL);
-    assert(eack.earliest_tx_ms == 0u);
+    assert(eack.earliest_tx_ms == current_plan.start_ms + 3u);
 }
 
 static void test_current_channel9_failure_restores_before_candidate_c5_fallback(void)
 {
     struct policy_test_ctx ctx = {
         .send_channel9_returns = {-EIO},
-        .prepare_returns = {-EBUSY},
+        .prepare_returns = {0, -EBUSY},
         .mutate_failed_prepare = true,
     };
     struct mesh_outbound eack;
     struct app_gateway_eack_policy_result result;
     const struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
     const uint64_t candidates[] = {HOP_B};
+    const struct mesh_event_plan current_plan = {
+        .action = MESH_EVENT_PLAN_START,
+        .start_ms = 900u,
+        .end_ms = 920u,
+        .window_ms = 20u,
+    };
 
     init_eack(&eack);
     eack.packet.session_id = 0x01020304u;
@@ -241,12 +254,13 @@ static void test_current_channel9_failure_restores_before_candidate_c5_fallback(
     assert(app_gateway_eack_send_to_candidates_with_current_channel9(
                &eack,
                HOP_A,
+               &current_plan,
                candidates,
                sizeof(candidates) / sizeof(candidates[0]),
                &ops,
                &result) == 0);
     assert(ctx.plan_count == 1);
-    assert(ctx.prepare_count == 1);
+    assert(ctx.prepare_count == 2);
     assert(ctx.send_channel9_count == 1);
     assert(ctx.send_c5_count == 1);
     assert(ctx.note_tx_count == 1);

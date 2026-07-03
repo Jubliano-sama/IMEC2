@@ -109,6 +109,8 @@ struct mesh_rx_pending {
     uint8_t link_quality;
     uint8_t radio_channel;
     uint32_t received_at_ms;
+    bool current_channel9_plan_valid;
+    struct mesh_event_plan current_channel9_plan;
 };
 
 struct mesh_frame_parse_context {
@@ -302,6 +304,8 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                      uint8_t link_quality,
                                      uint8_t radio_channel,
                                      uint32_t received_at_ms,
+                                     const struct mesh_event_plan *current_channel9_plan,
+                                     uint64_t current_channel9_peer_id,
                                      bool *valid_mesh_frame,
                                      uint64_t *previous_hop_id);
 
@@ -3167,6 +3171,8 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                                        capture.quality,
                                        UWB_CHANNEL_WAKE_CONTACT,
                                        capture.received_at_ms,
+                                       NULL,
+                                       0u,
                                        &valid_mesh_frame,
                                        &previous_hop_id);
         ARG_UNUSED(valid_mesh_frame);
@@ -4446,6 +4452,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                        captures[i].quality,
                                        UWB_CHANNEL_WAKE_CONTACT,
                                        captures[i].received_at_ms,
+                                       NULL,
+                                       0u,
                                        &valid_mesh_frame,
                                        &previous_hop_id);
         ARG_UNUSED(valid_mesh_frame);
@@ -6794,13 +6802,19 @@ static void mesh_rx_work_handler(struct k_work *work)
                                             pending->payload,
                                             pending->payload_len,
                                             pending->previous_hop_id,
-                                            pending->radio_channel);
+                                            pending->radio_channel,
+                                            pending->current_channel9_plan_valid ?
+                                            &pending->current_channel9_plan :
+                                            NULL);
             } else if (pending->packet.msg_type == MSG_RESULT_BUNDLE) {
                 gateway_note_command_result_bundle(&pending->packet,
                                                    pending->payload,
                                                    pending->payload_len,
                                                    pending->previous_hop_id,
-                                                   pending->radio_channel);
+                                                   pending->radio_channel,
+                                                   pending->current_channel9_plan_valid ?
+                                                   &pending->current_channel9_plan :
+                                                   NULL);
             }
             mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
                                                    pending->payload,
@@ -6964,6 +6978,8 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                      uint8_t link_quality,
                                      uint8_t radio_channel,
                                      uint32_t received_at_ms,
+                                     const struct mesh_event_plan *current_channel9_plan,
+                                     uint64_t current_channel9_peer_id,
                                      bool *valid_mesh_frame,
                                      uint64_t *previous_hop_id)
 {
@@ -7004,6 +7020,13 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
     pending.link_quality = link_quality;
     pending.radio_channel = radio_channel;
     pending.received_at_ms = received_at_ms;
+    if (radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+        current_channel9_plan != NULL &&
+        context.previous_hop_id == current_channel9_peer_id &&
+        !uptime_deadline_reached(received_at_ms, current_channel9_plan->end_ms)) {
+        pending.current_channel9_plan_valid = true;
+        pending.current_channel9_plan = *current_channel9_plan;
+    }
     app_mesh_test_note_wake_event(&pending.packet,
                                   pending.previous_hop_id,
                                   pending.link_quality,
@@ -7075,6 +7098,8 @@ bool mesh_queue_from_frame(const uint8_t *frame,
                                     link_quality,
                                     radio_channel,
                                     k_uptime_get_32(),
+                                    NULL,
+                                    0u,
                                     valid_mesh_frame,
                                     previous_hop_id);
 }
@@ -7159,36 +7184,39 @@ static bool mesh_process_received_frame(const uint8_t *frame,
         return true;
     }
 
-    if (mesh_queue_from_frame(frame,
-                              frame_len,
-                              quality,
-                              channel9_event ? UWB_CHANNEL_MESH_PAYLOAD :
-                                               UWB_CHANNEL_WAKE_CONTACT,
-                              &valid_mesh_frame,
-                              &rx_previous_hop_id)) {
-	        if (channel9_event &&
-	            channel9_plan != NULL &&
-	            rx_previous_hop_id == channel9_peer_id) {
-	            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-	                int32_t delta_ms = (int32_t)(observed_packet_ms - channel9_plan->start_ms);
+    if (mesh_queue_from_frame_at(frame,
+                                 frame_len,
+                                 quality,
+                                 channel9_event ? UWB_CHANNEL_MESH_PAYLOAD :
+                                                  UWB_CHANNEL_WAKE_CONTACT,
+                                 observed_packet_ms,
+                                 channel9_event ? channel9_plan : NULL,
+                                 channel9_peer_id,
+                                 &valid_mesh_frame,
+                                 &rx_previous_hop_id)) {
+        if (channel9_event &&
+            channel9_plan != NULL &&
+            rx_previous_hop_id == channel9_peer_id) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                int32_t delta_ms = (int32_t)(observed_packet_ms - channel9_plan->start_ms);
 
-	                status_debug_printf("DBG_CH9_RX_EXPECTED delta=%d q=%u\n",
-	                                    delta_ms,
-	                                    quality);
-	            }
-	            mesh_relay_note_channel9_rx(&mesh_runtime,
-	                                        rx_previous_hop_id,
-	                                        channel9_plan->start_ms,
-	                                        observed_packet_ms);
-	            if (channel9_peer_observed != NULL) {
-	                *channel9_peer_observed = true;
-	            }
-	        } else if (channel9_event && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-	            status_debug_note("DBG_CH9_RX_UNEXPECTED_PEER\n");
-	            status_debug_printf("DBG_CH9_RX_UNEXPECTED prev=0x%llx exp=0x%llx\n",
-	                                (unsigned long long)rx_previous_hop_id,
-	                                (unsigned long long)channel9_peer_id);
-	        }
+                status_debug_printf("DBG_CH9_RX_EXPECTED delta=%d q=%u\n",
+                                    delta_ms,
+                                    quality);
+            }
+            mesh_relay_note_channel9_rx(&mesh_runtime,
+                                        rx_previous_hop_id,
+                                        channel9_plan->start_ms,
+                                        observed_packet_ms);
+            if (channel9_peer_observed != NULL) {
+                *channel9_peer_observed = true;
+            }
+        } else if (channel9_event && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_CH9_RX_UNEXPECTED_PEER\n");
+            status_debug_printf("DBG_CH9_RX_UNEXPECTED prev=0x%llx exp=0x%llx\n",
+                                (unsigned long long)rx_previous_hop_id,
+                                (unsigned long long)channel9_peer_id);
+        }
         LOG_DBG("mesh UWB RX frame accepted: len=%u", (unsigned int)frame_len);
         return true;
     }

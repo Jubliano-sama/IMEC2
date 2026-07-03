@@ -2,6 +2,7 @@
 #define APP_GATEWAY_BLE_H
 
 #include "gateway_command.h"
+#include "mesh.h"
 #include "protocol.h"
 
 #include <stdbool.h>
@@ -50,12 +51,14 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
                                  uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel);
+                                 uint8_t received_radio_channel,
+                                 const struct mesh_event_plan *current_channel9_plan);
 void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len,
                                         uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel);
+                                        uint8_t received_radio_channel,
+                                        const struct mesh_event_plan *current_channel9_plan);
 void gateway_command_result_tracking_init(void);
 
 #endif

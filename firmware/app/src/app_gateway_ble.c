@@ -135,26 +135,30 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
                                  uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel)
+                                 uint8_t received_radio_channel,
+                                 const struct mesh_event_plan *current_channel9_plan)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
     ARG_UNUSED(payload_len);
     ARG_UNUSED(previous_hop_id);
     ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
 }
 
 void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len,
                                         uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel)
+                                        uint8_t received_radio_channel,
+                                        const struct mesh_event_plan *current_channel9_plan)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
     ARG_UNUSED(payload_len);
     ARG_UNUSED(previous_hop_id);
     ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
 }
 
 void gateway_command_result_tracking_init(void)
@@ -299,7 +303,8 @@ static uint32_t gateway_eack_now_ms(void *ctx)
 
 static int gateway_send_collection_eack(const char *reason,
                                         uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel)
+                                        uint8_t received_radio_channel,
+                                        const struct mesh_event_plan *current_channel9_plan)
 {
     struct mesh_outbound eack = {0};
     struct app_gateway_collection_eack_input input = {
@@ -308,6 +313,7 @@ static int gateway_send_collection_eack(const char *reason,
         .expected_node_id_count = gateway_collection_expected_node_id_count,
         .previous_hop_id = previous_hop_id,
         .received_radio_channel = received_radio_channel,
+        .current_channel9_plan = current_channel9_plan,
         .self_id = DEVICE_ID,
     };
     const struct app_gateway_eack_policy_ops ops = {
@@ -368,7 +374,7 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
         return;
     }
 
-    ret = gateway_send_collection_eack("collection-eack-round", 0u, 0u);
+    ret = gateway_send_collection_eack("collection-eack-round", 0u, 0u, NULL);
     if (ret < 0) {
         (void)k_work_reschedule(&gateway_collection_eack_work,
                                 K_MSEC(RELAY_BUSY_RETRY_MIN_MS));
@@ -391,7 +397,8 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
                                            uint64_t previous_hop_id,
-                                           uint8_t received_radio_channel)
+                                           uint8_t received_radio_channel,
+                                           const struct mesh_event_plan *current_channel9_plan)
 {
     bool duplicate = false;
     int ret;
@@ -425,7 +432,8 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
         gateway_persist_collection_state("collection-result");
         (void)gateway_send_collection_eack("collection-eack-result",
                                            previous_hop_id,
-                                           received_radio_channel);
+                                           received_radio_channel,
+                                           current_channel9_plan);
         gateway_schedule_collection_eack_round();
     }
 }
@@ -434,7 +442,8 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
                                            uint64_t previous_hop_id,
-                                           uint8_t received_radio_channel)
+                                           uint8_t received_radio_channel,
+                                           const struct mesh_event_plan *current_channel9_plan)
 {
     uint16_t accepted_count = 0u;
     uint16_t duplicate_count = 0u;
@@ -471,7 +480,8 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
         gateway_persist_collection_state("collection-bundle");
         (void)gateway_send_collection_eack("collection-eack-bundle",
                                            previous_hop_id,
-                                           received_radio_channel);
+                                           received_radio_channel,
+                                           current_channel9_plan);
         gateway_schedule_collection_eack_round();
     }
 }
@@ -848,7 +858,8 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
                                  uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel)
+                                 uint8_t received_radio_channel,
+                                 const struct mesh_event_plan *current_channel9_plan)
 {
     struct proto_packet command;
     enum command_id pending_command_id;
@@ -865,7 +876,8 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                    payload,
                                    payload_len,
                                    previous_hop_id,
-                                   received_radio_channel);
+                                   received_radio_channel,
+                                   current_channel9_plan);
 
     if (!gateway_command_pending_matches_result(&gateway_command_pending_state, packet)) {
         return;
@@ -900,7 +912,8 @@ void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len,
                                         uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel)
+                                        uint8_t received_radio_channel,
+                                        const struct mesh_event_plan *current_channel9_plan)
 {
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
@@ -910,7 +923,8 @@ void gateway_note_command_result_bundle(const struct proto_packet *packet,
                                    payload,
                                    payload_len,
                                    previous_hop_id,
-                                   received_radio_channel);
+                                   received_radio_channel,
+                                   current_channel9_plan);
 }
 
 int gateway_begin_command_result_wait(const struct proto_packet *command,

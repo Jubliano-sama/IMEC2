@@ -90,17 +90,10 @@ static void result_note_mode(struct app_gateway_eack_policy_result *result,
     }
 }
 
-static uint32_t ops_now_ms(const struct app_gateway_eack_policy_ops *ops)
-{
-    if (ops != NULL && ops->now_ms != NULL) {
-        return ops->now_ms(ops->ctx);
-    }
-    return 0u;
-}
-
 int app_gateway_eack_send_to_candidates_with_current_channel9(
     struct mesh_outbound *eack,
     uint64_t current_channel9_next_hop_id,
+    const struct mesh_event_plan *current_channel9_plan,
     const uint64_t *return_next_hop_ids,
     size_t return_next_hop_count,
     const struct app_gateway_eack_policy_ops *ops,
@@ -120,12 +113,19 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
 
     original_eack = *eack;
     if (return_target_valid(current_channel9_next_hop_id) &&
+        current_channel9_plan != NULL &&
+        ops->prepare_channel9 != NULL &&
         ops->send_channel9 != NULL) {
         *eack = original_eack;
         eack->next_hop_id = current_channel9_next_hop_id;
         eack->radio_channel = MESH_EVENT_CHANNEL;
         eack->earliest_tx_ms = 0u;
         result_note_channel9_attempt(result);
+        ret = ops->prepare_channel9(eack, current_channel9_plan, ops->ctx);
+        result_note_channel9_prepare(result, ret);
+        if (ret != 0) {
+            goto current_channel9_done;
+        }
         ret = ops->send_channel9(eack, ops->ctx);
         result_note_channel9_send(result, ret);
         if (ret == 0) {
@@ -136,12 +136,13 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
             }
             if (ops->note_channel9_tx != NULL) {
                 ops->note_channel9_tx(current_channel9_next_hop_id,
-                                      ops_now_ms(ops),
+                                      current_channel9_plan->start_ms,
                                       ops->ctx);
             }
             return 0;
         }
     }
+current_channel9_done:
 
     if (ops->plan_channel9 != NULL &&
         ops->prepare_channel9 != NULL &&
@@ -213,6 +214,7 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
     return app_gateway_eack_send_to_candidates_with_current_channel9(
         eack,
         0u,
+        NULL,
         return_next_hop_ids,
         return_next_hop_count,
         ops,

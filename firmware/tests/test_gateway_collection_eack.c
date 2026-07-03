@@ -193,6 +193,12 @@ static void test_strict_roster_missing_list_uses_current_channel9_first(void)
     struct orchestration_test_ctx ctx = {
         .now_ms = 4567u,
     };
+    const struct mesh_event_plan current_plan = {
+        .action = MESH_EVENT_PLAN_START,
+        .start_ms = 3456u,
+        .end_ms = 3556u,
+        .window_ms = 100u,
+    };
     struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
     struct app_gateway_collection_eack_input input = {
         .collection = &collection,
@@ -200,6 +206,7 @@ static void test_strict_roster_missing_list_uses_current_channel9_first(void)
         .expected_node_id_count = sizeof(expected_node_ids) / sizeof(expected_node_ids[0]),
         .previous_hop_id = HOP_CURRENT,
         .received_radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .current_channel9_plan = &current_plan,
         .self_id = GATEWAY_ID_TEST,
     };
     struct app_gateway_collection_eack_result result;
@@ -234,18 +241,18 @@ static void test_strict_roster_missing_list_uses_current_channel9_first(void)
     assert(result.policy.channel9_attempt_count == 1u);
     assert(result.policy.channel9_candidate_count == 0u);
     assert(ctx.plan_count == 0);
-    assert(ctx.prepare_count == 0);
+    assert(ctx.prepare_count == 1);
     assert(ctx.send_channel9_count == 1);
     assert(ctx.send_c5_count == 0);
     assert(ctx.note_tx_count == 1);
     assert(ctx.note_channel9_count == 1);
-    assert(ctx.now_count == 1);
+    assert(ctx.now_count == 0);
     assert(ctx.noted_channel9_hop == HOP_CURRENT);
-    assert(ctx.noted_channel9_start == ctx.now_ms);
+    assert(ctx.noted_channel9_start == current_plan.start_ms);
 
     assert(ctx.sent_channel9.next_hop_id == HOP_CURRENT);
     assert(ctx.sent_channel9.radio_channel == UWB_CHANNEL_MESH_PAYLOAD);
-    assert(ctx.sent_channel9.earliest_tx_ms == 0u);
+    assert(ctx.sent_channel9.earliest_tx_ms == current_plan.start_ms + 5u);
     assert(ctx.sent_channel9.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
     assert(ctx.sent_channel9.packet.src_id == GATEWAY_ID_TEST);
     assert(ctx.sent_channel9.packet.dst_id == MESH_BROADCAST_ID);
@@ -288,25 +295,42 @@ static void test_strict_roster_missing_list_uses_current_channel9_first(void)
 
 static void test_current_channel9_hop_filters_invalid_sources(void)
 {
+    const struct mesh_event_plan current_plan = {
+        .action = MESH_EVENT_PLAN_START,
+        .start_ms = 3456u,
+        .end_ms = 3556u,
+        .window_ms = 100u,
+    };
+
     assert(app_gateway_collection_eack_current_channel9_return_hop(
                HOP_CURRENT,
                UWB_CHANNEL_WAKE_CONTACT,
+               NULL,
                GATEWAY_ID_TEST) == 0u);
     assert(app_gateway_collection_eack_current_channel9_return_hop(
                0u,
                UWB_CHANNEL_MESH_PAYLOAD,
+               NULL,
                GATEWAY_ID_TEST) == 0u);
     assert(app_gateway_collection_eack_current_channel9_return_hop(
                MESH_BROADCAST_ID,
                UWB_CHANNEL_MESH_PAYLOAD,
+               NULL,
                GATEWAY_ID_TEST) == 0u);
     assert(app_gateway_collection_eack_current_channel9_return_hop(
                GATEWAY_ID_TEST,
                UWB_CHANNEL_MESH_PAYLOAD,
+               NULL,
                GATEWAY_ID_TEST) == 0u);
     assert(app_gateway_collection_eack_current_channel9_return_hop(
                HOP_CURRENT,
                UWB_CHANNEL_MESH_PAYLOAD,
+               NULL,
+               GATEWAY_ID_TEST) == 0u);
+    assert(app_gateway_collection_eack_current_channel9_return_hop(
+               HOP_CURRENT,
+               UWB_CHANNEL_MESH_PAYLOAD,
+               &current_plan,
                GATEWAY_ID_TEST) == HOP_CURRENT);
 }
 

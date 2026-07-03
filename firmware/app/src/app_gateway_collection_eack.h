@@ -16,6 +16,7 @@ struct app_gateway_collection_eack_input {
     size_t expected_node_id_count;
     uint64_t previous_hop_id;
     uint8_t received_radio_channel;
+    const struct mesh_event_plan *current_channel9_plan;
     uint64_t self_id;
 };
 
@@ -34,6 +35,7 @@ struct app_gateway_collection_eack_result {
 uint64_t app_gateway_collection_eack_current_channel9_return_hop(
     uint64_t previous_hop_id,
     uint8_t received_radio_channel,
+    const struct mesh_event_plan *current_channel9_plan,
     uint64_t self_id);
 int app_gateway_collection_eack_send(
     struct mesh_outbound *eack,

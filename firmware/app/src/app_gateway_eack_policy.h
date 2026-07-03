@@ -50,6 +50,7 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
 int app_gateway_eack_send_to_candidates_with_current_channel9(
     struct mesh_outbound *eack,
     uint64_t current_channel9_next_hop_id,
+    const struct mesh_event_plan *current_channel9_plan,
     const uint64_t *return_next_hop_ids,
     size_t return_next_hop_count,
     const struct app_gateway_eack_policy_ops *ops,

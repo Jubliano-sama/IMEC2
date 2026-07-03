@@ -279,7 +279,10 @@ the ACK.
 Gateway collection state keeps previous-hop metadata for accepted results and
 bundles. EACK routing derives distinct return candidates from that state, tries
 current or planned channel 9 first when possible, and falls back to bounded C5
-flood after channel-9 candidates fail or are unavailable.
+flood after channel-9 candidates fail or are unavailable. The immediate current
+event path requires matching current-event RX metadata and uses the normal
+channel-9 prepare/fit check before sending; otherwise EACK uses planned return
+candidates or bounded C5 fallback.
 
 This area is still partial: focused policy and app-orchestration tests prove the
 channel-9-first decisions and fallback preservation, but full app/radio EACK
