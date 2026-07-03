@@ -203,7 +203,20 @@ static uint8_t relay_current_capacity_state(const struct mesh_relay *relay)
     if (relay == NULL) {
         return RELAY_CAP_BLACK;
     }
+    if (!id_is_unicast(relay->local_id) || !id_is_unicast(relay->gateway_id) ||
+        (relay->role != MESH_RELAY_ROLE_ANCHOR &&
+         relay->role != MESH_RELAY_ROLE_GATEWAY)) {
+        return RELAY_CAP_BLACK;
+    }
+    if (relay->result_offer_reservation.valid ||
+        (relay->result_bundle.active &&
+         relay->result_bundle.record_count >= MESH_RELAY_RESULT_BUNDLE_RECORDS)) {
+        return RELAY_CAP_RED;
+    }
     if (relay->pending.state != MESH_RELAY_TX_IDLE) {
+        return RELAY_CAP_RED;
+    }
+    if (relay->result_bundle.active && relay->result_bundle.record_count > 0u) {
         return RELAY_CAP_YELLOW;
     }
     return RELAY_CAP_GREEN;
@@ -211,7 +224,21 @@ static uint8_t relay_current_capacity_state(const struct mesh_relay *relay)
 
 static uint16_t relay_current_queue_free_hint(const struct mesh_relay *relay)
 {
-    return relay_current_capacity_state(relay) == RELAY_CAP_GREEN ? 1u : 0u;
+    uint16_t free_slots = MESH_RELAY_RESULT_BUNDLE_RECORDS;
+
+    if (relay == NULL || relay_current_capacity_state(relay) >= RELAY_CAP_RED) {
+        return 0u;
+    }
+    if (relay->pending.state != MESH_RELAY_TX_IDLE) {
+        return 0u;
+    }
+    if (relay->result_bundle.active) {
+        if (relay->result_bundle.record_count >= MESH_RELAY_RESULT_BUNDLE_RECORDS) {
+            return 0u;
+        }
+        free_slots = MESH_RELAY_RESULT_BUNDLE_RECORDS - relay->result_bundle.record_count;
+    }
+    return free_slots;
 }
 
 static uint16_t relay_current_capacity_validity_interval_ms(const struct mesh_relay *relay)
@@ -2217,7 +2244,8 @@ static int handle_result_offer(struct mesh_relay *relay,
     }
 
     if (mesh_relay_tx_active(relay) ||
-        relay_current_capacity_state(relay) >= RELAY_CAP_RED) {
+        (relay_current_capacity_state(relay) >= RELAY_CAP_RED &&
+         !result_offer_reservation_matches_offer(relay, previous_hop_id, &offer))) {
         ret = build_result_offer_busy_response(relay,
                                                packet,
                                                &offer,
@@ -4261,8 +4289,9 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     fields.hop_count = 0u;
     fields.path_quality_min = 100u;
     fields.route_cost = gateway_route_cost(fields.hop_count, fields.path_quality_min);
-    fields.gateway_capacity_state = RELAY_CAP_GREEN;
-    fields.capacity_validity_interval_ms = RELAY_CAPACITY_HINT_VALIDITY_MS;
+    fields.gateway_capacity_state = relay_current_capacity_state(relay);
+    fields.capacity_validity_interval_ms =
+        relay_current_capacity_validity_interval_ms(relay);
     fields.flood_profile_version = MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION;
     fields.flood_epoch_id = gateway_route_seq;
     fields.slot_seed = gateway_route_adv_slot_seed(fields.gateway_id,

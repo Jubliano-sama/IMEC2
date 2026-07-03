@@ -171,11 +171,16 @@ Relay capacity is a short-lived hint, not route truth.
 
 Capacity states are:
 
-- `RELAY_CAP_UNKNOWN`
-- `RELAY_CAP_GREEN`
-- `RELAY_CAP_YELLOW`
-- `RELAY_CAP_RED`
-- `RELAY_CAP_BLACK`
+- `RELAY_CAP_UNKNOWN`: no current hint is available, or a previous hint expired.
+- `RELAY_CAP_GREEN`: the relay has no tracked TX, result-offer reservation, or
+  child result bundle backlog.
+- `RELAY_CAP_YELLOW`: the relay has shallow backlog, such as a partial child
+  result bundle with remaining bundle slots.
+- `RELAY_CAP_RED`: the relay cannot safely accept additional transfer custody
+  right now because it has an active tracked TX, an active result-offer
+  reservation, or a full child result bundle.
+- `RELAY_CAP_BLACK`: the relay is locally unusable for admission, such as an
+  invalid role or identity.
 
 When a capacity hint expires, effective capacity becomes
 `RELAY_CAP_UNKNOWN`. Expiry does not delete a route, clear channel-9 timing,
@@ -184,6 +189,12 @@ invalidate a parent, trigger rediscovery, or place a parent in hold-down.
 If a relay cannot safely accept a transfer, it can return `RELAY_BUSY` or
 `RESULT_BUSY` with retry-after and optional alternate-parent metadata. Busy is
 congestion, not proof that the route failed.
+
+Route-control traffic remains admissible under congestion so routes can recover
+and backlog can drain. Capacity therefore affects data admission, busy retry
+timing, and route preference, but it does not by itself delete route truth or
+block route advertisements, route replies, route-reply ACKs, hop ACKs, gateway
+ACKs, result grants, or collection EACK handling.
 
 ## Channel-9 Timing Model
 

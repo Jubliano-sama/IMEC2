@@ -292,11 +292,14 @@ channel-9 timing are not deleted solely because capacity expired.
 
 Implemented relay capacity states:
 
-- `RELAY_CAP_UNKNOWN`
-- `RELAY_CAP_GREEN`
-- `RELAY_CAP_YELLOW`
-- `RELAY_CAP_RED`
-- `RELAY_CAP_BLACK`
+- `RELAY_CAP_UNKNOWN`: no usable current capacity hint is available.
+- `RELAY_CAP_GREEN`: no tracked TX, result-offer reservation, or child bundle
+  backlog is active.
+- `RELAY_CAP_YELLOW`: shallow backlog exists, such as a partial child bundle
+  with remaining bundle slots.
+- `RELAY_CAP_RED`: no additional transfer custody is safe because tracked TX is
+  active, a result-offer reservation is active, or a child bundle is full.
+- `RELAY_CAP_BLACK`: the local relay identity or role is unusable.
 
 Busy responses use `MSG_RELAY_BUSY` or `MSG_RESULT_BUSY` with retry-after,
 capacity state, capacity validity, and optional alternate-parent metadata when
