@@ -7,6 +7,7 @@
 #include "app_high_debug.h"
 #include "app_mesh_flood.h"
 #include "app_mesh_ch9_ack.h"
+#include "app_mesh_collection_deferral.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
 #include "app_mesh_result_handoff.h"
@@ -1388,6 +1389,23 @@ static int mesh_preempt_schedule_timeout(void *ctx)
     return 0;
 }
 
+static int mesh_collection_deferral_save_outbox(struct mesh_relay *relay,
+                                                uint32_t now_ms,
+                                                void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return app_mesh_persistence_save_outbox(relay, now_ms);
+}
+
+static int mesh_collection_deferral_schedule_retry(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    mesh_schedule_tx_timeout();
+    return 0;
+}
+
 static int mesh_handoff_save_child_custody(void *ctx)
 {
     ARG_UNUSED(ctx);
@@ -1459,14 +1477,32 @@ static void mesh_schedule_tx_timeout(void)
 
 static bool mesh_defer_active_collection_result(const char *reason)
 {
-    if (!mesh_relay_defer_tx(&mesh_runtime, k_uptime_get_32())) {
+    const uint32_t now_ms = k_uptime_get_32();
+    const struct app_mesh_collection_deferral_ops ops = {
+        .save_outbox = mesh_collection_deferral_save_outbox,
+        .schedule_retry = mesh_collection_deferral_schedule_retry,
+    };
+    struct app_mesh_collection_deferral_result result;
+
+    if (!app_mesh_collection_defer_active_result(&mesh_runtime,
+                                                now_ms,
+                                                &ops,
+                                                &result)) {
         return false;
     }
 
-    (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
+    if (!result.outbox_saved) {
+        LOG_WRN("mesh pending collection result deferred without persisted outbox: ret=%d reason=%s",
+                result.save_ret,
+                reason == NULL ? "defer" : reason);
+    }
+    if (!result.retry_scheduled) {
+        LOG_WRN("mesh pending collection result deferred without retry schedule: ret=%d reason=%s",
+                result.schedule_ret,
+                reason == NULL ? "defer" : reason);
+    }
     LOG_INF("mesh pending collection result deferred: reason=%s",
             reason == NULL ? "defer" : reason);
-    mesh_schedule_tx_timeout();
     return true;
 }
 

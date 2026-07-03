@@ -676,6 +676,10 @@ channel-9 payload windows.
    canceled or requeued according to the current preemption helper.
    The app helper preserves save/schedule return codes and marks
    `outbox_saved` or `timeout_scheduled` only when those side effects succeed.
+   Active collection-result channel-9 slot-full and send-failure deferrals use
+   the same pattern: preserve relay-owned delivery state, run outbox save
+   before retry scheduling, and report failed persistence or scheduling without
+   dropping the in-RAM result.
 6. Later channel-9 windows or C5 refresh resume delivery according to timing
    supervision and retry policy.
 

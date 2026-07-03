@@ -89,6 +89,14 @@ add_executable(test_mesh_preemption tests/test_mesh_preemption.c)
 target_link_libraries(test_mesh_preemption PRIVATE core)
 add_test(NAME mesh_preemption COMMAND test_mesh_preemption)
 
+add_executable(test_app_mesh_collection_deferral
+    tests/test_app_mesh_collection_deferral.c
+    app/src/app_mesh_collection_deferral.c
+)
+target_include_directories(test_app_mesh_collection_deferral PRIVATE app/src)
+target_link_libraries(test_app_mesh_collection_deferral PRIVATE core)
+add_test(NAME app_mesh_collection_deferral COMMAND test_app_mesh_collection_deferral)
+
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)

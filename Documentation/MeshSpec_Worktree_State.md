@@ -82,6 +82,12 @@ Current `get_goal()`:
    a later partial ACK requeues only the unACKed result, and the requeued
    payload preserves command-result identity/source node plus collection retry
    TLVs.
+   `app_mesh_collection_deferral` now covers the active collection-result
+   channel-9 slot-full/send-failure deferral sequence used by
+   `app_mesh_report.c`: relay-owned delivery state is preserved, outbox save
+   runs before retry scheduling, failed save/schedule callbacks are reported
+   through result fields and app warnings, and non-collection TX is left to the
+   existing caller fallback.
    Gateway collection state now has per-result previous-hop metadata on
    `gateway_collection_result_entry`, previous-hop-aware result/bundle record
    APIs, and `gateway_collection_return_candidates()` for distinct return
