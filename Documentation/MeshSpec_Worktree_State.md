@@ -84,8 +84,10 @@ Current `get_goal()`:
    return over existing timing, and fall back to channel-5 flood when no
    candidate can be used. Focused native policy coverage now proves
    channel-9-first success through a later candidate, duplicate/invalid
-   return-hop suppression, C5 fallback only after channel-9 send failures, and
-   no-candidate bounded C5 recovery. Core `gateway_collection_export_snapshot()` and
+   return-hop suppression, C5 fallback only after channel-9 candidate failures,
+   no-candidate bounded C5 recovery, and C5 fallback preserving the original
+   collection EACK header/payload state after a failed channel-9 preparation
+   path. Core `gateway_collection_export_snapshot()` and
    `gateway_collection_restore_snapshot()` now preserve active
    `gateway_collection_state`, including per-result `previous_hop_id`
    reverse-path metadata. Gateway app persistence now saves/restores/clears that
@@ -212,8 +214,9 @@ Current `get_goal()`:
   sequence numbers, legacy requested-sequence ACKs still require matching ACK
   packet session, malformed ACK lists are rejected, partial recovery requeues
   only unACKed packets ahead of pre-existing queued work, and a full queue
-  reports the retry drop path. Full radio/runtime integration coverage around
-  route-test partial ACK recovery remains a gap.
+  reports the retry drop path. The same focused test target now covers
+  route-test `MSG_MESH_DATA` multi-packet partial ACK recovery, including
+  unACKed-only retry requeue ahead of later queued work.
 - Latest active collection retry persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a real active
   `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be
@@ -236,12 +239,14 @@ Current `get_goal()`:
   retransmit the original child payload to the gateway rather than re-sending
   `MSG_RESULT_OFFER`.
 - Latest strict all-registered collection slice:
-  `gateway_command_extract_options()` rejects collection-required
-  `CMD_SCOPE_ALL_REGISTERED` commands unless `TLV_EXPECTED_NODE_ID` entries
-  exactly match `TLV_EXPECTED_NODE_COUNT`. `CMD_SCOPE_ALL_HEARD` is the
-  best-effort collection mode without a strict roster. The gateway app keeps
-  the command-supplied explicit roster only for the active collection and uses
-  it for missing-list EACKs when the payload fits.
+  `gateway_command_extract_options()` accepts rosterless collection-required
+  `CMD_SCOPE_ALL_REGISTERED` commands when `membership_epoch` and
+  `expected_node_count` are present. Gateway collection start resolves an
+  explicit `TLV_EXPECTED_NODE_ID` roster first, otherwise requires a matching
+  registered membership provider roster; mismatches are rejected instead of
+  downgraded to best effort. `CMD_SCOPE_ALL_HEARD` remains best effort. The
+  gateway app keeps the resolved strict roster for the active collection and
+  uses it for missing-list EACKs when the payload fits.
 - Local collection-result gateway ACK/EACK timeout now schedules a collection retry round with
   deterministic jitter instead of immediately counting the missing EACK as a route failure.
 - Relay outbox snapshot/restore now preserves local collection command results with payload

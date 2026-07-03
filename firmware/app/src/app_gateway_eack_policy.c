@@ -96,6 +96,7 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
                                         const struct app_gateway_eack_policy_ops *ops,
                                         struct app_gateway_eack_policy_result *result)
 {
+    struct mesh_outbound original_eack;
     int ret;
 
     result_init(result);
@@ -107,6 +108,7 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
         return -EINVAL;
     }
 
+    original_eack = *eack;
     if (ops->plan_channel9 != NULL &&
         ops->prepare_channel9 != NULL &&
         ops->send_channel9 != NULL) {
@@ -127,6 +129,7 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
                 continue;
             }
 
+            *eack = original_eack;
             eack->next_hop_id = return_next_hop_id;
             eack->radio_channel = MESH_EVENT_CHANNEL;
             ret = ops->prepare_channel9(eack, &plan, ops->ctx);
@@ -152,6 +155,7 @@ int app_gateway_eack_send_to_candidates(struct mesh_outbound *eack,
         }
     }
 
+    *eack = original_eack;
     eack->next_hop_id = MESH_BROADCAST_ID;
     eack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     eack->earliest_tx_ms = 0u;

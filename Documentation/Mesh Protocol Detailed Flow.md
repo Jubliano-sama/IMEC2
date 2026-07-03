@@ -325,11 +325,12 @@ Implemented in native code:
 - Result dedupe.
 - Received-list EACK payloads.
 - Missing-list EACK payload helpers from roster data.
-- `CMD_SCOPE_ALL_REGISTERED` collection commands are accepted only when the
-  command carries an explicit `TLV_EXPECTED_NODE_ID` roster whose count matches
-  `TLV_EXPECTED_NODE_COUNT`.
-- Gateway app stores that command roster for the active collection and selects
-  missing-list EACKs from it when the payload fits.
+- `CMD_SCOPE_ALL_REGISTERED` collection commands are accepted when the command
+  carries an explicit `TLV_EXPECTED_NODE_ID` roster whose count matches
+  `TLV_EXPECTED_NODE_COUNT`, or when the command's `membership_epoch` and
+  `expected_node_count` match the registered gateway membership provider.
+- Gateway app stores the resolved strict roster for the active collection and
+  selects missing-list EACKs from it when the payload fits.
 - Gateway app received-list EACK fallback remains for best-effort
   `CMD_SCOPE_ALL_HEARD` collection or when a missing-list payload would not fit.
 - Collection-open state.
@@ -346,8 +347,9 @@ Implemented in native code:
   flood when no candidate can be used.
 - Focused native policy coverage proves channel-9 succeeds through a later
   valid candidate without C5 fallback, duplicate/invalid return hops are not
-  planned, C5 fallback happens only after channel-9 sends fail, and no-candidate
-  recovery uses bounded C5 flood.
+  planned, C5 fallback happens only after channel-9 candidate failures,
+  no-candidate recovery uses bounded C5 flood, and a failed channel-9 prepare
+  path cannot corrupt the collection EACK header/payload before C5 fallback.
 - Core gateway collection snapshot/export/restore now exists:
   `gateway_collection_export_snapshot()` and
   `gateway_collection_restore_snapshot()` preserve active
@@ -358,10 +360,10 @@ Implemented in native code:
   initialization restores a valid saved collection state instead of always
   clearing it, and gateway role builds now enable the persistence Kconfig
   fragment.
-- This is still not full MeshSpec EACK routing. The durable return state and
-  channel-9-first policy proof now exist, but broader EACK routing requirements
-  remain partial until the rest of the collection routing, persistent
-  membership, and app/radio handoff behavior is complete.
+- This is still not full MeshSpec EACK routing. The durable return state,
+  registered membership provider, and channel-9-first policy proof now exist,
+  but broader EACK routing requirements remain partial until the rest of the
+  collection routing and app/radio handoff behavior is complete.
 - Latest focused role-build measurements after bounded C5 flood and anchor
   command execution changes: clicker 234592 B FLASH / 84624 B RAM, anchor
   181836 B FLASH / 96896 B RAM, gateway 291692 B FLASH / 103564 B RAM.
@@ -574,6 +576,11 @@ The tasklist marks the following as covered by native tests:
 - Duplicate command/result.
 - Capacity expiry.
 - Channel-9 local completion with later gateway ACK.
+- Channel-9 partial ACK matching, including route-test `MSG_MESH_DATA`
+  multi-packet partial ACK recovery and unACKed-only retry requeue ahead of
+  later queued work.
+- Collection EACK state preservation when a channel-9 preparation path mutates
+  the outbound before C5 fallback.
 - Missing EACK.
 - Bundle dedupe.
 - All-node collection spread.
@@ -717,8 +724,10 @@ flowchart TD
 Evidence scope: this is the implemented command/result collection state shape.
 Native code covers collection state, result identity, spread/retry timing,
 received-list and missing-list behavior, offer/grant, bundle handling, and relay
-snapshot restore. The gateway app selects missing-list EACKs only for explicit
-count-matched command rosters and otherwise falls back to received-list EACKs.
+snapshot restore. The gateway app selects missing-list EACKs for strict
+count-matched command rosters resolved from either explicit command node IDs or
+the registered membership provider, and otherwise falls back to received-list
+EACKs.
 Full Zephyr runtime side-effect coverage around every handoff/preemption point
 is still partial.
 

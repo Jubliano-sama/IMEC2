@@ -3,6 +3,7 @@
 #include "protocol.h"
 
 #include <errno.h>
+#include <stdbool.h>
 
 #include <zephyr/ztest.h>
 
@@ -26,6 +27,7 @@ struct test_ctx {
     uint8_t send_c5_calls;
     uint8_t note_tx_calls;
     uint8_t note_ch9_calls;
+    bool mutate_failed_prepare;
 };
 
 static struct mesh_outbound make_eack(void)
@@ -86,6 +88,14 @@ static int test_prepare_channel9(struct mesh_outbound *out,
     if (ret == 0) {
         out->earliest_tx_ms = plan->start_ms + 11u;
         test->prepared_earliest_tx_ms = out->earliest_tx_ms;
+    } else if (test->mutate_failed_prepare) {
+        out->packet.session_id = 0xdeadbeefu;
+        out->packet.seq = 0xbeefu;
+        out->payload[0] = 0xeeu;
+        out->payload[1] = 0xddu;
+        out->payload_len = 2u;
+        out->queued_at_ms = 0x12345678u;
+        out->earliest_tx_ms = 0x87654321u;
     }
     return ret;
 }
@@ -256,6 +266,53 @@ ZTEST(gateway_eack_policy, test_falls_back_to_c5_when_channel9_prepare_fails)
     zassert_equal(ctx.send_c5_calls, 1u);
     zassert_equal(ctx.note_tx_calls, 1u);
     zassert_equal(ctx.note_ch9_calls, 0u);
+    zassert_equal(eack.next_hop_id, MESH_BROADCAST_ID);
+    zassert_equal(eack.radio_channel, UWB_CHANNEL_WAKE_CONTACT);
+    zassert_equal(eack.earliest_tx_ms, 0u);
+}
+
+ZTEST(gateway_eack_policy,
+      test_c5_fallback_restores_collection_eack_state_after_prepare_failure)
+{
+    const uint64_t return_peer = 0x1111222233334444ull;
+    struct mesh_outbound eack = make_eack();
+    struct test_ctx ctx = {
+        .prepare_ret = -EBUSY,
+        .mutate_failed_prepare = true,
+    };
+    struct app_gateway_eack_policy_ops ops = make_ops(&ctx);
+    struct app_gateway_eack_policy_result result;
+
+    eack.packet.session_id = 0x01020304u;
+    eack.packet.seq = 0x1122u;
+    eack.packet.ttl = 3u;
+    eack.payload[0] = 0xa1u;
+    eack.payload[1] = 0xb2u;
+    eack.payload[2] = 0xc3u;
+    eack.payload[3] = 0xd4u;
+    eack.payload_len = 4u;
+    eack.queued_at_ms = 0x55667788u;
+
+    zassert_ok(app_gateway_eack_send(&eack, return_peer, &ops, &result));
+    zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_C5_FLOOD);
+    zassert_equal(result.channel9_prepare_ret, -EBUSY);
+    zassert_equal(result.channel9_candidate_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(ctx.prepare_calls, 1u);
+    zassert_equal(ctx.send_ch9_calls, 0u);
+    zassert_equal(ctx.send_c5_calls, 1u);
+    zassert_equal(ctx.note_tx_calls, 1u);
+    zassert_equal(ctx.note_ch9_calls, 0u);
+    zassert_equal(eack.packet.msg_type, MSG_GATEWAY_COLLECTION_EACK);
+    zassert_equal(eack.packet.session_id, 0x01020304u);
+    zassert_equal(eack.packet.seq, 0x1122u);
+    zassert_equal(eack.packet.ttl, 3u);
+    zassert_equal(eack.payload_len, 4u);
+    zassert_equal(eack.payload[0], 0xa1u);
+    zassert_equal(eack.payload[1], 0xb2u);
+    zassert_equal(eack.payload[2], 0xc3u);
+    zassert_equal(eack.payload[3], 0xd4u);
+    zassert_equal(eack.queued_at_ms, 0x55667788u);
     zassert_equal(eack.next_hop_id, MESH_BROADCAST_ID);
     zassert_equal(eack.radio_channel, UWB_CHANNEL_WAKE_CONTACT);
     zassert_equal(eack.earliest_tx_ms, 0u);

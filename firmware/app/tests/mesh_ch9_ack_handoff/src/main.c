@@ -52,6 +52,26 @@ static void append_ack_lists(uint8_t *payload,
                                 (uint8_t)(count * sizeof(uint16_t))));
 }
 
+static void append_ack_packet_ids(uint8_t *payload,
+                                  size_t payload_cap,
+                                  size_t *payload_len,
+                                  const uint32_t *packet_ids,
+                                  uint8_t count)
+{
+    uint8_t packet_id_list[16];
+
+    zassert_true(count <= 4u);
+    for (uint8_t i = 0u; i < count; i++) {
+        proto_put_u32_le(&packet_id_list[i * sizeof(uint32_t)], packet_ids[i]);
+    }
+    zassert_ok(tlv_append_bytes(payload,
+                                payload_cap,
+                                payload_len,
+                                TLV_MESH_ACK_PACKET_ID_LIST,
+                                packet_id_list,
+                                (uint8_t)(count * sizeof(uint32_t))));
+}
+
 static int fake_retry_put(const struct mesh_outbound *outbound, void *ctx)
 {
     struct fake_retry_queue *queue = ctx;
@@ -106,6 +126,66 @@ static struct mesh_outbound fake_outbound(uint16_t seq, uint32_t queued_at_ms)
         .queued_at_ms = queued_at_ms,
         .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
     };
+}
+
+static struct mesh_outbound fake_route_test_outbound(uint16_t seq,
+                                                     uint32_t session_id,
+                                                     uint32_t packet_id,
+                                                     uint32_t queued_at_ms)
+{
+    struct mesh_outbound outbound = {
+        .packet = {
+            .msg_type = MSG_MESH_DATA,
+            .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            .seq = seq,
+            .session_id = session_id,
+            .src_id = 0x1111222233334444ull,
+            .dst_id = 0x9999888877776666ull,
+            .ttl = MESH_DEFAULT_TTL,
+        },
+        .queued_at_ms = queued_at_ms,
+        .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .next_hop_id = 0x9999888877776666ull,
+    };
+    size_t payload_len = 0u;
+
+    zassert_ok(tlv_append_u32(outbound.payload,
+                              sizeof(outbound.payload),
+                              &payload_len,
+                              TLV_MESH_TEST_PACKET_ID,
+                              packet_id));
+    zassert_ok(tlv_append_u32(outbound.payload,
+                              sizeof(outbound.payload),
+                              &payload_len,
+                              TLV_EVENT_SEQ,
+                              packet_id));
+    zassert_ok(tlv_append_u8(outbound.payload,
+                             sizeof(outbound.payload),
+                             &payload_len,
+                             TLV_MESH_CHANNEL,
+                             UWB_CHANNEL_MESH_PAYLOAD));
+    outbound.payload_len = (uint16_t)payload_len;
+    outbound.packet.payload_len = (uint16_t)payload_len;
+    return outbound;
+}
+
+static bool payload_find_u32(const uint8_t *payload,
+                             size_t payload_len,
+                             uint8_t type,
+                             uint32_t *value)
+{
+    const uint8_t *encoded = NULL;
+    uint8_t encoded_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, payload_len, type, &encoded, &encoded_len);
+    if (ret != PROTO_OK || encoded_len != sizeof(uint32_t)) {
+        return false;
+    }
+    if (value != NULL) {
+        *value = proto_get_u32_le(encoded);
+    }
+    return true;
 }
 
 ZTEST(mesh_ch9_ack_handoff, test_partial_ack_marks_only_matching_entry)
@@ -344,6 +424,124 @@ ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeue_reports_drop_when_queue_ful
     zassert_equal(result.queued_before, 4u);
     zassert_equal(result.queued_after, 4u);
     zassert_equal(queue.drop_notes, 1u);
+}
+
+ZTEST(mesh_ch9_ack_handoff,
+      test_route_test_partial_ack_requeues_unacked_ahead_of_later_work)
+{
+    const uint32_t ack_sessions[] = { 2101u, 2103u };
+    const uint16_t ack_seqs[] = { 41u, 43u };
+    const uint32_t ack_packet_ids[] = { 501u, 503u };
+    struct proto_packet ack = gateway_ack_packet();
+    struct fake_retry_queue queue = {
+        .entries = {
+            fake_route_test_outbound(99u, 2199u, 599u, 10u),
+        },
+        .count = 1u,
+    };
+    const struct app_mesh_ch9_tx_retry_ops ops = {
+        .put = fake_retry_put,
+        .get = fake_retry_get,
+        .queue_used = fake_retry_used,
+        .note_drop = fake_retry_note_drop,
+        .ctx = &queue,
+    };
+    struct app_mesh_ch9_tx_retry_entry retry_entries[] = {
+        {
+            .outbound = fake_route_test_outbound(41u, 2101u, 501u, 20u),
+        },
+        {
+            .outbound = fake_route_test_outbound(42u, 2102u, 502u, 30u),
+        },
+        {
+            .outbound = fake_route_test_outbound(43u, 2103u, 503u, 40u),
+        },
+    };
+    struct app_mesh_ch9_tx_ack_entry ack_entries[] = {
+        {
+            .session_id = retry_entries[0].outbound.packet.session_id,
+            .seq = retry_entries[0].outbound.packet.seq,
+        },
+        {
+            .session_id = retry_entries[1].outbound.packet.session_id,
+            .seq = retry_entries[1].outbound.packet.seq,
+        },
+        {
+            .session_id = retry_entries[2].outbound.packet.session_id,
+            .seq = retry_entries[2].outbound.packet.seq,
+        },
+    };
+    struct app_mesh_ch9_tx_ack_result ack_result;
+    struct app_mesh_ch9_tx_retry_result retry_result;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    uint32_t packet_id = 0u;
+
+    append_ack_lists(payload,
+                     sizeof(payload),
+                     &payload_len,
+                     ack_sessions,
+                     ack_seqs,
+                     ARRAY_SIZE(ack_seqs));
+    append_ack_packet_ids(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          ack_packet_ids,
+                          ARRAY_SIZE(ack_packet_ids));
+
+    zassert_true(app_mesh_ch9_tx_should_track_ack(
+        &retry_entries[0].outbound.packet, true));
+    zassert_ok(app_mesh_ch9_tx_ack_apply(&ack,
+                                         payload,
+                                         payload_len,
+                                         ack_entries,
+                                         ARRAY_SIZE(ack_entries),
+                                         &ack_result));
+    zassert_true(ack_result.any_match);
+    zassert_false(ack_result.all_acked);
+    zassert_equal(ack_result.acked_now, 2u);
+    zassert_equal(ack_result.unacked_count, 1u);
+
+    for (uint8_t i = 0u; i < ARRAY_SIZE(retry_entries); i++) {
+        retry_entries[i].acked = ack_entries[i].acked;
+    }
+    zassert_true(retry_entries[0].acked);
+    zassert_false(retry_entries[1].acked);
+    zassert_true(retry_entries[2].acked);
+
+    zassert_ok(app_mesh_ch9_tx_requeue_unacked(retry_entries,
+                                               ARRAY_SIZE(retry_entries),
+                                               6000u,
+                                               &ops,
+                                               &retry_result));
+
+    zassert_equal(retry_result.requeued, 1u);
+    zassert_equal(retry_result.dropped, 0u);
+    zassert_equal(retry_result.queued_before, 1u);
+    zassert_equal(retry_result.queued_after, 2u);
+    zassert_equal(queue.drop_notes, 0u);
+    zassert_equal(queue.count, 2u);
+
+    zassert_equal(queue.entries[0].packet.msg_type, MSG_MESH_DATA);
+    zassert_equal(queue.entries[0].packet.flags,
+                  FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC);
+    zassert_equal(queue.entries[0].packet.seq, 42u);
+    zassert_equal(queue.entries[0].packet.session_id, 2102u);
+    zassert_equal(queue.entries[0].queued_at_ms, 6000u);
+    zassert_equal(queue.entries[0].radio_channel, UWB_CHANNEL_MESH_PAYLOAD);
+    zassert_true(payload_find_u32(queue.entries[0].payload,
+                                  queue.entries[0].payload_len,
+                                  TLV_MESH_TEST_PACKET_ID,
+                                  &packet_id));
+    zassert_equal(packet_id, 502u);
+
+    zassert_equal(queue.entries[1].packet.seq, 99u);
+    zassert_equal(queue.entries[1].queued_at_ms, 10u);
+    zassert_true(payload_find_u32(queue.entries[1].payload,
+                                  queue.entries[1].payload_len,
+                                  TLV_MESH_TEST_PACKET_ID,
+                                  &packet_id));
+    zassert_equal(packet_id, 599u);
 }
 
 ZTEST(mesh_ch9_ack_handoff,
