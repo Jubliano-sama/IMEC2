@@ -329,6 +329,63 @@ ZTEST(mesh_result_handoff,
 }
 
 ZTEST(mesh_result_handoff,
+      test_bundle_forward_save_failure_blocks_combined_hop_ack)
+{
+    struct mesh_relay_result result = {
+        .actions = MESH_RELAY_ACTION_FORWARD |
+                   MESH_RELAY_ACTION_SEND_HOP_ACK |
+                   MESH_RELAY_ACTION_CUSTODY_ACCEPTED,
+        .forward = {
+            .packet = {
+                .msg_type = MSG_RESULT_BUNDLE,
+                .src_id = 0x1111222233334444ull,
+                .dst_id = 0x9999888877776666ull,
+                .session_id = 41u,
+                .seq = 11u,
+                .ttl = MESH_DEFAULT_TTL,
+            },
+            .next_hop_id = 0x2222333344445555ull,
+            .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        },
+    };
+    struct test_ctx ctx;
+    struct app_mesh_result_handoff_ops ops = make_ops(&ctx);
+    struct app_mesh_result_handoff_status forward_status;
+    struct app_mesh_result_handoff_status ack_status;
+
+    init_ctx(&ctx);
+    ctx.save_ret = -EIO;
+    app_mesh_result_handoff_after_forward(&result,
+                                          true,
+                                          true,
+                                          &ops,
+                                          &forward_status);
+    app_mesh_result_handoff_prepare_hop_ack(&result,
+                                            true,
+                                            true,
+                                            &ops,
+                                            &ack_status);
+
+    zassert_true(forward_status.result_bundle_forward_noted);
+    zassert_false(forward_status.child_custody_ready);
+    zassert_false(forward_status.child_custody_saved);
+    zassert_true(forward_status.child_custody_save_failed);
+    zassert_equal(forward_status.save_ret, -EIO);
+
+    zassert_false(ack_status.child_custody_ready);
+    zassert_false(ack_status.child_custody_saved);
+    zassert_true(ack_status.child_custody_save_failed);
+    zassert_false(ack_status.hop_ack_allowed);
+    zassert_equal(ack_status.save_ret, -EIO);
+
+    zassert_equal(ctx.event_count, 3u);
+    zassert_equal(ctx.events[0], EVENT_NOTE_BUNDLE);
+    zassert_equal(ctx.events[1], EVENT_SAVE);
+    zassert_equal(ctx.events[2], EVENT_SAVE);
+    zassert_true(ctx.noted_bundle == &result.forward);
+}
+
+ZTEST(mesh_result_handoff,
       test_forwarded_packet_hop_ack_allowed_after_forward_send)
 {
     struct mesh_relay_result result = {

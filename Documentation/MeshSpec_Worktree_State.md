@@ -75,6 +75,11 @@ Current `get_goal()`:
    Native relay coverage also verifies that a closed collection EACK terminates
    pending source delivery even when the EACK uses roster-bitmap format and
    carries no explicit node list.
+   `firmware/app/tests/mesh_ch9_ack_handoff` now covers collection-result
+   source delivery handoff where a nonmatching ACK leaves source retry pending,
+   a later partial ACK requeues only the unACKed result, and the requeued
+   payload preserves command-result identity/source node plus collection retry
+   TLVs.
    Gateway collection state now has per-result previous-hop metadata on
    `gateway_collection_result_entry`, previous-hop-aware result/bundle record
    APIs, and `gateway_collection_return_candidates()` for distinct return
@@ -113,7 +118,9 @@ Current `get_goal()`:
    `firmware/app/tests/mesh_result_handoff` verifies the app bridge that saves
    child custody before result grants, suppresses grants on save failure, reports
    grant-send failure without marking TX sent, notes forwarded bundles before
-   saving custody, and updates custody after forwarded child-result handoff. The
+   saving custody, updates custody after forwarded child-result handoff, and
+   suppresses hop/custody ACK for a combined multi-hop `MSG_RESULT_BUNDLE`
+   forward when child-custody save fails. The
    remaining gap is broader app-integrated recovery coverage across every radio
    handoff and preemption path.
 3. Gateway app collection EACKs now select explicit missing-list format when the
@@ -204,8 +211,9 @@ Current `get_goal()`:
   bundle-forward notation before custody save, and save-failure reporting after
   forwarded handoff. The app dispatcher now also uses the helper to gate
   hop/custody ACKs on child-custody save, and the same test target verifies ACK
-  allowed after save success/forward success and suppressed after save failure
-  under `native_sim/native/64`.
+  allowed after save success/forward success and suppressed after save failure,
+  including a combined multi-hop `MSG_RESULT_BUNDLE` forward plus custody-ACK
+  handoff under `native_sim/native/64`.
 - Latest channel-9 ACK matching slice: `firmware/app/src/app_mesh_ch9_ack.*`
   factors route-test channel-9 batch ACK matching and partial-ACK requeue
   behavior into caller-owned helpers.
@@ -216,7 +224,9 @@ Current `get_goal()`:
   only unACKed packets ahead of pre-existing queued work, and a full queue
   reports the retry drop path. The same focused test target now covers
   route-test `MSG_MESH_DATA` multi-packet partial ACK recovery, including
-  unACKed-only retry requeue ahead of later queued work.
+  unACKed-only retry requeue ahead of later queued work, and collection-source
+  `MSG_COMMAND_RESULT` nonmatching/partial ACK recovery preserving result
+  identity/source metadata plus collection retry TLVs.
 - Latest active collection retry persistence test slice:
   `firmware/app/tests/mesh_persistence` verifies a real active
   `MSG_COMMAND_RESULT` outbox already waiting in collection retry-backoff can be
@@ -327,3 +337,5 @@ Verification already run on the dirty patches:
 5. `./firmware/build/test_mesh_relay` passed.
 6. `.venv/bin/west build --no-sysbuild -s firmware/app/tests/mesh_ch9_ack_handoff -b native_sim/native/64 --build-dir build/mesh_ch9_ack_handoff_test` passed.
 7. `build/mesh_ch9_ack_handoff_test/zephyr/zephyr.exe` passed 7/7.
+8. `.venv/bin/west build --no-sysbuild -s firmware/app/tests/mesh_result_handoff -b native_sim/native/64 --build-dir build/mesh_result_handoff_test` passed.
+9. `build/mesh_result_handoff_test/zephyr/zephyr.exe` passed 10/10.
