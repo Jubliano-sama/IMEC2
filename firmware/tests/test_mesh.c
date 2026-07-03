@@ -340,7 +340,7 @@ static void test_channel5_active_until_zero_is_idle_across_uptime_wrap(void)
     assert(plan.action == MESH_EVENT_PLAN_START);
 }
 
-static void test_channel9_missed_events_stay_channel9_until_supervision_timeout(void)
+static void test_channel9_missed_events_refresh_contact_at_configured_limit(void)
 {
     struct mesh_event_timing timing = {0};
     struct mesh_event_params params = event_params();
@@ -362,19 +362,17 @@ static void test_channel9_missed_events_stay_channel9_until_supervision_timeout(
     assert(timing.missed_event_count == 1u);
     assert(diagnostics.ch9_event_misses == 1u);
     assert(!timing.fallback_required);
+    assert(timing.timing_fresh);
+    assert(mesh_event_timing_usable(&timing, 1100u));
 
     mesh_event_note_missed(&timing, &diagnostics);
     assert(timing.missed_event_count == 2u);
     assert(diagnostics.ch9_event_misses == 2u);
-    assert(!timing.fallback_required);
-    assert(mesh_event_timing_usable(&timing, 1200u));
+    assert(timing.fallback_required);
+    assert(!timing.timing_fresh);
+    assert(!mesh_event_timing_usable(&timing, 1200u));
 
     assert(mesh_event_plan_channel9(&timing, &requirements, 1200u, &plan) == PROTO_OK);
-    assert(plan.action == MESH_EVENT_PLAN_WAIT);
-    assert(mesh_event_plan_channel9(&timing, &requirements, 1300u, &plan) == PROTO_OK);
-    assert(plan.action == MESH_EVENT_PLAN_START);
-    assert(!mesh_event_timing_usable(&timing, 1501u));
-    assert(mesh_event_plan_channel9(&timing, &requirements, 1501u, &plan) == PROTO_OK);
     assert(plan.action == MESH_EVENT_PLAN_REFRESH_CONTACT_CH5);
 
     mesh_event_note_report_latency(&diagnostics, 42u);
@@ -451,7 +449,7 @@ int main(void)
     test_channel9_observed_rx_keeps_negotiated_cadence();
     test_channel5_activity_preempts_channel9_mesh();
     test_channel5_active_until_zero_is_idle_across_uptime_wrap();
-    test_channel9_missed_events_stay_channel9_until_supervision_timeout();
+    test_channel9_missed_events_refresh_contact_at_configured_limit();
     test_channel9_skip_elapsed_advances_to_next_live_slot();
     test_channel9_traffic_refreshes_supervision_timeout();
     test_channel9_local_tx_does_not_refresh_supervision_timeout();

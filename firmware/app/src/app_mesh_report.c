@@ -11,6 +11,7 @@
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
 #include "app_mesh_route_ready_handoff.h"
+#include "app_mesh_route_wait_tx.h"
 #include "app_mesh_result_handoff.h"
 #include "app_mesh_test.h"
 #include "app_mesh_tx_handoff_gate.h"
@@ -5284,6 +5285,11 @@ static void mesh_try_route_waiting_tx(void)
     struct mesh_outbound pending;
     struct app_mesh_tx_handoff_result handoff_result;
     struct app_mesh_route_ready_handoff_result route_ready_result;
+    struct app_mesh_route_wait_tx_decision wait_decision;
+    struct app_mesh_route_wait_tx_state wait_state = {
+        .channel9_retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+        .busy_retry_delay_ms = REPORT_TX_RETRY_DELAY_MS,
+    };
     uint32_t now_ms;
     int ret;
 
@@ -5347,26 +5353,37 @@ static void mesh_try_route_waiting_tx(void)
 
     pending = mesh_route_waiting_tx;
     now_ms = k_uptime_get_32();
-    if (!mesh_outbound_ready_for_tx(&pending, now_ms)) {
-        mesh_schedule_route_waiting_retry("route-waiting-not-ready");
-        return;
+    wait_state.outbound_ready = mesh_outbound_ready_for_tx(&pending, now_ms);
+    if (wait_state.outbound_ready) {
+        wait_state.tx_ret = mesh_start_tracked_tx(&pending, "route-discovered-packet");
     }
-    ret = mesh_start_tracked_tx(&pending, "route-discovered-packet");
-    if (ret == 0) {
+    app_mesh_route_wait_tx_decide(&wait_state, &wait_decision);
+    switch (wait_decision.action) {
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_CLEAR_VALID:
         mesh_route_waiting_tx_valid = false;
-    } else if (ret == -EHOSTUNREACH) {
-        ret = mesh_request_route(pending.packet.dst_id, "route-waiting-packet");
-        if (ret == -ETIMEDOUT) {
-            mesh_drop_route_waiting_tx("route-waiting-timeout");
+        break;
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_REQUEST_ROUTE:
+        ret = mesh_request_route(pending.packet.dst_id, wait_decision.reason);
+        wait_state.route_request_attempted = true;
+        wait_state.route_request_ret = ret;
+        app_mesh_route_wait_tx_decide(&wait_state, &wait_decision);
+        if (wait_decision.action == APP_MESH_ROUTE_WAIT_TX_ACTION_DROP) {
+            mesh_drop_route_waiting_tx(wait_decision.reason);
         }
-    } else if (ret == -ETIMEDOUT) {
-        mesh_drop_route_waiting_tx("route-waiting-stale");
-    } else if (ret == -EBUSY) {
-        mesh_schedule_route_waiting_retry_after("route-waiting-channel9-event",
-                                                MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
-    } else {
-        mesh_schedule_route_waiting_retry_after("route-waiting-busy",
-                                                REPORT_TX_RETRY_DELAY_MS);
+        break;
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_DROP:
+        mesh_drop_route_waiting_tx(wait_decision.reason);
+        break;
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_ROUTE_RETRY:
+        mesh_schedule_route_waiting_retry(wait_decision.reason);
+        break;
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_FIXED_RETRY:
+        mesh_schedule_route_waiting_retry_after(wait_decision.reason,
+                                                wait_decision.delay_ms);
+        break;
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_NONE:
+    default:
+        break;
     }
 }
 

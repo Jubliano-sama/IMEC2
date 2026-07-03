@@ -179,6 +179,8 @@ Current behavior:
   preempted by channel-5 work.
 - Event/window closure is separate from channel-9 timing validity.
 - Timing can remain valid after a payload window completes.
+- Timing becomes stale and requires channel-5 contact refresh when the
+  configured missed-event limit is reached.
 - ACK/EACK can arrive later through a later event or refreshed contact path.
 - Route-test channel-9 batch ACK matching is factored into a caller-owned
   helper. Focused Zephyr coverage verifies partial ACKs mark only matching

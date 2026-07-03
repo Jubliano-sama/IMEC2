@@ -338,6 +338,11 @@ void mesh_event_note_missed(struct mesh_event_timing *timing,
     }
     timing->next_event_time_ms += timing->event_interval_ms;
     timing->event_counter++;
+    if (timing->max_missed_events > 0u &&
+        timing->missed_event_count >= timing->max_missed_events) {
+        timing->timing_fresh = false;
+        timing->fallback_required = true;
+    }
     counter_add(diagnostics == NULL ? NULL : &diagnostics->ch9_event_misses, 1u);
 }
 
