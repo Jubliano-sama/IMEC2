@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define ANCHOR_A 0xA001u
+#define ANCHOR_B 0xA002u
 #define GATEWAY 0x9000u
 
 struct deferral_test_ctx {
@@ -198,6 +199,71 @@ static void test_collection_result_defers_even_when_snapshot_save_fails(void)
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
 }
 
+static void test_forwarded_child_result_defers_and_preserves_outbox(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(7u);
+    struct proto_packet packet;
+    struct mesh_outbound tx;
+    uint8_t payload[96];
+    size_t payload_len;
+    struct deferral_test_ctx ctx = {0};
+    const struct app_mesh_collection_deferral_ops ops = deferral_ops(&ctx);
+    struct app_mesh_collection_deferral_result result;
+
+    build_collection_payload(payload, sizeof(payload), &payload_len);
+    assert(mesh_init_command_result(&packet,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    0x10203040u,
+                                    4u,
+                                    (uint8_t)payload_len,
+                                    false) == PROTO_OK);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 7u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &packet,
+                               payload,
+                               payload_len,
+                               5000u,
+                               &tx) == PROTO_OK);
+    assert(mesh_relay_tx_active(&relay));
+    assert(!mesh_relay_tx_active_local_collection_result(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    assert(relay.pending.packet.src_id == ANCHOR_A);
+    assert(relay.pending.packet.dst_id == GATEWAY);
+    assert(relay.outbox_record.valid);
+    assert(relay.outbox_record.packet_class == MSG_COMMAND_RESULT);
+    assert(relay.outbox_record.payload_len == payload_len);
+    assert(relay.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+
+    assert(app_mesh_collection_defer_active_result(&relay,
+                                                  5100u,
+                                                  &ops,
+                                                  &result));
+    assert(result.deferred);
+    assert(result.outbox_saved);
+    assert(result.retry_scheduled);
+    assert(result.save_ret == 0);
+    assert(result.schedule_ret == 0);
+    assert(ctx.save_count == 1);
+    assert(ctx.schedule_count == 1);
+    assert(mesh_relay_tx_active(&relay));
+    assert(!mesh_relay_tx_active_local_collection_result(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    assert(relay.pending.retry_after_ms == 5100u + RELAY_BUSY_RETRY_MIN_MS);
+    assert(relay.pending.packet.msg_type == MSG_COMMAND_RESULT);
+    assert(relay.pending.packet.src_id == ANCHOR_A);
+    assert(relay.pending.payload_len == payload_len);
+    assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
+    assert(relay.outbox_record.valid);
+    assert(relay.outbox_record.packet_class == MSG_COMMAND_RESULT);
+    assert(relay.outbox_record.payload_len == payload_len);
+    assert(relay.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+    assert(!relay.outbox_record.gateway_acked);
+}
+
 static void test_non_collection_tx_is_left_for_caller_fallback(void)
 {
     struct mesh_relay relay;
@@ -241,6 +307,7 @@ int main(void)
 {
     test_collection_result_defers_and_runs_hooks_in_order();
     test_collection_result_defers_even_when_snapshot_save_fails();
+    test_forwarded_child_result_defers_and_preserves_outbox();
     test_non_collection_tx_is_left_for_caller_fallback();
     return 0;
 }

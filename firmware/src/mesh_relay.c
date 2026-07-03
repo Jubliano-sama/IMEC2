@@ -1298,6 +1298,16 @@ static bool pending_is_local_collection_result(const struct mesh_relay *relay,
                                             &collection_epoch_id) == PROTO_OK;
 }
 
+static bool pending_is_forwarded_command_result(const struct mesh_relay *relay,
+                                                const struct mesh_pending_tx *pending)
+{
+    return outbox_should_track_pending(relay, pending) &&
+           pending->packet.src_id != relay->local_id &&
+           pending->state != MESH_RELAY_TX_IDLE &&
+           pending->packet.msg_type == MSG_COMMAND_RESULT &&
+           pending_has_valid_command_result_id(relay, pending);
+}
+
 static bool pending_is_result_bundle(const struct mesh_relay *relay,
                                      const struct mesh_pending_tx *pending)
 {
@@ -1481,6 +1491,7 @@ static bool preserve_pending_gateway_result(struct mesh_relay *relay,
 {
     if (relay == NULL ||
         (!pending_is_local_collection_result(relay, &relay->pending) &&
+         !pending_is_forwarded_command_result(relay, &relay->pending) &&
          !pending_is_result_bundle(relay, &relay->pending))) {
         return false;
     }
@@ -4942,7 +4953,6 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
                         struct mesh_outbound *out)
 {
     uint64_t next_hop_id = 0u;
-    bool wait_gateway_ack;
     int ret;
 
     if (relay == NULL || packet == NULL || out == NULL ||
@@ -4967,12 +4977,7 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
         return ret;
     }
 
-    wait_gateway_ack = packet->src_id == relay->local_id &&
-                       (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
-
     memset(&relay->pending, 0, sizeof(relay->pending));
-    relay->pending.state = wait_gateway_ack ? MESH_RELAY_TX_WAIT_GATEWAY_ACK :
-                                              MESH_RELAY_TX_IDLE;
     relay->pending.packet = *packet;
     if (payload_len > 0u) {
         memcpy(relay->pending.payload, payload, payload_len);
@@ -4981,6 +4986,9 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
     relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     relay->pending.next_hop_id = next_hop_id;
     relay->pending.queued_at_ms = now_ms;
+    relay->pending.state = outbox_should_track_pending(relay, &relay->pending) ?
+                           MESH_RELAY_TX_WAIT_GATEWAY_ACK :
+                           MESH_RELAY_TX_IDLE;
     pending_set_deadlines(&relay->pending, now_ms);
     outbox_record_track_pending(relay, now_ms);
     return outbound_from_pending(relay, &relay->pending, now_ms, out);

@@ -340,9 +340,12 @@ NVS-backed snapshots for the focused paths already covered by tests.
 
 This durable custody area is partial: queued child bundles, in-flight
 `MSG_RESULT_BUNDLE`, parent result-offer reservation, and forwarded child
-`MSG_COMMAND_RESULT` retry paths have native and focused Zephyr coverage, but
-full app-integrated recovery across every radio handoff/preemption point remains
-unfinished.
+`MSG_COMMAND_RESULT` retry paths have native and focused Zephyr coverage.
+Forwarded non-bundled child `MSG_COMMAND_RESULT` payloads with valid identity
+are tracked as persistent relay outbox work before upstream send completion, so
+slot-full or send-failure deferral can preserve the child payload, outbox
+record, and retry schedule. Full app-integrated recovery across every radio
+handoff/preemption point remains unfinished.
 
 ## Direct Gateway / Transmitter Mesh-Test Scenario
 
@@ -429,6 +432,7 @@ The implementation tracker records focused native and Zephyr coverage for:
 - all-node command spread/retry helpers,
 - result offer/grant validation,
 - relay outbox and child custody snapshot/restore paths,
+- forwarded child command-result outbox preservation on app deferral,
 - app helper coverage for selected preemption/handoff paths.
 
 Remaining partial areas are intentionally not hidden:
