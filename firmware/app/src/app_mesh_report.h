@@ -75,6 +75,9 @@ int mesh_send_c5_control(const struct mesh_outbound *out,
                          uint8_t purpose,
                          enum mesh_c5_control_send_mode mode,
                          const char *reason);
+int mesh_send_c5_flood(const struct mesh_outbound *out,
+                       uint8_t purpose,
+                       const char *reason);
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
                                    const struct mesh_event_plan *plan,

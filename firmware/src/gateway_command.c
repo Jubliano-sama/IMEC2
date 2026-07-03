@@ -45,6 +45,17 @@ static bool command_response_requires_collection(enum command_response_mode resp
            response_mode == CMD_RESPONSE_LARGE_RESULT;
 }
 
+static uint32_t command_expiry_ms(const struct gateway_command_options *options)
+{
+    if (options == NULL || options->command_expiry_s == 0u) {
+        return 0u;
+    }
+    if (options->command_expiry_s > UINT32_MAX / 1000u) {
+        return UINT32_MAX;
+    }
+    return options->command_expiry_s * 1000u;
+}
+
 static uint32_t mix32(uint32_t value)
 {
     value ^= value >> 16;
@@ -422,6 +433,108 @@ enum gateway_command_transport_mode gateway_command_transport_mode_from_outbound
         return GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST;
     }
     return GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED;
+}
+
+bool gateway_command_receive_expired(const struct proto_packet *packet,
+                                     const struct gateway_command_options *options)
+{
+    uint32_t expiry_ms = command_expiry_ms(options);
+
+    if (packet == NULL || options == NULL || expiry_ms == 0u) {
+        return true;
+    }
+    return packet->message_age_ms >= expiry_ms ||
+           (options->execute_delay_ms != 0u &&
+            options->execute_delay_ms >= expiry_ms);
+}
+
+uint32_t gateway_command_expiry_remaining_ms(const struct proto_packet *packet,
+                                             const struct gateway_command_options *options)
+{
+    uint32_t expiry_ms = command_expiry_ms(options);
+
+    if (packet == NULL || options == NULL ||
+        expiry_ms == 0u || packet->message_age_ms >= expiry_ms) {
+        return 0u;
+    }
+    return expiry_ms - packet->message_age_ms;
+}
+
+uint32_t gateway_command_execute_delay_remaining_ms(
+    const struct proto_packet *packet,
+    const struct gateway_command_options *options)
+{
+    if (packet == NULL || options == NULL ||
+        options->execute_delay_ms <= packet->message_age_ms) {
+        return 0u;
+    }
+    return options->execute_delay_ms - packet->message_age_ms;
+}
+
+static void command_rx_duplicate_expire(struct gateway_command_rx_duplicate_cache *cache,
+                                        uint32_t now_ms)
+{
+    size_t i;
+
+    if (cache == NULL) {
+        return;
+    }
+    for (i = 0u; i < GATEWAY_COMMAND_RX_DUP_CACHE_SIZE; i++) {
+        struct gateway_command_rx_duplicate_entry *entry = &cache->entries[i];
+
+        if (entry->valid &&
+            (entry->lifetime_ms == 0u ||
+             (uint32_t)(now_ms - entry->stored_at_ms) >= entry->lifetime_ms)) {
+            memset(entry, 0, sizeof(*entry));
+        }
+    }
+}
+
+bool gateway_command_rx_duplicate_seen(struct gateway_command_rx_duplicate_cache *cache,
+                                       uint32_t command_seq,
+                                       uint32_t now_ms)
+{
+    size_t i;
+
+    if (cache == NULL || command_seq == 0u) {
+        return false;
+    }
+
+    command_rx_duplicate_expire(cache, now_ms);
+    for (i = 0u; i < GATEWAY_COMMAND_RX_DUP_CACHE_SIZE; i++) {
+        if (cache->entries[i].valid &&
+            cache->entries[i].command_seq == command_seq) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void gateway_command_rx_duplicate_store(struct gateway_command_rx_duplicate_cache *cache,
+                                        const struct proto_packet *packet,
+                                        const struct gateway_command_options *options,
+                                        uint32_t now_ms)
+{
+    struct gateway_command_rx_duplicate_entry *entry;
+    uint32_t lifetime_ms;
+
+    if (cache == NULL || packet == NULL || options == NULL ||
+        options->command_seq == 0u) {
+        return;
+    }
+
+    lifetime_ms = gateway_command_expiry_remaining_ms(packet, options);
+    if (lifetime_ms == 0u) {
+        return;
+    }
+
+    command_rx_duplicate_expire(cache, now_ms);
+    entry = &cache->entries[cache->next];
+    entry->command_seq = options->command_seq;
+    entry->stored_at_ms = now_ms;
+    entry->lifetime_ms = lifetime_ms;
+    entry->valid = true;
+    cache->next = (uint8_t)((cache->next + 1u) % GATEWAY_COMMAND_RX_DUP_CACHE_SIZE);
 }
 
 uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count)

@@ -718,6 +718,88 @@ static void test_tracking_mode_uses_collection_for_broadcast_results(void)
            GATEWAY_COMMAND_TRACK_COLLECTION);
 }
 
+static void test_command_receive_timing_waits_until_execute_delay(void)
+{
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .response_mode = CMD_RESPONSE_NONE,
+        .command_seq = 77u,
+        .flood_epoch_id = 88u,
+        .execute_delay_ms = 1000u,
+        .command_expiry_s = 3u,
+        .flood_required = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = MESH_BROADCAST_ID,
+        .message_age_ms = 250u,
+    };
+
+    assert(!gateway_command_receive_expired(&packet, &options));
+    assert(gateway_command_execute_delay_remaining_ms(&packet, &options) == 750u);
+
+    packet.message_age_ms = 1000u;
+    assert(!gateway_command_receive_expired(&packet, &options));
+    assert(gateway_command_execute_delay_remaining_ms(&packet, &options) == 0u);
+}
+
+static void test_command_receive_rejects_expired_or_unexecutable_delay(void)
+{
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .response_mode = CMD_RESPONSE_SMALL_RESULT,
+        .command_seq = 77u,
+        .flood_epoch_id = 88u,
+        .execute_delay_ms = 1000u,
+        .command_expiry_s = 1u,
+        .flood_required = true,
+        .collection_required = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = MESH_BROADCAST_ID,
+        .message_age_ms = 999u,
+    };
+
+    assert(gateway_command_receive_expired(&packet, &options));
+
+    options.execute_delay_ms = 0u;
+    packet.message_age_ms = 1000u;
+    assert(gateway_command_receive_expired(&packet, &options));
+    assert(gateway_command_expiry_remaining_ms(&packet, &options) == 0u);
+
+    packet.message_age_ms = 999u;
+    assert(!gateway_command_receive_expired(&packet, &options));
+    assert(gateway_command_expiry_remaining_ms(&packet, &options) == 1u);
+}
+
+static void test_command_rx_duplicate_cache_blocks_replay_until_expiry(void)
+{
+    struct gateway_command_rx_duplicate_cache cache = {0};
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .response_mode = CMD_RESPONSE_NONE,
+        .command_seq = 77u,
+        .flood_epoch_id = 88u,
+        .command_expiry_s = 2u,
+        .flood_required = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = MESH_BROADCAST_ID,
+        .message_age_ms = 100u,
+    };
+
+    assert(!gateway_command_rx_duplicate_seen(&cache, options.command_seq, 1000u));
+    gateway_command_rx_duplicate_store(&cache, &packet, &options, 1000u);
+    assert(gateway_command_rx_duplicate_seen(&cache, options.command_seq, 1000u));
+    assert(gateway_command_rx_duplicate_seen(&cache, options.command_seq, 2899u));
+    assert(!gateway_command_rx_duplicate_seen(&cache, options.command_seq, 2900u));
+}
+
 static void test_collection_initial_due_is_deterministic_and_bounded(void)
 {
     uint32_t due_a;
@@ -2222,6 +2304,9 @@ int main(void)
     test_tracking_mode_keeps_single_node_on_legacy_wait();
     test_tracking_mode_skips_broadcast_no_response_wait();
     test_tracking_mode_uses_collection_for_broadcast_results();
+    test_command_receive_timing_waits_until_execute_delay();
+    test_command_receive_rejects_expired_or_unexecutable_delay();
+    test_command_rx_duplicate_cache_blocks_replay_until_expiry();
     test_collection_initial_due_is_deterministic_and_bounded();
     test_all_node_collection_due_spreads_responses();
     test_collection_retry_round_advances_spread();

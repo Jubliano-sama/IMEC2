@@ -81,7 +81,10 @@ Current `get_goal()`:
    from the UWB previous hop; app collection EACK sends derive up to two
    candidates from collection state, try valid candidates for channel-9 EACK
    return over existing timing, and fall back to channel-5 flood when no
-   candidate can be used. Core `gateway_collection_export_snapshot()` and
+   candidate can be used. Focused native policy coverage now proves
+   channel-9-first success through a later candidate, duplicate/invalid
+   return-hop suppression, C5 fallback only after channel-9 send failures, and
+   no-candidate bounded C5 recovery. Core `gateway_collection_export_snapshot()` and
    `gateway_collection_restore_snapshot()` now preserve active
    `gateway_collection_state`, including per-result `previous_hop_id`
    reverse-path metadata. Gateway app persistence now saves/restores/clears that
@@ -90,9 +93,9 @@ Current `get_goal()`:
    enable the same generated persistence Kconfig fragment used by anchors. This
    is still not full MeshSpec EACK routing: durable return state exists, but the
    remaining collection routing, persistent membership, and app/radio handoff
-   behavior is not complete. Latest measured role builds after enabling gateway
-   persistence: clicker 232928 B FLASH / 82448 B RAM, anchor 178516 B FLASH /
-   95360 B RAM, gateway 290012 B FLASH / 102412 B RAM.
+   behavior is not complete. Latest measured role builds after bounded C5 flood
+   and anchor command execution changes: clicker 234592 B FLASH / 84624 B RAM,
+   anchor 181836 B FLASH / 96896 B RAM, gateway 291692 B FLASH / 103564 B RAM.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -282,7 +285,48 @@ forward-looking behavior as if it exists.
 
 ## Next actions
 
-1. Add/finalize broader app-integrated failure-mode test cases around full
-   radio handoff/retry behavior during real-time preemption.
-2. Keep `Documentation/Mesh Protocol Detailed Flow.md` aligned with what is
-   actually implemented right now, including partial and missing behavior.
+Current integration checkpoint:
+
+- `7e5a08c Cover gateway EACK return policy`
+- This commit adds focused native coverage for channel-9-first collection EACK
+  return candidate behavior, duplicate/invalid return-hop suppression, fallback
+  to bounded channel-5 recovery only after channel-9 send failures, and
+  no-candidate channel-5 recovery.
+- Local verification for that commit: `./firmware/build/test_gateway_eack_policy`
+  passed, `ctest --test-dir firmware/build --output-on-failure` passed 15/15,
+  and `git diff --check` passed.
+- Previous clean config checkpoint: `dd67448 Enable gateway collection
+  persistence config`.
+- Gateway persistence config audit confirmed default gateway plus
+  `gateway_stage3_highdebug`, `gateway_ble_connectivity_test`, and
+  `mesh_gateway` presets build with the NVS backend rather than persistence
+  stubs.
+
+Integrated worker slices pending commit:
+
+1. Bounded channel-5 flood scheduler and politeness:
+   route solicitation, gateway route advertisements, gateway command floods,
+   collection EACK C5 fallback, and relay broadcast forwards now use bounded
+   C5 flood sends with `FLOOD_RELAY_REPEAT_MS`, `C5_POLITE_SNIFF_MS`, busy-repeat
+   skipping, one-slot deferral for C5 preemption, and relay `earliest_tx_ms`
+   forward-due timing.
+2. Anchor all-node command execution contract:
+   anchor broadcast command receive now rejects expired floods, suppresses
+   duplicate `command_seq` replays through a bounded RX cache, honors
+   packet-age-adjusted `execute_delay_ms`, and schedules collection results only
+   when `response_mode` requires them.
+3. Collection EACK return/fallback behavior:
+   focused native policy coverage is committed in `7e5a08c`. Remaining work is
+   broader app/radio integration proof if needed.
+
+Main-agent verification for the integrated worker slices:
+
+1. `git diff -- Documentation/MeshSpec.md` was empty.
+2. `git diff --check` passed.
+3. `cmake --build firmware/build` passed.
+4. `ctest --test-dir firmware/build --output-on-failure` passed 15/15.
+5. `build/mesh-flood-test-64/zephyr/zephyr.exe` passed 4/4.
+6. Zephyr role builds passed:
+   - clicker: 234592 B FLASH / 84624 B RAM
+   - anchor: 181836 B FLASH / 96896 B RAM
+   - gateway: 291692 B FLASH / 103564 B RAM

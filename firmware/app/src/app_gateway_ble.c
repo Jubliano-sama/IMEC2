@@ -241,10 +241,9 @@ static int gateway_eack_send_c5_flood(const struct mesh_outbound *out, void *ctx
 {
     ARG_UNUSED(ctx);
 
-    return mesh_send_c5_control(out,
-                                C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
-                                MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                "collection-eack-c5");
+    return mesh_send_c5_flood(out,
+                              C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
+                              "collection-eack-c5");
 }
 
 static void gateway_eack_note_tx_sent(const struct mesh_outbound *out, void *ctx)

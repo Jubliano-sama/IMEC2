@@ -764,6 +764,9 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
     assert(result.forward.packet.msg_type == MSG_COMMAND);
     assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
     assert(result.forward.packet.ttl == 2u);
+    assert(result.forward.queued_at_ms == 3020u);
+    assert(result.forward.earliest_tx_ms >= 3020u);
+    assert(result.forward.earliest_tx_ms < 3020u + FLOOD_WAVE_MS);
     assert(result.forward.payload_len == payload_len);
     assert(memcmp(result.forward.payload, payload, payload_len) == 0);
 
@@ -836,6 +839,9 @@ static void test_collection_eack_broadcast_delivers_and_forwards_once(void)
     assert(result.forward.packet.src_id == GATEWAY);
     assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
     assert(result.forward.packet.ttl == 2u);
+    assert(result.forward.queued_at_ms == 3040u);
+    assert(result.forward.earliest_tx_ms >= 3040u);
+    assert(result.forward.earliest_tx_ms < 3040u + FLOOD_WAVE_MS);
     assert(result.forward.payload_len == payload_len);
     assert(memcmp(result.forward.payload, payload, payload_len) == 0);
 
@@ -3769,6 +3775,9 @@ static void test_route_discovery_attempts_are_capped_with_backoff(void)
         assert(relay.route_discovery.target_id == GATEWAY);
         assert(relay.route_discovery.attempts == attempt);
         assert(route_req.packet.ttl == expected_ttl);
+        assert(route_req.queued_at_ms == now_ms);
+        assert(route_req.earliest_tx_ms == now_ms);
+        assert(route_req.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
         assert(relay.route_discovery.next_request_ms ==
                now_ms + mesh_relay_route_discovery_backoff_ms(attempt, 0u));
         assert(mesh_relay_prepare_route_request(&relay,
@@ -3834,6 +3843,9 @@ static void test_route_solicit_flood_identity_is_preserved(void)
     assert(result.route_request.packet.session_id == route_req.packet.session_id);
     assert(result.route_request.packet.seq == route_req.packet.seq);
     assert(result.route_request.packet.ttl == FLOOD_EPOCH_LOCAL_TTL - 1u);
+    assert(result.route_request.queued_at_ms == 1010u);
+    assert(result.route_request.earliest_tx_ms >= 1010u);
+    assert(result.route_request.earliest_tx_ms < 1010u + FLOOD_WAVE_MS);
     assert(require_tlv_u32(result.route_request.payload,
                            result.route_request.payload_len,
                            TLV_FLOOD_EPOCH_ID) == flood_epoch_id);
@@ -3988,6 +4000,8 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(adv.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
     assert(adv.next_hop_id == MESH_BROADCAST_ID);
     assert(adv.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+    assert(adv.queued_at_ms == 1000u);
+    assert(adv.earliest_tx_ms == 1000u);
     assert(require_tlv_u64(adv.payload, adv.payload_len, TLV_GATEWAY_ID) == GATEWAY);
     assert(require_tlv_u16(adv.payload, adv.payload_len, TLV_GATEWAY_EPOCH) == 9u);
     assert(require_tlv_u32(adv.payload, adv.payload_len, TLV_GATEWAY_ROUTE_SEQ) == 77u);
@@ -4029,6 +4043,9 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(result_a.gateway_route_adv.packet.session_id == adv.packet.session_id);
     assert(result_a.gateway_route_adv.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL - 1u);
     assert(result_a.gateway_route_adv.next_hop_id == MESH_BROADCAST_ID);
+    assert(result_a.gateway_route_adv.queued_at_ms == 1010u);
+    assert(result_a.gateway_route_adv.earliest_tx_ms >= 1010u);
+    assert(result_a.gateway_route_adv.earliest_tx_ms < 1010u + FLOOD_WAVE_MS);
     assert(require_tlv_u32(result_a.gateway_route_adv.payload,
                            result_a.gateway_route_adv.payload_len,
                            TLV_FLOOD_EPOCH_ID) == flood_epoch_id);

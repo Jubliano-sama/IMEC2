@@ -152,6 +152,32 @@ static uint32_t gateway_route_adv_slot_seed(uint64_t gateway_id,
     return seed == 0u ? 1u : seed;
 }
 
+static uint32_t flood_forward_delay_ms(uint64_t local_id,
+                                       uint32_t slot_seed,
+                                       uint8_t hop_count)
+{
+    uint32_t seed = slot_seed ^ ((uint32_t)hop_count << 24);
+
+    seed ^= (uint32_t)local_id;
+    seed ^= (uint32_t)(local_id >> 32);
+    return mix32(seed) % FLOOD_WAVE_MS;
+}
+
+static uint32_t flood_identity_seed(const struct proto_packet *packet,
+                                    uint64_t local_id)
+{
+    uint32_t seed = packet == NULL ? 0u : packet->session_id;
+
+    if (packet != NULL) {
+        seed ^= (uint32_t)packet->seq << 16;
+        seed ^= (uint32_t)packet->msg_type << 8;
+        seed ^= packet->ttl;
+    }
+    seed ^= (uint32_t)local_id;
+    seed ^= (uint32_t)(local_id >> 32);
+    return seed == 0u ? 1u : seed;
+}
+
 static uint16_t gateway_route_cost(uint8_t hop_count, uint8_t path_quality_min)
 {
     return route_candidate_cost(hop_count, path_quality_min);
@@ -2555,6 +2581,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
                                    const struct proto_packet *packet,
                                    const uint8_t *payload,
                                    size_t payload_len,
+                                   uint32_t now_ms,
                                    struct mesh_outbound *out)
 {
     if (!broadcast_packet_needs_forward(relay, packet, payload, payload_len)) {
@@ -2569,6 +2596,11 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(
+        relay->local_id,
+        flood_identity_seed(packet, relay->local_id),
+        packet->ttl);
     return PROTO_OK;
 }
 
@@ -3118,6 +3150,8 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
                                            uint8_t link_quality,
+                                           uint64_t local_id,
+                                           uint32_t now_ms,
                                            struct mesh_outbound *out)
 {
     struct gateway_route_adv_fields fields = {0};
@@ -3154,6 +3188,10 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     out->payload_len = (uint16_t)out_payload_len;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = MESH_BROADCAST_ID;
+    out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(local_id,
+                                                          fields.slot_seed,
+                                                          fields.hop_count);
     return PROTO_OK;
 }
 
@@ -3208,6 +3246,8 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                           payload,
                                           payload_len,
                                           link_quality,
+                                          relay->local_id,
+                                          now_ms,
                                           &result->gateway_route_adv);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV;
@@ -3222,6 +3262,8 @@ static int build_route_request_forward(const struct proto_packet *packet,
                                        const uint8_t *payload,
                                        size_t payload_len,
                                        uint8_t link_quality,
+                                       uint64_t local_id,
+                                       uint32_t now_ms,
                                        struct mesh_outbound *out)
 {
     struct route_discovery_fields fields = {0};
@@ -3255,6 +3297,11 @@ static int build_route_request_forward(const struct proto_packet *packet,
     out->packet.payload_len = (uint16_t)out_payload_len;
     out->payload_len = (uint16_t)out_payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(local_id,
+                                                          fields.slot_seed,
+                                                          fields.hop_count);
     return PROTO_OK;
 }
 
@@ -3450,6 +3497,8 @@ static int handle_route_request(struct mesh_relay *relay,
                                       payload,
                                       payload_len,
                                       link_quality,
+                                      relay->local_id,
+                                      now_ms,
                                       &result->route_request);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REQ;
@@ -4020,6 +4069,9 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms;
     return PROTO_OK;
 }
 
@@ -4076,6 +4128,7 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms;
     return PROTO_OK;
 }
 
@@ -5323,7 +5376,12 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
     if (packet->dst_id == MESH_BROADCAST_ID) {
         duplicate_store(relay, packet, now_ms);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
-        ret = build_broadcast_forward(relay, packet, payload, payload_len, &result->forward);
+        ret = build_broadcast_forward(relay,
+                                      packet,
+                                      payload,
+                                      payload_len,
+                                      now_ms,
+                                      &result->forward);
         if (ret == PROTO_OK) {
             result->actions |= MESH_RELAY_ACTION_FORWARD;
         }

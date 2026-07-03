@@ -15,6 +15,7 @@ extern "C" {
 #define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
 #define GATEWAY_COLLECTION_RESULT_CACHE_SIZE 64u
 #define GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP GATEWAY_COLLECTION_RESULT_CACHE_SIZE
+#define GATEWAY_COMMAND_RX_DUP_CACHE_SIZE 4u
 #define GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION 1u
 
 struct gateway_command_pending {
@@ -39,6 +40,18 @@ struct gateway_command_options {
     uint64_t expected_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
     bool collection_required;
     bool flood_required;
+};
+
+struct gateway_command_rx_duplicate_entry {
+    uint32_t command_seq;
+    uint32_t stored_at_ms;
+    uint32_t lifetime_ms;
+    bool valid;
+};
+
+struct gateway_command_rx_duplicate_cache {
+    struct gateway_command_rx_duplicate_entry entries[GATEWAY_COMMAND_RX_DUP_CACHE_SIZE];
+    uint8_t next;
 };
 
 enum gateway_command_tracking_mode {
@@ -101,6 +114,20 @@ enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(
     const struct gateway_command_options *options);
 enum gateway_command_transport_mode gateway_command_transport_mode_from_outbound(
     const struct mesh_outbound *out);
+bool gateway_command_receive_expired(const struct proto_packet *packet,
+                                     const struct gateway_command_options *options);
+uint32_t gateway_command_expiry_remaining_ms(const struct proto_packet *packet,
+                                             const struct gateway_command_options *options);
+uint32_t gateway_command_execute_delay_remaining_ms(
+    const struct proto_packet *packet,
+    const struct gateway_command_options *options);
+bool gateway_command_rx_duplicate_seen(struct gateway_command_rx_duplicate_cache *cache,
+                                       uint32_t command_seq,
+                                       uint32_t now_ms);
+void gateway_command_rx_duplicate_store(struct gateway_command_rx_duplicate_cache *cache,
+                                        const struct proto_packet *packet,
+                                        const struct gateway_command_options *options,
+                                        uint32_t now_ms);
 uint32_t gateway_command_collection_spread_ms(uint16_t expected_node_count);
 uint32_t gateway_command_collection_initial_due_ms(uint32_t command_flood_end_ms,
                                                   uint64_t node_id,

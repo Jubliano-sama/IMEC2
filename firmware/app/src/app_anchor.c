@@ -38,6 +38,7 @@ static struct k_work_delayable anchor_uwb_scan_work;
 static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
 static struct k_work_delayable anchor_collection_result_work;
+static struct k_work_delayable anchor_command_execute_work;
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_THREAD_STACK_DEFINE(anchor_uwb_scan_work_q_stack, ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE);
@@ -87,6 +88,25 @@ struct anchor_collection_result_pending {
     bool reboot_after_result;
 };
 static struct anchor_collection_result_pending anchor_collection_result_pending;
+struct anchor_pending_command_options {
+    enum command_response_mode response_mode;
+    uint32_t command_seq;
+    uint32_t collection_epoch_id;
+    uint32_t collection_slot_seed;
+    uint32_t command_expiry_s;
+    uint16_t expected_node_count;
+    bool collection_required;
+};
+struct anchor_pending_command_execution {
+    struct proto_packet command;
+    struct anchor_pending_command_options options;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    uint16_t payload_len;
+    uint32_t received_at_ms;
+    bool active;
+};
+static struct anchor_pending_command_execution anchor_pending_command_execution;
+static struct gateway_command_rx_duplicate_cache anchor_command_seq_cache;
 #if defined(CONFIG_IMEC_ML_ANCHOR)
 static uint32_t anchor_run_clicker_pair_survey(
     const struct uwb_anchor_pair_schedule_frame *schedule,
@@ -112,6 +132,7 @@ static int anchor_start_survey_pair_from_command(const struct proto_packet *pack
 static void anchor_abort_survey_pair(void);
 static void anchor_reboot_work_handler(struct k_work *work);
 static void anchor_collection_result_work_handler(struct k_work *work);
+static void anchor_command_execute_work_handler(struct k_work *work);
 static void anchor_schedule_reboot_after_command_result(void);
 static void anchor_force_rediscovery_from_command(void);
 static void gateway_survey_work_handler(struct k_work *work);
@@ -1062,17 +1083,237 @@ static void anchor_handle_survey_pair_prepare(const struct proto_packet *packet,
             reason);
 }
 
+static void anchor_pending_options_to_gateway(
+    const struct anchor_pending_command_options *pending,
+    struct gateway_command_options *options)
+{
+    memset(options, 0, sizeof(*options));
+    options->scope = CMD_SCOPE_ALL_REGISTERED;
+    options->response_mode = pending->response_mode;
+    options->command_seq = pending->command_seq;
+    options->collection_epoch_id = pending->collection_epoch_id;
+    options->collection_slot_seed = pending->collection_slot_seed;
+    options->command_expiry_s = pending->command_expiry_s;
+    options->expected_node_count = pending->expected_node_count;
+    options->collection_required = pending->collection_required;
+    options->flood_required = true;
+}
+
+static void anchor_execute_command_side_effects(const struct proto_packet *packet,
+                                                const uint8_t *payload,
+                                                size_t payload_len,
+                                                enum command_id command_id,
+                                                enum command_status *status,
+                                                uint8_t *reason,
+                                                bool *force_rediscovery_after_result,
+                                                bool *reboot_after_result)
+{
+    enum device_role requested_role = ROLE_ANCHOR;
+    int ret;
+
+    if (command_id == CMD_REBOOT) {
+        *reboot_after_result = true;
+    } else if (command_id == CMD_SET_ROLE) {
+        ret = gateway_command_extract_role(payload, payload_len, &requested_role);
+        if (ret != PROTO_OK) {
+            *status = COMMAND_MALFORMED_PAYLOAD;
+            *reason = (uint8_t)(-ret);
+        } else if ((uint8_t)requested_role != (uint8_t)DEVICE_ROLE) {
+            *status = COMMAND_DENIED;
+            *reason = 1u;
+        }
+    } else if (command_id == CMD_START_HEARTBEAT) {
+        ret = anchor_start_heartbeat_from_command(payload, payload_len, reason);
+        if (ret < 0) {
+            *status = COMMAND_MALFORMED_PAYLOAD;
+        }
+    } else if (command_id == CMD_STOP_HEARTBEAT) {
+        anchor_stop_heartbeat();
+    } else if (command_id == CMD_SET_LED_PATTERN) {
+        ret = anchor_set_led_pattern_from_command(payload, payload_len, reason);
+        if (ret < 0) {
+            *status = COMMAND_MALFORMED_PAYLOAD;
+        }
+    } else if (command_id == CMD_SET_ROUTE) {
+        ret = anchor_set_route_from_command(payload, payload_len, reason);
+        if (ret < 0) {
+            *status = ret == -ENOSPC ? COMMAND_BUSY : COMMAND_MALFORMED_PAYLOAD;
+        }
+    } else if (command_id == CMD_CLEAR_ROUTE) {
+        anchor_clear_route_from_command();
+    } else if (command_id == CMD_FORCE_REDISCOVERY) {
+        *force_rediscovery_after_result = true;
+    } else if (command_id == CMD_SET_SCAN_DUTY) {
+        ret = anchor_set_scan_duty_from_command(payload, payload_len, reason);
+        if (ret < 0) {
+            *status = COMMAND_MALFORMED_PAYLOAD;
+        }
+    } else if (command_id == CMD_SURVEY_START_PAIR) {
+        ret = anchor_start_survey_pair_from_command(packet,
+                                                    payload,
+                                                    payload_len,
+                                                    status,
+                                                    reason);
+        if (ret < 0 && *status == COMMAND_OK) {
+            *status = COMMAND_INTERNAL_ERROR;
+            *reason = (uint8_t)(-ret);
+        }
+    } else if (command_id == CMD_SURVEY_ABORT) {
+        anchor_abort_survey_pair();
+    } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
+        *status = COMMAND_UNSUPPORTED_COMMAND;
+        *reason = 1u;
+    }
+}
+
+static void anchor_finish_broadcast_command(const struct proto_packet *packet,
+                                            const uint8_t *payload,
+                                            size_t payload_len,
+                                            enum command_id command_id,
+                                            const struct gateway_command_options *command_options)
+{
+    enum command_status status = COMMAND_OK;
+    bool reboot_after_result = false;
+    bool force_rediscovery_after_result = false;
+    uint8_t reason = 0u;
+    int ret;
+
+    anchor_execute_command_side_effects(packet,
+                                        payload,
+                                        payload_len,
+                                        command_id,
+                                        &status,
+                                        &reason,
+                                        &force_rediscovery_after_result,
+                                        &reboot_after_result);
+
+    if (command_options->response_mode == CMD_RESPONSE_NONE) {
+        LOG_INF("anchor broadcast command handled without result: cmd=0x%04x command_seq=%u status=%u reason=%u",
+                (unsigned int)command_id,
+                command_options->command_seq,
+                status,
+                reason);
+        if (force_rediscovery_after_result && status == COMMAND_OK) {
+            anchor_force_rediscovery_from_command();
+        }
+        if (reboot_after_result && status == COMMAND_OK) {
+            anchor_schedule_reboot_after_command_result();
+        }
+        return;
+    }
+
+    ret = anchor_schedule_collection_command_result(packet,
+                                                    command_options,
+                                                    command_id,
+                                                    status,
+                                                    reason,
+                                                    force_rediscovery_after_result,
+                                                    reboot_after_result);
+    if (ret < 0) {
+        LOG_WRN("anchor collection command result schedule failed: cmd=0x%04x status=%u ret=%d",
+                (unsigned int)command_id,
+                status,
+                ret);
+    } else {
+        LOG_INF("anchor broadcast command handled with collection result: cmd=0x%04x command_seq=%u status=%u reason=%u",
+                (unsigned int)command_id,
+                command_options->command_seq,
+                status,
+                reason);
+    }
+}
+
+static int anchor_schedule_broadcast_command_execution(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    const struct gateway_command_options *options,
+    uint32_t delay_ms)
+{
+    if (packet == NULL || payload == NULL || options == NULL ||
+        payload_len > sizeof(anchor_pending_command_execution.payload)) {
+        return -EINVAL;
+    }
+    if (anchor_pending_command_execution.active) {
+        return -EBUSY;
+    }
+
+    anchor_pending_command_execution.command = *packet;
+    anchor_pending_command_execution.options.response_mode = options->response_mode;
+    anchor_pending_command_execution.options.command_seq = options->command_seq;
+    anchor_pending_command_execution.options.collection_epoch_id = options->collection_epoch_id;
+    anchor_pending_command_execution.options.collection_slot_seed = options->collection_slot_seed;
+    anchor_pending_command_execution.options.command_expiry_s = options->command_expiry_s;
+    anchor_pending_command_execution.options.expected_node_count = options->expected_node_count;
+    anchor_pending_command_execution.options.collection_required = options->collection_required;
+    memcpy(anchor_pending_command_execution.payload, payload, payload_len);
+    anchor_pending_command_execution.payload_len = (uint16_t)payload_len;
+    anchor_pending_command_execution.received_at_ms = k_uptime_get_32();
+    anchor_pending_command_execution.active = true;
+    (void)k_work_reschedule(&anchor_command_execute_work,
+                            K_MSEC(delay_ms == 0u ? 1u : delay_ms));
+    LOG_INF("anchor broadcast command execution scheduled: command_seq=%u delay_ms=%u",
+            options->command_seq,
+            delay_ms);
+    return 0;
+}
+
+static void anchor_command_execute_work_handler(struct k_work *work)
+{
+    struct anchor_pending_command_execution pending;
+    struct gateway_command_options options = {0};
+    enum command_id command_id = CMD_VENDOR_BASE;
+    uint32_t now_ms;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_pending_command_execution.active) {
+        return;
+    }
+
+    pending = anchor_pending_command_execution;
+    memset(&anchor_pending_command_execution, 0, sizeof(anchor_pending_command_execution));
+
+    now_ms = k_uptime_get_32();
+    packet_age_add_elapsed(&pending.command, now_ms - pending.received_at_ms);
+    anchor_pending_options_to_gateway(&pending.options, &options);
+
+    if (gateway_command_receive_expired(&pending.command, &options)) {
+        LOG_WRN("anchor dropped expired delayed broadcast command: command_seq=%u age_ms=%u expiry_s=%u",
+                options.command_seq,
+                pending.command.message_age_ms,
+                options.command_expiry_s);
+        return;
+    }
+
+    ret = gateway_command_extract_id(pending.payload, pending.payload_len, &command_id);
+    if (ret != PROTO_OK) {
+        LOG_WRN("anchor dropped malformed delayed broadcast command: command_seq=%u ret=%d",
+                options.command_seq,
+                ret);
+        return;
+    }
+
+    anchor_finish_broadcast_command(&pending.command,
+                                    pending.payload,
+                                    pending.payload_len,
+                                    command_id,
+                                    &options);
+}
+
 static void anchor_handle_local_command(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len)
 {
     enum command_id command_id = CMD_VENDOR_BASE;
     enum command_status status = COMMAND_OK;
-    enum device_role requested_role = ROLE_ANCHOR;
     struct gateway_command_options command_options = {0};
     bool reboot_after_result = false;
     bool force_rediscovery_after_result = false;
     bool broadcast_command = false;
+    uint32_t delay_ms;
+    uint32_t now_ms;
     uint8_t reason = 0u;
     int ret;
 
@@ -1106,95 +1347,69 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
                 return;
             }
         }
-        if (command_id == CMD_REBOOT) {
-            reboot_after_result = true;
-        } else if (command_id == CMD_SET_ROLE) {
-            ret = gateway_command_extract_role(payload, payload_len, &requested_role);
-            if (ret != PROTO_OK) {
-                status = COMMAND_MALFORMED_PAYLOAD;
-                reason = (uint8_t)(-ret);
-            } else if ((uint8_t)requested_role != (uint8_t)DEVICE_ROLE) {
-                status = COMMAND_DENIED;
-                reason = 1u;
-            }
-        } else if (command_id == CMD_START_HEARTBEAT) {
-            ret = anchor_start_heartbeat_from_command(payload, payload_len, &reason);
-            if (ret < 0) {
-                status = COMMAND_MALFORMED_PAYLOAD;
-            }
-        } else if (command_id == CMD_STOP_HEARTBEAT) {
-            anchor_stop_heartbeat();
-        } else if (command_id == CMD_SET_LED_PATTERN) {
-            ret = anchor_set_led_pattern_from_command(payload, payload_len, &reason);
-            if (ret < 0) {
-                status = COMMAND_MALFORMED_PAYLOAD;
-            }
-        } else if (command_id == CMD_SET_ROUTE) {
-            ret = anchor_set_route_from_command(payload, payload_len, &reason);
-            if (ret < 0) {
-                status = ret == -ENOSPC ? COMMAND_BUSY : COMMAND_MALFORMED_PAYLOAD;
-            }
-        } else if (command_id == CMD_CLEAR_ROUTE) {
-            anchor_clear_route_from_command();
-        } else if (command_id == CMD_FORCE_REDISCOVERY) {
-            force_rediscovery_after_result = true;
-        } else if (command_id == CMD_SET_SCAN_DUTY) {
-            ret = anchor_set_scan_duty_from_command(payload, payload_len, &reason);
-            if (ret < 0) {
-                status = COMMAND_MALFORMED_PAYLOAD;
-            }
-        } else if (command_id == CMD_SURVEY_START_PAIR) {
-            ret = anchor_start_survey_pair_from_command(packet,
-                                                        payload,
-                                                        payload_len,
-                                                        &status,
-                                                        &reason);
-            if (ret < 0 && status == COMMAND_OK) {
-                status = COMMAND_INTERNAL_ERROR;
-                reason = (uint8_t)(-ret);
-            }
-        } else if (command_id == CMD_SURVEY_ABORT) {
-            anchor_abort_survey_pair();
-        } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
-            status = COMMAND_UNSUPPORTED_COMMAND;
-            reason = 1u;
-        }
     }
 
     if (broadcast_command) {
-        if (command_options.response_mode == CMD_RESPONSE_NONE) {
-            LOG_INF("anchor broadcast command handled without result: cmd=0x%04x status=%u reason=%u",
+        now_ms = k_uptime_get_32();
+        if (gateway_command_receive_expired(packet, &command_options)) {
+            LOG_WRN("anchor ignored expired broadcast command: cmd=0x%04x command_seq=%u age_ms=%u expiry_s=%u delay_ms=%u",
                     (unsigned int)command_id,
-                    status,
-                    reason);
-            if (force_rediscovery_after_result && status == COMMAND_OK) {
-                anchor_force_rediscovery_from_command();
-            }
-            if (reboot_after_result && status == COMMAND_OK) {
-                anchor_schedule_reboot_after_command_result();
-            }
+                    command_options.command_seq,
+                    packet->message_age_ms,
+                    command_options.command_expiry_s,
+                    command_options.execute_delay_ms);
             return;
         }
-        ret = anchor_schedule_collection_command_result(packet,
-                                                        &command_options,
-                                                        command_id,
-                                                        status,
-                                                        reason,
-                                                        force_rediscovery_after_result,
-                                                        reboot_after_result);
-        if (ret < 0) {
-            LOG_WRN("anchor collection command result schedule failed: cmd=0x%04x status=%u ret=%d",
+        if (gateway_command_rx_duplicate_seen(&anchor_command_seq_cache,
+                                              command_options.command_seq,
+                                              now_ms)) {
+            LOG_INF("anchor ignored duplicate broadcast command: cmd=0x%04x command_seq=%u",
                     (unsigned int)command_id,
-                    status,
-                    ret);
-        } else {
-            LOG_INF("anchor broadcast command handled with collection result: cmd=0x%04x status=%u reason=%u",
-                    (unsigned int)command_id,
-                    status,
-                    reason);
+                    command_options.command_seq);
+            return;
         }
+
+        delay_ms = gateway_command_execute_delay_remaining_ms(packet, &command_options);
+        if (delay_ms != 0u) {
+            ret = anchor_schedule_broadcast_command_execution(packet,
+                                                              payload,
+                                                              payload_len,
+                                                              &command_options,
+                                                              delay_ms);
+            if (ret < 0) {
+                LOG_WRN("anchor delayed broadcast command schedule failed: cmd=0x%04x command_seq=%u ret=%d",
+                        (unsigned int)command_id,
+                        command_options.command_seq,
+                        ret);
+                return;
+            }
+            gateway_command_rx_duplicate_store(&anchor_command_seq_cache,
+                                               packet,
+                                               &command_options,
+                                               now_ms);
+            return;
+        }
+
+        gateway_command_rx_duplicate_store(&anchor_command_seq_cache,
+                                           packet,
+                                           &command_options,
+                                           now_ms);
+        anchor_finish_broadcast_command(packet,
+                                        payload,
+                                        payload_len,
+                                        command_id,
+                                        &command_options);
         return;
     }
+
+    anchor_execute_command_side_effects(packet,
+                                        payload,
+                                        payload_len,
+                                        command_id,
+                                        &status,
+                                        &reason,
+                                        &force_rediscovery_after_result,
+                                        &reboot_after_result);
 
     ret = anchor_send_command_result(packet, command_id, status, reason, NULL, 0u);
     if (ret < 0) {
@@ -2070,10 +2285,9 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
 
     if (gateway_command_transport_mode_from_outbound(&outbound) ==
         GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST) {
-        ret = mesh_send_c5_control(&outbound,
-                                   C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
-                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                   "ble-command-broadcast");
+        ret = mesh_send_c5_flood(&outbound,
+                                 C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                                 "ble-command-broadcast");
         if (ret == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &outbound, k_uptime_get_32());
         }
@@ -4404,6 +4618,8 @@ int app_anchor_init(void)
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);
+    k_work_init_delayable(&anchor_command_execute_work,
+                          anchor_command_execute_work_handler);
     return 0;
 }
 
@@ -4442,6 +4658,8 @@ int app_anchor_start_anchor_role(void)
     k_work_init_delayable(&anchor_survey_work, anchor_survey_work_handler);
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);
+    k_work_init_delayable(&anchor_command_execute_work,
+                          anchor_command_execute_work_handler);
     if (mesh_relay_tx_active(&mesh_runtime)) {
         app_mesh_persistence_clear_collection_result();
     } else {

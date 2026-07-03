@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
+#include "app_mesh_flood.h"
 #include "app_mesh_ch9_ack.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
@@ -133,6 +134,7 @@ static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_uwb_rx_work;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable report_tx_work;
+static struct k_work_delayable mesh_c5_flood_work;
 static struct k_work_delayable gateway_route_adv_work;
 static uint32_t mesh_rx_window_log_next_ms;
 static uint32_t gateway_route_adv_seq;
@@ -214,6 +216,12 @@ static uint32_t mesh_ch9_event_end_ms;
 static struct mesh_route_embedded_rx_state mesh_route_embedded_rx;
 static uint64_t mesh_route_embedded_reply_peer_id;
 static uint32_t mesh_route_embedded_reply_hold_until_ms;
+static struct {
+    bool valid;
+    struct mesh_outbound outbound;
+    uint8_t purpose;
+    const char *reason;
+} mesh_c5_flood_deferred;
 
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 static int mesh_submit_work(struct k_work *work);
@@ -234,6 +242,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
                                       const char *reason);
+static void mesh_c5_flood_work_handler(struct k_work *work);
 static int mesh_listen_for_route_reply(uint64_t target_id,
                                        const char *reason,
                                        bool *route_reply_captured);
@@ -2014,10 +2023,9 @@ static void gateway_route_adv_work_handler(struct k_work *work)
                                              now_ms,
                                              &adv);
     if (ret == PROTO_OK) {
-        ret = mesh_send_c5_control(&adv,
-                                   C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
-                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                   "gateway-route-adv");
+        ret = mesh_send_c5_flood(&adv,
+                                 C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                 "gateway-route-adv");
         if (ret == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &adv, k_uptime_get_32());
             high_debug_log_event("GATEWAY_ROUTE_ADV",
@@ -2683,6 +2691,162 @@ int mesh_send_c5_control(const struct mesh_outbound *out,
                                  purpose,
                                  mesh_c5_exchange_expires_at(purpose),
                                  reason == NULL ? "c5-control" : reason);
+    }
+    return ret;
+}
+
+static uint32_t mesh_c5_flood_now_ms(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return k_uptime_get_32();
+}
+
+static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    mesh_wait_until_ms(due_ms);
+}
+
+static bool mesh_c5_flood_defer_active_cb(void *ctx)
+{
+    uint32_t now_ms;
+
+    ARG_UNUSED(ctx);
+
+    if (DEVICE_ROLE == ROLE_ANCHOR &&
+        (anchor_uwb_window_active() ||
+         mesh_report_anchor_survey_discovery_is_pending())) {
+        return true;
+    }
+
+    now_ms = k_uptime_get_32();
+    return mesh_gateway_route_test_preempt_active(now_ms);
+}
+
+static bool mesh_c5_flood_quiet_cb(uint32_t sniff_ms, void *ctx)
+{
+    size_t frame_len = 0u;
+    int64_t uwb_window_start_ms = -1;
+    int ret;
+
+    ARG_UNUSED(ctx);
+
+    mesh_stop_role_scan();
+    ret = radio_guard_uwb_start("mesh C5 flood politeness");
+    if (ret < 0) {
+        mesh_restart_role_scan();
+        return false;
+    }
+    uwb_window_start_ms = k_uptime_get();
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret == 0) {
+        ret = dwm3000_driver_receive_frame(sniff_ms,
+                                           mesh_uwb_rx_frame,
+                                           sizeof(mesh_uwb_rx_frame),
+                                           &frame_len,
+                                           NULL,
+                                           NULL);
+    }
+    (void)dwm3000_driver_standby();
+    mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
+    radio_guard_uwb_stop();
+    mesh_restart_role_scan();
+
+    return ret == -ETIMEDOUT;
+}
+
+static int mesh_c5_flood_send_cb(const struct mesh_outbound *out, void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return mesh_send_outbound(out, "bounded-c5-flood");
+}
+
+static void mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
+                                         uint8_t purpose,
+                                         const char *reason)
+{
+    if (out == NULL) {
+        return;
+    }
+    if (mesh_c5_flood_deferred.valid) {
+        LOG_WRN("mesh C5 flood defer slot occupied; replacing msg=0x%02x with msg=0x%02x",
+                mesh_c5_flood_deferred.outbound.packet.msg_type,
+                out->packet.msg_type);
+    }
+    mesh_c5_flood_deferred.outbound = *out;
+    mesh_c5_flood_deferred.purpose = purpose;
+    mesh_c5_flood_deferred.reason = reason;
+    mesh_c5_flood_deferred.valid = true;
+    (void)mesh_reschedule_delayable(&mesh_c5_flood_work, MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+}
+
+static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
+                                  uint8_t purpose,
+                                  const char *reason,
+                                  bool send_wake_train,
+                                  struct app_mesh_flood_result *result)
+{
+    struct mesh_outbound tx;
+    struct app_mesh_flood_ops ops = {
+        .now_ms = mesh_c5_flood_now_ms,
+        .sleep_until_ms = mesh_c5_flood_sleep_until_ms,
+        .defer_active = mesh_c5_flood_defer_active_cb,
+        .c5_quiet = mesh_c5_flood_quiet_cb,
+        .send = mesh_c5_flood_send_cb,
+    };
+    int ret;
+
+    if (out == NULL || purpose == 0u ||
+        out->packet.dst_id != MESH_BROADCAST_ID ||
+        out->next_hop_id != MESH_BROADCAST_ID ||
+        out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        return -EINVAL;
+    }
+
+    tx = *out;
+    tx.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+
+    if (mesh_c5_flood_defer_active_cb(NULL)) {
+        return -EAGAIN;
+    }
+
+    if (send_wake_train) {
+        ret = mesh_send_route_wake_train(MESH_BROADCAST_ID, NULL, NULL, reason);
+        if (ret < 0) {
+            mesh_restart_role_scan();
+            LOG_WRN("mesh C5 flood wake train failed: msg=0x%02x ret=%d reason=%s",
+                    tx.packet.msg_type,
+                    ret,
+                    reason == NULL ? "c5-flood" : reason);
+            return ret;
+        }
+    }
+
+    ret = app_mesh_flood_send_bounded(&tx, &ops, result);
+    if (ret == 0) {
+        LOG_DBG("mesh bounded C5 flood sent: msg=0x%02x sent=%u busy_skip=%u defer=%u reason=%s",
+                tx.packet.msg_type,
+                result == NULL ? 0u : result->sent_count,
+                result == NULL ? 0u : result->busy_skip_count,
+                result == NULL ? 0u : result->deferred_count,
+                reason == NULL ? "c5-flood" : reason);
+    }
+    return ret;
+}
+
+int mesh_send_c5_flood(const struct mesh_outbound *out,
+                       uint8_t purpose,
+                       const char *reason)
+{
+    struct app_mesh_flood_result result = {0};
+    int ret;
+
+    ret = mesh_send_c5_flood_now(out, purpose, reason, true, &result);
+    if (ret == -EAGAIN && (result.sent_count == 0u)) {
+        mesh_c5_flood_store_deferred(out, purpose, reason);
     }
     return ret;
 }
@@ -4290,7 +4454,18 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                              C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
                              k_uptime_get_32() + MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
                              reason);
-    ret = mesh_send_outbound(&route_req, "route-request");
+    {
+        struct app_mesh_flood_result flood_result = {0};
+
+        ret = mesh_send_c5_flood_now(&route_req,
+                                     C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
+                                     "route-request",
+                                     false,
+                                     &flood_result);
+        if (ret == -EAGAIN && flood_result.sent_count == 0u) {
+            mesh_schedule_route_waiting_retry(reason);
+        }
+    }
     high_debug_log_event("MESH_ROUTE_REQ_TX",
                          "phase=done target=0x%016llx attempt=%u ret=%d reason=%s",
                          (unsigned long long)target_id,
@@ -5686,6 +5861,39 @@ void report_tx_schedule(uint32_t delay_ms)
     }
 }
 
+static void mesh_c5_flood_work_handler(struct k_work *work)
+{
+    struct mesh_outbound outbound;
+    uint8_t purpose;
+    const char *reason;
+    struct app_mesh_flood_result result = {0};
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (!mesh_c5_flood_deferred.valid) {
+        return;
+    }
+
+    outbound = mesh_c5_flood_deferred.outbound;
+    purpose = mesh_c5_flood_deferred.purpose;
+    reason = mesh_c5_flood_deferred.reason;
+
+    ret = mesh_send_c5_flood_now(&outbound, purpose, reason, true, &result);
+    if (ret == -EAGAIN && result.sent_count == 0u) {
+        (void)mesh_reschedule_delayable(&mesh_c5_flood_work,
+                                        MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+        return;
+    }
+
+    mesh_c5_flood_deferred.valid = false;
+    if (ret < 0) {
+        LOG_WRN("deferred C5 flood dropped after bounded send failure: msg=0x%02x ret=%d",
+                outbound.packet.msg_type,
+                ret);
+    }
+}
+
 uint32_t report_tx_queue_used(void)
 {
     return (uint32_t)k_msgq_num_used_get(&report_tx_msgq);
@@ -5952,10 +6160,9 @@ after_gateway_ack:
         int ret;
 
         if (result->forward.packet.dst_id == MESH_BROADCAST_ID) {
-            ret = mesh_send_c5_control(&result->forward,
-                                       mesh_c5_purpose_for_packet(&result->forward.packet),
-                                       MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                       "broadcast-forward");
+            ret = mesh_send_c5_flood(&result->forward,
+                                     mesh_c5_purpose_for_packet(&result->forward.packet),
+                                     "broadcast-forward");
         } else {
             ret = mesh_start_tracked_tx(&result->forward, "forward");
         }
@@ -6017,16 +6224,14 @@ after_gateway_ack:
                                        "route-reply-ack-failed");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
-        (void)mesh_send_c5_control(&result->route_request,
-                                   C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
-                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                   "route-request-forward");
+        (void)mesh_send_c5_flood(&result->route_request,
+                                 C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
+                                 "route-request-forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
-        (void)mesh_send_c5_control(&result->gateway_route_adv,
-                                   C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
-                                   MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                   "gateway-route-adv-forward");
+        (void)mesh_send_c5_flood(&result->gateway_route_adv,
+                                 C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
+                                 "gateway-route-adv-forward");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_RELAY_BUSY) {
         if (mesh_send_c5_control(&result->busy,
@@ -7332,6 +7537,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     k_work_init_delayable(&mesh_uwb_rx_work, mesh_uwb_rx_work_handler);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
+    k_work_init_delayable(&mesh_c5_flood_work, mesh_c5_flood_work_handler);
     k_work_init_delayable(&gateway_route_adv_work, gateway_route_adv_work_handler);
     return 0;
 }

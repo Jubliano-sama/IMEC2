@@ -115,8 +115,8 @@ The app has a C5 contact state model with states equivalent to:
 - `C5_CONTACT_EXCHANGE_ACTIVE`
 - `C5_CONTACT_CLOSING`
 
-Current C5 control sends route through `mesh_send_c5_control()` in the app
-mesh-report layer. The implementation uses the existing UWB wake train /
+Current C5 unicast/control sends route through `mesh_send_c5_control()` in the
+app mesh-report layer. The implementation uses the existing UWB wake train /
 wake-claim mechanism before C5 control exchanges when no accepted contact is
 active. Once a contact is accepted, follow-up frames in that exchange do not
 need a fresh full wake train.
@@ -139,6 +139,19 @@ The C5 control path has listen-before-talk behavior using the configured
 politeness constants. Reliable unicast control and bounded flood forwarding are
 handled differently: reliable sends may retry/back off, while flood bursts stay
 bounded and do not grow indefinitely just because channel 5 is busy.
+
+Broadcast route solicitation, gateway route advertisement, gateway command,
+collection EACK fallback, and relay broadcast-forward paths now use
+`mesh_send_c5_flood()`:
+
+- Each sleeping-peer flood starts with the existing wake train mechanism.
+- Bounded repeats run at `FLOOD_RELAY_REPEAT_MS`.
+- Every repeat performs a `C5_POLITE_SNIFF_MS` sniff first.
+- Busy channel 5 skips that repeat and does not extend the flood burst.
+- Click service / required wake-scan preemption can defer one pending flood
+  retry, but the flood helper itself remains bounded.
+- Relay-generated broadcast forwards carry `queued_at_ms` and `earliest_tx_ms`
+  so app sending honors forward-due wave timing.
 
 ## Implemented Channel-9 Behavior
 
@@ -331,6 +344,10 @@ Implemented in native code:
   the UWB receive path. EACK sends derive up to two candidates from collection
   state, try valid candidates over channel 9, and fall back to bounded channel-5
   flood when no candidate can be used.
+- Focused native policy coverage proves channel-9 succeeds through a later
+  valid candidate without C5 fallback, duplicate/invalid return hops are not
+  planned, C5 fallback happens only after channel-9 sends fail, and no-candidate
+  recovery uses bounded C5 flood.
 - Core gateway collection snapshot/export/restore now exists:
   `gateway_collection_export_snapshot()` and
   `gateway_collection_restore_snapshot()` preserve active
@@ -341,16 +358,32 @@ Implemented in native code:
   initialization restores a valid saved collection state instead of always
   clearing it, and gateway role builds now enable the persistence Kconfig
   fragment.
-- This is still not full MeshSpec EACK routing. The durable return state now
-  exists, but broader EACK routing requirements remain partial until the rest of
-  the collection routing, persistent membership, and app/radio handoff behavior
-  is complete.
-- Latest focused role-build measurements after enabling gateway persistence:
-  clicker 232928 B FLASH / 82448 B RAM, anchor 178516 B FLASH / 95360 B RAM,
-  gateway 290012 B FLASH / 102412 B RAM.
+- This is still not full MeshSpec EACK routing. The durable return state and
+  channel-9-first policy proof now exist, but broader EACK routing requirements
+  remain partial until the rest of the collection routing, persistent
+  membership, and app/radio handoff behavior is complete.
+- Latest focused role-build measurements after bounded C5 flood and anchor
+  command execution changes: clicker 234592 B FLASH / 84624 B RAM, anchor
+  181836 B FLASH / 96896 B RAM, gateway 291692 B FLASH / 103564 B RAM.
 - Source behavior for received-list hit, received-list miss, explicit
   missing-list retry, explicit missing-list absence confirmation, and
   closed-collection stop.
+
+## Implemented Anchor Command Execution
+
+Anchor broadcast command receive handling now uses packet-age-aware command
+timing:
+
+- Expired gateway command floods are rejected before side effects.
+- A small bounded RX duplicate cache suppresses repeated `command_seq` execution
+  until the command expiry window elapses.
+- `execute_delay_ms` is reduced by packet age; if delay remains, the anchor
+  stores one pending command execution and runs it later through delayable work.
+- The delayed execution path re-adds elapsed local time to packet age before
+  checking expiry and executing.
+- `CMD_RESPONSE_NONE` executes side effects without creating a command result.
+- Response modes that require collection schedule the collection result through
+  the existing hashed collection-result path.
 
 ## Implemented Collection Result Scheduling
 
@@ -575,10 +608,11 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    distinct return-candidate helper. Gateway app result and bundle handlers
    populate that metadata from the UWB previous hop, and app EACK sends derive
    up to two candidates from collection state before falling back to channel-5
-   collection EACK flood. Gateway app persistence now keeps that collection
-   return state restart-tolerant through NVS record `0x0104`; the remaining gap
-   is full MeshSpec EACK routing across every app/radio handoff and collection
-   routing case.
+   collection EACK flood. Focused native policy coverage proves the intended
+   channel-9-first/fallback decision behavior. Gateway app persistence now keeps
+   that collection return state restart-tolerant through NVS record `0x0104`;
+   the remaining gap is full MeshSpec EACK routing across every app/radio
+   handoff and collection routing case.
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are
