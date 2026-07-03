@@ -18,9 +18,11 @@ struct test_ctx {
     uint64_t planned_next_hops[4];
     uint64_t prepared_next_hops[4];
     uint64_t sent_ch9_next_hops[4];
+    uint64_t noted_tx_next_hop;
     uint64_t noted_ch9_peer;
     uint32_t noted_ch9_start_ms;
     uint32_t prepared_earliest_tx_ms;
+    uint8_t noted_tx_radio_channel;
     uint8_t plan_calls;
     uint8_t prepare_calls;
     uint8_t send_ch9_calls;
@@ -137,6 +139,8 @@ static void test_note_tx(const struct mesh_outbound *out, void *ctx)
 
     zassert_not_null(out);
     test->note_tx_calls++;
+    test->noted_tx_next_hop = out->next_hop_id;
+    test->noted_tx_radio_channel = out->radio_channel;
 }
 
 static void test_note_ch9(uint64_t next_hop_id,
@@ -389,6 +393,46 @@ ZTEST(gateway_eack_policy, test_tries_second_candidate_when_first_send_fails)
     zassert_equal(eack.next_hop_id, second_peer);
     zassert_equal(eack.radio_channel, MESH_EVENT_CHANNEL);
     zassert_equal(eack.earliest_tx_ms, 1245u);
+}
+
+ZTEST(gateway_eack_policy,
+      test_c5_fallback_after_all_channel9_sends_fail_notes_only_fallback_tx)
+{
+    const uint64_t first_peer = 0x1111222233334444ull;
+    const uint64_t second_peer = 0x5555666677778888ull;
+    const uint64_t candidates[] = { first_peer, second_peer };
+    struct mesh_outbound eack = make_eack();
+    struct test_ctx ctx = {
+        .send_ch9_ret_by_call = { -EIO, -ETIMEDOUT },
+    };
+    struct app_gateway_eack_policy_ops ops = make_ops(&ctx);
+    struct app_gateway_eack_policy_result result;
+
+    zassert_ok(app_gateway_eack_send_to_candidates(&eack, candidates,
+                                                   ARRAY_SIZE(candidates),
+                                                   &ops, &result));
+
+    zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_C5_FLOOD);
+    zassert_equal(result.channel9_plan_ret, 0);
+    zassert_equal(result.channel9_prepare_ret, 0);
+    zassert_equal(result.channel9_send_ret, -ETIMEDOUT);
+    zassert_equal(result.c5_send_ret, 0);
+    zassert_equal(result.channel9_next_hop_id, 0u);
+    zassert_equal(result.channel9_candidate_count, 2u);
+    zassert_equal(result.channel9_attempt_count, 2u);
+    zassert_equal(ctx.plan_calls, 2u);
+    zassert_equal(ctx.prepare_calls, 2u);
+    zassert_equal(ctx.send_ch9_calls, 2u);
+    zassert_equal(ctx.send_c5_calls, 1u);
+    zassert_equal(ctx.note_tx_calls, 1u);
+    zassert_equal(ctx.note_ch9_calls, 0u);
+    zassert_equal(ctx.sent_ch9_next_hops[0], first_peer);
+    zassert_equal(ctx.sent_ch9_next_hops[1], second_peer);
+    zassert_equal(ctx.noted_tx_next_hop, MESH_BROADCAST_ID);
+    zassert_equal(ctx.noted_tx_radio_channel, UWB_CHANNEL_WAKE_CONTACT);
+    zassert_equal(eack.next_hop_id, MESH_BROADCAST_ID);
+    zassert_equal(eack.radio_channel, UWB_CHANNEL_WAKE_CONTACT);
+    zassert_equal(eack.earliest_tx_ms, 0u);
 }
 
 ZTEST(gateway_eack_policy, test_skips_invalid_and_duplicate_candidates_before_c5_fallback)

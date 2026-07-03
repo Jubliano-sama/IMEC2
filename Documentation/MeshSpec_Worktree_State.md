@@ -270,6 +270,14 @@ Current `get_goal()`:
   saves/restores/clears that snapshot through NVS record `0x0104`, and the
   gateway role build enables `CONFIG_FLASH`, `CONFIG_FLASH_PAGE_LAYOUT`,
   `CONFIG_FLASH_MAP`, `CONFIG_NVS`, and `CONFIG_MPU_ALLOW_FLASH_WRITE`.
+- Focused gateway EACK policy coverage now also proves that when all valid
+  channel-9 return-candidate sends fail, the helper tries each candidate, falls
+  back to bounded channel-5 EACK, does not call channel-9 TX notation, and notes
+  only the bounded C5 fallback transmit.
+- Verification run after the all-channel-9-send-failed EACK fallback slice:
+  `.venv/bin/west build --no-sysbuild -s firmware/app/tests/gateway_eack_policy -b native_sim/native/64 --build-dir build/test-gateway-eack-policy-native64 --target run`
+  passed (`gateway_eack_policy`: pass = 9, fail = 0), and
+  `git diff --check` passed.
 - Verification run after the strict all-registered collection slice:
   `cmake --build firmware/build` passed and
   `ctest --test-dir firmware/build --output-on-failure` passed 14/14.
