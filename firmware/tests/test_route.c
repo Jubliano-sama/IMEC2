@@ -308,6 +308,54 @@ static void test_expired_capacity_hint_does_not_invalidate_route(void)
     assert(table.candidates[0].valid);
     assert(table.candidates[0].channel9_timing_valid);
     assert(table.candidates[0].hold_down_until_ms == 0u);
+    assert(route_expire_stale(&table, 31501u, ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
+    assert(route_selected(&table) != NULL);
+    assert(table.candidates[0].valid);
+    assert(table.candidates[0].channel9_timing_valid);
+    assert(table.candidates[0].hold_down_until_ms == 0u);
+}
+
+static void test_expired_capacity_update_only_clears_capacity_hint(void)
+{
+    struct route_table table;
+    struct route_candidate route = candidate(0x02u, 1u, 1u, 90u, 1000u);
+    const struct route_candidate *selected;
+
+    route.channel9_timing_valid = true;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route) == PROTO_OK);
+
+    route_update_capacity_hint(&table,
+                               route.next_hop_id,
+                               route.gateway_id,
+                               RELAY_CAP_GREEN,
+                               4u,
+                               1u,
+                               2000u,
+                               2500u,
+                               2501u);
+
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == route.next_hop_id);
+    assert(selected->relay_capacity_state == RELAY_CAP_UNKNOWN);
+    assert(selected->queue_free_hint == 0u);
+    assert(selected->channel9_busy_hint == 0u);
+    assert(selected->capacity_observed_at_ms == 0u);
+    assert(selected->capacity_valid_until_ms == 0u);
+    assert(selected->valid);
+    assert(selected->channel9_timing_valid);
+    assert(selected->failure_count == 0u);
+    assert(selected->hold_down_until_ms == 0u);
+    assert(route_expire_stale(&table, 60000u, ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == route.next_hop_id);
+    assert(selected->valid);
+    assert(selected->channel9_timing_valid);
+    assert(selected->failure_count == 0u);
+    assert(selected->hold_down_until_ms == 0u);
 }
 
 static void test_retry_backoff_values(void)
@@ -332,6 +380,7 @@ int main(void)
     test_channel9_timing_breaks_equal_cost_tie();
     test_capacity_breaks_equal_cost_tie();
     test_expired_capacity_hint_does_not_invalidate_route();
+    test_expired_capacity_update_only_clears_capacity_hint();
     test_retry_backoff_values();
     return 0;
 }

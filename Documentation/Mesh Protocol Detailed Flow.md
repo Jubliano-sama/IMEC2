@@ -369,21 +369,26 @@ Implemented in native code:
   missing-list retry, explicit missing-list absence confirmation, and
   closed-collection stop.
 
-## Implemented Gateway Membership Core
+## Implemented Gateway Membership
 
-The gateway now has a core-only registered-membership roster model:
+The gateway now has a registered-membership roster model:
 
 - `gateway_membership` stores a bounded preserve-order node roster keyed by
   `membership_epoch`.
 - The roster rejects zero node IDs, duplicate node IDs, zero epochs, and
   over-capacity input.
 - Lookup and export helpers require an epoch match.
-- Versioned snapshot export/restore exists with validation for future app/NVS
-  persistence.
+- Versioned snapshot export/restore exists with validation.
+- Gateway app code can set and clear the registered roster.
+- Gateway app persistence saves/restores/clears the roster through NVS record
+  `0x0105`.
+- Gateway command collection resolves strict `CMD_SCOPE_ALL_REGISTERED` rosters
+  from the explicit command roster first, then from the registered provider when
+  `membership_epoch` and `expected_node_count` match.
 
-This core model is not wired into gateway app command handling yet. Current
-`CMD_SCOPE_ALL_REGISTERED` collection still requires an explicit command-carried
-roster before the gateway can send strict missing-list EACKs.
+`CMD_SCOPE_ALL_HEARD` remains best-effort. If the registered provider does not
+match a rosterless `CMD_SCOPE_ALL_REGISTERED` collection command, the gateway
+rejects the collection instead of downgrading it to best effort.
 
 ## Implemented Anchor Command Execution
 
@@ -611,15 +616,16 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    local collection-result sends relay-owned instead of moving them into app
    ACK-pending state, and retry-round delay restore has native coverage.
 
-3. Gateway app scheduled EACKs use explicit missing-list format only when the
-   active collection state has an explicit count-matched roster from
-   `TLV_EXPECTED_NODE_ID`. `CMD_SCOPE_ALL_REGISTERED` collection commands
-   without that full roster are rejected rather than treated as provable
-   membership. `CMD_SCOPE_ALL_HEARD` remains best-effort and uses received-list
-   EACKs unless a strict roster is available. A core gateway membership roster
-   and snapshot model now exists, but app/NVS wiring and parser relaxation for
-   rosterless `ALL_REGISTERED` commands are still missing. The gateway falls
-   back to received-list EACKs if the missing-list payload would exceed packet
+3. Gateway app scheduled EACKs use explicit missing-list format when the active
+   collection state has a strict count-matched roster from either
+   `TLV_EXPECTED_NODE_ID` or the registered membership provider. Rosterless
+   `CMD_SCOPE_ALL_REGISTERED` collection commands are accepted only when their
+   `membership_epoch` and `expected_node_count` match the registered provider;
+   otherwise the gateway rejects the collection rather than treating it as
+   provable membership. `CMD_SCOPE_ALL_HEARD` remains best-effort and uses
+   received-list EACKs unless a strict roster is available. Gateway membership
+   provider state is NVS-backed through record `0x0105`. The gateway falls back
+   to received-list EACKs if the missing-list payload would exceed packet
    capacity.
 
    The EACK return path is also still partial. Collection state now has

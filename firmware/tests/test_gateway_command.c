@@ -1,5 +1,6 @@
 #include "gateway_command.h"
 
+#include "gateway_membership.h"
 #include "mesh.h"
 
 #include <assert.h>
@@ -352,7 +353,7 @@ static void test_prepare_outbound_accepts_all_registered_command_flood_with_rost
     assert(memcmp(out.payload, payload, payload_len) == 0);
 }
 
-static void test_extract_options_rejects_all_registered_collection_without_roster(void)
+static void test_extract_options_accepts_all_registered_collection_without_roster(void)
 {
     uint8_t payload[96];
     size_t payload_len = 0u;
@@ -389,6 +390,54 @@ static void test_extract_options_rejects_all_registered_collection_without_roste
                           &payload_len,
                           TLV_EXPECTED_NODE_COUNT,
                           2u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          3003u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COLLECTION_SLOT_SEED,
+                          4004u) == PROTO_OK);
+
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) == PROTO_OK);
+    assert(options.scope == CMD_SCOPE_ALL_REGISTERED);
+    assert(options.membership_epoch == 3u);
+    assert(options.expected_node_count == 2u);
+    assert(options.expected_node_id_count == 0u);
+    assert(options.collection_required);
+}
+
+static void test_extract_options_rejects_all_registered_missing_membership_identity(void)
+{
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_GET_STATUS);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_REGISTERED) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_SMALL_RESULT) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
     assert(tlv_append_u32(payload,
                           sizeof(payload),
                           &payload_len,
@@ -1258,6 +1307,217 @@ static void test_collection_prepares_missing_list_from_roster(void)
     assert(gateway_collection_eack_contains_node_id(out.payload,
                                                     out.payload_len,
                                                     roster[3],
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+}
+
+static void test_collection_roster_resolution_prefers_explicit_roster(void)
+{
+    const uint64_t provider_ids[] = {
+        0x9999000000000001ull,
+    };
+    struct gateway_membership_roster membership;
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .response_mode = CMD_RESPONSE_SMALL_RESULT,
+        .membership_epoch = 7u,
+        .expected_node_count = 2u,
+        .expected_node_id_count = 2u,
+        .collection_required = true,
+        .expected_node_ids = {
+            ANCHOR_ID_TEST,
+            0x5555666677778888ull,
+        },
+    };
+    uint64_t resolved[2] = {0};
+    size_t resolved_count = 0u;
+    enum gateway_command_collection_roster_source source =
+        GATEWAY_COMMAND_COLLECTION_ROSTER_NONE;
+
+    gateway_membership_clear(&membership);
+    assert(gateway_membership_set_roster_preserve_order(&membership,
+                                                        99u,
+                                                        provider_ids,
+                                                        1u) == PROTO_OK);
+
+    assert(gateway_command_resolve_collection_roster(&options,
+                                                     &membership,
+                                                     resolved,
+                                                     sizeof(resolved) / sizeof(resolved[0]),
+                                                     &resolved_count,
+                                                     &source) == PROTO_OK);
+    assert(source == GATEWAY_COMMAND_COLLECTION_ROSTER_EXPLICIT);
+    assert(resolved_count == 2u);
+    assert(resolved[0] == ANCHOR_ID_TEST);
+    assert(resolved[1] == 0x5555666677778888ull);
+}
+
+static void test_collection_roster_resolution_rejects_provider_mismatch(void)
+{
+    const uint64_t roster[] = {
+        ANCHOR_ID_TEST,
+        0x3333444455556666ull,
+    };
+    struct gateway_membership_roster membership;
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .response_mode = CMD_RESPONSE_SMALL_RESULT,
+        .membership_epoch = 7u,
+        .expected_node_count = 2u,
+        .collection_required = true,
+    };
+    uint64_t resolved[3] = {0};
+    size_t resolved_count = 0u;
+    enum gateway_command_collection_roster_source source =
+        GATEWAY_COMMAND_COLLECTION_ROSTER_NONE;
+
+    gateway_membership_clear(&membership);
+    assert(gateway_membership_set_roster_preserve_order(&membership,
+                                                        8u,
+                                                        roster,
+                                                        2u) == PROTO_OK);
+    assert(gateway_command_resolve_collection_roster(&options,
+                                                     &membership,
+                                                     resolved,
+                                                     sizeof(resolved) / sizeof(resolved[0]),
+                                                     &resolved_count,
+                                                     &source) == PROTO_ERR_STALE);
+
+    assert(gateway_membership_set_roster_preserve_order(&membership,
+                                                        7u,
+                                                        roster,
+                                                        2u) == PROTO_OK);
+    options.expected_node_count = 3u;
+    assert(gateway_command_resolve_collection_roster(&options,
+                                                     &membership,
+                                                     resolved,
+                                                     sizeof(resolved) / sizeof(resolved[0]),
+                                                     &resolved_count,
+                                                     &source) == PROTO_ERR_MALFORMED);
+}
+
+static void test_collection_roster_resolution_leaves_all_heard_best_effort(void)
+{
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_HEARD,
+        .response_mode = CMD_RESPONSE_SMALL_RESULT,
+        .membership_epoch = 7u,
+        .expected_node_count = 2u,
+        .collection_required = true,
+    };
+    uint64_t resolved[2] = {0};
+    size_t resolved_count = 99u;
+    enum gateway_command_collection_roster_source source =
+        GATEWAY_COMMAND_COLLECTION_ROSTER_EXPLICIT;
+
+    assert(gateway_command_resolve_collection_roster(&options,
+                                                     NULL,
+                                                     resolved,
+                                                     sizeof(resolved) / sizeof(resolved[0]),
+                                                     &resolved_count,
+                                                     &source) == PROTO_OK);
+    assert(source == GATEWAY_COMMAND_COLLECTION_ROSTER_NONE);
+    assert(resolved_count == 0u);
+}
+
+static void test_provider_roster_feeds_missing_list_eack(void)
+{
+    const uint64_t provider_ids[] = {
+        ANCHOR_ID_TEST,
+        0x3333444455556666ull,
+        0x4444555566667777ull,
+    };
+    struct gateway_membership_roster membership;
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .response_mode = CMD_RESPONSE_SMALL_RESULT,
+        .membership_epoch = 7u,
+        .expected_node_count = 3u,
+        .collection_required = true,
+    };
+    struct gateway_collection_state collection;
+    struct command_result_id id_a = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct proto_packet result_a;
+    struct mesh_outbound out;
+    struct gateway_collection_eack decoded;
+    uint8_t payload_a[96];
+    size_t payload_a_len = 0u;
+    uint64_t resolved[3] = {0};
+    size_t resolved_count = 0u;
+    uint16_t missing_count = 0u;
+    bool duplicate = false;
+    bool listed = false;
+    enum gateway_command_collection_roster_source source =
+        GATEWAY_COMMAND_COLLECTION_ROSTER_NONE;
+
+    gateway_membership_clear(&membership);
+    assert(gateway_membership_set_roster_preserve_order(&membership,
+                                                        7u,
+                                                        provider_ids,
+                                                        sizeof(provider_ids) / sizeof(provider_ids[0])) ==
+           PROTO_OK);
+
+    assert(gateway_command_resolve_collection_roster(&options,
+                                                     &membership,
+                                                     resolved,
+                                                     sizeof(resolved) / sizeof(resolved[0]),
+                                                     &resolved_count,
+                                                     &source) == PROTO_OK);
+    assert(source == GATEWAY_COMMAND_COLLECTION_ROSTER_MEMBERSHIP);
+    assert(resolved_count == 3u);
+
+    make_collection_result_payload(payload_a, sizeof(payload_a), &payload_a_len, &id_a, 3003u);
+    result_a = make_collection_result_packet(&id_a, payload_a_len);
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    options.membership_epoch,
+                                    options.expected_node_count,
+                                    1u,
+                                    COLLECTION_RETRY_ROUND_1_MS) == PROTO_OK);
+    assert(gateway_collection_record_result(&collection,
+                                            &result_a,
+                                            payload_a,
+                                            payload_a_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
+
+    assert(gateway_collection_prepare_missing_eack_outbound(&collection,
+                                                            resolved,
+                                                            resolved_count,
+                                                            &out,
+                                                            &missing_count) == PROTO_OK);
+    assert(missing_count == 2u);
+    assert(gateway_collection_eack_from_tlvs(out.payload,
+                                             out.payload_len,
+                                             &decoded) == PROTO_OK);
+    assert(decoded.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST);
+    assert(decoded.membership_epoch == options.membership_epoch);
+    assert(decoded.expected_count == options.expected_node_count);
+
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    provider_ids[0],
+                                                    &listed) == PROTO_OK);
+    assert(!listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    provider_ids[1],
+                                                    &listed) == PROTO_OK);
+    assert(listed);
+    assert(gateway_collection_eack_contains_node_id(out.payload,
+                                                    out.payload_len,
+                                                    provider_ids[2],
                                                     &listed) == PROTO_OK);
     assert(listed);
 }
@@ -2297,7 +2557,8 @@ int main(void)
     test_prepare_outbound_rejects_malformed_command_id();
     test_extract_options_defaults_to_single_node_small_result();
     test_prepare_outbound_accepts_all_registered_command_flood_with_roster();
-    test_extract_options_rejects_all_registered_collection_without_roster();
+    test_extract_options_accepts_all_registered_collection_without_roster();
+    test_extract_options_rejects_all_registered_missing_membership_identity();
     test_command_flood_requires_collection_identity_for_responses();
     test_extract_options_accepts_all_registered_roster();
     test_extract_options_rejects_mismatched_roster();
@@ -2314,6 +2575,10 @@ int main(void)
     test_collection_records_unique_results_and_builds_eack();
     test_collection_prepares_eack_broadcast_outbound();
     test_collection_prepares_missing_list_from_roster();
+    test_collection_roster_resolution_prefers_explicit_roster();
+    test_collection_roster_resolution_rejects_provider_mismatch();
+    test_collection_roster_resolution_leaves_all_heard_best_effort();
+    test_provider_roster_feeds_missing_list_eack();
     test_collection_records_result_bundle_and_dedupes_replay();
     test_collection_return_candidates_from_direct_results();
     test_collection_snapshot_round_trips_return_hops();

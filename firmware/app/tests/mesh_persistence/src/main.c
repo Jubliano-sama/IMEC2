@@ -11,9 +11,16 @@
 #define LOCAL_ID 0x1111222233334444ull
 #define GATEWAY_ID 0x9999888877776666ull
 #define CHILD_ID 0x5555666677778888ull
+#define MEMBER_A_ID 0x0102030405060708ull
+#define MEMBER_B_ID 0x1112131415161718ull
+#define MEMBER_C_ID 0x2122232425262728ull
 
 K_MSGQ_DEFINE(test_mesh_rx_msgq, sizeof(uint32_t), 2, 4);
 static struct k_work_delayable test_tx_timeout_work;
+
+int app_mesh_persistence_test_write_gateway_membership_snapshot(
+    const void *snapshot,
+    size_t snapshot_len);
 
 struct preempt_save_ctx {
     struct mesh_relay *relay;
@@ -112,6 +119,18 @@ static void assert_result_id_equal(const struct command_result_id *actual,
     zassert_equal(actual->result_seq, expected->result_seq);
 }
 
+static void assert_membership_roster_equal(
+    const struct gateway_membership_roster *actual,
+    const struct gateway_membership_roster *expected)
+{
+    zassert_equal(actual->valid, expected->valid);
+    zassert_equal(actual->membership_epoch, expected->membership_epoch);
+    zassert_equal(actual->node_count, expected->node_count);
+    zassert_mem_equal(actual->node_ids,
+                      expected->node_ids,
+                      expected->node_count * sizeof(expected->node_ids[0]));
+}
+
 static void build_identity_command_result_payload(
     uint8_t *payload,
     size_t payload_cap,
@@ -207,6 +226,23 @@ static struct app_mesh_collection_result_snapshot make_snapshot(void)
         .reboot_after_result = false,
         .valid = true,
     };
+}
+
+static struct gateway_membership_roster make_gateway_membership_roster(void)
+{
+    const uint64_t node_ids[] = {
+        MEMBER_A_ID,
+        MEMBER_B_ID,
+        MEMBER_C_ID,
+    };
+    struct gateway_membership_roster roster;
+
+    gateway_membership_clear(&roster);
+    zassert_ok(gateway_membership_set_roster_preserve_order(&roster,
+                                                            44u,
+                                                            node_ids,
+                                                            sizeof(node_ids) / sizeof(node_ids[0])));
+    return roster;
 }
 
 ZTEST(mesh_persistence, test_collection_result_snapshot_round_trip_and_clear)
@@ -376,6 +412,73 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_rejects_invalid_save)
                                         COLLECTION_RETRY_ROUND_0_MS));
     collection.received_count = 1u;
     zassert_equal(app_mesh_persistence_save_gateway_collection(&collection), -EINVAL);
+}
+
+ZTEST(mesh_persistence, test_gateway_membership_snapshot_round_trip_and_clear)
+{
+    struct gateway_membership_roster saved = make_gateway_membership_roster();
+    struct gateway_membership_roster restored;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_gateway_membership();
+
+    zassert_ok(app_mesh_persistence_save_gateway_membership(&saved));
+
+    memset(&restored, 0, sizeof(restored));
+    zassert_ok(app_mesh_persistence_restore_gateway_membership(&restored));
+    assert_membership_roster_equal(&restored, &saved);
+
+    app_mesh_persistence_clear_gateway_membership();
+    memset(&restored, 0xA5, sizeof(restored));
+    zassert_ok(app_mesh_persistence_restore_gateway_membership(&restored));
+    zassert_false(restored.valid);
+    zassert_equal(restored.membership_epoch, 0u);
+    zassert_equal(restored.node_count, 0u);
+}
+
+ZTEST(mesh_persistence, test_gateway_membership_snapshot_rejects_invalid_save)
+{
+    struct gateway_membership_roster roster;
+
+    zassert_ok(app_mesh_persistence_init());
+
+    gateway_membership_clear(&roster);
+    zassert_equal(app_mesh_persistence_save_gateway_membership(&roster), -EINVAL);
+    zassert_equal(app_mesh_persistence_save_gateway_membership(NULL), -EINVAL);
+}
+
+ZTEST(mesh_persistence, test_gateway_membership_restore_rejects_and_clears_bad_nvs)
+{
+    struct gateway_membership_roster roster = make_gateway_membership_roster();
+    struct gateway_membership_roster restored;
+    struct gateway_membership_snapshot snapshot;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_gateway_membership();
+
+    zassert_ok(gateway_membership_export_snapshot(&roster, &snapshot));
+    snapshot.version++;
+    zassert_ok(app_mesh_persistence_test_write_gateway_membership_snapshot(
+        &snapshot,
+        sizeof(snapshot)));
+
+    memset(&restored, 0xA5, sizeof(restored));
+    zassert_equal(app_mesh_persistence_restore_gateway_membership(&restored), -EINVAL);
+    zassert_false(restored.valid);
+    zassert_ok(app_mesh_persistence_restore_gateway_membership(&restored));
+    zassert_false(restored.valid);
+
+    zassert_ok(gateway_membership_export_snapshot(&roster, &snapshot));
+    app_mesh_persistence_clear_gateway_membership();
+    zassert_ok(app_mesh_persistence_test_write_gateway_membership_snapshot(
+        &snapshot,
+        sizeof(snapshot) - 1u));
+
+    memset(&restored, 0xA5, sizeof(restored));
+    zassert_equal(app_mesh_persistence_restore_gateway_membership(&restored), -EINVAL);
+    zassert_false(restored.valid);
+    zassert_ok(app_mesh_persistence_restore_gateway_membership(&restored));
+    zassert_false(restored.valid);
 }
 
 ZTEST(mesh_persistence, test_active_collection_retry_outbox_round_trip)

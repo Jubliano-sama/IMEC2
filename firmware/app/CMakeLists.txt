@@ -347,6 +347,7 @@ if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
     target_sources(app PRIVATE
         src/main.c
         ${IMEC_APP_LOCAL_SOURCES}
+        ../src/gateway_membership.c
     )
 else()
     # Operational wake, discovery, ranging, and relay traffic use UWB frames.
@@ -360,6 +361,7 @@ else()
         ../src/debug_log.c
         ../src/protocol.c
         ../src/gateway_command.c
+        ../src/gateway_membership.c
         ../src/uwb.c
         ../src/uwb_ble_courtesy.c
         ../src/uwb_session.c

@@ -47,9 +47,10 @@ Current `get_goal()`:
 - Bounded flood controls, duplicate suppression, flood identity handling, and no recursive child
   route discovery for the same request.
 - Gateway route advertisement, command flood scopes, collection EACK +
-  missing-list support, strict `CMD_SCOPE_ALL_REGISTERED` collection rejection
-  without a full explicit roster, and gateway app missing-list EACK selection
-  when a count-matched command roster is present.
+  missing-list support, strict `CMD_SCOPE_ALL_REGISTERED` collection handling
+  from either an explicit roster or a matching registered membership provider,
+  and gateway app missing-list EACK selection when a strict count-matched roster
+  is present.
 - Relay capacity states and busy responses with `retry_after`.
 - C5 contact-state model and channel-9 finite event state semantics.
 
@@ -92,8 +93,8 @@ Current `get_goal()`:
    valid saved state instead of always clearing it. Gateway role builds now
    enable the same generated persistence Kconfig fragment used by anchors. This
    is still not full MeshSpec EACK routing: durable return state exists, but the
-   remaining collection routing, persistent membership, and app/radio handoff
-   behavior is not complete. Latest measured role builds after bounded C5 flood
+   remaining collection routing and app/radio handoff behavior is not complete.
+   Latest measured role builds after bounded C5 flood
    and anchor command execution changes: clicker 234592 B FLASH / 84624 B RAM,
    anchor 181836 B FLASH / 96896 B RAM, gateway 291692 B FLASH / 103564 B RAM.
 2. Parent-side result-offer reservations, queued child result bundles,
@@ -114,14 +115,16 @@ Current `get_goal()`:
    remaining gap is broader app-integrated recovery coverage across every radio
    handoff and preemption path.
 3. Gateway app collection EACKs now select explicit missing-list format when the
-   active collection state has a count-matched `TLV_EXPECTED_NODE_ID` roster.
-   `CMD_SCOPE_ALL_REGISTERED` collection commands without that full roster are
-   rejected instead of being downgraded to best-effort membership. A core
-   preserve-order `gateway_membership` roster and snapshot model now exists, but
-   gateway app/NVS wiring and parser relaxation for rosterless
-   `ALL_REGISTERED` commands are not implemented yet. `CMD_SCOPE_ALL_HEARD`
-   remains the best-effort collection mode and received-list fallback is still
-   used when a missing-list payload does not fit.
+   active collection state has a strict count-matched roster from either
+   `TLV_EXPECTED_NODE_ID` or the registered membership provider. Rosterless
+   `CMD_SCOPE_ALL_REGISTERED` collection commands are accepted only when their
+   `membership_epoch` and `expected_node_count` match the registered provider;
+   mismatches are rejected instead of downgraded to best effort. The
+   preserve-order `gateway_membership` roster is NVS-backed through record
+   `0x0105` and restored during gateway command-result tracking init before
+   collection state restore. `CMD_SCOPE_ALL_HEARD` remains the best-effort
+   collection mode and received-list fallback is still used when a missing-list
+   payload does not fit.
 4. App-level failure-mode coverage still needs broader integration tests for
    full radio handoff/retry behavior across real-time preemption points.
 

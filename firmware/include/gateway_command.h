@@ -18,6 +18,8 @@ extern "C" {
 #define GATEWAY_COMMAND_RX_DUP_CACHE_SIZE 4u
 #define GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION 1u
 
+struct gateway_membership_roster;
+
 struct gateway_command_pending {
     struct proto_packet command;
     enum command_id command_id;
@@ -63,6 +65,12 @@ enum gateway_command_tracking_mode {
 enum gateway_command_transport_mode {
     GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED = 0,
     GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST = 1,
+};
+
+enum gateway_command_collection_roster_source {
+    GATEWAY_COMMAND_COLLECTION_ROSTER_NONE = 0,
+    GATEWAY_COMMAND_COLLECTION_ROSTER_EXPLICIT = 1,
+    GATEWAY_COMMAND_COLLECTION_ROSTER_MEMBERSHIP = 2,
 };
 
 struct gateway_collection_result_entry {
@@ -114,6 +122,13 @@ enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(
     const struct gateway_command_options *options);
 enum gateway_command_transport_mode gateway_command_transport_mode_from_outbound(
     const struct mesh_outbound *out);
+int gateway_command_resolve_collection_roster(
+    const struct gateway_command_options *options,
+    const struct gateway_membership_roster *membership_roster,
+    uint64_t *out_node_ids,
+    size_t out_cap,
+    size_t *out_count,
+    enum gateway_command_collection_roster_source *source);
 bool gateway_command_receive_expired(const struct proto_packet *packet,
                                      const struct gateway_command_options *options);
 uint32_t gateway_command_expiry_remaining_ms(const struct proto_packet *packet,

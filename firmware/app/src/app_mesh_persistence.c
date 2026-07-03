@@ -22,6 +22,7 @@ LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 #define APP_MESH_NVS_COLLECTION_RESULT_ID 0x0102u
 #define APP_MESH_NVS_CHILD_CUSTODY_ID 0x0103u
 #define APP_MESH_NVS_GATEWAY_COLLECTION_ID 0x0104u
+#define APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID 0x0105u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
@@ -41,6 +42,9 @@ BUILD_ASSERT(sizeof(struct mesh_relay_child_custody_snapshot) <
 BUILD_ASSERT(sizeof(struct gateway_collection_state_snapshot) <=
              (APP_MESH_NVS_SECTOR_SIZE - 256u),
              "gateway collection snapshot must leave NVS sector headroom");
+BUILD_ASSERT(sizeof(struct gateway_membership_snapshot) <
+             (APP_MESH_NVS_SECTOR_SIZE / 2u),
+             "gateway membership snapshot must fit comfortably in one NVS sector");
 
 static struct nvs_fs mesh_nvs;
 static bool mesh_nvs_ready;
@@ -148,6 +152,23 @@ void app_mesh_persistence_clear_gateway_collection(void)
     ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_GATEWAY_COLLECTION_ID);
     if (ret < 0 && ret != -ENOENT) {
         LOG_WRN("gateway collection snapshot clear failed: %d", ret);
+    }
+}
+
+void app_mesh_persistence_clear_gateway_membership(void)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+    if (!mesh_persistence_ready()) {
+        return;
+    }
+
+    ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID);
+    if (ret < 0 && ret != -ENOENT) {
+        LOG_WRN("gateway membership snapshot clear failed: %d", ret);
     }
 }
 
@@ -379,6 +400,44 @@ int app_mesh_persistence_save_gateway_collection(
     return 0;
 }
 
+int app_mesh_persistence_save_gateway_membership(
+    const struct gateway_membership_roster *roster)
+{
+    struct gateway_membership_snapshot snapshot;
+    ssize_t written;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    ret = gateway_membership_export_snapshot(roster, &snapshot);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway membership snapshot export failed: %d", ret);
+        return -EINVAL;
+    }
+
+    written = nvs_write(&mesh_nvs,
+                        APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID,
+                        &snapshot,
+                        sizeof(snapshot));
+    if (written < 0) {
+        LOG_WRN("gateway membership snapshot write failed: %d", (int)written);
+        return (int)written;
+    }
+    if ((size_t)written != sizeof(snapshot)) {
+        LOG_WRN("gateway membership snapshot short write: %d/%u",
+                (int)written,
+                (unsigned int)sizeof(snapshot));
+        return -EIO;
+    }
+
+    return 0;
+}
+
 int app_mesh_persistence_restore_collection_result(
     struct app_mesh_collection_result_snapshot *snapshot)
 {
@@ -468,6 +527,86 @@ int app_mesh_persistence_restore_gateway_collection(
     return 0;
 }
 
+int app_mesh_persistence_restore_gateway_membership(
+    struct gateway_membership_roster *roster)
+{
+    struct gateway_membership_snapshot snapshot;
+    ssize_t read_len;
+    int ret;
+
+    if (roster == NULL) {
+        return -EINVAL;
+    }
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        gateway_membership_clear(roster);
+        return -ENOTSUP;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    gateway_membership_clear(roster);
+    memset(&snapshot, 0, sizeof(snapshot));
+    read_len = nvs_read(&mesh_nvs,
+                        APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID,
+                        &snapshot,
+                        sizeof(snapshot));
+    if (read_len == -ENOENT) {
+        return 0;
+    }
+    if (read_len < 0) {
+        LOG_WRN("gateway membership snapshot read failed: %d", (int)read_len);
+        return (int)read_len;
+    }
+    if ((size_t)read_len != sizeof(snapshot)) {
+        LOG_WRN("gateway membership snapshot has wrong size: %d/%u",
+                (int)read_len,
+                (unsigned int)sizeof(snapshot));
+        app_mesh_persistence_clear_gateway_membership();
+        return -EINVAL;
+    }
+
+    ret = gateway_membership_restore_snapshot(roster, &snapshot);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway membership snapshot restore rejected: %d", ret);
+        app_mesh_persistence_clear_gateway_membership();
+        return -EINVAL;
+    }
+
+    LOG_INF("gateway membership snapshot restored: epoch=%u nodes=%u",
+            roster->membership_epoch,
+            roster->node_count);
+    return 0;
+}
+
+#if defined(CONFIG_ZTEST)
+int app_mesh_persistence_test_write_gateway_membership_snapshot(
+    const void *snapshot,
+    size_t snapshot_len)
+{
+    ssize_t written;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    if (snapshot == NULL && snapshot_len != 0u) {
+        return -EINVAL;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    written = nvs_write(&mesh_nvs,
+                        APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID,
+                        snapshot,
+                        snapshot_len);
+    if (written < 0) {
+        return (int)written;
+    }
+    return (size_t)written == snapshot_len ? 0 : -EIO;
+}
+#endif
+
 #else
 
 #include <errno.h>
@@ -548,6 +687,24 @@ int app_mesh_persistence_restore_gateway_collection(
 }
 
 void app_mesh_persistence_clear_gateway_collection(void)
+{
+}
+
+int app_mesh_persistence_save_gateway_membership(
+    const struct gateway_membership_roster *roster)
+{
+    ARG_UNUSED(roster);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_restore_gateway_membership(
+    struct gateway_membership_roster *roster)
+{
+    gateway_membership_clear(roster);
+    return -ENOTSUP;
+}
+
+void app_mesh_persistence_clear_gateway_membership(void)
 {
 }
 

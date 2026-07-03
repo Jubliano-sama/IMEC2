@@ -2,6 +2,7 @@
 #define APP_MESH_PERSISTENCE_H
 
 #include "gateway_command.h"
+#include "gateway_membership.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 
@@ -45,5 +46,10 @@ int app_mesh_persistence_save_gateway_collection(
 int app_mesh_persistence_restore_gateway_collection(
     struct gateway_collection_state *collection);
 void app_mesh_persistence_clear_gateway_collection(void);
+int app_mesh_persistence_save_gateway_membership(
+    const struct gateway_membership_roster *roster);
+int app_mesh_persistence_restore_gateway_membership(
+    struct gateway_membership_roster *roster);
+void app_mesh_persistence_clear_gateway_membership(void);
 
 #endif

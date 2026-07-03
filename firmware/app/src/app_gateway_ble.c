@@ -7,6 +7,7 @@
 #include "app_mesh_report.h"
 #include "app_mesh_persistence.h"
 #include "app_state.h"
+#include "gateway_membership.h"
 #include "mesh.h"
 #include "mesh_relay.h"
 #include "serial_frame.h"
@@ -114,6 +115,21 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
     ARG_UNUSED(options);
 }
 
+int gateway_set_registered_membership_roster(uint16_t membership_epoch,
+                                             const uint64_t *node_ids,
+                                             size_t node_count)
+{
+    ARG_UNUSED(membership_epoch);
+    ARG_UNUSED(node_ids);
+    ARG_UNUSED(node_count);
+
+    return -ENOTSUP;
+}
+
+void gateway_clear_registered_membership_roster(void)
+{
+}
+
 void gateway_note_command_result(const struct proto_packet *packet,
                                  const uint8_t *payload,
                                  size_t payload_len,
@@ -144,6 +160,7 @@ void gateway_command_result_tracking_init(void)
 
 static struct gateway_command_pending gateway_command_pending_state;
 static struct gateway_collection_state gateway_collection_state;
+static struct gateway_membership_roster gateway_membership_roster_state;
 static uint64_t gateway_collection_expected_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
 static uint16_t gateway_collection_expected_node_id_count;
 static struct k_work_delayable gateway_command_result_timeout_work;
@@ -698,6 +715,9 @@ void gateway_clear_pending_command_result(const struct proto_packet *command)
 
 int gateway_begin_command_collection(const struct gateway_command_options *options)
 {
+    enum gateway_command_collection_roster_source roster_source =
+        GATEWAY_COMMAND_COLLECTION_ROSTER_NONE;
+    size_t resolved_node_count = 0u;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY || options == NULL || !options->collection_required) {
@@ -705,6 +725,22 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
     }
     if (gateway_command_pending_state.active || gateway_collection_state.collection_open) {
         return -EBUSY;
+    }
+
+    ret = gateway_command_resolve_collection_roster(options,
+                                                    &gateway_membership_roster_state,
+                                                    gateway_collection_expected_node_ids,
+                                                    ARRAY_SIZE(gateway_collection_expected_node_ids),
+                                                    &resolved_node_count,
+                                                    &roster_source);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway collection roster unavailable: ret=%d command_seq=%u epoch=%u expected=%u explicit=%u",
+                ret,
+                options->command_seq,
+                options->membership_epoch,
+                options->expected_node_count,
+                options->expected_node_id_count);
+        return mesh_errno_from_proto(ret);
     }
 
     ret = gateway_collection_start(&gateway_collection_state,
@@ -719,23 +755,52 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
-    if (options->expected_node_id_count > 0u) {
-        memcpy(gateway_collection_expected_node_ids,
-               options->expected_node_ids,
-               options->expected_node_id_count * sizeof(options->expected_node_ids[0]));
-        gateway_collection_expected_node_id_count = options->expected_node_id_count;
-    } else {
-        gateway_collection_expected_node_id_count = 0u;
-    }
+    gateway_collection_expected_node_id_count = (uint16_t)resolved_node_count;
 
-    LOG_INF("gateway collection tracking started: command_seq=%u collection=%u epoch=%u expected=%u",
+    LOG_INF("gateway collection tracking started: command_seq=%u collection=%u epoch=%u expected=%u roster_source=%u",
             gateway_collection_state.command_seq,
             gateway_collection_state.collection_epoch_id,
             gateway_collection_state.gateway_epoch,
-            gateway_collection_state.expected_count);
+            gateway_collection_state.expected_count,
+            (unsigned int)roster_source);
     gateway_persist_collection_state("collection-start");
     gateway_schedule_collection_eack_round();
     return 0;
+}
+
+int gateway_set_registered_membership_roster(uint16_t membership_epoch,
+                                             const uint64_t *node_ids,
+                                             size_t node_count)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -EINVAL;
+    }
+
+    ret = gateway_membership_set_roster_preserve_order(&gateway_membership_roster_state,
+                                                       membership_epoch,
+                                                       node_ids,
+                                                       node_count);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    ret = app_mesh_persistence_save_gateway_membership(&gateway_membership_roster_state);
+    if (ret < 0) {
+        LOG_WRN("gateway membership snapshot save failed: ret=%d", ret);
+    }
+    return 0;
+}
+
+void gateway_clear_registered_membership_roster(void)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    gateway_membership_clear(&gateway_membership_roster_state);
+    app_mesh_persistence_clear_gateway_membership();
 }
 
 void gateway_clear_command_collection(const struct gateway_command_options *options)
@@ -870,6 +935,7 @@ void gateway_command_result_tracking_init(void)
     int ret;
 
     gateway_collection_clear(&gateway_collection_state);
+    gateway_membership_clear(&gateway_membership_roster_state);
     gateway_collection_expected_node_id_count = 0u;
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
@@ -877,6 +943,12 @@ void gateway_command_result_tracking_init(void)
                           gateway_collection_eack_work_handler);
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
+    }
+
+    ret = app_mesh_persistence_restore_gateway_membership(&gateway_membership_roster_state);
+    if (ret < 0) {
+        gateway_membership_clear(&gateway_membership_roster_state);
+        LOG_WRN("gateway membership snapshot restore unavailable: ret=%d", ret);
     }
 
     ret = app_mesh_persistence_restore_gateway_collection(&gateway_collection_state);

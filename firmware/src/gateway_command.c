@@ -1,5 +1,6 @@
 #include "gateway_command.h"
 
+#include "gateway_membership.h"
 #include "mesh.h"
 
 #include <string.h>
@@ -397,12 +398,6 @@ int gateway_command_extract_options(const uint8_t *payload,
          options->expected_node_count == 0u)) {
         return PROTO_ERR_MALFORMED;
     }
-    if (options->collection_required &&
-        options->scope == CMD_SCOPE_ALL_REGISTERED &&
-        options->expected_node_id_count != options->expected_node_count) {
-        return PROTO_ERR_MALFORMED;
-    }
-
     return PROTO_OK;
 }
 
@@ -433,6 +428,62 @@ enum gateway_command_transport_mode gateway_command_transport_mode_from_outbound
         return GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST;
     }
     return GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED;
+}
+
+int gateway_command_resolve_collection_roster(
+    const struct gateway_command_options *options,
+    const struct gateway_membership_roster *membership_roster,
+    uint64_t *out_node_ids,
+    size_t out_cap,
+    size_t *out_count,
+    enum gateway_command_collection_roster_source *source)
+{
+    size_t membership_count = 0u;
+    int ret;
+
+    if (options == NULL || out_count == NULL || source == NULL ||
+        (out_node_ids == NULL && out_cap != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+
+    *out_count = 0u;
+    *source = GATEWAY_COMMAND_COLLECTION_ROSTER_NONE;
+
+    if (!options->collection_required ||
+        options->scope != CMD_SCOPE_ALL_REGISTERED) {
+        return PROTO_OK;
+    }
+
+    if (options->expected_node_id_count != 0u) {
+        if (options->expected_node_id_count != options->expected_node_count) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (out_cap < options->expected_node_id_count) {
+            return PROTO_ERR_NO_SPACE;
+        }
+        memcpy(out_node_ids,
+               options->expected_node_ids,
+               options->expected_node_id_count * sizeof(options->expected_node_ids[0]));
+        *out_count = options->expected_node_id_count;
+        *source = GATEWAY_COMMAND_COLLECTION_ROSTER_EXPLICIT;
+        return PROTO_OK;
+    }
+
+    ret = gateway_membership_export_node_ids_preserve_order(membership_roster,
+                                                            options->membership_epoch,
+                                                            out_node_ids,
+                                                            out_cap,
+                                                            &membership_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (membership_count != options->expected_node_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *out_count = membership_count;
+    *source = GATEWAY_COMMAND_COLLECTION_ROSTER_MEMBERSHIP;
+    return PROTO_OK;
 }
 
 bool gateway_command_receive_expired(const struct proto_packet *packet,
