@@ -97,6 +97,14 @@ target_include_directories(test_app_mesh_collection_deferral PRIVATE app/src)
 target_link_libraries(test_app_mesh_collection_deferral PRIVATE core)
 add_test(NAME app_mesh_collection_deferral COMMAND test_app_mesh_collection_deferral)
 
+add_executable(test_app_mesh_tx_handoff_gate
+    tests/test_app_mesh_tx_handoff_gate.c
+    app/src/app_mesh_tx_handoff_gate.c
+)
+target_include_directories(test_app_mesh_tx_handoff_gate PRIVATE app/src)
+target_link_libraries(test_app_mesh_tx_handoff_gate PRIVATE core)
+add_test(NAME app_mesh_tx_handoff_gate COMMAND test_app_mesh_tx_handoff_gate)
+
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)

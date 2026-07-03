@@ -88,6 +88,11 @@ Current `get_goal()`:
    runs before retry scheduling, failed save/schedule callbacks are reported
    through result fields and app warnings, and non-collection TX is left to the
    existing caller fallback.
+   `app_mesh_tx_handoff_gate` now covers queued gateway-bound report/result
+   work and route-waiting TX yielding during route-reply or RX-control handoff:
+   queued state is kept, retry is scheduled with the existing
+   `MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS`, and non-blocked queued work is allowed
+   through.
    Gateway collection state now has per-result previous-hop metadata on
    `gateway_collection_result_entry`, previous-hop-aware result/bundle record
    APIs, and `gateway_collection_return_candidates()` for distinct return

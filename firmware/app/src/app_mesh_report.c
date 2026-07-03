@@ -12,6 +12,7 @@
 #include "app_mesh_preemption.h"
 #include "app_mesh_result_handoff.h"
 #include "app_mesh_test.h"
+#include "app_mesh_tx_handoff_gate.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
 #include "mesh.h"
@@ -1856,6 +1857,62 @@ static void mesh_schedule_route_waiting_retry(const char *reason)
                now + REPORT_TX_RETRY_DELAY_MS;
     delay_ms = uptime_ms_until_deadline(now, deadline);
     mesh_schedule_route_waiting_retry_after(reason, delay_ms);
+}
+
+static const char *mesh_tx_handoff_reason_name(
+    enum app_mesh_tx_handoff_reason reason)
+{
+    switch (reason) {
+    case APP_MESH_TX_HANDOFF_REASON_RX_CONTROL:
+        return "rx-control-handoff";
+    case APP_MESH_TX_HANDOFF_REASON_ROUTE_REPLY:
+        return "route-reply-handoff";
+    case APP_MESH_TX_HANDOFF_REASON_NONE:
+    default:
+        return "handoff";
+    }
+}
+
+static int mesh_tx_handoff_schedule_retry(
+    enum app_mesh_tx_handoff_work work,
+    enum app_mesh_tx_handoff_reason reason,
+    uint32_t delay_ms,
+    void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    switch (work) {
+    case APP_MESH_TX_HANDOFF_WORK_ROUTE_WAITING:
+        mesh_schedule_route_waiting_retry_after(
+            mesh_tx_handoff_reason_name(reason), delay_ms);
+        return 0;
+    case APP_MESH_TX_HANDOFF_WORK_REPORT_QUEUE:
+        report_tx_schedule(delay_ms);
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static bool mesh_tx_handoff_gate_yields(
+    enum app_mesh_tx_handoff_work work,
+    bool queued_gateway_tx_pending,
+    bool route_reply_handoff_active,
+    bool rx_control_handoff_active,
+    struct app_mesh_tx_handoff_result *result)
+{
+    const struct app_mesh_tx_handoff_ops ops = {
+        .schedule_retry = mesh_tx_handoff_schedule_retry,
+    };
+    const struct app_mesh_tx_handoff_state state = {
+        .queued_gateway_tx_pending = queued_gateway_tx_pending,
+        .route_reply_handoff_active = route_reply_handoff_active,
+        .rx_control_handoff_active = rx_control_handoff_active,
+        .work = work,
+        .retry_delay_ms = MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS,
+    };
+
+    return app_mesh_tx_handoff_gate_yield(&state, &ops, result);
 }
 
 static bool mesh_event_plan_debugs_channel5(enum mesh_event_plan_action action)
@@ -5224,6 +5281,7 @@ bool mesh_route_waiting_tx_active(void)
 static void mesh_try_route_waiting_tx(void)
 {
     struct mesh_outbound pending;
+    struct app_mesh_tx_handoff_result handoff_result;
     uint32_t now_ms;
     int ret;
 
@@ -5233,11 +5291,13 @@ static void mesh_try_route_waiting_tx(void)
         return;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-        (mesh_route_reply_handoff_active() ||
-         k_msgq_num_used_get(&mesh_rx_msgq) > 0u)) {
+        mesh_tx_handoff_gate_yields(
+            APP_MESH_TX_HANDOFF_WORK_ROUTE_WAITING,
+            mesh_route_waiting_tx_valid,
+            mesh_route_reply_handoff_active(),
+            k_msgq_num_used_get(&mesh_rx_msgq) > 0u,
+            &handoff_result)) {
         status_debug_note("DBG_ROUTE_WAIT_RX_HANDOFF\n");
-        mesh_schedule_route_waiting_retry_after("route-reply-handoff",
-                                                MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS);
         return;
     }
 
@@ -5960,8 +6020,10 @@ static void report_tx_work_handler(struct k_work *work)
     bool relay_tx_active;
     bool ch9_ack_wait_active;
     bool route_waiting_active;
+    bool report_queue_pending;
     bool rx_queue_pending;
     bool route_handoff_active;
+    struct app_mesh_tx_handoff_result handoff_result;
     uint32_t now_ms;
     int ret;
 
@@ -5976,13 +6038,14 @@ static void report_tx_work_handler(struct k_work *work)
     ch9_ack_wait_active = mesh_ch9_tx_pending.active;
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
+    report_queue_pending = k_msgq_num_used_get(&report_tx_msgq) > 0;
     rx_queue_pending = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                        k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
     route_handoff_active = mesh_route_reply_handoff_active();
     if (anchor_busy || survey_busy || relay_tx_active || ch9_ack_wait_active ||
         route_waiting_active || rx_queue_pending || route_handoff_active) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-            k_msgq_num_used_get(&report_tx_msgq) > 0) {
+            report_queue_pending) {
             if (anchor_busy) {
                 status_debug_note("DBG_REPORT_WORK_BUSY_ANCHOR\n");
             } else if (rx_queue_pending) {
@@ -5998,9 +6061,15 @@ static void report_tx_work_handler(struct k_work *work)
             } else {
                 status_debug_note("DBG_REPORT_WORK_BUSY_SURVEY\n");
             }
-            report_tx_schedule((rx_queue_pending || route_handoff_active) ?
-                               MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS :
-                               MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+            if (mesh_tx_handoff_gate_yields(
+                    APP_MESH_TX_HANDOFF_WORK_REPORT_QUEUE,
+                    report_queue_pending,
+                    route_handoff_active,
+                    rx_queue_pending,
+                    &handoff_result)) {
+                return;
+            }
+            report_tx_schedule(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         }
         return;
     }

@@ -680,6 +680,9 @@ channel-9 payload windows.
    the same pattern: preserve relay-owned delivery state, run outbox save
    before retry scheduling, and report failed persistence or scheduling without
    dropping the in-RAM result.
+   Queued gateway-bound work also yields when route-reply or RX-control
+   handoff is active; the queue entry is kept and retry is scheduled with the
+   existing route-preemption yield delay.
 6. Later channel-9 windows or C5 refresh resume delivery according to timing
    supervision and retry policy.
 

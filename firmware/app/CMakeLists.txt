@@ -338,6 +338,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_flood.c
     src/app_mesh_ch9_ack.c
     src/app_mesh_collection_deferral.c
+    src/app_mesh_tx_handoff_gate.c
     src/app_mesh_result_handoff.c
     src/app_mesh_report.c
     src/app_stack_diag.c
