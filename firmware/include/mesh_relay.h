@@ -16,6 +16,7 @@ extern "C" {
 #define MESH_BROADCAST_ID 0u
 #define MESH_RELAY_DOWNLINK_ROUTES 16u
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
+#define MESH_RELAY_FLOOD_SEEN_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
 #define MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS 5u
@@ -129,7 +130,7 @@ struct mesh_parent_candidate {
 
 struct flood_seen_entry {
     uint64_t gateway_id;
-    uint16_t gateway_epoch;
+    uint32_t gateway_epoch;
     uint32_t flood_epoch_id;
     uint8_t flood_type;
     uint64_t origin_id;
@@ -139,7 +140,9 @@ struct flood_seen_entry {
     uint64_t best_previous_hop;
     uint64_t backup_previous_hop;
     uint8_t forward_count;
+    uint8_t heard_count;
     uint32_t expires_at_ms;
+    bool valid;
 };
 
 enum mesh_relay_delivery_state {
@@ -357,6 +360,7 @@ struct mesh_relay {
     struct route_table upstream;
     struct mesh_downlink_entry downlinks[MESH_RELAY_DOWNLINK_ROUTES];
     struct mesh_duplicate_entry duplicates[MESH_RELAY_DUP_CACHE_SIZE];
+    struct flood_seen_entry flood_seen[MESH_RELAY_FLOOD_SEEN_SIZE];
     struct mesh_relay_event_timing_entry event_timings[MESH_RELAY_EVENT_TIMINGS];
     struct mesh_pending_tx pending;
     struct persistent_outbox_record outbox_record;
@@ -365,6 +369,7 @@ struct mesh_relay {
     struct mesh_result_offer_reservation result_offer_reservation;
     struct mesh_relay_diagnostics diagnostics;
     uint8_t duplicate_next;
+    uint8_t flood_seen_next;
     uint16_t next_seq;
 };
 

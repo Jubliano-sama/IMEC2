@@ -655,7 +655,11 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
 
 static bool duplicate_tracked(const struct proto_packet *packet)
 {
-    (void)packet;
+    if (packet != NULL &&
+        packet->msg_type == MSG_ROUTE_REQ &&
+        packet->dst_id == MESH_BROADCAST_ID) {
+        return false;
+    }
     return true;
 }
 
@@ -747,6 +751,144 @@ static void duplicate_store(struct mesh_relay *relay,
     entry->seq = packet->seq;
     entry->valid = true;
     relay->duplicate_next = (uint8_t)((relay->duplicate_next + 1u) % MESH_RELAY_DUP_CACHE_SIZE);
+}
+
+static uint32_t flood_seen_window_ms(uint8_t flood_type)
+{
+    (void)flood_type;
+    return ROUTE_DEDUP_WINDOW_MS;
+}
+
+static void flood_seen_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_FLOOD_SEEN_SIZE; i++) {
+        struct flood_seen_entry *entry = &relay->flood_seen[i];
+
+        if (entry->valid && (int32_t)(now_ms - entry->expires_at_ms) >= 0) {
+            entry->valid = false;
+        }
+    }
+}
+
+static bool flood_seen_matches_route_solicit(const struct flood_seen_entry *entry,
+                                             const struct route_discovery_fields *fields,
+                                             uint32_t request_id)
+{
+    return entry->valid &&
+           entry->flood_type == FLOOD_EPOCH_TYPE_ROUTE_SOLICIT &&
+           entry->gateway_id == fields->target_id &&
+           entry->gateway_epoch == fields->route_epoch &&
+           entry->flood_epoch_id == fields->flood_epoch_id &&
+           entry->origin_id == fields->origin_id &&
+           entry->origin_request_id == request_id;
+}
+
+static struct flood_seen_entry *flood_seen_find_route_solicit(
+    struct mesh_relay *relay,
+    const struct route_discovery_fields *fields,
+    uint32_t request_id)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_FLOOD_SEEN_SIZE; i++) {
+        if (flood_seen_matches_route_solicit(&relay->flood_seen[i], fields, request_id)) {
+            return &relay->flood_seen[i];
+        }
+    }
+    return NULL;
+}
+
+static struct flood_seen_entry *flood_seen_alloc_or_replace(struct mesh_relay *relay,
+                                                           uint32_t now_ms)
+{
+    struct flood_seen_entry *entry;
+
+    for (uint8_t i = 0u; i < MESH_RELAY_FLOOD_SEEN_SIZE; i++) {
+        if (!relay->flood_seen[i].valid) {
+            return &relay->flood_seen[i];
+        }
+    }
+
+    entry = &relay->flood_seen[relay->flood_seen_next];
+    relay->flood_seen_next = (uint8_t)((relay->flood_seen_next + 1u) %
+                                       MESH_RELAY_FLOOD_SEEN_SIZE);
+    (void)now_ms;
+    return entry;
+}
+
+static bool flood_metric_is_better(uint16_t candidate_metric, uint16_t current_metric)
+{
+    uint32_t candidate = candidate_metric;
+    uint32_t current = current_metric;
+
+    return candidate * 100u <
+           current * (100u - FLOOD_BETTER_METRIC_MARGIN_PERCENT);
+}
+
+static uint16_t route_solicit_metric(const struct route_discovery_fields *fields)
+{
+    return route_candidate_cost(fields->hop_count, fields->quality);
+}
+
+static struct flood_seen_entry *route_solicit_flood_note(
+    struct mesh_relay *relay,
+    const struct route_discovery_fields *fields,
+    uint32_t request_id,
+    uint64_t previous_hop_id,
+    uint32_t now_ms,
+    bool *first_seen)
+{
+    struct flood_seen_entry *entry;
+    uint16_t metric;
+
+    if (first_seen != NULL) {
+        *first_seen = false;
+    }
+
+    flood_seen_expire_stale(relay, now_ms);
+    entry = flood_seen_find_route_solicit(relay, fields, request_id);
+    metric = route_solicit_metric(fields);
+    if (entry == NULL) {
+        entry = flood_seen_alloc_or_replace(relay, now_ms);
+        memset(entry, 0, sizeof(*entry));
+        entry->gateway_id = fields->target_id;
+        entry->gateway_epoch = fields->route_epoch;
+        entry->flood_epoch_id = fields->flood_epoch_id;
+        entry->flood_type = FLOOD_EPOCH_TYPE_ROUTE_SOLICIT;
+        entry->origin_id = fields->origin_id;
+        entry->origin_request_id = request_id;
+        entry->best_hop_count = fields->hop_count;
+        entry->best_metric = metric;
+        entry->best_previous_hop = previous_hop_id;
+        entry->expires_at_ms = now_ms + flood_seen_window_ms(entry->flood_type);
+        entry->valid = true;
+        if (first_seen != NULL) {
+            *first_seen = true;
+        }
+    } else if (previous_hop_id != entry->best_previous_hop &&
+               flood_metric_is_better(metric, entry->best_metric)) {
+        if (id_is_unicast(entry->best_previous_hop)) {
+            entry->backup_previous_hop = entry->best_previous_hop;
+        }
+        entry->best_previous_hop = previous_hop_id;
+        entry->best_hop_count = fields->hop_count;
+        entry->best_metric = metric;
+    } else if (previous_hop_id != entry->best_previous_hop &&
+               previous_hop_id != entry->backup_previous_hop &&
+               id_is_unicast(previous_hop_id)) {
+        entry->backup_previous_hop = previous_hop_id;
+    }
+
+    if (entry->heard_count < UINT8_MAX) {
+        entry->heard_count++;
+    }
+    return entry;
+}
+
+static bool route_solicit_forward_allowed(const struct flood_seen_entry *entry)
+{
+    return entry != NULL &&
+           entry->forward_count < FLOOD_FORWARD_MAX_NORMAL &&
+           (entry->forward_count == 0u ||
+            entry->heard_count < FLOOD_FORWARD_SUPPRESS_AFTER_HEARD);
 }
 
 static int ack_payload_contains_seq(const uint8_t *payload,
@@ -3426,6 +3568,9 @@ static int handle_route_request(struct mesh_relay *relay,
                                 struct mesh_relay_result *result)
 {
     struct route_discovery_fields fields = {0};
+    struct flood_seen_entry *flood_entry;
+    bool flood_first_seen = false;
+    bool forward_allowed;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
@@ -3446,6 +3591,13 @@ static int handle_route_request(struct mesh_relay *relay,
     }
 
     fields.quality = combined_quality(fields.quality, link_quality);
+    flood_entry = route_solicit_flood_note(relay,
+                                           &fields,
+                                           packet->session_id,
+                                           previous_hop_id,
+                                           now_ms,
+                                           &flood_first_seen);
+    forward_allowed = route_solicit_forward_allowed(flood_entry);
     ret = upsert_reactive_route(relay,
                                 fields.origin_id,
                                 previous_hop_id,
@@ -3459,6 +3611,11 @@ static int handle_route_request(struct mesh_relay *relay,
                                 now_ms);
     if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
         return ret;
+    }
+
+    if (!flood_first_seen && !forward_allowed) {
+        relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
+        return PROTO_ERR_STALE;
     }
 
     if (fields.target_id == relay->local_id ||
@@ -3502,6 +3659,9 @@ static int handle_route_request(struct mesh_relay *relay,
                                       now_ms,
                                       &result->route_request);
     if (ret == PROTO_OK) {
+        if (flood_entry != NULL && flood_entry->forward_count < UINT8_MAX) {
+            flood_entry->forward_count++;
+        }
         result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REQ;
     }
     return ret;

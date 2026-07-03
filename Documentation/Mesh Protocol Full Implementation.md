@@ -118,9 +118,12 @@ A route solicitation keeps one identity across relays:
 
 Relays validate the frame, suppress duplicates, record best and backup reverse
 paths, forward only within TTL and repeat bounds, and reply only if they have a
-usable parent route to the gateway. Route selection remains hop-first with
-quality/cost as the main discriminator and capacity only as a tie-breaker or
-penalty among comparable candidates.
+usable parent route to the gateway. Route solicitations use explicit
+flood-seen state instead of the generic packet duplicate cache, so equivalent
+heard copies can be suppressed while a relay that heard but did not forward can
+still use a later copy to perform its one configured normal forward. Route
+selection remains hop-first with quality/cost as the main discriminator and
+capacity only as a tie-breaker or penalty among comparable candidates.
 
 ```mermaid
 flowchart TD

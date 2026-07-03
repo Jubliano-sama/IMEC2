@@ -313,8 +313,10 @@ Current route solicitation behavior:
 
 1. Origin creates a route request with target gateway, origin ID, request ID,
    flood epoch, TTL, hop/cost fields, capacity fields, and slot seed.
-2. Relays validate, dedupe by flood identity, record best/backup reverse path,
-   and forward within TTL/forward limits.
+2. Relays validate, record route-solicit flood-seen state by gateway/origin/
+   request/flood identity, suppress equivalent heard copies outside the generic
+   duplicate cache, record best/backup reverse path, and forward within
+   TTL/forward limits.
 3. A relay with a usable gateway parent schedules a route reply.
 4. Route replies carry nonce and metric CRC fields.
 5. Each reverse hop expects `MSG_ROUTE_REPLY_ACK`.
