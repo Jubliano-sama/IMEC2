@@ -1,6 +1,7 @@
 #ifndef APP_MESH_PERSISTENCE_H
 #define APP_MESH_PERSISTENCE_H
 
+#include "gateway_command.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 
@@ -39,5 +40,10 @@ int app_mesh_persistence_save_collection_result(
 int app_mesh_persistence_restore_collection_result(
     struct app_mesh_collection_result_snapshot *snapshot);
 void app_mesh_persistence_clear_collection_result(void);
+int app_mesh_persistence_save_gateway_collection(
+    const struct gateway_collection_state *collection);
+int app_mesh_persistence_restore_gateway_collection(
+    struct gateway_collection_state *collection);
+void app_mesh_persistence_clear_gateway_collection(void);
 
 #endif

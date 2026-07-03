@@ -5,6 +5,7 @@
 #include "app_gateway_eack_policy.h"
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
+#include "app_mesh_persistence.h"
 #include "app_state.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -154,6 +155,24 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          enum command_id command_id,
                                          enum command_status status,
                                          uint8_t reason);
+
+static bool gateway_collection_tracking_active(void);
+
+static void gateway_persist_collection_state(const char *reason)
+{
+    int ret;
+
+    if (!gateway_collection_tracking_active()) {
+        return;
+    }
+
+    ret = app_mesh_persistence_save_gateway_collection(&gateway_collection_state);
+    if (ret < 0) {
+        LOG_WRN("gateway collection snapshot save failed: ret=%d reason=%s",
+                ret,
+                reason == NULL ? "" : reason);
+    }
+}
 
 static bool gateway_collection_tracking_active(void)
 {
@@ -358,6 +377,7 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
         LOG_WRN("gateway collection retry round advance failed: ret=%d", ret);
         return;
     }
+    gateway_persist_collection_state("collection-eack-round");
     gateway_schedule_collection_eack_round();
 }
 
@@ -395,6 +415,7 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
             gateway_collection_state.expected_count,
             duplicate ? 1u : 0u);
     if (!duplicate) {
+        gateway_persist_collection_state("collection-result");
         (void)gateway_send_collection_eack("collection-eack-result");
         gateway_schedule_collection_eack_round();
     }
@@ -437,6 +458,7 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count);
     if (accepted_count != 0u) {
+        gateway_persist_collection_state("collection-bundle");
         (void)gateway_send_collection_eack("collection-eack-bundle");
         gateway_schedule_collection_eack_round();
     }
@@ -712,6 +734,7 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
             gateway_collection_state.collection_epoch_id,
             gateway_collection_state.gateway_epoch,
             gateway_collection_state.expected_count);
+    gateway_persist_collection_state("collection-start");
     gateway_schedule_collection_eack_round();
     return 0;
 }
@@ -729,6 +752,7 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
 
     gateway_collection_clear(&gateway_collection_state);
     gateway_collection_expected_node_id_count = 0u;
+    app_mesh_persistence_clear_gateway_collection();
     (void)k_work_cancel_delayable(&gateway_collection_eack_work);
 }
 
@@ -844,12 +868,33 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
 
 void gateway_command_result_tracking_init(void)
 {
+    int ret;
+
     gateway_collection_clear(&gateway_collection_state);
     gateway_collection_expected_node_id_count = 0u;
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
     k_work_init_delayable(&gateway_collection_eack_work,
                           gateway_collection_eack_work_handler);
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    ret = app_mesh_persistence_restore_gateway_collection(&gateway_collection_state);
+    if (ret < 0) {
+        gateway_collection_clear(&gateway_collection_state);
+        LOG_WRN("gateway collection snapshot restore unavailable: ret=%d", ret);
+        return;
+    }
+    if (gateway_collection_tracking_active()) {
+        LOG_INF("gateway collection tracking restored: command_seq=%u collection=%u received=%u expected=%u open=%u",
+                gateway_collection_state.command_seq,
+                gateway_collection_state.collection_epoch_id,
+                gateway_collection_state.received_count,
+                gateway_collection_state.expected_count,
+                gateway_collection_state.collection_open ? 1u : 0u);
+        gateway_schedule_collection_eack_round();
+    }
 }
 #endif
 

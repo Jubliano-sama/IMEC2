@@ -5,7 +5,8 @@
 
 #include <zephyr/sys/util.h>
 
-#if DEVICE_ROLE == ROLE_ANCHOR
+#if (DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY) && \
+    defined(CONFIG_NVS) && defined(CONFIG_FLASH_MAP)
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -20,6 +21,7 @@ LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 #define APP_MESH_NVS_OUTBOX_ID 0x0101u
 #define APP_MESH_NVS_COLLECTION_RESULT_ID 0x0102u
 #define APP_MESH_NVS_CHILD_CUSTODY_ID 0x0103u
+#define APP_MESH_NVS_GATEWAY_COLLECTION_ID 0x0104u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
@@ -36,6 +38,9 @@ BUILD_ASSERT(sizeof(struct app_mesh_collection_result_snapshot) <
 BUILD_ASSERT(sizeof(struct mesh_relay_child_custody_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "mesh child custody snapshot must fit comfortably in one NVS sector");
+BUILD_ASSERT(sizeof(struct gateway_collection_state_snapshot) <=
+             (APP_MESH_NVS_SECTOR_SIZE - 256u),
+             "gateway collection snapshot must leave NVS sector headroom");
 
 static struct nvs_fs mesh_nvs;
 static bool mesh_nvs_ready;
@@ -129,6 +134,20 @@ void app_mesh_persistence_clear_child_custody(void)
     ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_CHILD_CUSTODY_ID);
     if (ret < 0 && ret != -ENOENT) {
         LOG_WRN("mesh persisted child custody clear failed: %d", ret);
+    }
+}
+
+void app_mesh_persistence_clear_gateway_collection(void)
+{
+    int ret;
+
+    if (!mesh_persistence_ready()) {
+        return;
+    }
+
+    ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_GATEWAY_COLLECTION_ID);
+    if (ret < 0 && ret != -ENOENT) {
+        LOG_WRN("gateway collection snapshot clear failed: %d", ret);
     }
 }
 
@@ -325,6 +344,41 @@ int app_mesh_persistence_save_collection_result(
     return 0;
 }
 
+int app_mesh_persistence_save_gateway_collection(
+    const struct gateway_collection_state *collection)
+{
+    struct gateway_collection_state_snapshot snapshot;
+    ssize_t written;
+    int ret;
+
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    ret = gateway_collection_export_snapshot(collection, &snapshot);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway collection snapshot export failed: %d", ret);
+        return -EINVAL;
+    }
+
+    written = nvs_write(&mesh_nvs,
+                        APP_MESH_NVS_GATEWAY_COLLECTION_ID,
+                        &snapshot,
+                        sizeof(snapshot));
+    if (written < 0) {
+        LOG_WRN("gateway collection snapshot write failed: %d", (int)written);
+        return (int)written;
+    }
+    if ((size_t)written != sizeof(snapshot)) {
+        LOG_WRN("gateway collection snapshot short write: %d/%u",
+                (int)written,
+                (unsigned int)sizeof(snapshot));
+        return -EIO;
+    }
+
+    return 0;
+}
+
 int app_mesh_persistence_restore_collection_result(
     struct app_mesh_collection_result_snapshot *snapshot)
 {
@@ -360,6 +414,57 @@ int app_mesh_persistence_restore_collection_result(
         return -EINVAL;
     }
 
+    return 0;
+}
+
+int app_mesh_persistence_restore_gateway_collection(
+    struct gateway_collection_state *collection)
+{
+    struct gateway_collection_state_snapshot snapshot;
+    ssize_t read_len;
+    int ret;
+
+    if (collection == NULL) {
+        return -EINVAL;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    gateway_collection_clear(collection);
+    memset(&snapshot, 0, sizeof(snapshot));
+    read_len = nvs_read(&mesh_nvs,
+                        APP_MESH_NVS_GATEWAY_COLLECTION_ID,
+                        &snapshot,
+                        sizeof(snapshot));
+    if (read_len == -ENOENT) {
+        return 0;
+    }
+    if (read_len < 0) {
+        LOG_WRN("gateway collection snapshot read failed: %d", (int)read_len);
+        return (int)read_len;
+    }
+    if ((size_t)read_len != sizeof(snapshot)) {
+        LOG_WRN("gateway collection snapshot has wrong size: %d/%u",
+                (int)read_len,
+                (unsigned int)sizeof(snapshot));
+        app_mesh_persistence_clear_gateway_collection();
+        return -EINVAL;
+    }
+
+    ret = gateway_collection_restore_snapshot(collection, &snapshot);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway collection snapshot restore rejected: %d", ret);
+        app_mesh_persistence_clear_gateway_collection();
+        return -EINVAL;
+    }
+
+    LOG_INF("gateway collection snapshot restored: command_seq=%u collection=%u received=%u expected=%u open=%u",
+            collection->command_seq,
+            collection->collection_epoch_id,
+            collection->received_count,
+            collection->expected_count,
+            collection->collection_open ? 1u : 0u);
     return 0;
 }
 
@@ -425,6 +530,24 @@ int app_mesh_persistence_restore_collection_result(
 }
 
 void app_mesh_persistence_clear_collection_result(void)
+{
+}
+
+int app_mesh_persistence_save_gateway_collection(
+    const struct gateway_collection_state *collection)
+{
+    ARG_UNUSED(collection);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_restore_gateway_collection(
+    struct gateway_collection_state *collection)
+{
+    ARG_UNUSED(collection);
+    return -ENOTSUP;
+}
+
+void app_mesh_persistence_clear_gateway_collection(void)
 {
 }
 

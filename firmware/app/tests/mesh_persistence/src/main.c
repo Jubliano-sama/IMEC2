@@ -244,6 +244,140 @@ ZTEST(mesh_persistence, test_collection_result_snapshot_rejects_invalid_save)
     zassert_equal(app_mesh_persistence_save_collection_result(NULL), -EINVAL);
 }
 
+ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
+{
+    const struct command_result_id id_a = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = 0x1201u,
+        .node_id = LOCAL_ID,
+        .node_boot_counter = 101u,
+        .result_seq = 102u,
+    };
+    struct command_result_id id_b = id_a;
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    struct proto_packet packet_a = {0};
+    struct proto_packet packet_b = {0};
+    uint64_t candidates[2] = {0};
+    uint8_t payload_a[96];
+    uint8_t payload_b[96];
+    size_t payload_a_len = 0u;
+    size_t payload_b_len = 0u;
+    bool duplicate = false;
+
+    id_b.node_id = CHILD_ID;
+    id_b.node_boot_counter = 201u;
+    id_b.result_seq = 202u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_gateway_collection();
+
+    zassert_ok(gateway_collection_start(&collection,
+                                        GATEWAY_ID,
+                                        13u,
+                                        id_a.command_seq,
+                                        3013u,
+                                        4u,
+                                        3u,
+                                        1u,
+                                        1200u));
+    build_collection_command_result_payload(payload_a,
+                                            sizeof(payload_a),
+                                            64u,
+                                            &id_a,
+                                            collection.collection_epoch_id,
+                                            &payload_a_len);
+    build_collection_command_result_payload(payload_b,
+                                            sizeof(payload_b),
+                                            64u,
+                                            &id_b,
+                                            collection.collection_epoch_id,
+                                            &payload_b_len);
+    zassert_ok(mesh_init_command_result(&packet_a,
+                                        id_a.node_id,
+                                        GATEWAY_ID,
+                                        id_a.command_seq,
+                                        id_a.result_seq,
+                                        (uint8_t)payload_a_len,
+                                        false));
+    zassert_ok(mesh_init_command_result(&packet_b,
+                                        id_b.node_id,
+                                        GATEWAY_ID,
+                                        id_b.command_seq,
+                                        id_b.result_seq,
+                                        (uint8_t)payload_b_len,
+                                        false));
+    zassert_ok(gateway_collection_record_result_from_hop(&collection,
+                                                         &packet_a,
+                                                         payload_a,
+                                                         payload_a_len,
+                                                         0xAAAABBBBCCCC0001ull,
+                                                         &duplicate));
+    zassert_false(duplicate);
+    zassert_ok(gateway_collection_record_result_from_hop(&collection,
+                                                         &packet_b,
+                                                         payload_b,
+                                                         payload_b_len,
+                                                         0xAAAABBBBCCCC0002ull,
+                                                         &duplicate));
+    zassert_false(duplicate);
+
+    zassert_ok(app_mesh_persistence_save_gateway_collection(&collection));
+
+    gateway_collection_clear(&restored);
+    zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
+    zassert_equal(restored.gateway_id, collection.gateway_id);
+    zassert_equal(restored.gateway_epoch, collection.gateway_epoch);
+    zassert_equal(restored.command_seq, collection.command_seq);
+    zassert_equal(restored.collection_epoch_id, collection.collection_epoch_id);
+    zassert_equal(restored.membership_epoch, collection.membership_epoch);
+    zassert_equal(restored.expected_count, collection.expected_count);
+    zassert_equal(restored.received_count, 2u);
+    zassert_equal(restored.retry_round, 1u);
+    zassert_equal(restored.next_retry_spread_ms, 1200u);
+    zassert_true(restored.collection_open);
+    assert_result_id_equal(&restored.results[0].id, &id_a);
+    assert_result_id_equal(&restored.results[1].id, &id_b);
+    zassert_equal(restored.results[0].previous_hop_id, 0xAAAABBBBCCCC0001ull);
+    zassert_equal(restored.results[1].previous_hop_id, 0xAAAABBBBCCCC0002ull);
+    zassert_equal(gateway_collection_return_candidates(&restored,
+                                                       candidates,
+                                                       sizeof(candidates) / sizeof(candidates[0])),
+                  2u);
+    zassert_equal(candidates[0], 0xAAAABBBBCCCC0002ull);
+    zassert_equal(candidates[1], 0xAAAABBBBCCCC0001ull);
+
+    app_mesh_persistence_clear_gateway_collection();
+    memset(&restored, 0xA5, sizeof(restored));
+    zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
+    zassert_equal(restored.gateway_id, 0u);
+    zassert_false(restored.collection_open);
+}
+
+ZTEST(mesh_persistence, test_gateway_collection_snapshot_rejects_invalid_save)
+{
+    struct gateway_collection_state collection;
+
+    zassert_ok(app_mesh_persistence_init());
+
+    gateway_collection_clear(&collection);
+    zassert_equal(app_mesh_persistence_save_gateway_collection(&collection), -EINVAL);
+    zassert_equal(app_mesh_persistence_save_gateway_collection(NULL), -EINVAL);
+
+    zassert_ok(gateway_collection_start(&collection,
+                                        GATEWAY_ID,
+                                        13u,
+                                        0x1211u,
+                                        3021u,
+                                        4u,
+                                        1u,
+                                        0u,
+                                        COLLECTION_RETRY_ROUND_0_MS));
+    collection.received_count = 1u;
+    zassert_equal(app_mesh_persistence_save_gateway_collection(&collection), -EINVAL);
+}
+
 ZTEST(mesh_persistence, test_active_collection_retry_outbox_round_trip)
 {
     const struct command_result_id result_id = {
