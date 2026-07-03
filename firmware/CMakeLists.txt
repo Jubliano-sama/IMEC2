@@ -65,6 +65,14 @@ target_include_directories(test_gateway_collection_eack PRIVATE app/src)
 target_link_libraries(test_gateway_collection_eack PRIVATE core)
 add_test(NAME gateway_collection_eack COMMAND test_gateway_collection_eack)
 
+add_executable(test_app_gateway_ble_stream
+    tests/test_app_gateway_ble_stream.c
+    app/src/app_gateway_ble_stream.c
+)
+target_include_directories(test_app_gateway_ble_stream PRIVATE app/src)
+target_link_libraries(test_app_gateway_ble_stream PRIVATE core)
+add_test(NAME app_gateway_ble_stream COMMAND test_app_gateway_ble_stream)
+
 add_executable(test_uwb tests/test_uwb.c)
 target_link_libraries(test_uwb PRIVATE core)
 add_test(NAME uwb COMMAND test_uwb)

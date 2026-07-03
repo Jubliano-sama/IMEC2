@@ -6819,11 +6819,12 @@ static void mesh_rx_work_handler(struct k_work *work)
             mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
                                                    pending->payload,
                                                    pending->payload_len);
-            ret = gateway_emit_host_packet(&pending->packet,
-                                           pending->payload,
-                                           pending->payload_len);
+            ret = gateway_ble_stream_packet(&pending->packet,
+                                            pending->payload,
+                                            pending->payload_len,
+                                            pending->received_at_ms);
             if (ret < 0) {
-                LOG_WRN("gateway BLE COBS frame not emitted: %d", ret);
+                LOG_DBG("gateway BLE stream packet not queued: %d", ret);
             }
         } else if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
                    DEVICE_ROLE == ROLE_ANCHOR) {

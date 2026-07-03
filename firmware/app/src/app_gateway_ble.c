@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "app_gateway_collection_eack.h"
 #include "app_gateway_eack_policy.h"
+#include "app_gateway_ble_stream.h"
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
 #include "app_mesh_persistence.h"
@@ -38,6 +39,11 @@
 LOG_MODULE_REGISTER(app_gateway_ble, LOG_LEVEL_DBG);
 
 static uint16_t gateway_command_seq;
+static struct gateway_ble_stream_state gateway_ble_stream_state;
+static struct k_spinlock gateway_ble_stream_lock;
+
+static bool gateway_ble_stream_ready(void);
+static void gateway_ble_schedule_stream_drain(void);
 
 uint16_t gateway_next_command_seq(void)
 {
@@ -58,6 +64,26 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
     ARG_UNUSED(payload_len);
 
     return -ENOTSUP;
+}
+
+int gateway_ble_stream_packet(const struct proto_packet *packet,
+                              const uint8_t *payload,
+                              size_t payload_len,
+                              uint32_t received_at_ms)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(received_at_ms);
+
+    return -ENOTSUP;
+}
+
+void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics)
+{
+    if (diagnostics != NULL) {
+        memset(diagnostics, 0, sizeof(*diagnostics));
+    }
 }
 
 int gateway_encode_host_packet_frame(const struct proto_packet *packet,
@@ -181,6 +207,51 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason);
 
 static bool gateway_collection_tracking_active(void);
+
+int gateway_ble_stream_packet(const struct proto_packet *packet,
+                              const uint8_t *payload,
+                              size_t payload_len,
+                              uint32_t received_at_ms)
+{
+    k_spinlock_key_t key;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return 0;
+    }
+    if (!gateway_ble_transport_enabled()) {
+        return -ENOTSUP;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_enqueue_packet(&gateway_ble_stream_state,
+                                            packet,
+                                            payload,
+                                            payload_len,
+                                            received_at_ms,
+                                            k_uptime_get_32(),
+                                            gateway_ble_stream_ready());
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret > 0) {
+        gateway_ble_schedule_stream_drain();
+    }
+    return ret < 0 ? ret : 0;
+}
+
+void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics)
+{
+    k_spinlock_key_t key;
+
+    if (diagnostics == NULL) {
+        return;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    gateway_ble_stream_get_diagnostics(&gateway_ble_stream_state,
+                                       k_uptime_get_32(),
+                                       diagnostics);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+}
 
 static void gateway_persist_collection_state(const char *reason)
 {
@@ -1020,6 +1091,7 @@ K_MSGQ_DEFINE(gateway_ble_rx_msgq,
               4);
 
 static struct k_work gateway_ble_rx_work;
+static struct k_work gateway_ble_stream_work;
 static struct k_work_delayable gateway_ble_quiet_flush_work;
 static struct bt_conn *gateway_ble_conn;
 static bool gateway_ble_advertising_active;
@@ -1051,6 +1123,22 @@ static int gateway_ble_stop_advertising(const char *reason);
 static void gateway_ble_flush_quiet_logs(void);
 static void gateway_ble_quiet_flush_work_handler(struct k_work *work);
 static void gateway_ble_rx_work_handler(struct k_work *work);
+static void gateway_ble_stream_work_handler(struct k_work *work);
+
+static bool gateway_ble_stream_ready(void)
+{
+    return gateway_ble_transport_enabled() &&
+           !gateway_ble_uwb_quiet_active() &&
+           gateway_ble_conn != NULL &&
+           gateway_ble_packet_notify_enabled;
+}
+
+static void gateway_ble_schedule_stream_drain(void)
+{
+    if (gateway_ble_transport_enabled()) {
+        (void)k_work_submit(&gateway_ble_stream_work);
+    }
+}
 
 bool gateway_ble_uwb_quiet_active(void)
 {
@@ -1133,6 +1221,7 @@ void gateway_ble_exit_uwb_quiet(const char *reason)
     gateway_ble_quiet_stopped_advertising = false;
     (void)k_work_reschedule(&gateway_ble_quiet_flush_work,
                             K_MSEC(GATEWAY_BLE_QUIET_LOG_FLUSH_DELAY_MS));
+    gateway_ble_schedule_stream_drain();
     LOG_INF("gateway BLE resumed after UWB: reason=%s",
             reason == NULL ? "unknown" : reason);
 }
@@ -1143,6 +1232,9 @@ static void gateway_ble_packet_ccc_changed(const struct bt_gatt_attr *attr,
     ARG_UNUSED(attr);
 
     gateway_ble_packet_notify_enabled = value == BT_GATT_CCC_NOTIFY;
+    if (gateway_ble_packet_notify_enabled) {
+        gateway_ble_schedule_stream_drain();
+    }
 }
 
 static void gateway_ble_log_ccc_changed(const struct bt_gatt_attr *attr,
@@ -1285,6 +1377,7 @@ static void gateway_ble_quiet_flush_work_handler(struct k_work *work)
         return;
     }
     gateway_ble_flush_quiet_logs();
+    gateway_ble_schedule_stream_drain();
 }
 
 int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
@@ -1310,6 +1403,45 @@ int gateway_ble_send_log_bytes(const uint8_t *data, size_t len)
                                    data,
                                    len,
                                    gateway_ble_log_notify_enabled);
+}
+
+static void gateway_ble_stream_work_handler(struct k_work *work)
+{
+    uint8_t record[GATEWAY_BLE_STREAM_RECORD_MAX_LEN];
+    size_t record_len = 0u;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    for (;;) {
+        bool have_record = false;
+        const uint8_t *queued = NULL;
+        k_spinlock_key_t key = k_spin_lock(&gateway_ble_stream_lock);
+
+        if (gateway_ble_stream_ready() &&
+            gateway_ble_stream_peek(&gateway_ble_stream_state,
+                                    &queued,
+                                    &record_len) == 0 &&
+            record_len <= sizeof(record)) {
+            memcpy(record, queued, record_len);
+            have_record = true;
+        }
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+
+        if (!have_record) {
+            return;
+        }
+
+        ret = gateway_ble_send_packet_frame(record, record_len);
+        if (ret < 0) {
+            return;
+        }
+
+        key = k_spin_lock(&gateway_ble_stream_lock);
+        gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
+                                     k_uptime_get_32());
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+    }
 }
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND)
@@ -1471,8 +1603,10 @@ int gateway_ble_init(void)
     }
 
     k_work_init(&gateway_ble_rx_work, gateway_ble_rx_work_handler);
+    k_work_init(&gateway_ble_stream_work, gateway_ble_stream_work_handler);
     k_work_init_delayable(&gateway_ble_quiet_flush_work,
                           gateway_ble_quiet_flush_work_handler);
+    gateway_ble_stream_init(&gateway_ble_stream_state);
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;
 
@@ -1586,6 +1720,15 @@ void gateway_ble_get_status(struct gateway_ble_status *status)
     status->log_notify_enabled = gateway_ble_log_notify_enabled;
 }
 #else
+static bool gateway_ble_stream_ready(void)
+{
+    return false;
+}
+
+static void gateway_ble_schedule_stream_drain(void)
+{
+}
+
 int gateway_ble_init(void)
 {
     return gateway_ble_transport_enabled() ? -ENOTSUP : 0;
