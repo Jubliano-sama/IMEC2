@@ -81,12 +81,18 @@ Current `get_goal()`:
    from the UWB previous hop; app collection EACK sends derive up to two
    candidates from collection state, try valid candidates for channel-9 EACK
    return over existing timing, and fall back to channel-5 flood when no
-   candidate can be used. This is still not full MeshSpec EACK routing: durable
-   EACK return state is not implemented. RAM impact for this slice is 8 bytes
-   per `GATEWAY_COLLECTION_RESULT_CACHE_SIZE` core result entry plus a two-entry
-   stack candidate array during EACK send; latest
-   measured role-build RAM was clicker 82448 B 62.90%, anchor 95360 B 72.75%,
-   gateway 102220 B 77.99%.
+   candidate can be used. Core `gateway_collection_export_snapshot()` and
+   `gateway_collection_restore_snapshot()` now preserve active
+   `gateway_collection_state`, including per-result `previous_hop_id`
+   reverse-path metadata. Gateway app persistence now saves/restores/clears that
+   collection snapshot through NVS record `0x0104`, and gateway init restores
+   valid saved state instead of always clearing it. Gateway role builds now
+   enable the same generated persistence Kconfig fragment used by anchors. This
+   is still not full MeshSpec EACK routing: durable return state exists, but the
+   remaining collection routing, persistent membership, and app/radio handoff
+   behavior is not complete. Latest measured role builds after enabling gateway
+   persistence: clicker 232928 B FLASH / 82448 B RAM, anchor 178516 B FLASH /
+   95360 B RAM, gateway 290012 B FLASH / 102412 B RAM.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level
@@ -244,6 +250,13 @@ Current `get_goal()`:
   outbox snapshot/restore tests, child-custody bundle/reservation snapshot
   tests, no-state export coverage, corrupt bundle snapshot rejection, and
   updated route-loss preservation expectations in `test_mesh_relay`.
+- Current gateway collection durability slice: core
+  `gateway_collection_state_snapshot` export/restore exists and carries the
+  `gateway_collection_result_entry` array, so restored collection state preserves
+  per-result `previous_hop_id` reverse-path metadata. Gateway app persistence
+  saves/restores/clears that snapshot through NVS record `0x0104`, and the
+  gateway role build enables `CONFIG_FLASH`, `CONFIG_FLASH_PAGE_LAYOUT`,
+  `CONFIG_FLASH_MAP`, `CONFIG_NVS`, and `CONFIG_MPU_ALLOW_FLASH_WRITE`.
 - Verification run after the strict all-registered collection slice:
   `cmake --build firmware/build` passed and
   `ctest --test-dir firmware/build --output-on-failure` passed 14/14.

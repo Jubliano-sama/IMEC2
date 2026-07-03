@@ -220,7 +220,7 @@ elseif(FIRMWARE_ROLE STREQUAL "clicker")
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj-clicker.conf")
 endif()
 
-if(FIRMWARE_ROLE STREQUAL "anchor")
+if(FIRMWARE_ROLE STREQUAL "anchor" OR FIRMWARE_ROLE STREQUAL "gateway")
     set(IMEC_MESH_PERSISTENCE_CONF
         "${CMAKE_CURRENT_BINARY_DIR}/imec-mesh-persistence.conf")
     file(WRITE "${IMEC_MESH_PERSISTENCE_CONF}"

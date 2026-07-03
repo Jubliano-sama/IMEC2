@@ -331,12 +331,23 @@ Implemented in native code:
   the UWB receive path. EACK sends derive up to two candidates from collection
   state, try valid candidates over channel 9, and fall back to bounded channel-5
   flood when no candidate can be used.
-- This is not full MeshSpec EACK routing yet: durable EACK return state is not
-  implemented.
-- RAM impact for the current EACK return slice is 8 bytes per
-  `GATEWAY_COLLECTION_RESULT_CACHE_SIZE` core result entry, plus a two-entry
-  stack candidate array during EACK send. Latest measured role-build RAM was
-  clicker 82448 B 62.90%, anchor 95360 B 72.75%, gateway 102220 B 77.99%.
+- Core gateway collection snapshot/export/restore now exists:
+  `gateway_collection_export_snapshot()` and
+  `gateway_collection_restore_snapshot()` preserve active
+  `gateway_collection_state`, including each valid result entry's
+  `previous_hop_id` reverse-path metadata.
+- Gateway app persistence saves/restores/clears gateway collection snapshots
+  through the app persistence layer and NVS record `0x0104`. Gateway
+  initialization restores a valid saved collection state instead of always
+  clearing it, and gateway role builds now enable the persistence Kconfig
+  fragment.
+- This is still not full MeshSpec EACK routing. The durable return state now
+  exists, but broader EACK routing requirements remain partial until the rest of
+  the collection routing, persistent membership, and app/radio handoff behavior
+  is complete.
+- Latest focused role-build measurements after enabling gateway persistence:
+  clicker 232928 B FLASH / 82448 B RAM, anchor 178516 B FLASH / 95360 B RAM,
+  gateway 290012 B FLASH / 102412 B RAM.
 - Source behavior for received-list hit, received-list miss, explicit
   missing-list retry, explicit missing-list absence confirmation, and
   closed-collection stop.
@@ -564,7 +575,10 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    distinct return-candidate helper. Gateway app result and bundle handlers
    populate that metadata from the UWB previous hop, and app EACK sends derive
    up to two candidates from collection state before falling back to channel-5
-   collection EACK flood. Durable EACK return state is not implemented.
+   collection EACK flood. Gateway app persistence now keeps that collection
+   return state restart-tolerant through NVS record `0x0104`; the remaining gap
+   is full MeshSpec EACK routing across every app/radio handoff and collection
+   routing case.
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are
