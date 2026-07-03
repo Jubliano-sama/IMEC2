@@ -41,6 +41,14 @@ struct app_mesh_ch9_tx_retry_result {
     uint8_t queued_after;
 };
 
+struct app_mesh_ch9_ack_complete_state {
+    bool route_test_enabled;
+    bool transmitter_role;
+    uint8_t report_tx_queue_used;
+    bool route_waiting_tx_valid;
+    bool ack_batch_valid;
+};
+
 int app_mesh_ch9_tx_ack_apply(const struct proto_packet *ack_packet,
                               const uint8_t *payload,
                               size_t payload_len,
@@ -56,5 +64,8 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
 
 bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
                                       bool relay_collection_result_active);
+
+bool app_mesh_ch9_ack_complete_should_close_timing(
+    const struct app_mesh_ch9_ack_complete_state *state);
 
 #endif

@@ -349,6 +349,11 @@ Channel-9 timing is negotiated by C5 contact:
 5. `MSG_MESH_EVENT_END`, supervision expiry, too many misses, explicit route
    clear, timing replacement, or policy reset closes timing.
 
+Route-test ACK completion clears only the local pending ACK batch and finite
+payload/ACK attempt. It no longer sends `MSG_MESH_EVENT_END` merely because the
+route-test queues are idle, so the supervised repeating timing agreement can
+serve later payload, ACK, or reverse-control windows.
+
 Channel-9 event direction alternates by event counter. The connection initiator
 starts with TX on event counter 0; the downstream peer starts with RX. The
 mesh-route-test build supports up to `MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS`

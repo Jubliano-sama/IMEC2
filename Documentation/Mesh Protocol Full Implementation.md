@@ -398,7 +398,9 @@ supervised timing remains valid unless normal supervision later expires it.
 Gateway ACK after local completion:
 The finite channel-9 event closes after local payload and hop/custody ACK work.
 Persistent delivery state waits for gateway ACK/EACK, which may arrive in a
-later scheduled channel-9 reverse slot.
+later scheduled channel-9 reverse slot. ACK-complete route-test cleanup clears
+pending ACK tracking, but does not send `MSG_MESH_EVENT_END` or invalidate the
+supervised repeating timing agreement solely because current queues are idle.
 
 Missing EACK:
 Successful nodes stop when EACK confirms them. Missing/open status or no EACK

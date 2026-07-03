@@ -137,6 +137,14 @@ target_include_directories(test_app_mesh_gateway_ack_policy PRIVATE app/src)
 target_link_libraries(test_app_mesh_gateway_ack_policy PRIVATE core)
 add_test(NAME app_mesh_gateway_ack_policy COMMAND test_app_mesh_gateway_ack_policy)
 
+add_executable(test_app_mesh_ch9_ack
+    tests/test_app_mesh_ch9_ack.c
+    app/src/app_mesh_ch9_ack.c
+)
+target_include_directories(test_app_mesh_ch9_ack PRIVATE app/src)
+target_link_libraries(test_app_mesh_ch9_ack PRIVATE core)
+add_test(NAME app_mesh_ch9_ack COMMAND test_app_mesh_ch9_ack)
+
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)

@@ -208,3 +208,18 @@ bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
     return packet->msg_type != MSG_COMMAND_RESULT ||
            !relay_collection_result_active;
 }
+
+bool app_mesh_ch9_ack_complete_should_close_timing(
+    const struct app_mesh_ch9_ack_complete_state *state)
+{
+    if (state == NULL || !state->route_test_enabled) {
+        return false;
+    }
+
+    /*
+     * ACK completion only closes the finite payload/ACK attempt. The repeating
+     * channel-9 timing remains supervised until explicit policy, replacement,
+     * or missed-event expiry clears it.
+     */
+    return false;
+}

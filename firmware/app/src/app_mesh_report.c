@@ -3887,10 +3887,15 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     mesh_ch9_tx_pending_clear();
     mesh_schedule_tx_timeout();
     report_tx_schedule(0u);
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) &&
-        report_tx_queue_used() == 0u &&
-        !mesh_route_waiting_tx_valid &&
-        !mesh_ch9_ack_batch.valid) {
+    const struct app_mesh_ch9_ack_complete_state complete_state = {
+        .route_test_enabled = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST),
+        .transmitter_role = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER),
+        .report_tx_queue_used = report_tx_queue_used(),
+        .route_waiting_tx_valid = mesh_route_waiting_tx_valid,
+        .ack_batch_valid = mesh_ch9_ack_batch.valid,
+    };
+
+    if (app_mesh_ch9_ack_complete_should_close_timing(&complete_state)) {
         mesh_close_channel9_connection(ack_peer_id, "ch9-idle-ack-complete");
     }
     return true;
