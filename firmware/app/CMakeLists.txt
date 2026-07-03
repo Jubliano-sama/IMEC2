@@ -299,6 +299,7 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER=y\n"
+            "CONFIG_MESH_SMOKE_FAST_TX=y\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS=1000\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT=8\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES=900\n"
@@ -334,6 +335,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_clicker.c
     src/app_ml.c
     src/app_mesh_test.c
+    src/app_mesh_smoke_fast.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c

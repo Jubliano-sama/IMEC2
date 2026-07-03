@@ -128,6 +128,10 @@ TLV_SPECS = {
     0x5C: TlvSpec("mesh_test_origin_id", _id64),
     0x5D: TlvSpec("mesh_test_target_id", _id64),
     0x5E: TlvSpec("mesh_test_flags", _uint(4)),
+    0x97: TlvSpec("mesh_test_packet_age_ms", _uint(4)),
+    0x98: TlvSpec("mesh_test_selected_parent_id", _id64),
+    0x99: TlvSpec("mesh_test_ch9_timing_state", _uint(1)),
+    0x9A: TlvSpec("mesh_test_payload_crc", _uint(2)),
 }
 
 SYNTHETIC_TLV_NAMES = {
@@ -137,6 +141,7 @@ SYNTHETIC_TLV_NAMES = {
     "mesh_test_origin_id",
     "mesh_test_target_id",
     "mesh_test_flags",
+    "mesh_test_payload_crc",
 }
 
 
@@ -345,6 +350,15 @@ def format_packet_line(packet: ProtoPacket, stats: MonitorStats, now_s: float) -
     next_hop = packet.tlvs.get("next_hop_id")
     if isinstance(next_hop, str):
         fields.append(f"next={next_hop}")
+    selected_parent = packet.tlvs.get("mesh_test_selected_parent_id")
+    if isinstance(selected_parent, str):
+        fields.append(f"parent={selected_parent}")
+    ch9_state = packet.tlvs.get("mesh_test_ch9_timing_state")
+    if isinstance(ch9_state, int):
+        fields.append(f"ch9_state={ch9_state}")
+    payload_crc = packet.tlvs.get("mesh_test_payload_crc")
+    if isinstance(payload_crc, int):
+        fields.append(f"payload_crc=0x{payload_crc:04x}")
     return " ".join(fields)
 
 

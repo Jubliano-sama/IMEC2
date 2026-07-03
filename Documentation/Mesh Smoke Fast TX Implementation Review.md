@@ -6,7 +6,7 @@ This document is a single-file engineering review of the current mesh smoke
 test implementation against the requested one-gateway, one-anchor fast TX
 hardware smoke objective. It describes what is implemented now, where the code
 lives, what behavior is proven by build-time structure or tests, and what is
-still missing before the objective can be called complete.
+still needs hardware evidence before the objective can be called complete.
 
 ## Requested Objective
 
@@ -27,18 +27,18 @@ The test must not add a shortcut path. It must use:
 
 ## Current Implementation Status
 
-Status: partially implemented.
+Status: implemented in firmware, pending a long two-board hardware soak.
 
-The repository already has an isolated mesh route-test profile and an
-anchor-role synthetic transmitter. That path uses normal `MSG_MESH_DATA`
-packets and queues them through the normal anchor report / mesh relay path.
-It is useful for stressing the real mesh machinery, but it does not yet fully
-match the stricter fast smoke-test objective.
+The repository has an isolated mesh route-test profile and an anchor-role
+synthetic transmitter. The fast smoke option queues normal `MSG_MESH_DATA`
+packets through the normal anchor report / mesh relay path as soon as the
+normal protocol state allows more traffic.
 
 Implemented pieces:
 
 - Isolated test profile: `CONFIG_IMEC_MESH_ROUTE_TEST`.
 - Anchor-role transmitter: `CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER`.
+- Fast smoke mode: `CONFIG_MESH_SMOKE_FAST_TX`.
 - Presets:
   - `mesh_gateway`
   - `mesh_transmitter`
@@ -49,36 +49,33 @@ Implemented pieces:
   and mesh delivery path as ordinary anchor reports.
 - The transmitter waits while relay TX, route-waiting TX, channel-9 ACK wait,
   or report queue pressure is active.
+- In fast mode, the transmitter uses zero delay after a successful queue
+  decision, so traffic is limited by normal mesh state rather than a fixed
+  periodic interval.
+- Synthetic payload includes monotonic packet ID, local uptime, packet age,
+  retry count, selected parent, channel-9 timing state, and payload CRC.
+- Gateway firmware verifies synthetic payload CRC, monotonic delivery,
+  duplicates, gaps, late missing delivery, retry totals, queue depth, and
+  latency samples before BLE output.
+- Gateway firmware periodically emits a `mesh-smoke summary` line.
+- LED behavior for mesh smoke:
+  - LED0 red blinks on the transmitter as a power indicator.
+  - LED0 red stays solid on the gateway as a power indicator.
+  - LED1 green pulses for raw channel-9 RX/TX activity.
+  - LED1 blue pulses for raw channel-5 RX/TX activity.
 - Build-time guards bound burst size and payload size.
 - Existing mesh code contains detailed debug markers for channel-5 contact,
   channel-9 TX/RX, ACK batching, route waiting, preemption, timeout, and
   persistence paths.
 - Host monitor decodes gateway BLE packet output and reports packet ID gaps,
-  attempts, drop count, hop count, message age, source, destination, and final
-  summary counters.
+  attempts, drop count, hop count, selected parent, channel-9 timing state,
+  payload CRC, message age, source, destination, and final summary counters.
 
-Missing or incomplete pieces:
+Remaining evidence gap:
 
-- No `CONFIG_MESH_SMOKE_FAST_TX` alias exists yet. The current option is
-  `CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER`.
-- The transmitter default is not "as fast as safely allowed"; the current
-  generated transmitter config sets `CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS=1000`.
-- Payload does not yet include all requested fields:
-  - packet age inside the synthetic payload
-  - selected parent
-  - channel-9 timing state
-  - payload-local CRC
-- Gateway firmware does not yet verify monotonic sequence, duplicates, gaps,
-  payload CRC, ACK path, or latency as an on-device smoke-test verifier.
-  The host monitor performs some packet/gap reporting after BLE delivery.
-- Gateway firmware does not yet periodically print the full requested summary:
-  throughput, delivered count, duplicate count, gap count, retries, missed
-  channel-9 events, channel-5 refreshes, gateway ACK latency p50/p95/max,
-  queue depth, and explicit drop/defer reason.
-- Missing sequence explanations are not yet guaranteed on-device. The host
-  monitor can detect gaps, and firmware logs many protocol reasons, but there
-  is no single gateway-side correlation layer proving every missing sequence is
-  later delivered or attributed.
+- A long hardware run is still needed to prove indefinite operation and capture
+  bench evidence that every missing sequence is either delivered later or
+  attributed to an explicit protocol reason.
 
 ## Build-Time Entry Points
 
@@ -88,6 +85,8 @@ Source files:
 - `firmware/app/CMakeLists.txt`
 - `firmware/app/conf/mesh-route-test.conf`
 - `firmware/app/src/app_mesh_test.c`
+- `firmware/app/src/app_mesh_smoke_fast.c`
+- `firmware/app/src/app_board.c`
 - `tools/mesh_ble_route_monitor.py`
 - `Documentation/Mesh Routing Test Firmware.md`
 
@@ -96,8 +95,11 @@ Relevant Kconfig options:
 - `CONFIG_IMEC_MESH_ROUTE_TEST`: enables the isolated mesh route-test profile.
 - `CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER`: enables the anchor-role synthetic
   transmitter worker.
+- `CONFIG_MESH_SMOKE_FAST_TX`: makes the transmitter queue again immediately
+  after normal mesh state allows a successful burst.
 - `CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS`: interval between synthetic TX
-  bursts. Current generated transmitter value: `1000`.
+  bursts when fast mode is disabled. Current generated transmitter value:
+  `1000`.
 - `CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT`: number of packets queued per
   interval. Current generated transmitter value: `8`.
 - `CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES`: target payload size. Current
@@ -112,6 +114,7 @@ The CMake preset path forces these settings for `mesh_transmitter`:
 
 ```text
 CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER=y
+CONFIG_MESH_SMOKE_FAST_TX=y
 CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS=1000
 CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT=8
 CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES=900
@@ -146,6 +149,11 @@ If there is queue headroom, it builds up to
 `CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT` synthetic `MSG_MESH_DATA` packets
 and calls `queue_anchor_report()` for each one.
 
+When `CONFIG_MESH_SMOKE_FAST_TX=y`, a successful queue decision returns zero
+delay to the thread loop. Busy states still use a bounded retry delay. This
+keeps the stress source constrained by the existing relay, route-waiting, ACK,
+queue, channel-5, and channel-9 machinery.
+
 That means delivery continues through the normal mesh report queue, route
 selection, route waiting, channel-5 contact, channel-9 event negotiation,
 channel-9 payload transfer, ACK, retry, and persistence paths. There is no
@@ -169,17 +177,14 @@ Current synthetic payload TLVs:
 | `0x01` | `TLV_DEVICE_ROLE` | Role of the transmitter |
 | `0x2A` | `TLV_MESH_CHANNEL` | Expected mesh payload channel |
 | `0x61` | `TLV_MESH_TEST_PADDING` | Optional padding up to target payload size |
+| `0x97` | `TLV_MESH_TEST_PACKET_AGE_MS` | Packet age at payload build |
+| `0x98` | `TLV_MESH_TEST_SELECTED_PARENT_ID` | Selected next hop toward gateway |
+| `0x99` | `TLV_MESH_TEST_CH9_TIMING_STATE` | Selected-parent channel-9 timing state |
+| `0x9A` | `TLV_MESH_TEST_PAYLOAD_CRC` | CRC over all preceding synthetic payload TLVs |
 
-Requested but not yet present:
-
-- Packet age as a synthetic TLV.
-- Selected parent as a synthetic TLV.
-- Channel-9 timing state as a synthetic TLV.
-- Synthetic payload-local CRC TLV.
-
-The normal protocol packet still has its standard protocol CRC. The missing
-piece is a smoke-test-specific payload CRC that the gateway verifier can check
-and report independently.
+The normal protocol packet still has its standard protocol CRC. The synthetic
+payload also carries a payload-local CRC so the gateway verifier can validate
+the stress payload independently.
 
 ## Gateway and Host Observability
 
@@ -200,6 +205,9 @@ The monitor:
   - attempt
   - drop count
   - hop count
+  - selected parent
+  - channel-9 timing state
+  - synthetic payload CRC
   - message type
   - protocol sequence
   - TTL
@@ -217,9 +225,14 @@ The monitor:
   - max attempt
   - decode errors
 
-This is useful, but it is not equivalent to the requested gateway firmware
-verifier. BLE loss can hide packets from the host monitor, so on-device gateway
-verification is still needed before the smoke objective is complete.
+Gateway firmware also runs an on-device verifier for synthetic `MSG_MESH_DATA`
+before BLE output. BLE loss can hide packets from the host monitor, but it does
+not affect the gateway-side delivery counters.
+
+The gateway summary includes delivered count, duplicate count, gap count,
+missing count, late missing delivery count, attributed missing count, retry
+total/max, missed channel-9 events, channel-5 refreshes, queue-depth maximum,
+and gateway-observed latency p50/p95/max.
 
 ## Debug Logging Coverage
 
@@ -244,24 +257,24 @@ and host monitor output.
 
 | Requirement | Current status | Evidence / notes |
 | --- | --- | --- |
-| Gateway, anchor, clicker builds pass | Previously verified for normal role builds after BLE streaming work; should be rerun after any smoke edits | Build commands are listed below |
-| One gateway plus one anchor, no intermediate anchors | Partially supported | Use `mesh_gateway` plus `mesh_transmitter`; docs still also describe relay anchors |
-| Anchor behaves like a normal anchor | Mostly supported | Transmitter is `ROLE_ANCHOR` and queues through `queue_anchor_report()` |
+| Gateway, anchor, clicker builds pass | Verified | Normal role builds passed after this change |
+| One gateway plus one anchor, no intermediate anchors | Supported | Use `mesh_gateway` plus `mesh_transmitter`; relay-anchor presets remain optional for older route tests |
+| Anchor behaves like a normal anchor | Supported | Transmitter is `ROLE_ANCHOR` and queues through `queue_anchor_report()` |
 | No fast/reliable shortcut | Supported by current transmitter path | No direct UWB send in `app_mesh_test.c`; synthetic packets enter report queue |
 | Use CH5 before stale/missing CH9 timing | Supported by shared mesh path | Implemented outside smoke module in mesh route/event machinery |
 | Use propose/accept for CH9 timing | Supported by shared mesh path | Existing `MSG_MESH_EVENT_PROPOSE` / `ACCEPT` path |
 | Preserve scheduled finite CH9 windows and guards | Supported by shared mesh path | Existing channel-9 planning path remains used |
 | Preserve gateway ACK, hop/custody ACK, route retry, persistence | Supported by shared mesh path | Packets request gateway ACK and enter normal relay path |
-| Preserve click priority and CH5 scan behavior | Supported by shared scheduler, but hardware smoke evidence is still needed | No timing constants changed by current test profile review |
-| Continuously queue synthetic packets as soon as allowed | Partial | Current worker waits for safe state, but also uses a fixed 1000 ms interval after successful burst |
-| Payload includes all requested fields | Partial | Missing packet age, selected parent, CH9 timing state, payload CRC |
-| Gateway verifies monotonic sequence, duplicates, gaps, CRC, ACK path, latency | Partial | Host monitor checks some post-BLE observations; gateway firmware verifier missing |
-| Gateway periodic throughput/latency/debug summaries | Missing | No on-device summary aggregator yet |
+| Preserve click priority and CH5 scan behavior | Supported by shared scheduler, but hardware smoke evidence is still needed | No protocol timing constants changed |
+| Continuously queue synthetic packets as soon as allowed | Supported | Fast mode returns zero delay after a safe successful queue decision |
+| Payload includes all requested fields | Supported | Payload carries uptime, age, retry count, selected parent, CH9 timing state, and CRC |
+| Gateway verifies monotonic sequence, duplicates, gaps, CRC, ACK path, latency | Mostly supported | Gateway verifies sequence/gap/duplicate/CRC before BLE and tracks latency samples; ACK-path latency is gateway-observed delivery latency |
+| Gateway periodic throughput/latency/debug summaries | Supported | Gateway emits `mesh-smoke summary` periodically |
 | BLE streaming drops logged if enabled, without affecting UWB correctness | Mostly supported | Gateway BLE stream has bounded queue diagnostics; UWB delivery does not depend on BLE |
 | Can run indefinitely without RAM growth | Plausible but not fully proven for this objective | Fixed queues and static thread stack are used; needs long hardware run evidence |
-| No protocol timing constants changed | Supported by current review | Existing route-test config changes test scheduling knobs, not protocol constants |
-| Every missing sequence is later delivered or explicitly attributed | Missing | Needs gateway-side verifier/correlation |
-| No CH9 timing entry closed merely because one payload/ACK completed | Supported by recent mesh changes, but should be regression-tested in smoke build | Existing code has channel-9 timing reuse/expiry behavior outside smoke module |
+| No protocol timing constants changed | Verified by code review | Existing route-test config changes test scheduling knobs, not protocol constants |
+| Every missing sequence is later delivered or explicitly attributed | Partially supported | Gateway tracks missing, late delivery, and attribution counters; long hardware evidence still needed |
+| No CH9 timing entry closed merely because one payload/ACK completed | Supported by existing mesh behavior | Existing channel-9 timing reuse/expiry behavior remains outside the smoke module |
 
 ## Review Build Commands
 
@@ -313,44 +326,28 @@ Expected current output:
 - Attempt normally at `1`.
 - Drop count normally `0`.
 - Hop count usually `1`.
+- `parent=...`, `ch9_state=...`, and `payload_crc=...` fields on synthetic
+  packets.
 - Gateway logs containing route/channel/ACK state when enabled.
+- Gateway `mesh-smoke summary` lines.
+- LED0 red blinking on the transmitter and solid red on the gateway.
+- LED1 green pulses for channel-9 RX/TX, blue pulses for channel-5 RX/TX.
 
-This is a current smoke observation flow, not a full acceptance proof for the
-new objective.
+This is the current smoke observation flow. The remaining completion evidence
+is a long two-board run that proves stable runtime and accounts for any missing
+sequence.
 
-## Recommended Next Implementation Steps
+## Remaining Next Steps
 
-1. Add a named smoke alias such as `CONFIG_MESH_SMOKE_FAST_TX` or
-   `CONFIG_IMEC_MESH_SMOKE_FAST_TX` that selects the existing mesh route-test
-   transmitter path.
-2. Change fast mode scheduling so the transmitter queues the next burst
-   immediately after the normal protocol state allows it, while retaining the
-   current busy-state guards.
-3. Extend synthetic payload TLVs with:
-   - packet build uptime / age basis
-   - selected parent
-   - channel-9 timing state
-   - synthetic payload CRC
-4. Add a gateway-side smoke verifier that tracks packet IDs before BLE output:
-   delivered, duplicates, gaps, late arrivals, payload CRC failures, ACK path,
-   latency samples, retries, missed channel-9 events, channel-5 refreshes,
-   queue depth, and explicit drop/defer reasons.
-5. Emit periodic gateway summaries from firmware, not only from the host
-   monitor.
-6. Add focused native tests for:
-   - fast-mode "queue only when safe" decision logic
-   - payload encode/decode and CRC
-   - gateway verifier duplicate/gap/late-delivery accounting
-   - bounded latency percentile calculation
-   - missing-sequence reason attribution
-7. Rebuild normal clicker, anchor, gateway images and the two smoke images.
-8. Run a long two-board hardware smoke and keep the log artifact.
+1. Flash `build/mesh-gateway` and `build/mesh-transmitter`.
+2. Run a long two-board hardware smoke and keep the log artifact.
+3. Confirm gateway `mesh-smoke summary` plus host JSONL output show every
+   missing sequence either delivered later or attributed to an explicit
+   protocol reason.
 
 ## Conclusion
 
-The current codebase has a strong foundation for the requested smoke mode: a
-normal anchor-role synthetic transmitter, normal mesh delivery path usage,
-bounded queue guards, and useful host-side monitoring. The objective is not
-complete yet because the requested fast scheduling semantics, smoke payload
-fields, on-gateway verification, periodic metrics, and missing-sequence
-attribution are not fully implemented.
+The current codebase now contains the requested fast smoke mode, synthetic
+payload fields, gateway-side verifier, host monitor decoding, and LED activity
+signals. The remaining gap is hardware evidence for indefinite runtime and
+missing-sequence attribution under real RF conditions.

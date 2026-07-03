@@ -4,6 +4,7 @@
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
+#include "app_mesh_smoke_fast.h"
 #include "app_board.h"
 #include "app_state.h"
 #include "mesh_relay.h"
@@ -22,6 +23,7 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
 #define MESH_TEST_FLAG_GATEWAY_ACK_REQUIRED (1u << 0)
 #define MESH_TEST_FLAG_CHANNEL9_PAYLOAD     (1u << 1)
 #define MESH_TEST_FLAG_CH5_WAKE_CONTINUOUS  (1u << 2)
+#define MESH_TEST_SUMMARY_INTERVAL_MS 5000u
 
 #ifndef CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
 #define CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS 1000
@@ -49,7 +51,42 @@ static uint16_t mesh_test_seq;
 static uint32_t mesh_test_drop_count;
 static bool mesh_test_continuous_ch5_active;
 static uint8_t mesh_test_wait_log_ticks;
-static const uint8_t mesh_test_padding[UINT8_MAX];
+static struct mesh_smoke_fast_state mesh_test_gateway_state;
+static uint32_t mesh_test_gateway_last_summary_ms;
+
+static uint8_t mesh_test_ch9_state_for_parent(uint64_t parent_id)
+{
+    bool route_selected = parent_id != 0u;
+
+    if (!route_selected) {
+        return MESH_SMOKE_FAST_CH9_NONE;
+    }
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry =
+            &mesh_runtime.event_timings[i];
+
+        if (!entry->valid || entry->next_hop_id != parent_id) {
+            continue;
+        }
+        if (entry->timing.timing_fresh && entry->timing.route_fresh) {
+            return MESH_SMOKE_FAST_CH9_TIMING_FRESH;
+        }
+        return MESH_SMOKE_FAST_CH9_TIMING_STALE;
+    }
+    return MESH_SMOKE_FAST_CH9_ROUTE_ONLY;
+}
+
+static uint64_t mesh_test_selected_parent(void)
+{
+    uint64_t next_hop_id = 0u;
+
+    if (mesh_relay_select_next_hop(&mesh_runtime,
+                                   GATEWAY_ID,
+                                   &next_hop_id) != PROTO_OK) {
+        return 0u;
+    }
+    return next_hop_id;
+}
 
 static uint16_t mesh_test_next_seq(void)
 {
@@ -90,82 +127,30 @@ static int mesh_test_append_payload(uint8_t *payload,
                                     uint32_t packet_id,
                                     uint16_t attempt)
 {
+    const uint64_t selected_parent = mesh_test_selected_parent();
     const uint32_t flags = MESH_TEST_FLAG_GATEWAY_ACK_REQUIRED |
                            MESH_TEST_FLAG_CHANNEL9_PAYLOAD |
                            MESH_TEST_FLAG_CH5_WAKE_CONTINUOUS;
-    int ret;
+    const struct mesh_smoke_fast_payload_input input = {
+        .packet_id = packet_id,
+        .build_uptime_ms = k_uptime_get_32(),
+        .packet_age_ms = 0u,
+        .drop_count = mesh_test_drop_count,
+        .origin_id = DEVICE_ID,
+        .target_id = GATEWAY_ID,
+        .selected_parent_id = selected_parent,
+        .attempt = attempt,
+        .device_role = (uint8_t)DEVICE_ROLE,
+        .mesh_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .ch9_timing_state = mesh_test_ch9_state_for_parent(selected_parent),
+        .flags = flags,
+    };
 
-    ret = tlv_append_u32(payload, payload_cap, payload_len,
-                         TLV_MESH_TEST_PACKET_ID, packet_id);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u16(payload, payload_cap, payload_len,
-                         TLV_MESH_TEST_ATTEMPT, attempt);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u32(payload, payload_cap, payload_len,
-                         TLV_MESH_TEST_DROP_COUNT, mesh_test_drop_count);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u64(payload, payload_cap, payload_len,
-                         TLV_MESH_TEST_ORIGIN_ID, DEVICE_ID);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u64(payload, payload_cap, payload_len,
-                         TLV_MESH_TEST_TARGET_ID, GATEWAY_ID);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u32(payload, payload_cap, payload_len,
-                         TLV_MESH_TEST_FLAGS, flags);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u32(payload, payload_cap, payload_len,
-                         TLV_EVENT_SEQ, packet_id);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u8(payload, payload_cap, payload_len,
-                        TLV_RETRY_COUNT, (uint8_t)MIN(attempt, (uint16_t)UINT8_MAX));
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u32(payload, payload_cap, payload_len,
-                         TLV_UPTIME_MS, k_uptime_get_32());
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u8(payload, payload_cap, payload_len,
-                        TLV_DEVICE_ROLE, (uint8_t)DEVICE_ROLE);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = tlv_append_u8(payload, payload_cap, payload_len,
-                        TLV_MESH_CHANNEL, UWB_CHANNEL_MESH_PAYLOAD);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-
-    while (*payload_len + 2u < CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES) {
-        size_t remaining = CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES - *payload_len;
-        uint8_t chunk_len = (uint8_t)MIN(remaining - 2u, sizeof(mesh_test_padding));
-
-        ret = tlv_append_bytes(payload,
-                               payload_cap,
-                               payload_len,
-                               TLV_MESH_TEST_PADDING,
-                               mesh_test_padding,
-                               chunk_len);
-        if (ret != PROTO_OK) {
-            return ret;
-        }
-    }
-    return PROTO_OK;
+    return mesh_smoke_fast_payload_append(payload,
+                                          payload_cap,
+                                          payload_len,
+                                          &input,
+                                          CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES);
 }
 
 static int mesh_test_build_packet(struct mesh_outbound *outbound,
@@ -210,8 +195,9 @@ static uint32_t mesh_test_tx_once(void)
     bool route_waiting_active;
     bool ack_wait_active;
     uint32_t queue_used;
-    uint32_t queue_headroom;
     uint8_t burst_target;
+    struct mesh_smoke_fast_tx_gate gate;
+    struct mesh_smoke_fast_tx_decision decision;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR ||
@@ -222,11 +208,17 @@ static uint32_t mesh_test_tx_once(void)
     route_waiting_active = mesh_route_waiting_tx_active();
     ack_wait_active = mesh_report_ch9_ack_wait_active();
     queue_used = report_tx_queue_used();
-    queue_headroom = queue_used >= REPORT_TX_QUEUE_DEPTH ?
-                     0u :
-                     REPORT_TX_QUEUE_DEPTH - queue_used;
-    if (relay_tx_active || route_waiting_active || ack_wait_active ||
-        queue_headroom == 0u) {
+    gate = (struct mesh_smoke_fast_tx_gate) {
+        .relay_tx_active = relay_tx_active,
+        .route_waiting_active = route_waiting_active,
+        .ack_wait_active = ack_wait_active,
+        .queue_used = queue_used,
+        .queue_depth = REPORT_TX_QUEUE_DEPTH,
+        .configured_interval_ms = CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS,
+        .fast_mode = IS_ENABLED(CONFIG_MESH_SMOKE_FAST_TX),
+    };
+    mesh_smoke_fast_tx_decide(&gate, &decision);
+    if (!decision.can_queue) {
         status_debug_note("DBG_MESH_TEST_WAIT\n");
         if (relay_tx_active) {
             status_debug_note("DBG_MESH_TEST_WAIT_RELAY\n");
@@ -234,7 +226,7 @@ static uint32_t mesh_test_tx_once(void)
         if (route_waiting_active) {
             status_debug_note("DBG_MESH_TEST_WAIT_ROUTE\n");
         }
-        if (queue_headroom == 0u) {
+        if (decision.reason == MESH_SMOKE_FAST_DEFER_QUEUE_FULL) {
             status_debug_note("DBG_MESH_TEST_WAIT_BACKLOG\n");
         }
         if (ack_wait_active) {
@@ -247,7 +239,7 @@ static uint32_t mesh_test_tx_once(void)
             status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=%u route=%u headroom=%u ack=%u q=%u id=%u att=%u\n",
                                 relay_tx_active ? 1u : 0u,
                                 route_waiting_active ? 1u : 0u,
-                                queue_headroom,
+                                decision.queue_headroom,
                                 ack_wait_active ? 1u : 0u,
                                 queue_used,
                                 mesh_test_next_packet_id,
@@ -256,11 +248,11 @@ static uint32_t mesh_test_tx_once(void)
         } else {
             mesh_test_wait_log_ticks++;
         }
-        return 100u;
+        return decision.delay_ms;
     }
     mesh_test_wait_log_ticks = 0u;
     burst_target = (uint8_t)MIN((uint32_t)CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT,
-                               queue_headroom);
+                               decision.queue_headroom);
 
     for (uint8_t queued_count = 0u;
          queued_count < burst_target;
@@ -272,7 +264,7 @@ static uint32_t mesh_test_tx_once(void)
             mesh_test_drop_count++;
             LOG_WRN("mesh-test packet build failed: id=%u attempt=%u ret=%d drops=%u",
                     packet_id, attempt, ret, mesh_test_drop_count);
-            return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
+            return decision.delay_ms;
         }
 
         ret = queue_anchor_report(&outbound);
@@ -303,7 +295,7 @@ static uint32_t mesh_test_tx_once(void)
         return ret == -EBUSY ? 100u : 250u;
     }
 
-    return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
+    return decision.delay_ms;
 }
 
 static void mesh_test_tx_thread_entry(void *arg0, void *arg1, void *arg2)
@@ -351,12 +343,13 @@ int app_mesh_test_start(void)
         k_thread_name_set(tid, "mesh_test");
         mesh_test_thread_started = true;
     }
-    LOG_INF("mesh-test synthetic transmitter enabled: dst=0x%016llx interval_ms=%u burst=%u payload_bytes=%u startup_delay_ms=%u",
+    LOG_INF("mesh-test synthetic transmitter enabled: dst=0x%016llx interval_ms=%u burst=%u payload_bytes=%u startup_delay_ms=%u fast=%u",
             (unsigned long long)GATEWAY_ID,
             CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS,
             CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT,
             CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES,
-            CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS);
+            CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS,
+            IS_ENABLED(CONFIG_MESH_SMOKE_FAST_TX) ? 1u : 0u);
     return 0;
 }
 
@@ -397,6 +390,7 @@ void app_mesh_test_note_wake_event(const struct proto_packet *packet,
                          (unsigned long long)previous_hop_id,
                          link_quality,
                          anchor_uwb_scan_interval_ms);
+    mesh_smoke_fast_note_c5_refresh(&mesh_test_gateway_state);
 }
 
 void app_mesh_test_note_wake_claim(uint64_t source_id,
@@ -432,6 +426,71 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
                          attempt_index,
                          link_quality,
                          anchor_uwb_scan_interval_ms);
+    mesh_smoke_fast_note_c5_refresh(&mesh_test_gateway_state);
+}
+
+void app_mesh_test_note_ch9_missed(void)
+{
+    mesh_smoke_fast_note_ch9_missed(&mesh_test_gateway_state);
+}
+
+void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,
+                                         const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint32_t received_at_ms,
+                                         uint32_t queue_depth)
+{
+    struct mesh_smoke_fast_summary summary;
+    uint32_t now_ms = k_uptime_get_32();
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL ||
+        packet->msg_type != MSG_MESH_DATA) {
+        return;
+    }
+    ret = mesh_smoke_fast_note_delivery(&mesh_test_gateway_state,
+                                        payload,
+                                        payload_len,
+                                        now_ms,
+                                        now_ms - received_at_ms,
+                                        queue_depth);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return;
+    }
+    if (ret < 0) {
+        LOG_WRN("mesh-smoke gateway verify failed: ret=%d src=0x%016llx seq=%u",
+                ret,
+                (unsigned long long)packet->src_id,
+                packet->seq);
+        return;
+    }
+    if (mesh_test_gateway_last_summary_ms != 0u &&
+        now_ms - mesh_test_gateway_last_summary_ms < MESH_TEST_SUMMARY_INTERVAL_MS) {
+        return;
+    }
+    mesh_test_gateway_last_summary_ms = now_ms;
+    mesh_smoke_fast_get_summary(&mesh_test_gateway_state, &summary);
+    LOG_INF("mesh-smoke summary throughput=%u delivered=%u dup=%u gaps=%u missing=%u late_missing=%u attributed=%u retries=%u retry_max=%u ch9_miss=%u c5_refresh=%u ack_lat_ms=%u/%u/%u qmax=%u last_id=%u drop_reason=%u",
+            summary.last_delivered_ms > summary.first_delivered_ms ?
+            (summary.delivered_count * 1000u) /
+            (summary.last_delivered_ms - summary.first_delivered_ms) :
+            summary.delivered_count,
+            summary.delivered_count,
+            summary.duplicate_count,
+            summary.gap_count,
+            summary.missing_count,
+            summary.later_delivered_missing_count,
+            summary.attributed_missing_count,
+            summary.retry_total,
+            summary.retry_max,
+            summary.missed_ch9_events,
+            summary.c5_refreshes,
+            summary.gateway_ack_latency_p50_ms,
+            summary.gateway_ack_latency_p95_ms,
+            summary.gateway_ack_latency_max_ms,
+            summary.queue_depth_max,
+            summary.last_packet_id,
+            summary.last_drop_or_defer_reason);
 }
 #else
 int app_mesh_test_init(void)
@@ -464,5 +523,22 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
     ARG_UNUSED(event_seq);
     ARG_UNUSED(attempt_index);
     ARG_UNUSED(link_quality);
+}
+
+void app_mesh_test_note_ch9_missed(void)
+{
+}
+
+void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,
+                                         const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint32_t received_at_ms,
+                                         uint32_t queue_depth)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(received_at_ms);
+    ARG_UNUSED(queue_depth);
 }
 #endif

@@ -2566,6 +2566,7 @@ static int mesh_send_outbound_preconfigured_ch9_locked(const struct mesh_outboun
     }
 
     status_debug_tx_mesh_frame_sent_pulse();
+    status_debug_uwb_tx_channel_pulse(UWB_CHANNEL_MESH_PAYLOAD);
     HIGH_DEBUG_COUNTER_INC(mesh_tx);
     if (tx->packet.msg_type == MSG_GATEWAY_ACK) {
         status_debug_gateway_ack_tx_pulse();
@@ -2686,6 +2687,9 @@ int mesh_send_outbound(const struct mesh_outbound *out, const char *reason)
     }
 
     status_debug_tx_mesh_frame_sent_pulse();
+    status_debug_uwb_tx_channel_pulse(tx->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
+                                      UWB_CHANNEL_MESH_PAYLOAD :
+                                      UWB_CHANNEL_WAKE_CONTACT);
     HIGH_DEBUG_COUNTER_INC(mesh_tx);
     if (tx->packet.msg_type == MSG_GATEWAY_ACK) {
         status_debug_gateway_ack_tx_pulse();
@@ -5628,6 +5632,7 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
                 mesh_relay_note_channel9_missed(&mesh_runtime,
                                                 tx.next_hop_id,
                                                 &mesh_event_stats);
+                app_mesh_test_note_ch9_missed();
                 return deferred ? 0 : -EBUSY;
             }
             channel9_success_pending = true;
@@ -5984,6 +5989,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                 mesh_relay_note_channel9_missed(&mesh_runtime,
                                                 next_hop_id,
                                                 &mesh_event_stats);
+                app_mesh_test_note_ch9_missed();
                 report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
                 mesh_ch9_slot_tx_end(&slot_tx);
                 k_mutex_unlock(&mesh_send_scratch_lock);
@@ -6029,6 +6035,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                 mesh_relay_note_channel9_missed(&mesh_runtime,
                                                 next_hop_id,
                                                 &mesh_event_stats);
+                app_mesh_test_note_ch9_missed();
                 report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
                 mesh_ch9_slot_tx_end(&slot_tx);
                 k_mutex_unlock(&mesh_send_scratch_lock);
@@ -6819,6 +6826,11 @@ static void mesh_rx_work_handler(struct k_work *work)
             mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
                                                    pending->payload,
                                                    pending->payload_len);
+            app_mesh_test_note_gateway_delivery(&pending->packet,
+                                                pending->payload,
+                                                pending->payload_len,
+                                                pending->received_at_ms,
+                                                k_msgq_num_used_get(&mesh_rx_msgq));
             ret = gateway_ble_stream_packet(&pending->packet,
                                             pending->payload,
                                             pending->payload_len,
@@ -7544,6 +7556,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 	        mesh_relay_note_channel9_missed(&mesh_runtime,
 	                                        channel9_peer_id,
 	                                        &mesh_event_stats);
+	        app_mesh_test_note_ch9_missed();
 		    } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && channel9_event) {
 		        status_debug_note(channel9_peer_observed ?
 		                          "DBG_CH9_RX_DONE_WITH_PEER\n" :

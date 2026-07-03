@@ -60,6 +60,14 @@ The transmitter sends normal `MSG_MESH_DATA` packets to the gateway with
 - `TLV_MESH_TEST_ORIGIN_ID` (`0x5C`): transmitter device ID.
 - `TLV_MESH_TEST_TARGET_ID` (`0x5D`): gateway device ID.
 - `TLV_MESH_TEST_FLAGS` (`0x5E`): synthetic test flags.
+- `TLV_MESH_TEST_PACKET_AGE_MS` (`0x97`): transmitter-side packet age at
+  payload build time.
+- `TLV_MESH_TEST_SELECTED_PARENT_ID` (`0x98`): route-selected next hop toward
+  the gateway, or zero when no route is currently selected.
+- `TLV_MESH_TEST_CH9_TIMING_STATE` (`0x99`): channel-9 timing state for the
+  selected parent: `0` none, `1` route only, `2` stale timing, `3` fresh timing.
+- `TLV_MESH_TEST_PAYLOAD_CRC` (`0x9A`): CRC-16/CCITT-FALSE over all preceding
+  synthetic payload TLVs, including padding.
 
 The gateway emits delivered packets through the existing connected BLE packet
 notify characteristic. The host monitor computes observed hop count from the

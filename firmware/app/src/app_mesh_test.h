@@ -3,6 +3,7 @@
 
 #include "protocol.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 int app_mesh_test_init(void);
@@ -15,5 +16,11 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
                                    uint32_t event_seq,
                                    uint8_t attempt_index,
                                    uint8_t link_quality);
+void app_mesh_test_note_ch9_missed(void);
+void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,
+                                         const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint32_t received_at_ms,
+                                         uint32_t queue_depth);
 
 #endif

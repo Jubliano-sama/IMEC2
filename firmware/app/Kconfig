@@ -104,6 +104,15 @@ config IMEC_MESH_ROUTE_TEST_TRANSMITTER
       Runs an anchor-role mesh node that continuously sends synthetic
       MSG_MESH_DATA packets toward the gateway through the normal relay path.
 
+config MESH_SMOKE_FAST_TX
+    bool "Run one-hop mesh smoke traffic as fast as safely allowed"
+    depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    help
+      Queues synthetic gateway-bound packets immediately after the normal mesh
+      state allows more traffic. This does not bypass channel-5 contact,
+      channel-9 event negotiation, gateway ACK, custody, retry, preemption, or
+      persistent delivery state.
+
 config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     int "Synthetic mesh-test packet interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER

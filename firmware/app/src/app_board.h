@@ -14,6 +14,7 @@ void status_power_indicator_set(bool enabled);
 void status_debug_tx_boot_test(void);
 void status_debug_gateway_boot_test(void);
 void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel);
+void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel);
 void status_debug_tx_packet_sent_pulse(void);
 void status_debug_tx_wake_claim_sent_pulse(void);
 void status_debug_tx_mesh_frame_sent_pulse(void);

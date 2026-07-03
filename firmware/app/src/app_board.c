@@ -1,6 +1,7 @@
 #include "app_config.h"
 #include "app_board.h"
 #include "app_state.h"
+#include "uwb.h"
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
@@ -58,11 +59,12 @@ static const struct adc_dt_spec battery_adc = {
 #define HAS_BATTERY_ADC 0
 #endif
 
-static struct k_work_delayable status0_debug_pulse_off_work;
 static struct k_work_delayable status1_debug_pulse_restore_work;
-static bool status0_debug_pulse_work_ready;
+static struct k_work_delayable status0_power_blink_work;
 static bool status1_debug_pulse_work_ready;
+static bool status0_power_blink_work_ready;
 static bool status_power_indicator_enabled;
+static bool status0_power_red_on;
 
 static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
 {
@@ -220,33 +222,30 @@ void status_led1_set(bool red, bool green, bool blue)
 void status_power_indicator_set(bool enabled)
 {
     status_power_indicator_enabled = enabled;
-    status_led1_set(false, false, enabled);
-}
-
-static void status0_debug_pulse_off_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-
-    status_led0_set(false, false, false);
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_led1_set(false, false, enabled);
+    }
 }
 
 static void status1_debug_pulse_restore_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
-    status_led1_set(false, false, status_power_indicator_enabled);
+    ARG_UNUSED(status_power_indicator_enabled);
+    status_led1_set(false, false, false);
 }
 
-static void status0_debug_pulse(bool red, bool green, bool blue)
+static void status0_power_blink_handler(struct k_work *work)
 {
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
-        !status0_debug_pulse_work_ready) {
+    ARG_UNUSED(work);
+
+    if (!status0_power_blink_work_ready ||
+        !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
         return;
     }
-
-    status_led0_set(red, green, blue);
-    (void)k_work_reschedule(&status0_debug_pulse_off_work,
-                            K_MSEC(DEBUG_LED_PULSE_MS));
+    status0_power_red_on = !status0_power_red_on;
+    status_led0_set(status0_power_red_on, false, false);
+    (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
 }
 
 static void status1_debug_pulse(bool red, bool green, bool blue)
@@ -310,19 +309,37 @@ void status_debug_printf(const char *fmt, ...)
 
 void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
 {
-    if (DEVICE_ROLE != ROLE_GATEWAY || !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         return;
     }
 
     if (uwb_channel == 9u) {
-        status0_debug_pulse(false, true, false);
-        debug_rtt_write("DBG_GATEWAY_UWB_RX_CH9\n");
+        status1_debug_pulse(false, true, false);
+        debug_rtt_write("DBG_UWB_RX_CH9\n");
     } else if (uwb_channel == 5u) {
-        status0_debug_pulse(false, false, true);
-        debug_rtt_write("DBG_GATEWAY_UWB_RX_CH5\n");
+        status1_debug_pulse(false, false, true);
+        debug_rtt_write("DBG_UWB_RX_CH5\n");
     } else {
-        status0_debug_pulse(true, false, false);
-        debug_rtt_write("DBG_GATEWAY_UWB_RX_UNKNOWN_CH\n");
+        status1_debug_pulse(true, false, false);
+        debug_rtt_write("DBG_UWB_RX_UNKNOWN_CH\n");
+    }
+}
+
+void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+
+    if (uwb_channel == 9u) {
+        status1_debug_pulse(false, true, false);
+        debug_rtt_write("DBG_UWB_TX_CH9\n");
+    } else if (uwb_channel == 5u) {
+        status1_debug_pulse(false, false, true);
+        debug_rtt_write("DBG_UWB_TX_CH5\n");
+    } else {
+        status1_debug_pulse(true, false, false);
+        debug_rtt_write("DBG_UWB_TX_UNKNOWN_CH\n");
     }
 }
 
@@ -332,9 +349,12 @@ void status_debug_tx_boot_test(void)
         return;
     }
 
+    ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
+    status0_power_red_on = true;
     status_led0_set(true, false, false);
-    k_msleep(DEBUG_TX_BOOT_TEST_MS);
-    status_led0_set(false, false, false);
+    if (status0_power_blink_work_ready) {
+        (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
+    }
 }
 
 void status_debug_gateway_boot_test(void)
@@ -343,15 +363,14 @@ void status_debug_gateway_boot_test(void)
         return;
     }
 
-    status_led0_set(false, false, true);
-    k_msleep(DEBUG_TX_BOOT_TEST_MS);
-    status_led0_set(false, false, false);
+    ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
+    status0_power_red_on = true;
+    status_led0_set(true, false, false);
 }
 
 void status_debug_tx_packet_sent_pulse(void)
 {
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
-        status0_debug_pulse(true, false, false);
         debug_rtt_write("DBG_TX_PACKET_SENT\n");
     }
 }
@@ -359,7 +378,7 @@ void status_debug_tx_packet_sent_pulse(void)
 void status_debug_tx_wake_claim_sent_pulse(void)
 {
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
-        status0_debug_pulse(true, false, false);
+        status_debug_uwb_tx_channel_pulse(UWB_CHANNEL_WAKE_CONTACT);
         debug_rtt_write("DBG_TX_WAKE_CLAIM_SENT\n");
     }
 }
@@ -367,7 +386,6 @@ void status_debug_tx_wake_claim_sent_pulse(void)
 void status_debug_tx_mesh_frame_sent_pulse(void)
 {
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
-        status0_debug_pulse(false, true, false);
         debug_rtt_write("DBG_TX_MESH_FRAME_SENT\n");
     }
 }
@@ -382,7 +400,7 @@ void status_debug_tx_gateway_ack_rx_pulse(void)
 void status_debug_gateway_ack_tx_pulse(void)
 {
     if (DEVICE_ROLE == ROLE_GATEWAY && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status1_debug_pulse(true, false, false);
+        debug_rtt_write("DBG_GATEWAY_ACK_TX_LED\n");
     }
 }
 
@@ -454,12 +472,12 @@ int status_leds_init(void)
 {
     int ret = 0;
 
-    k_work_init_delayable(&status0_debug_pulse_off_work,
-                          status0_debug_pulse_off_handler);
-    status0_debug_pulse_work_ready = true;
     k_work_init_delayable(&status1_debug_pulse_restore_work,
                           status1_debug_pulse_restore_handler);
     status1_debug_pulse_work_ready = true;
+    k_work_init_delayable(&status0_power_blink_work,
+                          status0_power_blink_handler);
+    status0_power_blink_work_ready = true;
 
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     ret |= configure_output(&status0_red);
@@ -483,6 +501,7 @@ int status_leds_init(void)
     status_led0_set(false, false, false);
     if (reserve_status1_for_power_indicator()) {
         status_power_indicator_set(true);
+        status_led1_set(false, false, false);
     } else {
         status_led1_set(false, false, false);
     }
