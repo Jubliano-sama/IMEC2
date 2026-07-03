@@ -888,6 +888,21 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
                                      size_t payload_len,
                                      bool *duplicate)
 {
+    return gateway_collection_record_result_from_hop(collection,
+                                                     result,
+                                                     payload,
+                                                     payload_len,
+                                                     0u,
+                                                     duplicate);
+}
+
+int gateway_collection_record_result_from_hop(struct gateway_collection_state *collection,
+                                             const struct proto_packet *result,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             bool *duplicate)
+{
     struct command_result_id id;
     struct gateway_collection_result_entry *free_entry = NULL;
     uint32_t collection_epoch_id = 0u;
@@ -948,6 +963,7 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
     }
 
     free_entry->id = id;
+    free_entry->previous_hop_id = previous_hop_id;
     free_entry->payload_crc = proto_crc16_ccitt_false(payload, payload_len);
     free_entry->payload_len = (uint16_t)payload_len;
     free_entry->valid = true;
@@ -964,6 +980,23 @@ int gateway_collection_record_bundle(struct gateway_collection_state *collection
                                      size_t payload_len,
                                      uint16_t *accepted_count,
                                      uint16_t *duplicate_count)
+{
+    return gateway_collection_record_bundle_from_hop(collection,
+                                                     bundle_packet,
+                                                     payload,
+                                                     payload_len,
+                                                     0u,
+                                                     accepted_count,
+                                                     duplicate_count);
+}
+
+int gateway_collection_record_bundle_from_hop(struct gateway_collection_state *collection,
+                                             const struct proto_packet *bundle_packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             uint16_t *accepted_count,
+                                             uint16_t *duplicate_count)
 {
     struct result_bundle_header bundle;
     size_t cursor = 0u;
@@ -1050,11 +1083,12 @@ int gateway_collection_record_bundle(struct gateway_collection_state *collection
         result.seq = record.result_id.result_seq;
         result.ttl = 1u;
         result.payload_len = record.payload_len;
-        ret = gateway_collection_record_result(collection,
-                                               &result,
-                                               record.payload,
-                                               record.payload_len,
-                                               &duplicate);
+        ret = gateway_collection_record_result_from_hop(collection,
+                                                        &result,
+                                                        record.payload,
+                                                        record.payload_len,
+                                                        previous_hop_id,
+                                                        &duplicate);
         if (ret != PROTO_OK) {
             return ret;
         }
@@ -1068,6 +1102,46 @@ int gateway_collection_record_bundle(struct gateway_collection_state *collection
     }
 
     return parsed_count == bundle.record_count ? PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+size_t gateway_collection_return_candidates(const struct gateway_collection_state *collection,
+                                            uint64_t *out,
+                                            size_t out_cap)
+{
+    size_t count = 0u;
+
+    if (collection == NULL || (out == NULL && out_cap != 0u)) {
+        return 0u;
+    }
+
+    for (size_t offset = 0u; offset < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; offset++) {
+        const size_t i = GATEWAY_COLLECTION_RESULT_CACHE_SIZE - 1u - offset;
+        const struct gateway_collection_result_entry *entry = &collection->results[i];
+        bool duplicate = false;
+
+        if (!entry->valid ||
+            entry->previous_hop_id == 0u ||
+            entry->previous_hop_id == MESH_BROADCAST_ID) {
+            continue;
+        }
+
+        for (size_t j = 0u; j < count; j++) {
+            if (out[j] == entry->previous_hop_id) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        if (count >= out_cap) {
+            break;
+        }
+        out[count] = entry->previous_hop_id;
+        count++;
+    }
+
+    return count;
 }
 
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,

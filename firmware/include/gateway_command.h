@@ -53,6 +53,7 @@ enum gateway_command_transport_mode {
 
 struct gateway_collection_result_entry {
     struct command_result_id id;
+    uint64_t previous_hop_id;
     uint16_t payload_crc;
     uint16_t payload_len;
     bool valid;
@@ -148,14 +149,30 @@ int gateway_collection_record_result(struct gateway_collection_state *collection
                                      const uint8_t *payload,
                                      size_t payload_len,
                                      bool *duplicate);
+int gateway_collection_record_result_from_hop(struct gateway_collection_state *collection,
+                                             const struct proto_packet *result,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             bool *duplicate);
 int gateway_collection_record_bundle(struct gateway_collection_state *collection,
                                      const struct proto_packet *bundle_packet,
                                      const uint8_t *payload,
                                      size_t payload_len,
                                      uint16_t *accepted_count,
                                      uint16_t *duplicate_count);
+int gateway_collection_record_bundle_from_hop(struct gateway_collection_state *collection,
+                                             const struct proto_packet *bundle_packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             uint16_t *accepted_count,
+                                             uint16_t *duplicate_count);
 bool gateway_collection_contains_result(const struct gateway_collection_state *collection,
                                         const struct command_result_id *id);
+size_t gateway_collection_return_candidates(const struct gateway_collection_state *collection,
+                                            uint64_t *out,
+                                            size_t out_cap);
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,
                                   uint8_t eack_format,
                                   struct gateway_collection_eack *eack);

@@ -74,16 +74,19 @@ Current `get_goal()`:
    Native relay coverage also verifies that a closed collection EACK terminates
    pending source delivery even when the EACK uses roster-bitmap format and
    carries no explicit node list.
-   Gateway app collection EACK now keeps up to two volatile return peers from
-   accepted result/result-bundle traffic as upstream first-hop candidates and
-   tries valid candidates for channel-9 EACK return over existing timing,
-   falling back to channel-5 flood when no cached return peer can be used. This
-   is a two-candidate first-hop cache, not full
-   MeshSpec EACK routing: there is no per-result previous-hop table, no durable
-   EACK return state. RAM impact for this slice is a two-entry
-   volatile `uint64_t gateway_collection_return_next_hop_ids[]` cache, 16 bytes
-   plus stack locals; latest measured role-build RAM was clicker 82000 B
-   62.56%, anchor 94912 B 72.41%, gateway 101708 B 77.60%.
+   Gateway collection state now has per-result previous-hop metadata on
+   `gateway_collection_result_entry`, previous-hop-aware result/bundle record
+   APIs, and `gateway_collection_return_candidates()` for distinct return
+   candidates. Gateway app result and bundle handlers populate that metadata
+   from the UWB previous hop; app collection EACK sends derive up to two
+   candidates from collection state, try valid candidates for channel-9 EACK
+   return over existing timing, and fall back to channel-5 flood when no
+   candidate can be used. This is still not full MeshSpec EACK routing: durable
+   EACK return state is not implemented. RAM impact for this slice is 8 bytes
+   per `GATEWAY_COLLECTION_RESULT_CACHE_SIZE` core result entry plus a two-entry
+   stack candidate array during EACK send; latest
+   measured role-build RAM was clicker 82448 B 62.90%, anchor 95360 B 72.75%,
+   gateway 102220 B 77.99%.
 2. Parent-side result-offer reservations, queued child result bundles,
    in-flight `MSG_RESULT_BUNDLE` outbox state, and forwarded non-bundled child
    `MSG_COMMAND_RESULT` offer/payload custody-retry state now have relay-level

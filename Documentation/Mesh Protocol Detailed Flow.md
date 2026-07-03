@@ -323,17 +323,20 @@ Implemented in native code:
 - Source-side closed-collection handling, including roster-bitmap-format EACKs
   that close the collection without carrying an explicit node list.
 - Timed retry-round EACK broadcasts.
-- Gateway app remembers up to two volatile collection return peers from accepted
-  collection result/result-bundle traffic as upstream first-hop candidates. The
-  newest valid candidate is primary; current app EACK sends try valid
-  candidates over channel 9 and fall back to bounded channel-5 flood when no
-  candidate can be used.
-- This is not full MeshSpec EACK routing yet: the gateway does not keep
-  per-result reverse-path state or durable return state.
-- RAM impact for the current EACK return slice is a two-entry volatile
-  `uint64_t gateway_collection_return_next_hop_ids[]` cache, 16 bytes plus
-  stack locals. Latest measured role-build RAM was clicker 82000 B 62.56%,
-  anchor 94912 B 72.41%, gateway 101708 B 77.60%.
+- Gateway collection state now keeps per-result previous-hop metadata on
+  `gateway_collection_result_entry`, has previous-hop-aware result/bundle record
+  APIs, and can extract distinct return candidates with
+  `gateway_collection_return_candidates()`.
+- Gateway app result and bundle handlers populate that previous-hop metadata from
+  the UWB receive path. EACK sends derive up to two candidates from collection
+  state, try valid candidates over channel 9, and fall back to bounded channel-5
+  flood when no candidate can be used.
+- This is not full MeshSpec EACK routing yet: durable EACK return state is not
+  implemented.
+- RAM impact for the current EACK return slice is 8 bytes per
+  `GATEWAY_COLLECTION_RESULT_CACHE_SIZE` core result entry, plus a two-entry
+  stack candidate array during EACK send. Latest measured role-build RAM was
+  clicker 82448 B 62.90%, anchor 95360 B 72.75%, gateway 102220 B 77.99%.
 - Source behavior for received-list hit, received-list miss, explicit
   missing-list retry, explicit missing-list absence confirmation, and
   closed-collection stop.
@@ -556,12 +559,12 @@ These are the concrete gaps still present relative to `MeshSpec.md`:
    persistent membership table, and it falls back to received-list EACKs if the
    missing-list payload would exceed packet capacity.
 
-   The EACK return path is also still partial. Current code keeps up to two
-   volatile previous-hop return peers from accepted collection result or bundle
-   traffic as upstream first-hop candidates, tries valid candidates over
-   channel 9, and falls back to channel-5 collection EACK flood if those
-   candidates fail or are unavailable. Per-result reverse paths and durable EACK
-   return state are not implemented.
+   The EACK return path is also still partial. Collection state now has
+   per-result previous-hop metadata, previous-hop-aware record APIs, and a
+   distinct return-candidate helper. Gateway app result and bundle handlers
+   populate that metadata from the UWB previous hop, and app EACK sends derive
+   up to two candidates from collection state before falling back to channel-5
+   collection EACK flood. Durable EACK return state is not implemented.
 
 4. Durable large-result custody is partial.
    Offer/grant/reservation validation exists, parent-side reservations are
