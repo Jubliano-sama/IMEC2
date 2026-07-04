@@ -81,6 +81,14 @@ target_include_directories(test_app_mesh_smoke_fast PRIVATE app/src)
 target_link_libraries(test_app_mesh_smoke_fast PRIVATE core)
 add_test(NAME app_mesh_smoke_fast COMMAND test_app_mesh_smoke_fast)
 
+add_executable(test_app_mesh_c5_priority
+    tests/test_app_mesh_c5_priority.c
+    app/src/app_mesh_c5_priority.c
+)
+target_include_directories(test_app_mesh_c5_priority PRIVATE app/src)
+target_link_libraries(test_app_mesh_c5_priority PRIVATE core)
+add_test(NAME app_mesh_c5_priority COMMAND test_app_mesh_c5_priority)
+
 add_executable(test_uwb tests/test_uwb.c)
 target_link_libraries(test_uwb PRIVATE core)
 add_test(NAME uwb COMMAND test_uwb)

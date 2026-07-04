@@ -304,8 +304,8 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT=8\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES=900\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS=3000\n"
-            "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS=100\n"
-            "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US=20000\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS=50\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US=50000\n"
             "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=16384\n"
             "CONFIG_LOG=n\n")
     endif()
@@ -336,6 +336,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_ml.c
     src/app_mesh_test.c
     src/app_mesh_smoke_fast.c
+    src/app_mesh_c5_priority.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c

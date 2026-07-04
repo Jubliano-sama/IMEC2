@@ -430,6 +430,13 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
                                    uint64_t target_id,
                                    struct mesh_outbound *out,
                                    uint32_t now_ms);
+int mesh_relay_build_route_request_with_timing(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    struct mesh_outbound *out,
+    uint32_t now_ms);
 int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
                                        uint32_t gateway_route_seq,
                                        uint32_t now_ms,
@@ -439,6 +446,16 @@ int mesh_relay_prepare_route_request(struct mesh_relay *relay,
                                      uint32_t now_ms,
                                      uint32_t random_value,
                                      struct mesh_outbound *out);
+int mesh_relay_prepare_route_request_with_timing(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_outbound *out);
+int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
+                                         uint32_t now_ms);
 void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
                                            uint64_t target_id);
 void mesh_relay_reset_route_discovery(struct mesh_relay *relay);

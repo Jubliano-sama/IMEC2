@@ -62,6 +62,28 @@ static struct mesh_channel5_requirements clear_channel5_requirements(void)
     return requirements;
 }
 
+static const struct mesh_relay_event_timing_entry *find_event_timing(
+    const struct mesh_relay *relay,
+    uint64_t next_hop_id)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry = &relay->event_timings[i];
+
+        if (entry->valid && entry->next_hop_id == next_hop_id) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static int tlv_present(const uint8_t *payload, size_t payload_len, uint8_t type)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    return tlv_find(payload, payload_len, type, &value, &value_len);
+}
+
 static void seed_downlink(struct mesh_relay *relay,
                           uint64_t target_id,
                           uint64_t next_hop_id,
@@ -4976,8 +4998,11 @@ static void test_reactive_gateway_route_request_and_reply(void)
     struct mesh_relay_result anchor_result;
     struct mesh_relay_result ack_result;
     struct mesh_relay_result duplicate_result;
+    struct mesh_event_timing proposed_timing;
     struct proto_packet report;
     struct route_candidate route = direct_gateway_route(GATEWAY, 50u, 90u);
+    const struct mesh_relay_event_timing_entry *timing_entry;
+    struct mesh_event_params params = channel9_params(1500u);
     uint8_t payload[1] = {0x66u};
     const struct route_candidate *selected;
     uint32_t gateway_reply_flood_epoch;
@@ -4998,10 +5023,20 @@ static void test_reactive_gateway_route_request_and_reply(void)
     assert(mesh_relay_start_tx(&anchor, &report, payload, sizeof(payload), 1000u, &report_tx) ==
            PROTO_ERR_NOT_FOUND);
 
-    assert(mesh_relay_build_route_request(&anchor, GATEWAY, &route_req, 1000u) == PROTO_OK);
+    assert(mesh_event_timing_negotiate(&proposed_timing, &params, true) == PROTO_OK);
+    mesh_event_timing_set_local_first_slot_tx(&proposed_timing, true);
+    assert(mesh_relay_build_route_request_with_timing(&anchor,
+                                                      GATEWAY,
+                                                      &proposed_timing,
+                                                      1000u,
+                                                      &route_req,
+                                                      1000u) == PROTO_OK);
     assert(route_req.packet.msg_type == MSG_ROUTE_REQ);
     assert(route_req.packet.dst_id == MESH_BROADCAST_ID);
     assert(route_req.next_hop_id == MESH_BROADCAST_ID);
+    assert(tlv_present(route_req.payload,
+                       route_req.payload_len,
+                       TLV_MESH_CHANNEL) == PROTO_OK);
 
     assert(mesh_relay_handle_rx(&relay,
                                 &route_req.packet,
@@ -5013,6 +5048,12 @@ static void test_reactive_gateway_route_request_and_reply(void)
                                 &relay_result) == PROTO_OK);
     assert(relay_result.status == PROTO_OK);
     assert(has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    timing_entry = find_event_timing(&relay, ANCHOR_A);
+    assert(timing_entry != NULL);
+    assert(mesh_event_timing_local_rx_slot(&timing_entry->timing));
+    assert(tlv_present(relay_result.route_request.payload,
+                       relay_result.route_request.payload_len,
+                       TLV_MESH_CHANNEL) == PROTO_ERR_NOT_FOUND);
 
     assert(mesh_relay_handle_rx(&gateway,
                                 &relay_result.route_request.packet,
@@ -5074,6 +5115,9 @@ static void test_reactive_gateway_route_request_and_reply(void)
     assert(relay_result.route_reply.next_hop_id == ANCHOR_A);
     assert(relay_result.route_reply_backup_valid);
     assert(relay_result.route_reply_backup_next_hop_id == ANCHOR_C);
+    assert(tlv_present(relay_result.route_reply.payload,
+                       relay_result.route_reply.payload_len,
+                       TLV_MESH_CHANNEL) == PROTO_OK);
     relay_reply_flood_epoch = require_tlv_u32(relay_result.route_reply.payload,
                                               relay_result.route_reply.payload_len,
                                               TLV_FLOOD_EPOCH_ID);
@@ -5135,6 +5179,9 @@ static void test_reactive_gateway_route_request_and_reply(void)
                            anchor_result.route_reply_ack.payload_len,
                            TLV_METRIC_CRC) == relay_reply_metric_crc);
     assert(has_action(&anchor_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY));
+    timing_entry = find_event_timing(&anchor, ANCHOR_B);
+    assert(timing_entry != NULL);
+    assert(mesh_event_timing_local_tx_slot(&timing_entry->timing));
     assert(mesh_relay_handle_rx(&relay,
                                 &anchor_result.route_reply_ack.packet,
                                 anchor_result.route_reply_ack.payload,
@@ -6904,6 +6951,27 @@ static void test_mesh_hop_ack_is_protocol_valid(void)
     assert(written == proto_packet_encoded_len(packet.payload_len));
 }
 
+static void test_direct_gateway_route_probe_marks_route_ready(void)
+{
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    uint64_t next_hop_id = 0u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 7u);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop_id) ==
+           PROTO_ERR_NOT_FOUND);
+    assert(mesh_relay_prepare_route_request(&relay,
+                                            GATEWAY,
+                                            1000u,
+                                            0x12345678u,
+                                            &route_req) == PROTO_OK);
+    assert(relay.route_discovery.active);
+    assert(mesh_relay_note_direct_gateway_route(&relay, 1020u) == PROTO_OK);
+    assert(!relay.route_discovery.active);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop_id) == PROTO_OK);
+    assert(next_hop_id == GATEWAY);
+}
+
 int main(void)
 {
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
@@ -7007,5 +7075,6 @@ int main(void)
     test_channel9_receiver_miss_advances_timing_and_diagnostics();
     test_channel9_timing_expires_idle_connection_state();
     test_mesh_hop_ack_is_protocol_valid();
+    test_direct_gateway_route_probe_marks_route_ready();
     return 0;
 }

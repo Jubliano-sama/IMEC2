@@ -20,9 +20,12 @@ void app_mesh_gateway_ack_decide(
         return;
     }
 
-    if (state->route_test_enabled && state->received_on_channel9) {
-        decision->action = APP_MESH_GATEWAY_ACK_ACTION_QUEUE_ROUTE_TEST_ACK;
-        decision->reason = "gateway-ack-route-test-batch";
+    if (state->route_test_enabled &&
+        state->gateway_role &&
+        state->received_on_channel9 &&
+        !state->current_channel9_attempted) {
+        decision->action = APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9;
+        decision->reason = "gateway-ack-immediate-channel9";
         return;
     }
 

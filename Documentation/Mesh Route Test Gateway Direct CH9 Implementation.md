@@ -1,0 +1,82 @@
+# Mesh Route Test Gateway Direct CH9 Implementation
+
+Date: 2026-07-04
+
+## Purpose
+
+This note documents the mesh-route-test implementation changes for gateway-bound
+channel-9 traffic. It is intended as an engineering review file for the current
+firmware behavior and the assumptions behind it.
+
+## Protocol Behavior
+
+- The gateway route-test role no longer scans channel 5.
+- The gateway route-test role does not use slotted channel-9 receive windows.
+- The gateway arms continuous channel-9 RX in mesh-payload mode and stays there
+  until a packet is received or the long host-side RX call times out.
+- When the gateway receives a packet requiring a gateway ACK, RX has already
+  returned, so the gateway waits a conservative 10 ms turnaround guard, sends
+  the ACK immediately on channel 9, and then rearms continuous channel-9 RX.
+- Non-gateway nodes repairing a gateway route first send a short direct
+  `MSG_GATEWAY_ROUTE_REQ` on channel 9 and wait up to 120 ms for a matching
+  `MSG_GATEWAY_ACK`.
+- A successful direct gateway probe installs a direct route to the gateway only;
+  it does not install a synthetic or slotted gateway channel-9 timing.
+- If the direct probe fails, the node falls back to the existing channel-5
+  wake-train plus AODV-style route-request flow.
+- Route initiators own the channel-9 timing proposal for their next hop.
+  Channel-5 route requests can carry proposed channel-9 timing relative to the
+  request reference time. Receivers install that proposal as local-RX-first.
+- Forwarded route requests clear the child timing before sending upstream, so a
+  relay does not leak one hop's timing into another hop. Route replies sent back
+  downstream reattach the stored downstream timing so the child can install the
+  matching local-TX-first timing.
+
+## Timing Constants
+
+- Gateway immediate ACK guard: `MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS = 10 ms`.
+- Direct gateway probe ACK guard: `MESH_GATEWAY_DIRECT_PROBE_ACK_GUARD_MS = 10 ms`.
+- Direct gateway probe ACK listen: `MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS = 120 ms`.
+- Route-test channel-9 event guard: `MESH_EVENT_DEFAULT_GUARD_MS = 30 ms`.
+- Route-test channel-5 scan slot: `CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS = 50 ms`.
+- Route-test channel-5 scan RX: `CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US = 50000 us`.
+- Gateway continuous channel-9 RX host window:
+  `UWB_MESH_GATEWAY_RX_WINDOW_MS = 30000 ms`.
+
+The guards are intentionally conservative for current bring-up. They are not
+optimized for final latency or power.
+
+## Implementation Touchpoints
+
+- `firmware/include/protocol.h` and `firmware/src/protocol.c`
+  add `MSG_GATEWAY_ROUTE_REQ`.
+- `firmware/src/mesh_relay.c`
+  adds timed route-request preparation, direct gateway route installation, route
+  reply timing propagation back downstream, and route-reply timing installation
+  at the origin.
+- `firmware/app/src/app_mesh_report.c`
+  adds direct gateway probing, immediate direct gateway TX, continuous gateway
+  channel-9 RX, and gateway ACK turnaround guard logging.
+- `firmware/app/src/app_mesh_gateway_ack_policy.c`
+  changes route-test gateway channel-9 ACKs from batched ACKs to immediate
+  current-channel ACKs.
+- `firmware/app/src/app_config.h`,
+  `firmware/app/CMakeLists.txt`, and
+  `firmware/app/conf/mesh-route-test.conf`
+  hold the updated conservative timing defaults.
+- `firmware/tests/test_mesh_relay.c` and
+  `firmware/tests/test_app_mesh_gateway_ack_policy.c`
+  cover the route-timing and ACK-policy contracts.
+
+## Review Checklist
+
+- Verify the gateway route-test RX path returns before ACK TX and does not call
+  `mesh_select_channel9_rx_event()` for gateway RX.
+- Verify direct gateway traffic bypasses `mesh_relay_start_channel9_tx()` and
+  uses immediate channel-9 TX when the selected next hop is the gateway.
+- Verify fallback CH5 route requests still carry only the initiating hop's
+  proposed channel-9 timing.
+- Verify relays clear timing on upstream route-request forwarding and reattach
+  stored downstream timing on the route reply sent back to the child.
+- Verify RTT logs show `DBG_GATEWAY_CH9_RX_CONT_*`, `DBG_DIRECT_GW_*`, and
+  immediate gateway ACK markers during smoke testing.

@@ -12,7 +12,7 @@ static void decide(const struct app_mesh_gateway_ack_state *state,
     app_mesh_gateway_ack_decide(state, decision);
 }
 
-static void test_route_test_channel9_acks_are_batched(void)
+static void test_route_test_gateway_channel9_ack_is_immediate(void)
 {
     const struct app_mesh_gateway_ack_state state = {
         .route_test_enabled = true,
@@ -25,8 +25,8 @@ static void test_route_test_channel9_acks_are_batched(void)
 
     decide(&state, &decision);
 
-    assert(decision.action == APP_MESH_GATEWAY_ACK_ACTION_QUEUE_ROUTE_TEST_ACK);
-    assert(strcmp(decision.reason, "gateway-ack-route-test-batch") == 0);
+    assert(decision.action == APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9);
+    assert(strcmp(decision.reason, "gateway-ack-immediate-channel9") == 0);
 }
 
 static void test_gateway_rx_on_channel9_tries_current_event_first(void)
@@ -113,7 +113,7 @@ static void test_busy_channel9_event_waits_without_channel5_ack(void)
 
 int main(void)
 {
-    test_route_test_channel9_acks_are_batched();
+    test_route_test_gateway_channel9_ack_is_immediate();
     test_gateway_rx_on_channel9_tries_current_event_first();
     test_current_channel9_failure_waits_for_channel9_retry();
     test_planned_channel9_event_sends_ack_on_channel9();

@@ -88,6 +88,7 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_GATEWAY_ROUTE_ADV:
     case MSG_RELAY_BUSY:
     case MSG_RESULT_BUSY:
+    case MSG_GATEWAY_ROUTE_REQ:
     case MSG_MESH_EVENT_PROPOSE:
     case MSG_MESH_EVENT_ACCEPT:
     case MSG_MESH_EVENT_UPDATE:
