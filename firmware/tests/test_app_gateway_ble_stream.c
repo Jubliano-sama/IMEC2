@@ -58,6 +58,10 @@ static void test_allowlist_excludes_mesh_control(void)
                                             GATEWAY_BLE_STREAM_CLASS_UNKNOWN));
     assert(gateway_ble_should_stream_packet(MSG_SURVEY_PAIR_RESULT, 0u,
                                             GATEWAY_BLE_STREAM_CLASS_UNKNOWN));
+    assert(gateway_ble_should_stream_packet(MSG_MESH_DATA, FLAG_DIAGNOSTIC,
+                                            GATEWAY_BLE_STREAM_CLASS_UNKNOWN));
+    assert(!gateway_ble_should_stream_packet(MSG_MESH_DATA, 0u,
+                                             GATEWAY_BLE_STREAM_CLASS_UNKNOWN));
     assert(!gateway_ble_should_stream_packet(MSG_ROUTE_REQ, 0u,
                                              GATEWAY_BLE_STREAM_CLASS_UNKNOWN));
     assert(!gateway_ble_should_stream_packet(MSG_GATEWAY_ACK, 0u,

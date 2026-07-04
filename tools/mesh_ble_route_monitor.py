@@ -35,6 +35,10 @@ PROTO_VERSION = 0x01
 PACKET_HEADER_LEN = 32
 PACKET_CRC_LEN = 2
 MESH_DEFAULT_TTL = 4
+GATEWAY_STREAM_MAGIC = 0x5747
+GATEWAY_STREAM_VERSION = 1
+GATEWAY_STREAM_RECORD_HEADER_LEN = 40
+GATEWAY_STREAM_RECORD_PACKET = 1
 
 MSG_NAMES = {
     0x20: "CLICK_REPORT",
@@ -233,7 +237,7 @@ def parse_tlvs(payload: bytes) -> tuple[dict[str, object], dict[int, bytes]]:
     return decoded, raw_tlvs
 
 
-def parse_packet(frame: bytes) -> ProtoPacket:
+def parse_cobs_packet(frame: bytes) -> ProtoPacket:
     encoded = frame[:-1] if frame.endswith(b"\x00") else frame
     raw = cobs_decode(encoded)
     if len(raw) < PACKET_HEADER_LEN + PACKET_CRC_LEN:
@@ -263,6 +267,60 @@ def parse_packet(frame: bytes) -> ProtoPacket:
         tlvs=tlvs,
         raw_tlvs=raw_tlvs,
     )
+
+
+def parse_stream_record(record: bytes) -> ProtoPacket:
+    if len(record) < GATEWAY_STREAM_RECORD_HEADER_LEN:
+        raise DecodeError(f"short stream record: {len(record)} bytes")
+    magic = int.from_bytes(record[0:2], "little")
+    version = record[2]
+    header_len = record[3]
+    record_type = record[4]
+    if magic != GATEWAY_STREAM_MAGIC:
+        raise DecodeError(f"bad stream magic 0x{magic:04x}")
+    if version != GATEWAY_STREAM_VERSION:
+        raise DecodeError(f"bad stream version {version}")
+    if header_len != GATEWAY_STREAM_RECORD_HEADER_LEN:
+        raise DecodeError(f"bad stream header length {header_len}")
+    if record_type != GATEWAY_STREAM_RECORD_PACKET:
+        raise DecodeError(f"bad stream record type {record_type}")
+    payload_len = int.from_bytes(record[36:38], "little")
+    expected_len = header_len + payload_len
+    if len(record) != expected_len:
+        raise DecodeError(f"bad stream length: got {len(record)}, expected {expected_len}")
+    payload = record[header_len:expected_len]
+    expected_crc = int.from_bytes(record[38:40], "little")
+    actual_crc = crc16_ccitt_false(payload)
+    if expected_crc != actual_crc:
+        raise DecodeError(f"bad stream payload crc: expected 0x{expected_crc:04x}, actual 0x{actual_crc:04x}")
+    tlvs, raw_tlvs = parse_tlvs(payload)
+    return ProtoPacket(
+        msg_type=record[8],
+        flags=record[9],
+        src_id=int.from_bytes(record[16:24], "little"),
+        dst_id=int.from_bytes(record[24:32], "little"),
+        session_id=int.from_bytes(record[12:16], "little"),
+        seq=int.from_bytes(record[10:12], "little"),
+        ttl=MESH_DEFAULT_TTL,
+        message_age_ms=int.from_bytes(record[32:36], "little"),
+        payload=payload,
+        tlvs=tlvs,
+        raw_tlvs=raw_tlvs,
+    )
+
+
+def next_stream_record_len(buffer: bytearray) -> int | None:
+    if len(buffer) < GATEWAY_STREAM_RECORD_HEADER_LEN:
+        return None
+    if int.from_bytes(buffer[0:2], "little") != GATEWAY_STREAM_MAGIC:
+        return None
+    header_len = buffer[3]
+    if header_len < GATEWAY_STREAM_RECORD_HEADER_LEN:
+        raise DecodeError(f"bad stream header length {header_len}")
+    if len(buffer) < header_len:
+        return None
+    payload_len = int.from_bytes(buffer[36:38], "little")
+    return header_len + payload_len
 
 
 def packet_id(packet: ProtoPacket) -> int:
@@ -548,12 +606,37 @@ async def run(args: argparse.Namespace) -> int:
 
     def on_packet(_sender: object, data: bytearray) -> None:
         rx_buffer.extend(bytes(data))
-        while 0 in rx_buffer:
-            frame_end = rx_buffer.index(0)
-            frame = bytes(rx_buffer[:frame_end + 1])
-            del rx_buffer[:frame_end + 1]
+        while rx_buffer:
             try:
-                packet = parse_packet(frame)
+                stream_len = next_stream_record_len(rx_buffer)
+            except DecodeError as exc:
+                stats.decode_errors += 1
+                if args.verbose:
+                    print(f"decode_error {exc}", file=sys.stderr, flush=True)
+                del rx_buffer[:1]
+                continue
+
+            if stream_len is not None:
+                if len(rx_buffer) < stream_len:
+                    break
+                frame = bytes(rx_buffer[:stream_len])
+                del rx_buffer[:stream_len]
+                parser = parse_stream_record
+            else:
+                if (len(rx_buffer) < 2 and rx_buffer[0] == (GATEWAY_STREAM_MAGIC & 0xFF)) or \
+                   (len(rx_buffer) >= 2 and
+                    rx_buffer[0] == (GATEWAY_STREAM_MAGIC & 0xFF) and
+                    rx_buffer[1] == (GATEWAY_STREAM_MAGIC >> 8)):
+                    break
+                if 0 not in rx_buffer:
+                    break
+                frame_end = rx_buffer.index(0)
+                frame = bytes(rx_buffer[:frame_end + 1])
+                del rx_buffer[:frame_end + 1]
+                parser = parse_cobs_packet
+
+            try:
+                packet = parser(frame)
             except DecodeError as exc:
                 stats.decode_errors += 1
                 if args.verbose:

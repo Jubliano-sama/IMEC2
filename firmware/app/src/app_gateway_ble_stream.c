@@ -69,6 +69,10 @@ enum gateway_ble_stream_class gateway_ble_stream_classify_packet(uint8_t msg_typ
     }
 
     switch (msg_type) {
+    case MSG_MESH_DATA:
+        return (flags & FLAG_DIAGNOSTIC) != 0u ?
+               GATEWAY_BLE_STREAM_CLASS_DIAGNOSTIC :
+               GATEWAY_BLE_STREAM_CLASS_UNKNOWN;
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
         return GATEWAY_BLE_STREAM_CLASS_RESULT;
