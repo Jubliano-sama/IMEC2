@@ -142,7 +142,9 @@ static void gateway_ble_range_led_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
-    status_led0_set(false, seen_recently, false);
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_led0_set(false, seen_recently, false);
+    }
     (void)k_work_reschedule(&gateway_ble_range_led_work,
                             K_MSEC(BLE_RANGE_LED_POLL_MS));
 }
@@ -163,7 +165,9 @@ static void gateway_ble_range_scan_cb(const bt_addr_le_t *addr,
     }
 
     gateway_ble_range_last_seen_ms = k_uptime_get_32();
-    status_led0_set(false, true, false);
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_led0_set(false, true, false);
+    }
     LOG_INF("BLE range advertisement seen: rssi=%d", rssi);
 }
 
@@ -184,7 +188,9 @@ static int gateway_ble_range_start_scanner(void)
     if (ret < 0) {
         LOG_WRN("BLE range scanner LED setup incomplete: %d", ret);
     }
-    status_led0_set(false, false, false);
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_led0_set(false, false, false);
+    }
     k_work_init_delayable(&gateway_ble_range_led_work,
                           gateway_ble_range_led_work_handler);
 

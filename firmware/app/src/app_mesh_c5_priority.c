@@ -81,6 +81,9 @@ bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
                                            size_t standard_frame_max_len)
 {
     return frame_len > standard_frame_max_len ||
+           msg_type == MSG_ROUTE_REQ ||
+           msg_type == MSG_ROUTE_REPLY ||
+           msg_type == MSG_GATEWAY_ROUTE_ADV ||
            event_control_type(msg_type);
 }
 

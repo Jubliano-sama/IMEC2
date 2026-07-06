@@ -39,6 +39,123 @@ static bool collection_eack_format_valid(uint8_t eack_format)
            eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST;
 }
 
+static int ensure_tlv_u32(uint8_t *payload,
+                          size_t payload_cap,
+                          size_t current_len,
+                          size_t *offset,
+                          uint8_t type,
+                          uint32_t value)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, current_len, type, &tlv_value, &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return tlv_append_u32(payload, payload_cap, offset, type, value);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_len == sizeof(uint32_t) ? PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+static int ensure_tlv_u16(uint8_t *payload,
+                          size_t payload_cap,
+                          size_t current_len,
+                          size_t *offset,
+                          uint8_t type,
+                          uint16_t value)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, current_len, type, &tlv_value, &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return tlv_append_u16(payload, payload_cap, offset, type, value);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_len == sizeof(uint16_t) ? PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+static int ensure_tlv_u8(uint8_t *payload,
+                         size_t payload_cap,
+                         size_t current_len,
+                         size_t *offset,
+                         uint8_t type,
+                         uint8_t value)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+    int ret;
+
+    ret = tlv_find(payload, current_len, type, &tlv_value, &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return tlv_append_u8(payload, payload_cap, offset, type, value);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_len == sizeof(uint8_t) ? PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+static int append_default_flood_controls(struct mesh_outbound *out)
+{
+    size_t offset;
+    size_t original_len;
+    int ret;
+
+    if (out == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    offset = out->payload_len;
+    original_len = out->payload_len;
+    ret = ensure_tlv_u32(out->payload,
+                         sizeof(out->payload),
+                         original_len,
+                         &offset,
+                         TLV_FLOOD_RANDOM_BACKOFF_MAX_MS,
+                         FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = ensure_tlv_u16(out->payload,
+                         sizeof(out->payload),
+                         original_len,
+                         &offset,
+                         TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS,
+                         FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = ensure_tlv_u8(out->payload,
+                        sizeof(out->payload),
+                        original_len,
+                        &offset,
+                        TLV_FLOOD_RETRY_COUNT,
+                        0u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = ensure_tlv_u32(out->payload,
+                         sizeof(out->payload),
+                         original_len,
+                         &offset,
+                         TLV_FLOOD_PACKET_AGE_MS,
+                         0u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->payload_len = (uint16_t)offset;
+    out->packet.payload_len = (uint16_t)offset;
+    return PROTO_OK;
+}
+
 static bool command_response_requires_collection(enum command_response_mode response_mode)
 {
     return response_mode == CMD_RESPONSE_ACK_ONLY ||
@@ -793,6 +910,10 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
     if (options.flood_required) {
         out->next_hop_id = MESH_BROADCAST_ID;
         out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+        ret = append_default_flood_controls(out);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     return PROTO_OK;
 }

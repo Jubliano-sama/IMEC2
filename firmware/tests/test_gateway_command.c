@@ -18,6 +18,36 @@ static void make_command_payload(uint8_t *payload,
     assert(mesh_append_command_id(payload, payload_cap, payload_len, command_id) == PROTO_OK);
 }
 
+static uint32_t require_tlv_u32(const uint8_t *payload, size_t payload_len, uint8_t type)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    assert(tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint32_t));
+    return proto_get_u32_le(value);
+}
+
+static uint16_t require_tlv_u16(const uint8_t *payload, size_t payload_len, uint8_t type)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    assert(tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint16_t));
+    return proto_get_u16_le(value);
+}
+
+static uint8_t require_tlv_u8(const uint8_t *payload, size_t payload_len, uint8_t type)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    assert(tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint8_t));
+    return value[0];
+}
+
 static void assert_command_result_id_equal(const struct command_result_id *actual,
                                            const struct command_result_id *expected)
 {
@@ -349,8 +379,18 @@ static void test_prepare_outbound_accepts_all_registered_command_flood_with_rost
     assert(out.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
     assert(gateway_command_transport_mode_from_outbound(&out) ==
            GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST);
-    assert(out.payload_len == payload_len);
+    assert(out.payload_len > payload_len);
     assert(memcmp(out.payload, payload, payload_len) == 0);
+    assert(require_tlv_u32(out.payload,
+                           out.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_MAX_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+    assert(require_tlv_u16(out.payload,
+                           out.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
+    assert(require_tlv_u8(out.payload, out.payload_len, TLV_FLOOD_RETRY_COUNT) == 0u);
+    assert(require_tlv_u32(out.payload, out.payload_len, TLV_FLOOD_PACKET_AGE_MS) == 0u);
 }
 
 static void test_extract_options_accepts_all_registered_collection_without_roster(void)

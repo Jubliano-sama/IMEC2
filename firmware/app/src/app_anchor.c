@@ -4609,6 +4609,7 @@ focused_scan_attempt:
         int decode_ret;
 
         stage1_led_result(STAGE1_LED_RESULT_OK);
+        status_debug_uwb_rx_channel_pulse(UWB_CHANNEL_WAKE_CONTACT);
         high_debug_log_event("UWB_RX_DONE",
                              "mode=anchor_wake_scan frame_len=%u quality=%u rx_failure=%s",
                              (unsigned int)frame_len,

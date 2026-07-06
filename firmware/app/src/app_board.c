@@ -19,7 +19,9 @@
 
 LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
 
-#define DEBUG_LED_PULSE_MS 75u
+#define DEBUG_LED_PULSE_MS 250u
+#define DEBUG_CH5_RX_PULSE_MS 1000u
+#define DEBUG_CH5_TX_PULSE_MS 400u
 #define DEBUG_TX_BOOT_TEST_MS 600u
 
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
@@ -67,6 +69,8 @@ static bool status0_debug_pulse_work_ready;
 static bool status0_power_blink_work_ready;
 static bool status_power_indicator_enabled;
 static bool status0_power_red_on;
+static bool status0_debug_pulse_active;
+static uint32_t status0_ch5_rx_hold_until_ms;
 
 static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
 {
@@ -270,6 +274,7 @@ static void status0_debug_pulse_restore_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
+    status0_debug_pulse_active = false;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         status_power_indicator_enabled) {
         status0_route_test_power_apply();
@@ -284,6 +289,10 @@ static void status0_power_blink_handler(struct k_work *work)
 
     if (!status0_power_blink_work_ready ||
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        return;
+    }
+    if (status0_debug_pulse_active) {
+        (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(DEBUG_LED_PULSE_MS));
         return;
     }
     status0_power_red_on = !status0_power_red_on;
@@ -303,16 +312,20 @@ static void status1_debug_pulse(bool red, bool green, bool blue)
                             K_MSEC(DEBUG_LED_PULSE_MS));
 }
 
-static void status0_debug_pulse(bool red, bool green, bool blue)
+static void status0_debug_pulse_for(bool red,
+                                    bool green,
+                                    bool blue,
+                                    uint32_t duration_ms)
 {
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         !status0_debug_pulse_work_ready) {
         return;
     }
 
+    status0_debug_pulse_active = true;
     status_led0_set(red, green, blue);
     (void)k_work_reschedule(&status0_debug_pulse_restore_work,
-                            K_MSEC(DEBUG_LED_PULSE_MS));
+                            K_MSEC(duration_ms));
 }
 
 static bool anchor_route_test_activity_leds_enabled(void)
@@ -334,12 +347,28 @@ static void status1_debug_ch9_tx_pulse(void)
 
 static void status0_debug_ch5_rx_pulse(void)
 {
-    status0_debug_pulse(false, true, false);
+    status0_ch5_rx_hold_until_ms = k_uptime_get_32() + DEBUG_CH5_RX_PULSE_MS;
+    status0_debug_pulse_for(false, true, false, DEBUG_CH5_RX_PULSE_MS);
+}
+
+static void status0_debug_ch5_boot_selftest_pulse(void)
+{
+    status0_debug_pulse_for(false, true, false, DEBUG_CH5_RX_PULSE_MS);
+    status0_ch5_rx_hold_until_ms = 0u;
 }
 
 static void status0_debug_ch5_tx_pulse(void)
 {
-    status0_debug_pulse(false, false, true);
+    uint32_t now_ms = k_uptime_get_32();
+
+    if (!uptime_deadline_reached(now_ms, status0_ch5_rx_hold_until_ms)) {
+        return;
+    }
+    if (anchor_route_test_activity_leds_enabled()) {
+        status0_debug_pulse_for(true, false, false, DEBUG_CH5_TX_PULSE_MS);
+    } else {
+        status0_debug_pulse_for(false, false, true, DEBUG_CH5_TX_PULSE_MS);
+    }
 }
 
 static void status_debug_unknown_channel_pulse(uint8_t uwb_channel)
@@ -403,7 +432,7 @@ void status_debug_printf(const char *fmt, ...)
 #endif
 }
 
-void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
+void status_debug_uwb_rx_channel_pulse(uint8_t uwb_channel)
 {
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         return;
@@ -419,6 +448,11 @@ void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
         status_debug_unknown_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_UNKNOWN_CH\n");
     }
+}
+
+void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
+{
+    status_debug_uwb_rx_channel_pulse(uwb_channel);
 }
 
 void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel)
@@ -448,6 +482,8 @@ void status_debug_tx_boot_test(void)
     ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
     status0_power_red_on = true;
     status_power_indicator_set(true);
+    status0_debug_ch5_boot_selftest_pulse();
+    debug_rtt_write("DBG_LED_SELFTEST_CH5_RX\n");
     if (status0_power_blink_work_ready) {
         (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
     }
@@ -462,6 +498,8 @@ void status_debug_gateway_boot_test(void)
     ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
     status0_power_red_on = true;
     status_power_indicator_set(true);
+    status0_debug_ch5_boot_selftest_pulse();
+    debug_rtt_write("DBG_LED_SELFTEST_CH5_RX\n");
 }
 
 void status_debug_anchor_boot_test(void)
@@ -473,6 +511,8 @@ void status_debug_anchor_boot_test(void)
     }
 
     status_power_indicator_set(true);
+    status0_debug_ch5_boot_selftest_pulse();
+    debug_rtt_write("DBG_LED_SELFTEST_CH5_RX\n");
 }
 
 void status_debug_tx_packet_sent_pulse(void)
@@ -484,7 +524,7 @@ void status_debug_tx_packet_sent_pulse(void)
 
 void status_debug_tx_wake_claim_sent_pulse(void)
 {
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_uwb_tx_channel_pulse(UWB_CHANNEL_WAKE_CONTACT);
         debug_rtt_write("DBG_TX_WAKE_CLAIM_SENT\n");
     }

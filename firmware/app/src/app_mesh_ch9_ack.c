@@ -209,6 +209,56 @@ bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
            !relay_collection_result_active;
 }
 
+uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
+                                      uint64_t next_hop_id,
+                                      uint8_t configured_max)
+{
+    if (configured_max == 0u) {
+        return 0u;
+    }
+    if (packet == NULL || next_hop_id == 0u) {
+        return configured_max;
+    }
+
+    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+        packet->dst_id != next_hop_id) {
+        return 1u;
+    }
+
+    return configured_max;
+}
+
+bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
+                                         const struct proto_packet *ack_packet,
+                                         const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint64_t previous_hop_id,
+                                         uint64_t gateway_id)
+{
+    bool contains = false;
+
+    if (sent == NULL || ack_packet == NULL || gateway_id == 0u ||
+        sent->packet.src_id == 0u) {
+        return false;
+    }
+
+    if (previous_hop_id != gateway_id ||
+        ack_packet->msg_type != MSG_GATEWAY_ACK ||
+        ack_packet->src_id != gateway_id ||
+        ack_packet->dst_id != sent->packet.src_id ||
+        ack_packet->session_id != sent->packet.session_id) {
+        return false;
+    }
+
+    return ack_payload_contains_packet(ack_packet,
+                                       payload,
+                                       payload_len,
+                                       sent->packet.session_id,
+                                       sent->packet.seq,
+                                       &contains) == PROTO_OK &&
+           contains;
+}
+
 bool app_mesh_ch9_ack_complete_should_close_timing(
     const struct app_mesh_ch9_ack_complete_state *state)
 {

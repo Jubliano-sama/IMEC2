@@ -53,13 +53,23 @@ struct gateway_route_adv_fields {
     uint32_t gateway_route_seq;
     uint32_t flood_epoch_id;
     uint32_t slot_seed;
+    uint32_t random_backoff_max_ms;
+    uint32_t flood_packet_age_ms;
     uint16_t gateway_epoch;
     uint16_t route_cost;
     uint16_t flood_profile_version;
     uint16_t capacity_validity_interval_ms;
+    uint16_t random_backoff_slot_ms;
     uint8_t hop_count;
     uint8_t path_quality_min;
     uint8_t gateway_capacity_state;
+    uint8_t flood_retry_count;
+};
+
+struct flood_control_fields {
+    uint32_t random_backoff_max_ms;
+    uint16_t random_backoff_slot_ms;
+    uint8_t retry_count;
 };
 
 static bool id_is_unicast(uint64_t id)
@@ -173,6 +183,53 @@ static uint32_t flood_forward_delay_ms(uint64_t local_id,
     seed ^= (uint32_t)local_id;
     seed ^= (uint32_t)(local_id >> 32);
     return mix32(seed) % FLOOD_WAVE_MS;
+}
+
+static uint32_t flood_random_slotted_delay_ms(uint32_t random_backoff_max_ms,
+                                             uint16_t random_backoff_slot_ms,
+                                             uint32_t random_value)
+{
+    uint32_t slot_count;
+    uint64_t delay_ms;
+
+    if (random_backoff_max_ms == 0u) {
+        return 0u;
+    }
+    if (random_backoff_slot_ms == 0u) {
+        if (random_backoff_max_ms == UINT32_MAX) {
+            return random_value;
+        }
+        return random_value % (random_backoff_max_ms + 1u);
+    }
+
+    slot_count = random_backoff_max_ms / random_backoff_slot_ms;
+    if (slot_count == UINT32_MAX) {
+        slot_count--;
+    }
+    delay_ms = (uint64_t)(random_value % (slot_count + 1u)) * random_backoff_slot_ms;
+    return delay_ms > random_backoff_max_ms ? random_backoff_max_ms : (uint32_t)delay_ms;
+}
+
+static uint32_t flood_forward_total_delay_ms(uint64_t local_id,
+                                             uint32_t slot_seed,
+                                             uint8_t hop_count,
+                                             const struct flood_control_fields *control,
+                                             uint32_t random_value)
+{
+    uint32_t deterministic_ms = flood_forward_delay_ms(local_id, slot_seed, hop_count);
+
+    if (control == NULL) {
+        return deterministic_ms;
+    }
+    {
+        uint32_t random_ms =
+            flood_random_slotted_delay_ms(control->random_backoff_max_ms,
+                                          control->random_backoff_slot_ms,
+                                          random_value);
+
+        return UINT32_MAX - deterministic_ms < random_ms ?
+               UINT32_MAX : deterministic_ms + random_ms;
+    }
 }
 
 static uint32_t flood_identity_seed(const struct proto_packet *packet,
@@ -563,6 +620,216 @@ static int find_u8_tlv(const uint8_t *payload, size_t payload_len, uint8_t type,
         return PROTO_ERR_MALFORMED;
     }
     *value = tlv_value[0];
+    return PROTO_OK;
+}
+
+static void flood_control_defaults(struct flood_control_fields *control)
+{
+    if (control == NULL) {
+        return;
+    }
+    control->random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
+    control->random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
+    control->retry_count = 0u;
+}
+
+static int parse_flood_control_tlvs(const uint8_t *payload,
+                                    size_t payload_len,
+                                    struct flood_control_fields *control)
+{
+    uint32_t value_u32 = 0u;
+    uint16_t value_u16 = 0u;
+    uint8_t value_u8 = 0u;
+    int ret;
+
+    if (control == NULL || (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+
+    flood_control_defaults(control);
+    ret = find_u32_tlv(payload,
+                       payload_len,
+                       TLV_FLOOD_RANDOM_BACKOFF_MAX_MS,
+                       &value_u32);
+    if (ret == PROTO_OK) {
+        control->random_backoff_max_ms = value_u32;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+
+    ret = find_u16_tlv(payload,
+                       payload_len,
+                       TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS,
+                       &value_u16);
+    if (ret == PROTO_OK) {
+        control->random_backoff_slot_ms = value_u16;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+
+    ret = find_u8_tlv(payload, payload_len, TLV_FLOOD_RETRY_COUNT, &value_u8);
+    if (ret == PROTO_OK) {
+        control->retry_count = value_u8;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+    return PROTO_OK;
+}
+
+static int append_flood_control_tlvs(uint8_t *payload,
+                                     size_t payload_cap,
+                                     size_t *offset,
+                                     const struct flood_control_fields *control,
+                                     uint32_t packet_age_ms)
+{
+    int ret;
+
+    if (control == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         offset,
+                         TLV_FLOOD_RANDOM_BACKOFF_MAX_MS,
+                         control->random_backoff_max_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload,
+                         payload_cap,
+                         offset,
+                         TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS,
+                         control->random_backoff_slot_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        offset,
+                        TLV_FLOOD_RETRY_COUNT,
+                        control->retry_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u32(payload,
+                          payload_cap,
+                          offset,
+                          TLV_FLOOD_PACKET_AGE_MS,
+                          packet_age_ms);
+}
+
+int mesh_outbound_set_flood_packet_age_ms(struct mesh_outbound *out,
+                                          uint32_t age_ms)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+    int ret;
+
+    if (out == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(out->payload,
+                   out->payload_len,
+                   TLV_FLOOD_PACKET_AGE_MS,
+                   &tlv_value,
+                   &tlv_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (tlv_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    proto_put_u32_le((uint8_t *)tlv_value, age_ms);
+    return PROTO_OK;
+}
+
+static int ensure_flood_control_tlvs(struct mesh_outbound *out,
+                                     const struct flood_control_fields *control,
+                                     uint32_t packet_age_ms)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+    size_t offset;
+    int ret;
+
+    if (out == NULL || control == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    offset = out->payload_len;
+    ret = tlv_find(out->payload,
+                   out->payload_len,
+                   TLV_FLOOD_RANDOM_BACKOFF_MAX_MS,
+                   &tlv_value,
+                   &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        ret = tlv_append_u32(out->payload,
+                             sizeof(out->payload),
+                             &offset,
+                             TLV_FLOOD_RANDOM_BACKOFF_MAX_MS,
+                             control->random_backoff_max_ms);
+    } else if (ret == PROTO_OK && tlv_len != sizeof(uint32_t)) {
+        ret = PROTO_ERR_MALFORMED;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    ret = tlv_find(out->payload,
+                   out->payload_len,
+                   TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS,
+                   &tlv_value,
+                   &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        ret = tlv_append_u16(out->payload,
+                             sizeof(out->payload),
+                             &offset,
+                             TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS,
+                             control->random_backoff_slot_ms);
+    } else if (ret == PROTO_OK && tlv_len != sizeof(uint16_t)) {
+        ret = PROTO_ERR_MALFORMED;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    ret = tlv_find(out->payload,
+                   out->payload_len,
+                   TLV_FLOOD_RETRY_COUNT,
+                   &tlv_value,
+                   &tlv_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        ret = tlv_append_u8(out->payload,
+                            sizeof(out->payload),
+                            &offset,
+                            TLV_FLOOD_RETRY_COUNT,
+                            control->retry_count);
+    } else if (ret == PROTO_OK && tlv_len != sizeof(uint8_t)) {
+        ret = PROTO_ERR_MALFORMED;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->payload_len = (uint16_t)offset;
+    out->packet.payload_len = (uint16_t)offset;
+    ret = mesh_outbound_set_flood_packet_age_ms(out, packet_age_ms);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        ret = tlv_append_u32(out->payload,
+                             sizeof(out->payload),
+                             &offset,
+                             TLV_FLOOD_PACKET_AGE_MS,
+                             packet_age_ms);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->payload_len = (uint16_t)offset;
+    out->packet.payload_len = (uint16_t)offset;
     return PROTO_OK;
 }
 
@@ -2862,10 +3129,23 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
                                    const uint8_t *payload,
                                    size_t payload_len,
                                    uint32_t now_ms,
+                                   uint32_t random_value,
                                    struct mesh_outbound *out)
 {
+    struct flood_control_fields flood_control;
+    uint32_t slot_seed;
+    int ret;
+
     if (!broadcast_packet_needs_forward(relay, packet, payload, payload_len)) {
         return PROTO_ERR_STALE;
+    }
+
+    flood_control_defaults(&flood_control);
+    if (packet->msg_type == MSG_COMMAND) {
+        ret = parse_flood_control_tlvs(payload, payload_len, &flood_control);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
 
     out->packet = *packet;
@@ -2877,10 +3157,22 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->queued_at_ms = now_ms;
-    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(
+    out->flood_retry_count = flood_control.retry_count;
+    if (packet->msg_type == MSG_COMMAND) {
+        ret = ensure_flood_control_tlvs(out,
+                                        &flood_control,
+                                        packet->message_age_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    slot_seed = flood_identity_seed(packet, relay->local_id);
+    out->earliest_tx_ms = now_ms + flood_forward_total_delay_ms(
         relay->local_id,
-        flood_identity_seed(packet, relay->local_id),
-        packet->ttl);
+        slot_seed,
+        packet->ttl,
+        packet->msg_type == MSG_COMMAND ? &flood_control : NULL,
+        random_value);
     return PROTO_OK;
 }
 
@@ -3189,6 +3481,11 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
                                          size_t *offset,
                                          const struct gateway_route_adv_fields *fields)
 {
+    const struct flood_control_fields flood_control = {
+        .random_backoff_max_ms = fields->random_backoff_max_ms,
+        .random_backoff_slot_ms = fields->random_backoff_slot_ms,
+        .retry_count = fields->flood_retry_count,
+    };
     int ret;
 
     ret = tlv_append_u64(payload, payload_cap, offset, TLV_GATEWAY_ID, fields->gateway_id);
@@ -3240,8 +3537,16 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return tlv_append_u32(payload, payload_cap, offset,
-                          TLV_SLOT_SEED, fields->slot_seed);
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_SLOT_SEED, fields->slot_seed);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return append_flood_control_tlvs(payload,
+                                     payload_cap,
+                                     offset,
+                                     &flood_control,
+                                     fields->flood_packet_age_ms);
 }
 
 static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
@@ -3303,7 +3608,32 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return find_u32_tlv(payload, payload_len, TLV_SLOT_SEED, &fields->slot_seed);
+    ret = find_u32_tlv(payload, payload_len, TLV_SLOT_SEED, &fields->slot_seed);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    {
+        struct flood_control_fields flood_control;
+
+        ret = parse_flood_control_tlvs(payload, payload_len, &flood_control);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        fields->random_backoff_max_ms = flood_control.random_backoff_max_ms;
+        fields->random_backoff_slot_ms = flood_control.random_backoff_slot_ms;
+        fields->flood_retry_count = flood_control.retry_count;
+    }
+
+    ret = find_u32_tlv(payload,
+                       payload_len,
+                       TLV_FLOOD_PACKET_AGE_MS,
+                       &fields->flood_packet_age_ms);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        fields->flood_packet_age_ms = 0u;
+        return PROTO_OK;
+    }
+    return ret;
 }
 
 static int build_route_reply_ack(struct mesh_relay *relay,
@@ -3472,9 +3802,11 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
                                            uint8_t link_quality,
                                            uint64_t local_id,
                                            uint32_t now_ms,
+                                           uint32_t random_value,
                                            struct mesh_outbound *out)
 {
     struct gateway_route_adv_fields fields = {0};
+    struct flood_control_fields flood_control;
     size_t out_payload_len = 0u;
     int ret;
 
@@ -3494,6 +3826,7 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     fields.path_quality_min = combined_quality(fields.path_quality_min, link_quality);
     fields.hop_count++;
     fields.route_cost = gateway_route_cost(fields.hop_count, fields.path_quality_min);
+    fields.flood_packet_age_ms = packet->message_age_ms;
     ret = append_gateway_route_adv_tlvs(out->payload,
                                         sizeof(out->payload),
                                         &out_payload_len,
@@ -3509,9 +3842,15 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->queued_at_ms = now_ms;
-    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(local_id,
-                                                          fields.slot_seed,
-                                                          fields.hop_count);
+    out->flood_retry_count = fields.flood_retry_count;
+    flood_control.random_backoff_max_ms = fields.random_backoff_max_ms;
+    flood_control.random_backoff_slot_ms = fields.random_backoff_slot_ms;
+    flood_control.retry_count = fields.flood_retry_count;
+    out->earliest_tx_ms = now_ms + flood_forward_total_delay_ms(local_id,
+                                                                fields.slot_seed,
+                                                                fields.hop_count,
+                                                                &flood_control,
+                                                                random_value);
     return PROTO_OK;
 }
 
@@ -3522,6 +3861,7 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                     uint64_t previous_hop_id,
                                     uint8_t link_quality,
                                     uint32_t now_ms,
+                                    uint32_t random_value,
                                     struct mesh_relay_result *result)
 {
     struct gateway_route_adv_fields fields = {0};
@@ -3573,6 +3913,7 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                           link_quality,
                                           relay->local_id,
                                           now_ms,
+                                          random_value,
                                           &result->gateway_route_adv);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV;
@@ -4590,6 +4931,10 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     fields.slot_seed = gateway_route_adv_slot_seed(fields.gateway_id,
                                                    fields.gateway_route_seq,
                                                    fields.gateway_epoch);
+    fields.random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
+    fields.random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
+    fields.flood_retry_count = 0u;
+    fields.flood_packet_age_ms = 0u;
 
     ret = append_gateway_route_adv_tlvs(out->payload,
                                         sizeof(out->payload),
@@ -4612,6 +4957,7 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     out->next_hop_id = MESH_BROADCAST_ID;
     out->queued_at_ms = now_ms;
     out->earliest_tx_ms = now_ms;
+    out->flood_retry_count = fields.flood_retry_count;
     return PROTO_OK;
 }
 
@@ -5719,6 +6065,27 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                          uint32_t now_ms,
                          struct mesh_relay_result *result)
 {
+    return mesh_relay_handle_rx_with_random(relay,
+                                            packet,
+                                            payload,
+                                            payload_len,
+                                            previous_hop_id,
+                                            link_quality,
+                                            now_ms,
+                                            0u,
+                                            result);
+}
+
+int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
+                                     const struct proto_packet *packet,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     uint64_t previous_hop_id,
+                                     uint8_t link_quality,
+                                     uint32_t now_ms,
+                                     uint32_t random_value,
+                                     struct mesh_relay_result *result)
+{
     bool duplicate;
     int ret;
 
@@ -5922,6 +6289,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                                        previous_hop_id,
                                        link_quality,
                                        now_ms,
+                                       random_value,
                                        result);
         if (ret != PROTO_OK) {
             result->status = ret;
@@ -5966,6 +6334,7 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                                       payload,
                                       payload_len,
                                       now_ms,
+                                      random_value,
                                       &result->forward);
         if (ret == PROTO_OK) {
             result->actions |= MESH_RELAY_ACTION_FORWARD;

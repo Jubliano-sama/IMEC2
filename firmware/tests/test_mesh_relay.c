@@ -693,14 +693,15 @@ static void test_broadcast_command_delivers_without_flooding(void)
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
 
-    assert(mesh_relay_handle_rx(&relay,
-                                &packet,
-                                payload,
-                                payload_len,
-                                GATEWAY,
-                                80u,
-                                3020u,
-                                &result) == PROTO_OK);
+    assert(mesh_relay_handle_rx_with_random(&relay,
+                                            &packet,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY,
+                                            80u,
+                                            3020u,
+                                            3u,
+                                            &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
@@ -770,14 +771,15 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
 
-    assert(mesh_relay_handle_rx(&relay,
-                                &packet,
-                                payload,
-                                payload_len,
-                                GATEWAY,
-                                80u,
-                                3020u,
-                                &result) == PROTO_OK);
+    assert(mesh_relay_handle_rx_with_random(&relay,
+                                            &packet,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY,
+                                            80u,
+                                            3020u,
+                                            3u,
+                                            &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
     assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
@@ -787,10 +789,25 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
     assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
     assert(result.forward.packet.ttl == 2u);
     assert(result.forward.queued_at_ms == 3020u);
-    assert(result.forward.earliest_tx_ms >= 3020u);
-    assert(result.forward.earliest_tx_ms < 3020u + FLOOD_WAVE_MS);
-    assert(result.forward.payload_len == payload_len);
+    assert(result.forward.earliest_tx_ms >= 3020u + 1800u);
+    assert(result.forward.earliest_tx_ms <
+           3020u + FLOOD_WAVE_MS + FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+    assert(result.forward.payload_len > payload_len);
     assert(memcmp(result.forward.payload, payload, payload_len) == 0);
+    assert(require_tlv_u32(result.forward.payload,
+                           result.forward.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_MAX_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+    assert(require_tlv_u16(result.forward.payload,
+                           result.forward.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
+    assert(require_tlv_u8(result.forward.payload,
+                          result.forward.payload_len,
+                          TLV_FLOOD_RETRY_COUNT) == 0u);
+    assert(require_tlv_u32(result.forward.payload,
+                           result.forward.payload_len,
+                           TLV_FLOOD_PACKET_AGE_MS) == 0u);
 
     duplicate_packet = packet;
     duplicate_packet.seq = 99u;
@@ -4234,6 +4251,16 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     slot_seed = require_tlv_u32(adv.payload, adv.payload_len, TLV_SLOT_SEED);
     assert(flood_epoch_id == 77u);
     assert(slot_seed != 0u);
+    assert(require_tlv_u32(adv.payload,
+                           adv.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_MAX_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+    assert(require_tlv_u16(adv.payload,
+                           adv.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
+    assert(require_tlv_u8(adv.payload, adv.payload_len, TLV_FLOOD_RETRY_COUNT) == 0u);
+    assert(require_tlv_u32(adv.payload, adv.payload_len, TLV_FLOOD_PACKET_AGE_MS) == 0u);
 
     assert(mesh_relay_handle_rx(&anchor_a,
                                 &adv.packet,
@@ -4267,6 +4294,25 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     assert(require_tlv_u32(result_a.gateway_route_adv.payload,
                            result_a.gateway_route_adv.payload_len,
                            TLV_SLOT_SEED) == slot_seed);
+    assert(require_tlv_u32(result_a.gateway_route_adv.payload,
+                           result_a.gateway_route_adv.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_MAX_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+    assert(require_tlv_u16(result_a.gateway_route_adv.payload,
+                           result_a.gateway_route_adv.payload_len,
+                           TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
+           FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
+    assert(require_tlv_u8(result_a.gateway_route_adv.payload,
+                          result_a.gateway_route_adv.payload_len,
+                          TLV_FLOOD_RETRY_COUNT) == 0u);
+    assert(require_tlv_u32(result_a.gateway_route_adv.payload,
+                           result_a.gateway_route_adv.payload_len,
+                           TLV_FLOOD_PACKET_AGE_MS) == 0u);
+    assert(mesh_outbound_set_flood_packet_age_ms(&result_a.gateway_route_adv,
+                                                 1234u) == PROTO_OK);
+    assert(require_tlv_u32(result_a.gateway_route_adv.payload,
+                           result_a.gateway_route_adv.payload_len,
+                           TLV_FLOOD_PACKET_AGE_MS) == 1234u);
     assert(require_tlv_u8(result_a.gateway_route_adv.payload,
                           result_a.gateway_route_adv.payload_len,
                           TLV_HOP_COUNT) == 1u);

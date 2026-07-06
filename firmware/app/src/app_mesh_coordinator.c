@@ -54,9 +54,16 @@ void app_mesh_coordinator_decide(
         return;
     }
 
+    if (inputs->ch9_ack_wait_active) {
+        decision->state = APP_MESH_COORDINATOR_MESH_RX;
+        decision->route_wait_allowed = false;
+        decision->report_tx_allowed = false;
+        decision->reason = "ch9-ack-wait";
+        return;
+    }
+
     if (inputs->relay_tx_active ||
-        inputs->route_waiting_tx_active ||
-        inputs->ch9_ack_wait_active) {
+        inputs->route_waiting_tx_active) {
         decision->state = APP_MESH_COORDINATOR_MESH_TX;
         decision->report_tx_allowed = false;
         decision->uwb_rx_allowed = false;

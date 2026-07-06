@@ -123,6 +123,11 @@ static void test_route_reply_and_event_control_capture_rules(void)
 static void test_channel5_control_phr_policy(void)
 {
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 146u, 125u));
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 95u, 125u));
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY, 95u, 125u));
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_GATEWAY_ROUTE_ADV,
+                                                 114u,
+                                                 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_MESH_EVENT_PROPOSE,
                                                  103u,
                                                  125u));

@@ -33,6 +33,8 @@ extern "C" {
 #define FLOOD_RELAY_BURST_MS 600u
 #define FLOOD_RELAY_REPEAT_MS 40u
 #define FLOOD_POST_ROOT_GUARD_MS 150u
+#define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 2500u
+#define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define C5_POLITE_SNIFF_MS 6u
 #define C5_POLITE_BACKOFF_MIN_MS 20u
 #define C5_POLITE_BACKOFF_MAX_MS 1600u
@@ -223,6 +225,7 @@ struct mesh_outbound {
     uint64_t next_hop_id;
     uint32_t queued_at_ms;
     uint32_t earliest_tx_ms;
+    uint8_t flood_retry_count;
 };
 
 struct mesh_downlink_entry {
@@ -488,6 +491,8 @@ bool mesh_route_request_reply_rx_delay_ms(const struct mesh_outbound *out,
                                           uint16_t *delay_ms);
 int mesh_route_request_set_reply_rx_delay_ms(struct mesh_outbound *out,
                                              uint16_t delay_ms);
+int mesh_outbound_set_flood_packet_age_ms(struct mesh_outbound *out,
+                                          uint32_t age_ms);
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   uint8_t *payload,
                                   size_t payload_cap,
@@ -568,6 +573,15 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                          uint8_t link_quality,
                          uint32_t now_ms,
                          struct mesh_relay_result *result);
+int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
+                                     const struct proto_packet *packet,
+                                     const uint8_t *payload,
+                                     size_t payload_len,
+                                     uint64_t previous_hop_id,
+                                     uint8_t link_quality,
+                                     uint32_t now_ms,
+                                     uint32_t random_value,
+                                     struct mesh_relay_result *result);
 
 #ifdef __cplusplus
 }

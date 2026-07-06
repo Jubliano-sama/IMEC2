@@ -246,6 +246,8 @@ void anchor_click_window_set_active(bool active)
 
 void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)
 {
+    int ret;
+
     if (out == NULL) {
         return;
     }
@@ -254,6 +256,12 @@ void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)
         packet_age_add_elapsed(&out->packet, now_ms - out->queued_at_ms);
     }
     out->queued_at_ms = now_ms;
+    ret = mesh_outbound_set_flood_packet_age_ms(out, out->packet.message_age_ms);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+        LOG_WRN("mesh flood age TLV update failed: msg=0x%02x ret=%d",
+                out->packet.msg_type,
+                ret);
+    }
 }
 
 bool mesh_outbound_ready_for_tx(const struct mesh_outbound *out, uint32_t now_ms)

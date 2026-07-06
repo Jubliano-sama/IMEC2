@@ -104,6 +104,24 @@ static void test_rx_queue_blocks_route_wait_and_report_tx(void)
     assert(decision.uwb_rx_allowed);
 }
 
+static void test_ch9_ack_wait_allows_rx_and_blocks_new_tx(void)
+{
+    const struct app_mesh_coordinator_inputs inputs = {
+        .ch9_ack_wait_active = true,
+        .report_queue_pending = true,
+    };
+    struct app_mesh_coordinator_decision decision;
+
+    app_mesh_coordinator_decide(&inputs, &decision);
+
+    assert(decision.state == APP_MESH_COORDINATOR_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(!decision.route_wait_allowed);
+    assert(!decision.report_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(strcmp(decision.reason, "ch9-ack-wait") == 0);
+}
+
 static void test_report_queue_can_drive_mesh_tx_state(void)
 {
     const struct app_mesh_coordinator_inputs inputs = {
@@ -215,6 +233,7 @@ int main(void)
     test_mesh_tx_blocks_background_rx();
     test_survey_blocks_mesh_work();
     test_rx_queue_blocks_route_wait_and_report_tx();
+    test_ch9_ack_wait_allows_rx_and_blocks_new_tx();
     test_report_queue_can_drive_mesh_tx_state();
     test_replacing_paused_packet_counts_loss();
     test_same_paused_packet_does_not_count_loss();
