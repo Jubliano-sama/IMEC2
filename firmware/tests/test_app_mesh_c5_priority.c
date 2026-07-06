@@ -22,17 +22,6 @@ static void test_priority_response_bypasses_passive_gateway_preempt(void)
     assert(!app_mesh_c5_flood_should_defer(&state));
 }
 
-static void test_gateway_ack_pending_defers_even_priority_response(void)
-{
-    const struct app_mesh_c5_flood_priority_state state = {
-        .response_priority = true,
-        .gateway_ch5_preempt = true,
-        .gateway_ack_pending = true,
-    };
-
-    assert(app_mesh_c5_flood_should_defer(&state));
-}
-
 static void test_gateway_rx_yields_to_priority_response(void)
 {
     const struct app_mesh_c5_flood_priority_state priority_state = {
@@ -207,7 +196,6 @@ int main(void)
 {
     test_passive_gateway_preempt_defers_background_flood();
     test_priority_response_bypasses_passive_gateway_preempt();
-    test_gateway_ack_pending_defers_even_priority_response();
     test_gateway_rx_yields_to_priority_response();
     test_protected_anchor_work_still_defers_priority_response();
     test_idle_state_does_not_defer();

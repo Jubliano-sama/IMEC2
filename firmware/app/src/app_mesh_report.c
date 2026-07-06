@@ -3407,13 +3407,6 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
 
     now_ms = k_uptime_get_32();
     state.gateway_ch5_preempt = mesh_gateway_route_test_preempt_active(now_ms);
-    state.gateway_ack_pending = DEVICE_ROLE == ROLE_GATEWAY &&
-                                IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                                k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
-    if (state.gateway_ack_pending && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_C5_FLOOD_DEFER_ACK q=%u\n",
-                            k_msgq_num_used_get(&mesh_rx_msgq));
-    }
 
     return app_mesh_c5_flood_should_defer(&state);
 }

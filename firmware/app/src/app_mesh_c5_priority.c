@@ -21,10 +21,6 @@ bool app_mesh_c5_flood_should_defer(
         return true;
     }
 
-    if (state->gateway_ack_pending) {
-        return true;
-    }
-
     if (state->gateway_ch5_preempt && !state->response_priority) {
         return true;
     }
