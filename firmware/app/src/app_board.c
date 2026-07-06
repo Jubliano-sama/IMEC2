@@ -60,8 +60,10 @@ static const struct adc_dt_spec battery_adc = {
 #endif
 
 static struct k_work_delayable status1_debug_pulse_restore_work;
+static struct k_work_delayable status0_debug_pulse_restore_work;
 static struct k_work_delayable status0_power_blink_work;
 static bool status1_debug_pulse_work_ready;
+static bool status0_debug_pulse_work_ready;
 static bool status0_power_blink_work_ready;
 static bool status_power_indicator_enabled;
 static bool status0_power_red_on;
@@ -264,6 +266,18 @@ static void status1_debug_pulse_restore_handler(struct k_work *work)
     status_led1_set(false, false, false);
 }
 
+static void status0_debug_pulse_restore_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+        status_power_indicator_enabled) {
+        status0_route_test_power_apply();
+        return;
+    }
+    status_led0_set(false, false, false);
+}
+
 static void status0_power_blink_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
@@ -289,6 +303,18 @@ static void status1_debug_pulse(bool red, bool green, bool blue)
                             K_MSEC(DEBUG_LED_PULSE_MS));
 }
 
+static void status0_debug_pulse(bool red, bool green, bool blue)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        !status0_debug_pulse_work_ready) {
+        return;
+    }
+
+    status_led0_set(red, green, blue);
+    (void)k_work_reschedule(&status0_debug_pulse_restore_work,
+                            K_MSEC(DEBUG_LED_PULSE_MS));
+}
+
 static bool anchor_route_test_activity_leds_enabled(void)
 {
     return DEVICE_ROLE == ROLE_ANCHOR &&
@@ -296,23 +322,38 @@ static bool anchor_route_test_activity_leds_enabled(void)
            !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER);
 }
 
-static void status1_debug_channel_pulse(uint8_t uwb_channel)
+static void status1_debug_ch9_rx_pulse(void)
+{
+    status1_debug_pulse(false, true, false);
+}
+
+static void status1_debug_ch9_tx_pulse(void)
+{
+    status1_debug_pulse(false, false, true);
+}
+
+static void status0_debug_ch5_rx_pulse(void)
+{
+    status0_debug_pulse(false, true, false);
+}
+
+static void status0_debug_ch5_tx_pulse(void)
+{
+    status0_debug_pulse(false, false, true);
+}
+
+static void status_debug_unknown_channel_pulse(uint8_t uwb_channel)
 {
     if (uwb_channel == UWB_CHANNEL_MESH_PAYLOAD) {
-        status1_debug_pulse(false, true, false);
+        status1_debug_ch9_rx_pulse();
     } else if (anchor_route_test_activity_leds_enabled() &&
                uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
-        status1_debug_pulse(true, false, false);
+        status0_debug_ch5_rx_pulse();
     } else if (uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
-        status1_debug_pulse(false, false, true);
+        status0_debug_ch5_rx_pulse();
     } else {
         status1_debug_pulse(true, false, false);
     }
-}
-
-static void status1_debug_gateway_ch9_tx_pulse(void)
-{
-    status1_debug_pulse(false, false, true);
 }
 
 static void debug_rtt_write(const char *text)
@@ -369,13 +410,13 @@ void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
     }
 
     if (uwb_channel == UWB_CHANNEL_MESH_PAYLOAD) {
-        status1_debug_channel_pulse(uwb_channel);
+        status1_debug_ch9_rx_pulse();
         debug_rtt_write("DBG_UWB_RX_CH9\n");
     } else if (uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
-        status1_debug_channel_pulse(uwb_channel);
+        status0_debug_ch5_rx_pulse();
         debug_rtt_write("DBG_UWB_RX_CH5\n");
     } else {
-        status1_debug_channel_pulse(uwb_channel);
+        status_debug_unknown_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_UNKNOWN_CH\n");
     }
 }
@@ -387,17 +428,13 @@ void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel)
     }
 
     if (uwb_channel == UWB_CHANNEL_MESH_PAYLOAD) {
-        if (DEVICE_ROLE == ROLE_GATEWAY) {
-            status1_debug_gateway_ch9_tx_pulse();
-        } else {
-            status1_debug_channel_pulse(uwb_channel);
-        }
+        status1_debug_ch9_tx_pulse();
         debug_rtt_write("DBG_UWB_TX_CH9\n");
     } else if (uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
-        status1_debug_channel_pulse(uwb_channel);
+        status0_debug_ch5_tx_pulse();
         debug_rtt_write("DBG_UWB_TX_CH5\n");
     } else {
-        status1_debug_channel_pulse(uwb_channel);
+        status_debug_unknown_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_TX_UNKNOWN_CH\n");
     }
 }
@@ -545,6 +582,9 @@ int status_leds_init(void)
     k_work_init_delayable(&status1_debug_pulse_restore_work,
                           status1_debug_pulse_restore_handler);
     status1_debug_pulse_work_ready = true;
+    k_work_init_delayable(&status0_debug_pulse_restore_work,
+                          status0_debug_pulse_restore_handler);
+    status0_debug_pulse_work_ready = true;
     k_work_init_delayable(&status0_power_blink_work,
                           status0_power_blink_handler);
     status0_power_blink_work_ready = true;

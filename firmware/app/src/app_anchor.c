@@ -4874,6 +4874,7 @@ int app_anchor_start_anchor_role(void)
     if (ret < 0) {
         LOG_WRN("anchor mesh outbox restore unavailable: %d", ret);
     }
+    mesh_report_resume_restored_outbox("anchor-startup");
     ret = app_mesh_persistence_restore_child_custody(&mesh_runtime,
                                                     k_uptime_get_32());
     if (ret < 0) {

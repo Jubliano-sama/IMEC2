@@ -71,9 +71,8 @@ entry points and makes state changes visible in the logs.
   channel-5 flooding, route discovery, and late channel-9 payload sends now
   consult the same coordinator decision before starting new mesh work.
 - A click or survey window prevents new route discovery, wake trains, floods,
-  report sends, and scheduled background RX from starting. Existing blocking
-  listen helpers still keep their local click guard for the narrow receive
-  window they own.
+  report sends, route-reply listens, route-reply ACK listens, and scheduled
+  background RX from starting.
 - Channel-9 batch TX checks the coordinator before each packet, so a click that
   becomes active while the batch is waiting for a slot can stop the batch before
   the next packet leaves.

@@ -17,25 +17,34 @@ firmware behavior and the assumptions behind it.
 - When the gateway receives a packet requiring a gateway ACK, RX has already
   returned, so the gateway waits a conservative 10 ms turnaround guard, sends
   the ACK immediately on channel 9, and then rearms continuous channel-9 RX.
+- Current-channel channel-9 turnarounds release the DWM3000 to idle/awake
+  mesh-payload mode instead of standby. This applies to gateway continuous RX
+  after a valid frame, immediate gateway ACK TX, direct gateway payload ACK
+  waits when more queued traffic remains, and successful direct gateway probes.
+  Ordinary sends and failed probe/send paths still release to standby.
 - Non-gateway nodes repairing a gateway route first send a short direct
-  `MSG_GATEWAY_ROUTE_REQ` on channel 9 and wait up to 120 ms for a matching
+  `MSG_GATEWAY_ROUTE_REQ` on channel 9 and wait up to 250 ms for a matching
   `MSG_GATEWAY_ACK`.
 - A successful direct gateway probe installs a direct route to the gateway only;
   it does not install a synthetic or slotted gateway channel-9 timing.
 - If the direct probe fails, the node falls back to the existing channel-5
   wake-train plus AODV-style route-request flow.
-- The mesh transmitter preset currently enables a relay-required route request
-  debug mode. In that mode, gateway-bound route repair skips the direct
-  channel-9 gateway probe and marks the channel-5 `MSG_ROUTE_REQ` with
-  `TLV_ROUTE_REQUEST_FLAGS = MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED`.
+- The normal mesh transmitter preset does not force relay-only route requests.
+  It first tries the direct channel-9 gateway probe and then falls back to the
+  channel-5 route-request flow when the probe fails.
+- The optional `CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ` debug mode
+  can still mark channel-5 `MSG_ROUTE_REQ` packets with
+  `TLV_ROUTE_REQUEST_FLAGS = MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED` when a relay
+  route must be forced for a dedicated relay test.
 - In the mesh transmitter preset, `MSG_GATEWAY_ROUTE_ADV` frames are ignored so
   they cannot seed a direct `transmitter -> gateway` route during relay testing.
   Anchors still accept and forward gateway route advertisements for normal
   upstream route repair.
 - A route-test gateway ignores direct, hop-count-0 relay-required route
-  requests from the origin. The request is still eligible to be answered after
-  an anchor has a valid upstream route, because the reply then describes a
-  normal `origin -> anchor -> gateway` path.
+  requests from the origin only when that optional debug flag is present. The
+  request is still eligible to be answered after an anchor has a valid upstream
+  route, because the reply then describes a normal
+  `origin -> anchor -> gateway` path.
 - If an anchor hears a gateway-bound route request but has no selected upstream
   route after reset, it treats that as normal route repair: it forwards the
   route request on channel 5 and starts its own gateway route discovery. Once
@@ -59,7 +68,7 @@ firmware behavior and the assumptions behind it.
 
 - Gateway immediate ACK guard: `MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS = 10 ms`.
 - Direct gateway probe ACK guard: `MESH_GATEWAY_DIRECT_PROBE_ACK_GUARD_MS = 10 ms`.
-- Direct gateway probe ACK listen: `MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS = 120 ms`.
+- Direct gateway probe ACK listen: `MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS = 250 ms`.
 - Gateway route advertisement period: `MESH_GATEWAY_ROUTE_ADV_PERIOD_MS = 600000 ms`.
 - Route request reply-open countdown:
   `MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS = FLOOD_RELAY_BURST_MS + 20 ms`.
@@ -94,8 +103,9 @@ optimized for final latency or power.
   route-reply transmit-not-before scheduling from the request ETA.
 - `firmware/app/src/app_mesh_report.c`
   adds direct gateway probing, immediate direct gateway TX, continuous gateway
-  channel-9 RX, relay-required route request emission for the transmitter
-  preset, route-reply ETA waiting, and gateway ACK turnaround guard logging.
+  channel-9 RX, hot channel-9 release after same-channel turnarounds,
+  relay-required route request emission for the transmitter preset,
+  route-reply ETA waiting, and gateway ACK turnaround guard logging.
 - `firmware/app/src/app_mesh_flood.c`
   updates the route-reply ETA countdown on each bounded route-request flood
   repeat.
@@ -130,3 +140,17 @@ optimized for final latency or power.
   stored downstream timing on the route reply sent back to the child.
 - Verify RTT logs show `DBG_GATEWAY_CH9_RX_CONT_*`, `DBG_DIRECT_GW_*`, and
   immediate gateway ACK markers during smoke testing.
+
+## Latest Smoke Evidence
+
+Final 2026-07-06 paired pre-reset RTT run, gateway plus transmitter:
+
+- Transmitter direct gateway payload ACK waits: 679.
+- Successful transmitter ACK waits: 679.
+- Duplicate payload sequence attempts: 0.
+- Retryable payload sends: 0.
+- Gateway continuous channel-9 frame receives: 674.
+- Gateway channel-9 RX idle releases: 674.
+- The only remaining transmitter DWM config failure was during the first direct
+  gateway probe and was followed immediately by retained-config reinit and a
+  successful probe before the first payload.

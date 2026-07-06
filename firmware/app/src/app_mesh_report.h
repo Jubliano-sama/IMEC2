@@ -86,6 +86,7 @@ int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
 int mesh_request_route(uint64_t target_id, const char *reason);
 void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
 int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
+void mesh_report_resume_restored_outbox(const char *reason);
 void mesh_preempt_for_click_event(void);
 void report_tx_schedule(uint32_t delay_ms);
 uint32_t report_tx_queue_used(void);

@@ -120,7 +120,8 @@ config IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ
       Marks gateway route requests so the gateway ignores direct copies from
       the origin and only replies after the request has been forwarded by a
       relay. This is a debug mode for validating relay route handling even when
-      the transmitter is close enough to reach the gateway directly.
+      the transmitter is close enough to reach the gateway directly. The normal
+      mesh transmitter preset leaves this disabled.
 
 config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     int "Synthetic mesh-test packet interval in milliseconds"

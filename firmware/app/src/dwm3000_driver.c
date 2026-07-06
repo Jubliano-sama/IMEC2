@@ -949,7 +949,23 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
     } else {
         ret = wake_configured_radio();
         if (ret < 0) {
-            return ret;
+            LOG_WRN("DWM3000 retained sleep wake/restore failed: phy=%d ret=%d; forcing full reinit",
+                    phy_mode,
+                    ret);
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_DWM_WAKE_REINIT phy=%d ret=%d\n",
+                                    phy_mode,
+                                    ret);
+            }
+            ret = configure_radio_from_reset(phy_mode);
+            if (ret < 0) {
+                LOG_WRN("DWM3000 full reinit after retained wake failure failed: ret=%d",
+                        ret);
+                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_printf("DBG_DWM_REINIT_FAIL ret=%d\n", ret);
+                }
+                return ret;
+            }
         }
     }
 
@@ -2791,9 +2807,7 @@ int dwm3000_driver_configure_mesh_payload_mode(void)
 {
     int ret;
 
-    ret = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
-          configure_radio_from_reset(DWM3000_PHY_MESH_PAYLOAD) :
-          ensure_phy_mode(DWM3000_PHY_MESH_PAYLOAD);
+    ret = ensure_phy_mode(DWM3000_PHY_MESH_PAYLOAD);
     if (ret < 0) {
         return ret;
     }
