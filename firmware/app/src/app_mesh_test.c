@@ -53,6 +53,14 @@ static bool mesh_test_ch5_refresh_logged;
 static uint8_t mesh_test_wait_log_ticks;
 static struct mesh_smoke_fast_state mesh_test_gateway_state;
 static uint32_t mesh_test_gateway_last_summary_ms;
+static uint32_t mesh_test_first_queue_ms;
+static uint32_t mesh_test_first_queue_id;
+static uint16_t mesh_test_first_queue_seq;
+static uint32_t mesh_test_queued_total;
+static uint32_t mesh_test_retryable_before_first_ack;
+static uint32_t mesh_test_backoff_before_first_ack;
+static uint32_t mesh_test_ack_fail_before_first_success;
+static bool mesh_test_first_ack_logged;
 
 static uint8_t mesh_test_ch9_state_for_parent(uint64_t parent_id)
 {
@@ -118,6 +126,16 @@ static void mesh_test_advance_packet_id(void)
     mesh_test_next_packet_id++;
     if (mesh_test_next_packet_id == 0u) {
         mesh_test_next_packet_id = 1u;
+    }
+}
+
+static void mesh_test_note_queued(uint32_t packet_id, uint16_t seq)
+{
+    mesh_test_queued_total++;
+    if (mesh_test_first_queue_ms == 0u) {
+        mesh_test_first_queue_ms = k_uptime_get_32();
+        mesh_test_first_queue_id = packet_id;
+        mesh_test_first_queue_seq = seq;
     }
 }
 
@@ -271,6 +289,7 @@ static uint32_t mesh_test_tx_once(void)
         status_debug_note(ret == 0 ? "DBG_MESH_TEST_SEND_OK\n" :
                           "DBG_MESH_TEST_SEND_FAIL\n");
         if (ret == 0) {
+            mesh_test_note_queued(packet_id, outbound.packet.seq);
             mesh_test_advance_packet_id();
             mesh_test_reset_attempts();
             status_debug_printf("DBG_MESH_TEST_QUEUED id=%u att=%u q=%u burst=%u/%u\n",
@@ -430,6 +449,62 @@ void app_mesh_test_note_ch9_missed(void)
     mesh_smoke_fast_note_ch9_missed(&mesh_test_gateway_state);
 }
 
+void app_mesh_test_note_report_tx_retryable(uint16_t seq, int ret)
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ||
+        mesh_test_first_ack_logged) {
+        return;
+    }
+    mesh_test_retryable_before_first_ack++;
+    status_debug_printf("DBG_STARTUP_TX_RETRY seq=%u ret=%d retries=%u uptime=%u\n",
+                        seq,
+                        ret,
+                        mesh_test_retryable_before_first_ack,
+                        k_uptime_get_32());
+}
+
+void app_mesh_test_note_report_tx_backoff(uint16_t seq, int ret, uint32_t delay_ms)
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ||
+        mesh_test_first_ack_logged) {
+        return;
+    }
+    mesh_test_backoff_before_first_ack++;
+    status_debug_printf("DBG_STARTUP_TX_BACKOFF seq=%u ret=%d backoffs=%u delay=%u uptime=%u\n",
+                        seq,
+                        ret,
+                        mesh_test_backoff_before_first_ack,
+                        delay_ms,
+                        k_uptime_get_32());
+}
+
+void app_mesh_test_note_direct_gateway_ack(uint16_t seq, int ret, uint32_t queue_depth)
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ||
+        mesh_test_first_ack_logged) {
+        return;
+    }
+    if (ret != 0) {
+        mesh_test_ack_fail_before_first_success++;
+        return;
+    }
+    mesh_test_first_ack_logged = true;
+    status_debug_printf("DBG_STARTUP_FIRST_ACK seq=%u uptime=%u first_q_ms=%u first_id=%u first_seq=%u queued=%u retryable=%u backoff=%u ack_fail=%u q=%u\n",
+                        seq,
+                        k_uptime_get_32(),
+                        mesh_test_first_queue_ms,
+                        mesh_test_first_queue_id,
+                        mesh_test_first_queue_seq,
+                        mesh_test_queued_total,
+                        mesh_test_retryable_before_first_ack,
+                        mesh_test_backoff_before_first_ack,
+                        mesh_test_ack_fail_before_first_success,
+                        queue_depth);
+}
+
 void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,
                                          const uint8_t *payload,
                                          size_t payload_len,
@@ -523,6 +598,26 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
 
 void app_mesh_test_note_ch9_missed(void)
 {
+}
+
+void app_mesh_test_note_report_tx_retryable(uint16_t seq, int ret)
+{
+    ARG_UNUSED(seq);
+    ARG_UNUSED(ret);
+}
+
+void app_mesh_test_note_report_tx_backoff(uint16_t seq, int ret, uint32_t delay_ms)
+{
+    ARG_UNUSED(seq);
+    ARG_UNUSED(ret);
+    ARG_UNUSED(delay_ms);
+}
+
+void app_mesh_test_note_direct_gateway_ack(uint16_t seq, int ret, uint32_t queue_depth)
+{
+    ARG_UNUSED(seq);
+    ARG_UNUSED(ret);
+    ARG_UNUSED(queue_depth);
 }
 
 void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,

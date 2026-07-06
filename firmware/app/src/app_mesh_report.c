@@ -3407,6 +3407,13 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
 
     now_ms = k_uptime_get_32();
     state.gateway_ch5_preempt = mesh_gateway_route_test_preempt_active(now_ms);
+    state.gateway_ack_pending = DEVICE_ROLE == ROLE_GATEWAY &&
+                                IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+                                k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
+    if (state.gateway_ack_pending && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_C5_FLOOD_DEFER_ACK q=%u\n",
+                            k_msgq_num_used_get(&mesh_rx_msgq));
+    }
 
     return app_mesh_c5_flood_should_defer(&state);
 }
@@ -5502,6 +5509,9 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
             status_debug_printf("DBG_DIRECT_GW_TX_ACK_WAIT ret=%d seq=%u\n",
                                 ack_ret,
                                 out->packet.seq);
+            app_mesh_test_note_direct_gateway_ack(out->packet.seq,
+                                                  ack_ret,
+                                                  report_tx_queue_used());
             keep_channel9_awake =
                 (ack_ret == 0 || ack_ret == -ETIMEDOUT) &&
                 report_tx_queue_used() > 0u;
@@ -7226,6 +7236,7 @@ send_prepared:
                                     ret,
                                     tx.packet.seq);
             }
+            app_mesh_test_note_report_tx_retryable(tx.packet.seq, ret);
             return -EAGAIN;
         }
         if (mesh_defer_active_collection_result("send-failure")) {
@@ -7819,6 +7830,9 @@ static void report_tx_work_handler(struct k_work *work)
 
     if (ret == -EAGAIN) {
         LOG_WRN("queued gateway-bound report retrying after transient mesh TX failure");
+        app_mesh_test_note_report_tx_backoff(outbound->packet.seq,
+                                             ret,
+                                             MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         report_tx_schedule_backoff(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
                                    "report-tx-transient");
         return;
