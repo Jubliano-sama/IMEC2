@@ -445,7 +445,7 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
     if (candidate->failure_count < UINT8_MAX) {
         candidate->failure_count++;
     }
-    if (candidate->failure_count < ROUTE_MAX_FAILURES) {
+    if (candidate->failure_count <= ROUTE_RETRIES_PER_CANDIDATE) {
         return ROUTE_DELIVERY_RETRY_CURRENT;
     }
 
@@ -463,10 +463,10 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
 uint32_t route_retry_backoff_ms(uint8_t failure_count)
 {
     if (failure_count <= 1u) {
-        return 100u;
+        return 1500u;
     }
     if (failure_count == 2u) {
-        return 250u;
+        return 3000u;
     }
-    return 500u;
+    return 6000u;
 }

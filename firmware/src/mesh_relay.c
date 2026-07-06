@@ -95,6 +95,13 @@ static uint32_t jittered_delay_ms(uint32_t base_ms, uint32_t random_value)
     return base_ms + (random_value % (base_ms + 1u));
 }
 
+static uint32_t retry_jittered_delay_ms(uint32_t base_ms, uint32_t random_value)
+{
+    uint32_t jitter_span_ms = base_ms / 2u;
+
+    return base_ms + (random_value % (jitter_span_ms + 1u));
+}
+
 static uint32_t mix32(uint32_t value)
 {
     value ^= value >> 16;
@@ -334,7 +341,8 @@ static void relay_diag_inc_u8(uint8_t *counter)
 
 uint32_t mesh_relay_retry_backoff_ms(uint8_t failure_count, uint32_t random_value)
 {
-    return jittered_delay_ms(route_retry_backoff_ms(failure_count), random_value);
+    return retry_jittered_delay_ms(route_retry_backoff_ms(failure_count),
+                                   random_value);
 }
 
 uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
@@ -5680,10 +5688,13 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
             return PROTO_OK;
         }
         selected = route_selected(&relay->upstream);
-        failure_count = action == ROUTE_DELIVERY_TRY_ALTERNATE || selected == NULL ?
-                        ROUTE_MAX_FAILURES :
-                        selected->failure_count;
-        delay_ms = mesh_relay_retry_backoff_ms(failure_count, random_value);
+        if (action == ROUTE_DELIVERY_TRY_ALTERNATE) {
+            delay_ms = 0u;
+        } else {
+            failure_count = selected == NULL ? ROUTE_RETRIES_PER_CANDIDATE :
+                            selected->failure_count;
+            delay_ms = mesh_relay_retry_backoff_ms(failure_count, random_value);
+        }
         relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
         relay->pending.next_hop_id = next_hop_id;
         relay->pending.retry_after_ms = now_ms + delay_ms;

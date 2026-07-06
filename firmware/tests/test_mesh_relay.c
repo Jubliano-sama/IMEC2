@@ -2249,6 +2249,8 @@ static void test_start_tx_accepts_aged_upstream_route_until_failures(void)
     mesh_relay_note_delivery_failure(&relay, GATEWAY);
     assert(route_selected(&relay.upstream) != NULL);
     mesh_relay_note_delivery_failure(&relay, GATEWAY);
+    assert(route_selected(&relay.upstream) != NULL);
+    mesh_relay_note_delivery_failure(&relay, GATEWAY);
     assert(route_selected(&relay.upstream) == NULL);
 }
 
@@ -3840,6 +3842,23 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
 
     now_ms += ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u;
     assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_NONE);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    assert(relay.pending.retry_after_ms == now_ms + route_retry_backoff_ms(3u));
+    assert(mesh_relay_tx_active(&relay));
+
+    now_ms = relay.pending.retry_after_ms;
+    assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_RETRANSMIT));
+    assert(result.retransmit.packet.message_age_ms ==
+           123u + ((ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u) * 3u) +
+           route_retry_backoff_ms(1u) + route_retry_backoff_ms(2u) +
+           route_retry_backoff_ms(3u));
+    assert(mesh_relay_tx_active(&relay));
+    mesh_relay_note_tx_sent(&relay, &result.retransmit, now_ms);
+
+    now_ms += ROUTE_GATEWAY_ACK_TIMEOUT_MS + 1u;
+    assert(mesh_relay_tick(&relay, now_ms, &result) == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     assert(!mesh_relay_tx_active(&relay));
     assert(route_selected(&relay.upstream) == NULL);
@@ -4377,9 +4396,11 @@ static void test_route_discovery_ready_resets_attempt_budget(void)
 
 static void test_retry_and_route_discovery_backoff_apply_jitter(void)
 {
-    assert(mesh_relay_retry_backoff_ms(1u, 0u) == 100u);
-    assert(mesh_relay_retry_backoff_ms(1u, 5u) == 105u);
-    assert(mesh_relay_retry_backoff_ms(2u, 7u) == 257u);
+    assert(mesh_relay_retry_backoff_ms(1u, 0u) == 1500u);
+    assert(mesh_relay_retry_backoff_ms(1u, 5u) == 1505u);
+    assert(mesh_relay_retry_backoff_ms(1u, 750u) == 2250u);
+    assert(mesh_relay_retry_backoff_ms(2u, 7u) == 3007u);
+    assert(mesh_relay_retry_backoff_ms(3u, 3000u) == 9000u);
     assert(mesh_relay_route_discovery_backoff_ms(1u, 0u) == 250u);
     assert(mesh_relay_route_discovery_backoff_ms(3u, 7u) == 1007u);
     assert(mesh_relay_route_discovery_backoff_ms(5u, 11u) == 4011u);
@@ -4421,11 +4442,13 @@ static void test_held_down_candidate_can_return_after_hold_down(void)
     assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
            ROUTE_DELIVERY_RETRY_CURRENT);
     assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
            ROUTE_DELIVERY_DISCOVER);
     assert(route_selected(&relay.upstream) == NULL);
 
     assert(route_expire_stale(&relay.upstream,
-                              2200u + ROUTE_PARENT_HOLDDOWN_MS + 1u,
+                              2300u + ROUTE_PARENT_HOLDDOWN_MS + 1u,
                               ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
     selected = route_selected(&relay.upstream);
     assert(selected != NULL);

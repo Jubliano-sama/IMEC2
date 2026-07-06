@@ -170,17 +170,21 @@ static void test_failures_try_alternate_then_discovery(void)
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
            ROUTE_DELIVERY_RETRY_CURRENT);
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
            ROUTE_DELIVERY_TRY_ALTERNATE);
 
     selected = route_selected(&table);
     assert(selected != NULL);
     assert(selected->next_hop_id == 0x03u);
 
-    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
-           ROUTE_DELIVERY_RETRY_CURRENT);
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2400u) ==
            ROUTE_DELIVERY_RETRY_CURRENT);
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2500u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2600u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2700u) ==
            ROUTE_DELIVERY_DISCOVER);
     assert(route_selected(&table) == NULL);
 }
@@ -222,11 +226,13 @@ static void test_parent_hold_down_recovers_without_age_expiry(void)
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
            ROUTE_DELIVERY_RETRY_CURRENT);
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
            ROUTE_DELIVERY_DISCOVER);
     assert(route_selected(&table) == NULL);
 
     assert(route_expire_stale(&table,
-                              2200u + ROUTE_PARENT_HOLDDOWN_MS + 1u,
+                              2300u + ROUTE_PARENT_HOLDDOWN_MS + 1u,
                               ROUTE_CANDIDATE_MAX_AGE_MS) == 0u);
     selected = route_selected(&table);
     assert(selected != NULL);
@@ -360,9 +366,10 @@ static void test_expired_capacity_update_only_clears_capacity_hint(void)
 
 static void test_retry_backoff_values(void)
 {
-    assert(route_retry_backoff_ms(1u) == 100u);
-    assert(route_retry_backoff_ms(2u) == 250u);
-    assert(route_retry_backoff_ms(3u) == 500u);
+    assert(route_retry_backoff_ms(1u) == 1500u);
+    assert(route_retry_backoff_ms(2u) == 3000u);
+    assert(route_retry_backoff_ms(3u) == 6000u);
+    assert(route_retry_backoff_ms(4u) == 6000u);
 }
 
 int main(void)

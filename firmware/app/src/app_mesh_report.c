@@ -185,6 +185,8 @@ static struct k_work_delayable mesh_c5_flood_work;
 static struct k_work_delayable mesh_route_discovery_work;
 static struct k_work_delayable gateway_route_adv_work;
 static uint32_t report_tx_backoff_until_ms;
+static uint32_t report_tx_retry_delay_override_ms;
+static bool report_tx_retry_delay_override_valid;
 static atomic_t mesh_rx_response_active_state;
 static atomic_t mesh_rx_handler_active_state;
 static K_MUTEX_DEFINE(mesh_rx_handler_lock);
@@ -1788,6 +1790,37 @@ static bool mesh_defer_active_collection_result(const char *reason)
 static bool mesh_send_failure_retryable(int ret)
 {
     return ret == -EIO || ret == -EBUSY || ret == -EAGAIN;
+}
+
+static const char *route_delivery_action_name(enum route_delivery_action action)
+{
+    switch (action) {
+    case ROUTE_DELIVERY_RETRY_CURRENT:
+        return "retry-current";
+    case ROUTE_DELIVERY_TRY_ALTERNATE:
+        return "try-alternate";
+    case ROUTE_DELIVERY_DISCOVER:
+        return "discover";
+    default:
+        return "unknown";
+    }
+}
+
+static void report_tx_set_retry_delay_override(uint32_t delay_ms)
+{
+    report_tx_retry_delay_override_ms = delay_ms;
+    report_tx_retry_delay_override_valid = true;
+}
+
+static uint32_t report_tx_consume_retry_delay_override(uint32_t default_delay_ms)
+{
+    uint32_t delay_ms = default_delay_ms;
+
+    if (report_tx_retry_delay_override_valid) {
+        delay_ms = report_tx_retry_delay_override_ms;
+        report_tx_retry_delay_override_valid = false;
+    }
+    return delay_ms;
 }
 
 static bool mesh_route_reply_handoff_applies(void)
@@ -5511,6 +5544,8 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
             if (ack_ret != 0) {
                 mesh_ch9_tx_pending_clear();
                 ret = -EAGAIN;
+            } else {
+                route_record_success_at(&mesh_runtime.upstream, k_uptime_get_32());
             }
         }
     }
@@ -5711,6 +5746,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
     uint32_t now_ms = k_uptime_get_32();
     uint32_t timing_reference_ms = now_ms;
     uint32_t route_reply_window_ms = MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS;
+    uint32_t route_random_value;
     bool embedded_route_sent = false;
     bool relay_required_route_req =
         IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ) &&
@@ -5771,6 +5807,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         }
     }
 
+    route_random_value = sys_rand32_get();
     ret = mesh_relay_prepare_route_request_with_timing_flags(&mesh_runtime,
                                                              target_id,
                                                              proposed_timing_ptr,
@@ -5778,7 +5815,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                                                              route_request_flags,
                                                              route_reply_rx_delay_ms,
                                                              now_ms,
-                                                             sys_rand32_get(),
+                                                             route_random_value,
                                                              &route_req);
     if (ret != PROTO_OK) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -5810,6 +5847,16 @@ int mesh_request_route(uint64_t target_id, const char *reason)
     }
     route_reply_window_ms = mesh_route_reply_listen_window_ms(route_req.packet.ttl);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        uint32_t route_backoff_ms =
+            uptime_ms_until_deadline(now_ms,
+                                     mesh_runtime.route_discovery.next_request_ms);
+
+        status_debug_printf("DBG_ROUTE_REQ_BACKOFF attempt=%u ttl=%u rand=%u delay=%u next=%u\n",
+                            mesh_runtime.route_discovery.attempts,
+                            route_req.packet.ttl,
+                            route_random_value,
+                            route_backoff_ms,
+                            mesh_runtime.route_discovery.next_request_ms);
         status_debug_printf("DBG_ROUTE_REPLY_WINDOW ttl=%u win=%u base=%u attempt=%u\n",
                             route_req.packet.ttl,
                             route_reply_window_ms,
@@ -6430,6 +6477,7 @@ static bool mesh_tx_can_wait_for_route(const struct mesh_outbound *out)
     }
 
     switch (out->packet.msg_type) {
+    case MSG_CLICK_REPORT:
     case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
     case MSG_GATEWAY_ACK:
@@ -6688,6 +6736,79 @@ void mesh_clear_route_waiting_tx(const struct proto_packet *packet)
 bool mesh_route_waiting_tx_active(void)
 {
     return mesh_route_waiting_tx_valid;
+}
+
+static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *tx,
+                                                   const char *reason,
+                                                   int tx_ret)
+{
+    const struct route_candidate *selected;
+    enum route_delivery_action action;
+    uint64_t next_hop_id = 0u;
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t random_value = sys_rand32_get();
+    uint32_t delay_ms = 0u;
+    uint32_t base_delay_ms = 0u;
+    uint8_t failure_count = 0u;
+    int select_ret = PROTO_ERR_NOT_FOUND;
+    int route_ret;
+
+    if (tx == NULL || tx->packet.dst_id != GATEWAY_ID) {
+        return tx_ret;
+    }
+
+    action = route_record_failure_at(&mesh_runtime.upstream,
+                                     ROUTE_FAILURE_GATEWAY_ACK,
+                                     now_ms);
+    if (action != ROUTE_DELIVERY_DISCOVER) {
+        select_ret = mesh_relay_select_next_hop(&mesh_runtime,
+                                                tx->packet.dst_id,
+                                                &next_hop_id);
+    }
+    if (action != ROUTE_DELIVERY_DISCOVER && select_ret == PROTO_OK) {
+        if (action == ROUTE_DELIVERY_RETRY_CURRENT) {
+            selected = route_selected(&mesh_runtime.upstream);
+            failure_count = selected == NULL ? 1u : selected->failure_count;
+            base_delay_ms = route_retry_backoff_ms(failure_count);
+            delay_ms = mesh_relay_retry_backoff_ms(failure_count,
+                                                   random_value);
+        }
+        mesh_relay_cancel_tx(&mesh_runtime);
+        app_mesh_persistence_clear_outbox();
+        report_tx_set_retry_delay_override(delay_ms);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DIRECT_GW_ROUTE_RETRY action=%s seq=%u ret=%d fail=%u base=%u rand=%u delay=%u now=%u next=%u current=0x%llx selected=0x%llx reason=%s\n",
+                                route_delivery_action_name(action),
+                                tx->packet.seq,
+                                tx_ret,
+                                failure_count,
+                                base_delay_ms,
+                                random_value,
+                                delay_ms,
+                                now_ms,
+                                now_ms + delay_ms,
+                                (unsigned long long)tx->next_hop_id,
+                                (unsigned long long)next_hop_id,
+                                reason == NULL ? "direct-gateway" : reason);
+        }
+        return -EAGAIN;
+    }
+
+    mesh_relay_cancel_tx(&mesh_runtime);
+    app_mesh_persistence_clear_outbox();
+    mesh_store_route_waiting_tx(tx);
+    route_ret = mesh_request_route(tx->packet.dst_id, reason);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_DIRECT_GW_ROUTE_REPAIR action=%s seq=%u ret=%d route_ret=%d now=%u current=0x%llx reason=%s\n",
+                            route_delivery_action_name(ROUTE_DELIVERY_DISCOVER),
+                            tx->packet.seq,
+                            tx_ret,
+                            route_ret,
+                            now_ms,
+                            (unsigned long long)tx->next_hop_id,
+                            reason == NULL ? "direct-gateway" : reason);
+    }
+    return route_ret == -ETIMEDOUT ? route_ret : -EHOSTUNREACH;
 }
 
 static int mesh_try_deferred_gateway_ack_on_channel9(const struct mesh_outbound *pending,
@@ -7220,6 +7341,15 @@ send_prepared:
                                channel9_next_hop_id,
                                &plan,
                                reason);
+        }
+        if (direct_gateway_tx_pending && ret == -EAGAIN) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CH9_TX_SINGLE_RETRYABLE ret=%d seq=%u\n",
+                                    ret,
+                                    tx.packet.seq);
+            }
+            app_mesh_test_note_report_tx_retryable(tx.packet.seq, ret);
+            return mesh_handle_direct_gateway_retry_policy(&tx, reason, ret);
         }
         if (channel9_success_pending && mesh_send_failure_retryable(ret)) {
             mesh_relay_cancel_tx(&mesh_runtime);
@@ -7822,11 +7952,15 @@ static void report_tx_work_handler(struct k_work *work)
     }
 
     if (ret == -EAGAIN) {
+        uint32_t retry_delay_ms =
+            report_tx_consume_retry_delay_override(
+                MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+
         LOG_WRN("queued gateway-bound report retrying after transient mesh TX failure");
         app_mesh_test_note_report_tx_backoff(outbound->packet.seq,
                                              ret,
-                                             MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
-        report_tx_schedule_backoff(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+                                             retry_delay_ms);
+        report_tx_schedule_backoff(retry_delay_ms,
                                    "report-tx-transient");
         return;
     }
