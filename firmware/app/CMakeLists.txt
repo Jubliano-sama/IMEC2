@@ -350,6 +350,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_test.c
     src/app_mesh_smoke_fast.c
     src/app_mesh_c5_priority.c
+    src/app_mesh_coordinator.c
     src/app_mesh_rx_policy.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c

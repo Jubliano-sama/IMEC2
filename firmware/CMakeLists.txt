@@ -89,6 +89,14 @@ target_include_directories(test_app_mesh_c5_priority PRIVATE app/src)
 target_link_libraries(test_app_mesh_c5_priority PRIVATE core)
 add_test(NAME app_mesh_c5_priority COMMAND test_app_mesh_c5_priority)
 
+add_executable(test_app_mesh_coordinator
+    tests/test_app_mesh_coordinator.c
+    app/src/app_mesh_coordinator.c
+)
+target_include_directories(test_app_mesh_coordinator PRIVATE app/src)
+target_link_libraries(test_app_mesh_coordinator PRIVATE core)
+add_test(NAME app_mesh_coordinator COMMAND test_app_mesh_coordinator)
+
 add_executable(test_app_mesh_flood
     tests/test_app_mesh_flood.c
     app/src/app_mesh_flood.c

@@ -6,6 +6,7 @@
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
 #include "app_mesh_c5_priority.h"
+#include "app_mesh_coordinator.h"
 #include "app_mesh_flood.h"
 #include "app_mesh_ch9_ack.h"
 #include "app_mesh_collection_deferral.h"
@@ -253,6 +254,7 @@ static struct mesh_outbound report_tx_batch_tx;
 static struct mesh_outbound report_tx_batch_dropped;
 static struct mesh_outbound report_tx_work_outbound;
 static struct mesh_outbound report_tx_work_dropped;
+static struct mesh_outbound report_tx_queue_overflow_dropped;
 static struct mesh_relay_result mesh_work_result;
 static struct mesh_outbound mesh_tx_timeout_pending_waiting;
 static struct mesh_outbound mesh_tx_timeout_pending_report;
@@ -273,6 +275,8 @@ static uint8_t mesh_route_wake_frame_scratch[MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX
 static K_MUTEX_DEFINE(mesh_route_wait_scratch_lock);
 static struct mesh_outbound mesh_route_waiting_tx_scratch;
 static struct mesh_outbound mesh_deferred_gateway_ack_scratch;
+static struct app_mesh_paused_delivery_state mesh_paused_delivery;
+static K_MUTEX_DEFINE(report_tx_queue_overflow_lock);
 static K_MUTEX_DEFINE(mesh_c5_control_scratch_lock);
 static struct mesh_outbound mesh_c5_control_scratch_tx;
 static K_MUTEX_DEFINE(mesh_route_reply_scratch_lock);
@@ -729,6 +733,69 @@ static bool mesh_defer_for_click_priority(const char *reason)
                             reason == NULL ? "mesh" : reason);
     }
     return true;
+}
+
+static bool mesh_outbound_reports_local_delivery_loss(const struct mesh_outbound *out)
+{
+    if (out == NULL || out->packet.src_id != DEVICE_ID ||
+        out->packet.dst_id == MESH_BROADCAST_ID) {
+        return false;
+    }
+
+    switch (out->packet.msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_SURVEY_REACH_REPORT:
+    case MSG_SURVEY_PAIR_RESULT:
+    case MSG_SURVEY_DISCOVERY_REPORT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void mesh_attach_paused_delivery_loss(struct mesh_outbound *out,
+                                             const char *reason)
+{
+    struct app_mesh_paused_delivery_attach_result result;
+    int ret;
+
+    if (!mesh_outbound_reports_local_delivery_loss(out) ||
+        app_mesh_paused_delivery_lost_count(&mesh_paused_delivery) == 0u) {
+        return;
+    }
+
+    ret = app_mesh_paused_delivery_attach_loss(&mesh_paused_delivery, out, &result);
+    if (ret == PROTO_OK) {
+        high_debug_log_event("MESH_PAUSED_DELIVERY",
+                             "phase=loss-tlv msg=0x%02x dst=0x%016llx seq=%u lost=%u reason=%s",
+                             out->packet.msg_type,
+                             (unsigned long long)out->packet.dst_id,
+                             out->packet.seq,
+                             result.lost_count,
+                             reason == NULL ? "mesh" : reason);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_MESH_LOSS_TLV msg=0x%02x seq=%u lost=%u attach=%u update=%u reason=%s\n",
+                                out->packet.msg_type,
+                                out->packet.seq,
+                                result.lost_count,
+                                result.tlv_attached ? 1u : 0u,
+                                result.tlv_updated ? 1u : 0u,
+                                reason == NULL ? "mesh" : reason);
+        }
+        return;
+    }
+
+    LOG_WRN("mesh paused-delivery loss TLV not attached: msg=0x%02x seq=%u lost=%u ret=%d reason=%s",
+            out->packet.msg_type,
+            out->packet.seq,
+            result.lost_count,
+            ret,
+            reason == NULL ? "mesh" : reason);
 }
 
 static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)
@@ -6295,6 +6362,7 @@ static void mesh_wait_until_ms(uint32_t target_ms)
 static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
 {
     struct mesh_outbound waiting;
+    struct app_mesh_paused_delivery_store_result store_result;
 
     if (!mesh_tx_can_wait_for_route(out)) {
         return;
@@ -6304,6 +6372,30 @@ static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
     if (waiting.queued_at_ms == 0u) {
         waiting.queued_at_ms = k_uptime_get_32();
     }
+    app_mesh_paused_delivery_note_store(&mesh_paused_delivery,
+                                        mesh_route_waiting_tx_valid,
+                                        &mesh_route_waiting_tx,
+                                        &waiting,
+                                        &store_result);
+    if (store_result.replaced_existing) {
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
+        high_debug_log_event("MESH_PAUSED_DELIVERY",
+                             "phase=replace old_msg=0x%02x old_dst=0x%016llx old_seq=%u new_msg=0x%02x new_dst=0x%016llx new_seq=%u lost=%u",
+                             mesh_route_waiting_tx.packet.msg_type,
+                             (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
+                             mesh_route_waiting_tx.packet.seq,
+                             waiting.packet.msg_type,
+                             (unsigned long long)waiting.packet.dst_id,
+                             waiting.packet.seq,
+                             store_result.lost_count);
+        LOG_WRN("mesh paused delivery replaced older packet: old_msg=0x%02x old_seq=%u new_msg=0x%02x new_seq=%u lost=%u",
+                mesh_route_waiting_tx.packet.msg_type,
+                mesh_route_waiting_tx.packet.seq,
+                waiting.packet.msg_type,
+                waiting.packet.seq,
+                store_result.lost_count);
+    }
+    mesh_attach_paused_delivery_loss(&waiting, "route-wait-store");
     mesh_route_waiting_tx = waiting;
     mesh_route_waiting_tx_valid = true;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -6319,23 +6411,34 @@ static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
 
 static void mesh_drop_route_waiting_tx(const char *reason)
 {
+    struct app_mesh_paused_delivery_store_result drop_result;
+
     if (!mesh_route_waiting_tx_valid) {
         return;
     }
 
+    app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
+
     high_debug_log_event("MESH_ROUTE_WAIT_DROP",
-                         "reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u",
+                         "reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u lost=%u",
                          reason == NULL ? "drop" : reason,
                          mesh_route_waiting_tx.packet.msg_type,
                          (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
                          mesh_route_waiting_tx.packet.seq,
-                         mesh_runtime.route_discovery.attempts);
-    LOG_WRN("mesh route waiting packet dropped: reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u",
+                         mesh_runtime.route_discovery.attempts,
+                         drop_result.lost_count);
+    LOG_WRN("mesh route waiting packet dropped: reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u lost=%u",
             reason == NULL ? "drop" : reason,
             mesh_route_waiting_tx.packet.msg_type,
             (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
             mesh_route_waiting_tx.packet.seq,
-            mesh_runtime.route_discovery.attempts);
+            mesh_runtime.route_discovery.attempts,
+            drop_result.lost_count);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ROUTE_WAIT_DROP_LOST lost=%u reason=%s\n",
+                            drop_result.lost_count,
+                            reason == NULL ? "drop" : reason);
+    }
     mesh_route_reply_handoff_clear("route-wait-drop");
     mesh_route_waiting_tx_valid = false;
 }
@@ -6614,6 +6717,7 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
     aged_out = *out;
     now_ms = k_uptime_get_32();
     mesh_outbound_refresh_age(&aged_out, now_ms);
+    mesh_attach_paused_delivery_loss(&aged_out, reason);
 
     if (mesh_outbound_needs_result_offer(&aged_out)) {
         ret = mesh_relay_start_result_offer(&mesh_runtime,
@@ -6887,6 +6991,7 @@ send_prepared:
     }
 
     mesh_relay_note_tx_sent(&mesh_runtime, &tx, k_uptime_get_32());
+    app_mesh_paused_delivery_note_sent(&mesh_paused_delivery, &tx);
     (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
     if (channel9_success_pending) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -7224,6 +7329,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
 
         (void)k_msgq_get(&report_tx_msgq, dropped, K_NO_WAIT);
         mesh_relay_note_tx_sent(&mesh_runtime, tx, k_uptime_get_32());
+        app_mesh_paused_delivery_note_sent(&mesh_paused_delivery, tx);
         if (mesh_ch9_tx_pending_track_sent(tx, deadline_ms)) {
             ack_wait_started = true;
         }
@@ -7324,6 +7430,7 @@ static void report_tx_work_handler(struct k_work *work)
 {
     struct mesh_outbound *outbound = &report_tx_work_outbound;
     struct mesh_outbound *dropped = &report_tx_work_dropped;
+    struct app_mesh_coordinator_decision coordinator_decision;
     bool anchor_busy;
     bool survey_busy;
     bool relay_tx_active;
@@ -7351,8 +7458,19 @@ static void report_tx_work_handler(struct k_work *work)
     rx_queue_pending = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                        k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
     route_handoff_active = mesh_route_reply_handoff_active();
-    if (anchor_busy || survey_busy || relay_tx_active || ch9_ack_wait_active ||
-        route_waiting_active || rx_queue_pending || route_handoff_active) {
+    app_mesh_coordinator_decide(
+        &(const struct app_mesh_coordinator_inputs) {
+            .click_priority = anchor_busy,
+            .survey_pending = survey_busy,
+            .rx_queue_pending = rx_queue_pending,
+            .relay_tx_active = relay_tx_active,
+            .route_waiting_tx_active = route_waiting_active,
+            .ch9_ack_wait_active = ch9_ack_wait_active,
+            .report_queue_pending = report_queue_pending,
+        },
+        &coordinator_decision);
+    if (anchor_busy || !coordinator_decision.report_tx_allowed ||
+        route_handoff_active) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             report_queue_pending) {
             if (anchor_busy) {
@@ -7444,17 +7562,62 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
 
     queued = *outbound;
     queued.queued_at_ms = k_uptime_get_32();
+    mesh_attach_paused_delivery_loss(&queued, "queue-anchor-report");
 
     ret = k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT);
     if (ret != 0) {
+        struct app_mesh_paused_delivery_store_result drop_result;
+        int lock_ret;
+
+        lock_ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_NO_WAIT);
+        if (lock_ret == 0) {
+            ret = k_msgq_get(&report_tx_msgq,
+                             &report_tx_queue_overflow_dropped,
+                             K_NO_WAIT);
+            if (ret == 0) {
+                app_mesh_paused_delivery_note_drop(&mesh_paused_delivery,
+                                                   &drop_result);
+                mesh_attach_paused_delivery_loss(&queued,
+                                                 "queue-anchor-report-replace");
+                ret = k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT);
+                if (ret == 0) {
+                    HIGH_DEBUG_COUNTER_INC(mesh_drop);
+                    high_debug_log_event("ANCHOR_REPORT_QUEUE",
+                                         "phase=replace-oldest old_msg=0x%02x old_seq=%u new_msg=0x%02x new_seq=%u lost=%u queue_depth=%u",
+                                         report_tx_queue_overflow_dropped.packet.msg_type,
+                                         report_tx_queue_overflow_dropped.packet.seq,
+                                         queued.packet.msg_type,
+                                         queued.packet.seq,
+                                         drop_result.lost_count,
+                                         k_msgq_num_used_get(&report_tx_msgq));
+                    LOG_WRN("anchor report queue full; replaced oldest report: old_msg=0x%02x old_seq=%u new_msg=0x%02x new_seq=%u lost=%u",
+                            report_tx_queue_overflow_dropped.packet.msg_type,
+                            report_tx_queue_overflow_dropped.packet.seq,
+                            queued.packet.msg_type,
+                            queued.packet.seq,
+                            drop_result.lost_count);
+                    k_mutex_unlock(&report_tx_queue_overflow_lock);
+                    ret = 0;
+                    goto queued;
+                }
+            }
+            k_mutex_unlock(&report_tx_queue_overflow_lock);
+        }
+
+        app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
         HIGH_DEBUG_COUNTER_INC(mesh_drop);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_note("DBG_REPORT_QUEUE_FULL\n");
+            status_debug_printf("DBG_REPORT_QUEUE_FULL lost=%u lock=%d ret=%d\n",
+                                drop_result.lost_count,
+                                lock_ret,
+                                ret);
         }
-        LOG_WRN("anchor report queue full; gateway-bound report dropped");
+        LOG_WRN("anchor report queue full; gateway-bound report dropped: lost=%u",
+                drop_result.lost_count);
         return -ENOSPC;
     }
 
+queued:
     high_debug_log_event("ANCHOR_REPORT_QUEUE",
                          "msg=0x%02x dst=0x%016llx seq=%u earliest_tx_ms=%u queue_depth=%u",
                          queued.packet.msg_type,
@@ -9615,6 +9778,7 @@ void build_uwb_schedule_report_if_relevant(
 int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
 {
     mesh_report_callbacks = callbacks;
+    app_mesh_paused_delivery_reset(&mesh_paused_delivery);
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     k_work_queue_start(&mesh_route_work_q,
