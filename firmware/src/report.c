@@ -390,6 +390,7 @@ int report_init_range_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = REPORT_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -415,6 +416,7 @@ int report_init_anchor_heartbeat_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = REPORT_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -456,5 +458,6 @@ int report_init_self_test_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = REPORT_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }

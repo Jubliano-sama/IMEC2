@@ -25,6 +25,7 @@ struct route_discovery_fields {
     uint8_t quality;
     uint8_t relay_capacity_state;
     uint8_t channel9_busy_hint;
+    uint8_t request_flags;
     bool proposed_channel9_timing_valid;
 };
 
@@ -446,12 +447,22 @@ static int append_route_discovery_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (fields->request_flags != 0u) {
+        ret = tlv_append_u8(payload,
+                            payload_cap,
+                            offset,
+                            TLV_ROUTE_REQUEST_FLAGS,
+                            fields->request_flags);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     if (fields->proposed_channel9_timing_valid) {
-        ret = mesh_append_event_timing_tlvs_at(payload,
-                                               payload_cap,
-                                               offset,
-                                               &fields->proposed_channel9_timing,
-                                               fields->timing_reference_ms);
+        ret = mesh_append_compact_event_timing_tlvs_at(payload,
+                                                       payload_cap,
+                                                       offset,
+                                                       &fields->proposed_channel9_timing,
+                                                       fields->timing_reference_ms);
         if (ret != PROTO_OK) {
             return ret;
         }
@@ -2508,7 +2519,7 @@ static int build_forward(const struct mesh_relay *relay,
     uint64_t next_hop_id = 0u;
     int ret;
 
-    if (packet->ttl == 0u) {
+    if (packet->ttl <= 1u) {
         return PROTO_ERR_STALE;
     }
     ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
@@ -3023,6 +3034,15 @@ static int parse_route_discovery_tlvs(const uint8_t *payload,
     } else if (ret != PROTO_OK) {
         return ret;
     }
+    ret = find_u8_tlv(payload, payload_len, TLV_ROUTE_REQUEST_FLAGS, &fields->request_flags);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        fields->request_flags = 0u;
+    } else if (ret != PROTO_OK) {
+        return ret;
+    }
+    if ((fields->request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
     ret = find_u16_tlv(payload, payload_len, TLV_REPLY_NONCE, &fields->reply_nonce);
     if (ret == PROTO_ERR_NOT_FOUND) {
         fields->reply_nonce = 0u;
@@ -3375,7 +3395,7 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     size_t out_payload_len = 0u;
     int ret;
 
-    if (packet->ttl == 0u) {
+    if (packet->ttl <= 1u) {
         return PROTO_ERR_STALE;
     }
 
@@ -3480,11 +3500,11 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
-static int build_route_request_forward(const struct proto_packet *packet,
+static int build_route_request_forward(const struct mesh_relay *relay,
+                                       const struct proto_packet *packet,
                                        const uint8_t *payload,
                                        size_t payload_len,
                                        uint8_t link_quality,
-                                       uint64_t local_id,
                                        uint32_t now_ms,
                                        struct mesh_outbound *out)
 {
@@ -3492,7 +3512,11 @@ static int build_route_request_forward(const struct proto_packet *packet,
     size_t out_payload_len = 0u;
     int ret;
 
-    if (packet->ttl == 0u) {
+    if (relay == NULL || packet == NULL || out == NULL ||
+        !id_is_unicast(relay->local_id)) {
+        return PROTO_ERR_ARG;
+    }
+    if (packet->ttl <= 1u) {
         return PROTO_ERR_STALE;
     }
 
@@ -3524,10 +3548,10 @@ static int build_route_request_forward(const struct proto_packet *packet,
     out->packet.ttl = packet->ttl - 1u;
     out->packet.payload_len = (uint16_t)out_payload_len;
     out->payload_len = (uint16_t)out_payload_len;
+    out->queued_at_ms = now_ms;
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-    out->queued_at_ms = now_ms;
-    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(local_id,
+    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(relay->local_id,
                                                           fields.slot_seed,
                                                           fields.hop_count);
     return PROTO_OK;
@@ -3562,6 +3586,7 @@ static int build_route_reply(struct mesh_relay *relay,
     fields.channel9_busy_hint = relay_active_channel9_timing_count(relay);
     fields.capacity_validity_interval_ms =
         relay_current_capacity_validity_interval_ms(relay);
+    fields.request_flags = 0u;
     fields.reply_nonce = route_reply_nonce(fields.origin_id,
                                            fields.target_id,
                                            session_id,
@@ -3667,12 +3692,17 @@ static int handle_route_request(struct mesh_relay *relay,
                                 uint64_t previous_hop_id,
                                 uint8_t link_quality,
                                 uint32_t now_ms,
-                                struct mesh_relay_result *result)
+                                struct mesh_relay_result *result,
+                                bool duplicate_packet)
 {
     struct route_discovery_fields fields = {0};
     struct flood_seen_entry *flood_entry;
+    const struct flood_seen_entry *existing_flood_entry;
+    const struct route_candidate *selected = NULL;
+    uint64_t prior_best_previous_hop = 0u;
     bool flood_first_seen = false;
     bool forward_allowed;
+    bool duplicate_suppressed;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
@@ -3695,8 +3725,20 @@ static int handle_route_request(struct mesh_relay *relay,
         fields.flood_epoch_id == 0u) {
         return PROTO_ERR_MALFORMED;
     }
+    if (relay->role == MESH_RELAY_ROLE_GATEWAY &&
+        fields.target_id == relay->local_id &&
+        (fields.request_flags & MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u &&
+        (fields.hop_count == 0u || previous_hop_id == fields.origin_id)) {
+        return PROTO_ERR_STALE;
+    }
 
     fields.quality = combined_quality(fields.quality, link_quality);
+    existing_flood_entry = flood_seen_find_route_solicit(relay,
+                                                         &fields,
+                                                         packet->session_id);
+    if (existing_flood_entry != NULL) {
+        prior_best_previous_hop = existing_flood_entry->best_previous_hop;
+    }
     flood_entry = route_solicit_flood_note(relay,
                                            &fields,
                                            packet->session_id,
@@ -3704,6 +3746,7 @@ static int handle_route_request(struct mesh_relay *relay,
                                            now_ms,
                                            &flood_first_seen);
     forward_allowed = route_solicit_forward_allowed(flood_entry);
+    duplicate_suppressed = !flood_first_seen && !forward_allowed;
     ret = upsert_reactive_route(relay,
                                 fields.origin_id,
                                 previous_hop_id,
@@ -3730,14 +3773,10 @@ static int handle_route_request(struct mesh_relay *relay,
             NULL);
     }
 
-    if (!flood_first_seen && !forward_allowed) {
-        relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
-        return PROTO_ERR_STALE;
-    }
+    selected = route_selected(&relay->upstream);
 
     if (fields.target_id == relay->local_id ||
-        (fields.target_id == relay->gateway_id && route_selected(&relay->upstream) != NULL)) {
-        const struct route_candidate *selected = route_selected(&relay->upstream);
+        (fields.target_id == relay->gateway_id && selected != NULL)) {
         uint32_t reply_epoch = fields.route_epoch;
 
         if (selected != NULL && selected->route_epoch > reply_epoch) {
@@ -3759,7 +3798,18 @@ static int handle_route_request(struct mesh_relay *relay,
             return ret;
         }
     }
+    if (duplicate_packet || duplicate_suppressed) {
+        bool reply_allowed =
+            prior_best_previous_hop == previous_hop_id &&
+            (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u;
 
+        relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
+        if (reply_allowed) {
+            return PROTO_OK;
+        }
+        result->actions &= ~MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
+        return PROTO_ERR_STALE;
+    }
     if (mesh_relay_tx_active(relay)) {
         if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u) {
             return PROTO_OK;
@@ -3768,11 +3818,11 @@ static int handle_route_request(struct mesh_relay *relay,
         return PROTO_ERR_BUSY;
     }
 
-    ret = build_route_request_forward(packet,
+    ret = build_route_request_forward(relay,
+                                      packet,
                                       payload,
                                       payload_len,
                                       link_quality,
-                                      relay->local_id,
                                       now_ms,
                                       &result->route_request);
     if (ret == PROTO_OK) {
@@ -4301,15 +4351,16 @@ uint8_t mesh_relay_expire_channel9_timings(struct mesh_relay *relay,
     return expired;
 }
 
-int mesh_relay_build_route_request_with_timing(
+int mesh_relay_build_route_request_with_timing_flags(
     struct mesh_relay *relay,
     uint64_t target_id,
     const struct mesh_event_timing *proposed_channel9_timing,
     uint32_t timing_reference_ms,
+    uint8_t request_flags,
     struct mesh_outbound *out,
     uint32_t now_ms)
 {
-    struct route_discovery_fields fields;
+    struct route_discovery_fields fields = {0};
     uint32_t route_epoch;
     uint32_t session_id;
     size_t payload_len = 0u;
@@ -4318,7 +4369,8 @@ int mesh_relay_build_route_request_with_timing(
     if (relay == NULL || out == NULL ||
         !id_is_unicast(relay->local_id) ||
         !id_is_unicast(target_id) ||
-        target_id == relay->local_id) {
+        target_id == relay->local_id ||
+        (request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
         return PROTO_ERR_ARG;
     }
 
@@ -4347,6 +4399,7 @@ int mesh_relay_build_route_request_with_timing(
     fields.channel9_busy_hint = relay_active_channel9_timing_count(relay);
     fields.capacity_validity_interval_ms =
         relay_current_capacity_validity_interval_ms(relay);
+    fields.request_flags = request_flags;
     if (proposed_channel9_timing != NULL) {
         fields.proposed_channel9_timing = *proposed_channel9_timing;
         fields.proposed_channel9_timing_valid = true;
@@ -4381,6 +4434,23 @@ int mesh_relay_build_route_request_with_timing(
     out->queued_at_ms = now_ms;
     out->earliest_tx_ms = now_ms;
     return PROTO_OK;
+}
+
+int mesh_relay_build_route_request_with_timing(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    struct mesh_outbound *out,
+    uint32_t now_ms)
+{
+    return mesh_relay_build_route_request_with_timing_flags(relay,
+                                                            target_id,
+                                                            proposed_channel9_timing,
+                                                            timing_reference_ms,
+                                                            0u,
+                                                            out,
+                                                            now_ms);
 }
 
 int mesh_relay_build_route_request(struct mesh_relay *relay,
@@ -4454,11 +4524,12 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
-int mesh_relay_prepare_route_request_with_timing(
+int mesh_relay_prepare_route_request_with_timing_flags(
     struct mesh_relay *relay,
     uint64_t target_id,
     const struct mesh_event_timing *proposed_channel9_timing,
     uint32_t timing_reference_ms,
+    uint8_t request_flags,
     uint32_t now_ms,
     uint32_t random_value,
     struct mesh_outbound *out)
@@ -4468,7 +4539,8 @@ int mesh_relay_prepare_route_request_with_timing(
 
     if (relay == NULL || out == NULL ||
         !id_is_unicast(target_id) ||
-        target_id == relay->local_id) {
+        target_id == relay->local_id ||
+        (request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
         return PROTO_ERR_ARG;
     }
 
@@ -4487,12 +4559,13 @@ int mesh_relay_prepare_route_request_with_timing(
         return PROTO_ERR_BUSY;
     }
 
-    ret = mesh_relay_build_route_request_with_timing(relay,
-                                                     target_id,
-                                                     proposed_channel9_timing,
-                                                     timing_reference_ms,
-                                                     out,
-                                                     now_ms);
+    ret = mesh_relay_build_route_request_with_timing_flags(relay,
+                                                           target_id,
+                                                           proposed_channel9_timing,
+                                                           timing_reference_ms,
+                                                           request_flags,
+                                                           out,
+                                                           now_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -4503,6 +4576,25 @@ int mesh_relay_prepare_route_request_with_timing(
                                                      random_value);
     relay->route_discovery.next_request_ms = now_ms + delay_ms;
     return PROTO_OK;
+}
+
+int mesh_relay_prepare_route_request_with_timing(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_outbound *out)
+{
+    return mesh_relay_prepare_route_request_with_timing_flags(relay,
+                                                              target_id,
+                                                              proposed_channel9_timing,
+                                                              timing_reference_ms,
+                                                              0u,
+                                                              now_ms,
+                                                              random_value,
+                                                              out);
 }
 
 int mesh_relay_prepare_route_request(struct mesh_relay *relay,
@@ -5627,6 +5719,23 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
             result->status = PROTO_ERR_STALE;
             return PROTO_OK;
         }
+        if (packet->msg_type == MSG_ROUTE_REQ &&
+            packet->dst_id == MESH_BROADCAST_ID) {
+            ret = handle_route_request(relay,
+                                       packet,
+                                       payload,
+                                       payload_len,
+                                       previous_hop_id,
+                                       link_quality,
+                                       now_ms,
+                                       result,
+                                       true);
+            if (ret != PROTO_OK) {
+                result->status = ret;
+                result->actions |= MESH_RELAY_ACTION_DROP;
+            }
+            return PROTO_OK;
+        }
         if (packet->dst_id == MESH_BROADCAST_ID) {
             relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
             result->actions |= MESH_RELAY_ACTION_DROP;
@@ -5679,7 +5788,8 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                                    previous_hop_id,
                                    link_quality,
                                    now_ms,
-                                   result);
+                                   result,
+                                   false);
         if (ret != PROTO_OK) {
             result->status = ret;
             result->actions |= MESH_RELAY_ACTION_DROP;

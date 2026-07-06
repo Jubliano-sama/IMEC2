@@ -84,6 +84,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
 )
 set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile")
 set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test")
+set(IMEC_GATEWAY_BLE_RANGE_SCANNER OFF CACHE BOOL "Build the gateway BLE connectivity test as a passive range scanner")
 set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant")
 set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant")
 set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
@@ -239,6 +240,17 @@ if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/gateway-ble-connectivity-test.conf")
     list(APPEND EXTRA_DTC_OVERLAY_FILE
         "${CMAKE_CURRENT_LIST_DIR}/overlays/gateway-ble-connectivity-test.overlay")
+    if(IMEC_GATEWAY_BLE_RANGE_SCANNER)
+        set(IMEC_GATEWAY_BLE_RANGE_SCANNER_CONF
+            "${CMAKE_CURRENT_BINARY_DIR}/imec-gateway-ble-range-scanner.conf")
+        file(WRITE "${IMEC_GATEWAY_BLE_RANGE_SCANNER_CONF}"
+            "CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER=y\n"
+            "CONFIG_BT_DEVICE_NAME=\"IMEC BLE Range Scanner\"\n")
+        list(APPEND EXTRA_CONF_FILE "${IMEC_GATEWAY_BLE_RANGE_SCANNER_CONF}")
+    endif()
+elseif(IMEC_GATEWAY_BLE_RANGE_SCANNER)
+    message(FATAL_ERROR
+        "IMEC_GATEWAY_BLE_RANGE_SCANNER is only valid with gateway_ble_connectivity_test")
 endif()
 
 if(IMEC_ML_BUILD AND IMEC_PRESET_EXTRA_CONF)
@@ -278,7 +290,7 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
     set(IMEC_MESH_ROUTE_TEST_NAME_CONF
         "${CMAKE_CURRENT_BINARY_DIR}/imec-mesh-route-test-name.conf")
     file(WRITE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}" "")
-    if(NOT IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
+    if(FIRMWARE_ROLE STREQUAL "gateway" AND NOT IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             "CONFIG_BT=y\n"
             "CONFIG_BT_PERIPHERAL=y\n"
@@ -299,6 +311,7 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER=y\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n"
             "CONFIG_MESH_SMOKE_FAST_TX=y\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS=1000\n"
             "CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT=8\n"
@@ -337,6 +350,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_test.c
     src/app_mesh_smoke_fast.c
     src/app_mesh_c5_priority.c
+    src/app_mesh_rx_policy.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c

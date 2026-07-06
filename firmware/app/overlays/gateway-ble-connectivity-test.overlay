@@ -42,7 +42,7 @@
 };
 
 &status0_green {
-    status = "disabled";
+    status = "okay";
 };
 
 &status0_blue {

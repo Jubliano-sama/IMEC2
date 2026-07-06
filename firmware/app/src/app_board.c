@@ -260,6 +260,27 @@ static void status1_debug_pulse(bool red, bool green, bool blue)
                             K_MSEC(DEBUG_LED_PULSE_MS));
 }
 
+static bool anchor_route_test_activity_leds_enabled(void)
+{
+    return DEVICE_ROLE == ROLE_ANCHOR &&
+           IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+           !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER);
+}
+
+static void status1_debug_channel_pulse(uint8_t uwb_channel)
+{
+    if (uwb_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        status1_debug_pulse(false, true, false);
+    } else if (anchor_route_test_activity_leds_enabled() &&
+               uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
+        status1_debug_pulse(true, false, false);
+    } else if (uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
+        status1_debug_pulse(false, false, true);
+    } else {
+        status1_debug_pulse(true, false, false);
+    }
+}
+
 static void debug_rtt_write(const char *text)
 {
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -314,13 +335,13 @@ void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
     }
 
     if (uwb_channel == 9u) {
-        status1_debug_pulse(false, true, false);
+        status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_CH9\n");
     } else if (uwb_channel == 5u) {
-        status1_debug_pulse(false, false, true);
+        status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_CH5\n");
     } else {
-        status1_debug_pulse(true, false, false);
+        status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_UNKNOWN_CH\n");
     }
 }
@@ -332,13 +353,13 @@ void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel)
     }
 
     if (uwb_channel == 9u) {
-        status1_debug_pulse(false, true, false);
+        status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_TX_CH9\n");
     } else if (uwb_channel == 5u) {
-        status1_debug_pulse(false, false, true);
+        status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_TX_CH5\n");
     } else {
-        status1_debug_pulse(true, false, false);
+        status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_TX_UNKNOWN_CH\n");
     }
 }
@@ -366,6 +387,17 @@ void status_debug_gateway_boot_test(void)
     ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
     status0_power_red_on = true;
     status_led0_set(true, false, false);
+}
+
+void status_debug_anchor_boot_test(void)
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        return;
+    }
+
+    status_led0_set(false, false, true);
 }
 
 void status_debug_tx_packet_sent_pulse(void)

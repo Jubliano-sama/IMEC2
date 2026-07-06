@@ -130,6 +130,7 @@ int dwm3000_driver_probe(uint32_t *dev_id);
 int dwm3000_driver_configure_default(void);
 int dwm3000_driver_configure_range_mode(void);
 int dwm3000_driver_configure_mesh_payload_mode(void);
+int dwm3000_driver_configure_wake_mesh_control_mode(void);
 int dwm3000_driver_configure_wake_mode(void);
 int dwm3000_driver_idle(void);
 int dwm3000_driver_standby(void);
@@ -149,6 +150,13 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                           uint8_t *quality,
                                           int8_t *rsl_dbm,
                                           enum dwm3000_rx_failure *failure);
+int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
+                                                uint8_t *frame,
+                                                size_t frame_cap,
+                                                size_t *frame_len,
+                                                uint8_t *quality,
+                                                int8_t *rsl_dbm,
+                                                enum dwm3000_rx_failure *failure);
 int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                             uint8_t *frame,
                                             size_t frame_cap,

@@ -1,6 +1,7 @@
 #include "app_gateway_ble.h"
 
 #include "app_anchor.h"
+#include "app_board.h"
 #include "app_config.h"
 #include "app_gateway_collection_eack.h"
 #include "app_gateway_eack_policy.h"
@@ -53,6 +54,157 @@ uint16_t gateway_next_command_seq(void)
     }
     return gateway_command_seq;
 }
+
+#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST) && defined(CONFIG_BT)
+#define BLE_RANGE_ADV_INTERVAL_MIN_UNITS 0x00a0u
+#define BLE_RANGE_ADV_INTERVAL_MAX_UNITS 0x00a0u
+#define BLE_RANGE_SCAN_INTERVAL_UNITS 0x0060u
+#define BLE_RANGE_SCAN_WINDOW_UNITS 0x0060u
+#define BLE_RANGE_LED_HOLD_MS 1000u
+#define BLE_RANGE_LED_POLL_MS 50u
+
+static const uint8_t gateway_ble_range_marker[] = {
+    0xff, 0xff, 'I', 'M', 'E', 'C', 'R', 'N', 'G', 0x01
+};
+static const char gateway_ble_range_name[] = "IMEC BLE Range";
+
+static struct k_work_delayable gateway_ble_range_led_work;
+static uint32_t gateway_ble_range_last_seen_ms;
+
+static int gateway_ble_range_enable(void)
+{
+    int ret = bt_enable(NULL);
+
+    LOG_INF("BLE range bt_enable completed: ret=%d", ret);
+    if (ret != 0 && ret != -EALREADY) {
+        LOG_ERR("BLE range init failed: %d", ret);
+        return ret;
+    }
+    return 0;
+}
+
+static int gateway_ble_range_start_advertiser(void)
+{
+    const struct bt_le_adv_param adv_param = {
+        .id = BT_ID_DEFAULT,
+        .sid = 0u,
+        .secondary_max_skip = 0u,
+        .options = BT_LE_ADV_OPT_USE_IDENTITY,
+        .interval_min = BLE_RANGE_ADV_INTERVAL_MIN_UNITS,
+        .interval_max = BLE_RANGE_ADV_INTERVAL_MAX_UNITS,
+        .peer = NULL,
+    };
+    const struct bt_data ad[] = {
+        BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+        BT_DATA(BT_DATA_MANUFACTURER_DATA,
+                gateway_ble_range_marker,
+                sizeof(gateway_ble_range_marker)),
+        BT_DATA(BT_DATA_NAME_COMPLETE,
+                gateway_ble_range_name,
+                sizeof(gateway_ble_range_name) - 1u),
+    };
+    int ret;
+
+    ret = gateway_ble_range_enable();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
+    LOG_INF("BLE range advertiser start: ret=%d name=%s interval_units=%u",
+            ret,
+            gateway_ble_range_name,
+            BLE_RANGE_ADV_INTERVAL_MIN_UNITS);
+    return ret;
+}
+
+static bool gateway_ble_range_parse_ad(struct bt_data *data, void *user_data)
+{
+    bool *matched = user_data;
+
+    if (data->type == BT_DATA_MANUFACTURER_DATA &&
+        data->data_len == sizeof(gateway_ble_range_marker) &&
+        memcmp(data->data,
+               gateway_ble_range_marker,
+               sizeof(gateway_ble_range_marker)) == 0) {
+        *matched = true;
+        return false;
+    }
+    return true;
+}
+
+static void gateway_ble_range_led_work_handler(struct k_work *work)
+{
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t last_seen_ms = gateway_ble_range_last_seen_ms;
+    uint32_t age_ms = now_ms - last_seen_ms;
+    bool seen_recently = last_seen_ms != 0u && age_ms < BLE_RANGE_LED_HOLD_MS;
+
+    ARG_UNUSED(work);
+
+    status_led0_set(false, seen_recently, false);
+    (void)k_work_reschedule(&gateway_ble_range_led_work,
+                            K_MSEC(BLE_RANGE_LED_POLL_MS));
+}
+
+static void gateway_ble_range_scan_cb(const bt_addr_le_t *addr,
+                                      int8_t rssi,
+                                      uint8_t adv_type,
+                                      struct net_buf_simple *buf)
+{
+    bool matched = false;
+
+    ARG_UNUSED(addr);
+    ARG_UNUSED(adv_type);
+
+    bt_data_parse(buf, gateway_ble_range_parse_ad, &matched);
+    if (!matched) {
+        return;
+    }
+
+    gateway_ble_range_last_seen_ms = k_uptime_get_32();
+    status_led0_set(false, true, false);
+    LOG_INF("BLE range advertisement seen: rssi=%d", rssi);
+}
+
+static int gateway_ble_range_start_scanner(void)
+{
+    const struct bt_le_scan_param scan_param = {
+        .type = BT_LE_SCAN_TYPE_PASSIVE,
+        .options = BT_LE_SCAN_OPT_NONE,
+        .interval = BLE_RANGE_SCAN_INTERVAL_UNITS,
+        .window = BLE_RANGE_SCAN_WINDOW_UNITS,
+        .timeout = 0u,
+        .interval_coded = 0u,
+        .window_coded = 0u,
+    };
+    int ret;
+
+    ret = status_leds_init();
+    if (ret < 0) {
+        LOG_WRN("BLE range scanner LED setup incomplete: %d", ret);
+    }
+    status_led0_set(false, false, false);
+    k_work_init_delayable(&gateway_ble_range_led_work,
+                          gateway_ble_range_led_work_handler);
+
+    ret = gateway_ble_range_enable();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = bt_le_scan_start(&scan_param, gateway_ble_range_scan_cb);
+    LOG_INF("BLE range scanner start: ret=%d interval_units=%u window_units=%u",
+            ret,
+            BLE_RANGE_SCAN_INTERVAL_UNITS,
+            BLE_RANGE_SCAN_WINDOW_UNITS);
+    if (ret == 0) {
+        (void)k_work_reschedule(&gateway_ble_range_led_work,
+                                K_MSEC(BLE_RANGE_LED_POLL_MS));
+    }
+    return ret;
+}
+#endif
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
 int gateway_emit_host_packet(const struct proto_packet *packet,
@@ -1785,46 +1937,31 @@ int app_gateway_ble_init(void)
 #if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
 void gateway_ble_connectivity_test_run(void)
 {
-    uint32_t heartbeat = 0u;
     int ret;
 
-    printk("gateway BLE connectivity test booting\n");
-    ret = gateway_ble_init();
+    printk("gateway BLE range test booting\n");
+#if defined(CONFIG_BT)
+    if (IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER)) {
+        ret = gateway_ble_range_start_scanner();
+    } else {
+        ret = gateway_ble_range_start_advertiser();
+    }
+#else
+    ret = -ENOTSUP;
+#endif
     if (ret < 0) {
-        printk("gateway BLE connectivity test init failed: %d\n", ret);
-        LOG_ERR("gateway BLE connectivity test init failed: %d", ret);
+        printk("gateway BLE range test init failed: %d\n", ret);
+        LOG_ERR("gateway BLE range test init failed: %d", ret);
         for (;;) {
             k_sleep(K_SECONDS(30));
         }
     }
 
-    LOG_INF("gateway BLE connectivity test active; no UWB, mesh, DWM3000, ADC, LEDs, or buttons initialized");
+    LOG_INF("gateway BLE range test active: mode=%s no UWB, mesh, DWM3000, ADC, or buttons initialized",
+            IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER) ? "scanner" : "advertiser");
     for (;;) {
-        struct gateway_ble_status status = {0};
-        char line[128];
-        int len;
-
-        gateway_ble_get_status(&status);
-        LOG_INF("gateway BLE connectivity test heartbeat: seq=%u connected=%u packet_notify=%u log_notify=%u",
-                heartbeat,
-                status.connected ? 1u : 0u,
-                status.packet_notify_enabled ? 1u : 0u,
-                status.log_notify_enabled ? 1u : 0u);
-        len = snprintk(line,
-                       sizeof(line),
-                       "BLE_GATEWAY_TEST heartbeat=%u connected=%u packet_notify=%u log_notify=%u\n",
-                       heartbeat,
-                       status.connected ? 1u : 0u,
-                       status.packet_notify_enabled ? 1u : 0u,
-                       status.log_notify_enabled ? 1u : 0u);
-        if (len > 0) {
-            ret = gateway_ble_send_log_bytes((const uint8_t *)line,
-                                             (size_t)MIN(len, (int)sizeof(line) - 1));
-            if (ret < 0 && ret != -ENOTCONN && ret != -EACCES) {
-                LOG_WRN("gateway BLE connectivity test log notify failed: %d", ret);
-            }
-        }
-        heartbeat++;
+        LOG_INF("gateway BLE range test heartbeat: mode=%s",
+                IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER) ? "scanner" : "advertiser");
         k_sleep(K_SECONDS(5));
     }
 }

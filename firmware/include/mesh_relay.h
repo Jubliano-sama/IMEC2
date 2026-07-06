@@ -384,6 +384,7 @@ struct mesh_relay_result {
     struct mesh_outbound gateway_route_adv;
     struct mesh_outbound retransmit;
     uint64_t route_reply_backup_next_hop_id;
+    uint64_t route_discovery_target_id;
     union {
         struct mesh_outbound hop_ack;
         struct mesh_outbound busy;
@@ -437,6 +438,14 @@ int mesh_relay_build_route_request_with_timing(
     uint32_t timing_reference_ms,
     struct mesh_outbound *out,
     uint32_t now_ms);
+int mesh_relay_build_route_request_with_timing_flags(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    uint8_t request_flags,
+    struct mesh_outbound *out,
+    uint32_t now_ms);
 int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
                                        uint32_t gateway_route_seq,
                                        uint32_t now_ms,
@@ -451,6 +460,15 @@ int mesh_relay_prepare_route_request_with_timing(
     uint64_t target_id,
     const struct mesh_event_timing *proposed_channel9_timing,
     uint32_t timing_reference_ms,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_outbound *out);
+int mesh_relay_prepare_route_request_with_timing_flags(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    uint8_t request_flags,
     uint32_t now_ms,
     uint32_t random_value,
     struct mesh_outbound *out);

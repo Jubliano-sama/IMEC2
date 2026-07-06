@@ -113,6 +113,15 @@ config MESH_SMOKE_FAST_TX
       channel-9 event negotiation, gateway ACK, custody, retry, preemption, or
       persistent delivery state.
 
+config IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ
+    bool "Force mesh route requests through a relay"
+    depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    help
+      Marks gateway route requests so the gateway ignores direct copies from
+      the origin and only replies after the request has been forwarded by a
+      relay. This is a debug mode for validating relay route handling even when
+      the transmitter is close enough to reach the gateway directly.
+
 config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     int "Synthetic mesh-test packet interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
@@ -232,12 +241,18 @@ config IMEC_GATEWAY_BLE_CONNECTIVITY_TEST
     bool "Build only the gateway Bluetooth connectivity test"
     depends on IMEC_GATEWAY_BLE
     help
-      Boots only the connected gateway BLE service. It does not initialize the
-      DWM3000, UWB mesh, command routing, buttons, status LEDs, ADC,
-      or high-debug staged bring-up flow. Incoming packet-characteristic bytes
-      are re-emitted on the packet notification characteristic so a PC can
-      verify connection, write, notification, COBS framing, and debug-log
-      notification behavior without any UWB hardware dependency.
+      Boots only a BLE range-test path. It does not initialize the DWM3000,
+      UWB mesh, command routing, buttons, ADC, or high-debug staged bring-up
+      flow. The default image transmits a nonconnectable IMEC range-test
+      advertisement.
+
+config IMEC_GATEWAY_BLE_RANGE_SCANNER
+    bool "Build the gateway Bluetooth connectivity test as a range scanner"
+    depends on IMEC_GATEWAY_BLE_CONNECTIVITY_TEST && BT_OBSERVER
+    help
+      Switches the BLE-only connectivity image from range-test advertising to
+      passive scanning. The scanner lights status LED0 green while it has seen
+      the matching IMEC range-test advertisement within the last second.
 
 config IMEC_STAGE0_SEND_WAKE_CLAIM_ON_CLICK
     bool "Send one WAKE_CLAIM train on Stage 0 short press"

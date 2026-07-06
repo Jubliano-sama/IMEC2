@@ -49,7 +49,7 @@ static uint32_t mesh_test_next_packet_id = 1u;
 static uint16_t mesh_test_attempt;
 static uint16_t mesh_test_seq;
 static uint32_t mesh_test_drop_count;
-static bool mesh_test_continuous_ch5_active;
+static bool mesh_test_ch5_refresh_logged;
 static uint8_t mesh_test_wait_log_ticks;
 static struct mesh_smoke_fast_state mesh_test_gateway_state;
 static uint32_t mesh_test_gateway_last_summary_ms;
@@ -219,23 +219,23 @@ static uint32_t mesh_test_tx_once(void)
     };
     mesh_smoke_fast_tx_decide(&gate, &decision);
     if (!decision.can_queue) {
-        status_debug_note("DBG_MESH_TEST_WAIT\n");
-        if (relay_tx_active) {
-            status_debug_note("DBG_MESH_TEST_WAIT_RELAY\n");
-        }
-        if (route_waiting_active) {
-            status_debug_note("DBG_MESH_TEST_WAIT_ROUTE\n");
-        }
-        if (decision.reason == MESH_SMOKE_FAST_DEFER_QUEUE_FULL) {
-            status_debug_note("DBG_MESH_TEST_WAIT_BACKLOG\n");
-        }
-        if (ack_wait_active) {
-            status_debug_note("DBG_MESH_TEST_WAIT_ACK\n");
-        }
-        if (queue_used > 0u) {
-            status_debug_note("DBG_MESH_TEST_QUEUE_WAIT\n");
-        }
         if (mesh_test_wait_log_ticks == 0u || mesh_test_wait_log_ticks >= 10u) {
+            status_debug_note("DBG_MESH_TEST_WAIT\n");
+            if (relay_tx_active) {
+                status_debug_note("DBG_MESH_TEST_WAIT_RELAY\n");
+            }
+            if (route_waiting_active) {
+                status_debug_note("DBG_MESH_TEST_WAIT_ROUTE\n");
+            }
+            if (decision.reason == MESH_SMOKE_FAST_DEFER_QUEUE_FULL) {
+                status_debug_note("DBG_MESH_TEST_WAIT_BACKLOG\n");
+            }
+            if (ack_wait_active) {
+                status_debug_note("DBG_MESH_TEST_WAIT_ACK\n");
+            }
+            if (queue_used > 0u) {
+                status_debug_note("DBG_MESH_TEST_QUEUE_WAIT\n");
+            }
             status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=%u route=%u headroom=%u ack=%u q=%u id=%u att=%u\n",
                                 relay_tx_active ? 1u : 0u,
                                 route_waiting_active ? 1u : 0u,
@@ -366,15 +366,13 @@ void app_mesh_test_note_wake_event(const struct proto_packet *packet,
         return;
     }
 
-    target_scan_interval_ms = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ?
-                              CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS :
-                              0u;
+    target_scan_interval_ms = CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS;
     if (anchor_uwb_scan_interval_ms != target_scan_interval_ms) {
         anchor_uwb_scan_interval_ms = target_scan_interval_ms;
     }
-    if (!mesh_test_continuous_ch5_active) {
-        mesh_test_continuous_ch5_active = true;
-        LOG_INF("mesh-test wake event switched anchor to continuous channel-5 scan: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx quality=%u interval_ms=%u",
+    if (!mesh_test_ch5_refresh_logged) {
+        mesh_test_ch5_refresh_logged = true;
+        LOG_INF("mesh-test wake event refreshed anchor channel-5 scan: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx quality=%u interval_ms=%u",
                 packet->msg_type,
                 (unsigned long long)packet->src_id,
                 (unsigned long long)packet->dst_id,
@@ -404,15 +402,13 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
         return;
     }
 
-    target_scan_interval_ms = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) ?
-                              CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS :
-                              0u;
+    target_scan_interval_ms = CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS;
     if (anchor_uwb_scan_interval_ms != target_scan_interval_ms) {
         anchor_uwb_scan_interval_ms = target_scan_interval_ms;
     }
-    if (!mesh_test_continuous_ch5_active) {
-        mesh_test_continuous_ch5_active = true;
-        LOG_INF("mesh-test wake claim switched anchor to continuous channel-5 scan: src=0x%016llx event_seq=%u attempt=%u quality=%u interval_ms=%u",
+    if (!mesh_test_ch5_refresh_logged) {
+        mesh_test_ch5_refresh_logged = true;
+        LOG_INF("mesh-test wake claim refreshed anchor channel-5 scan: src=0x%016llx event_seq=%u attempt=%u quality=%u interval_ms=%u",
                 (unsigned long long)source_id,
                 event_seq,
                 attempt_index,

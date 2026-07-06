@@ -401,6 +401,22 @@ static dwt_config_t wake_config = {
     DWM3000_PHY_PDOA_MODE,
 };
 
+static dwt_config_t wake_mesh_control_config = {
+    DWM3000_PHY_CHANNEL,
+    DWM3000_PHY_PREAMBLE_LENGTH,
+    DWM3000_PHY_RX_PAC,
+    DWM3000_PHY_TX_CODE,
+    DWM3000_PHY_RX_CODE,
+    DWM3000_PHY_SFD_TYPE,
+    DWM3000_PHY_DATA_RATE,
+    DWM3000_MESH_PHY_PHR_MODE,
+    DWM3000_MESH_PHY_PHR_RATE,
+    DWM3000_WAKE_PHY_SFD_TIMEOUT,
+    DWM3000_PHY_STS_MODE,
+    DWM3000_PHY_STS_LENGTH,
+    DWM3000_PHY_PDOA_MODE,
+};
+
 static dwt_config_t mesh_payload_config = {
     UWB_CHANNEL_MESH_PAYLOAD,
     DWM3000_MESH_PHY_PREAMBLE_LENGTH,
@@ -434,6 +450,7 @@ enum dwm3000_phy_mode {
     DWM3000_PHY_RANGE = 1,
     DWM3000_PHY_WAKE = 2,
     DWM3000_PHY_MESH_PAYLOAD = 3,
+    DWM3000_PHY_WAKE_MESH_CONTROL = 4,
 };
 
 static bool radio_configured;
@@ -756,6 +773,8 @@ static const dwt_config_t *config_for_phy(enum dwm3000_phy_mode phy_mode)
     switch (phy_mode) {
     case DWM3000_PHY_WAKE:
         return &wake_config;
+    case DWM3000_PHY_WAKE_MESH_CONTROL:
+        return &wake_mesh_control_config;
     case DWM3000_PHY_MESH_PAYLOAD:
         return &mesh_payload_config;
     case DWM3000_PHY_RANGE:
@@ -2745,6 +2764,29 @@ int dwm3000_driver_configure_range_mode(void)
     return ensure_phy_mode(DWM3000_PHY_RANGE);
 }
 
+int dwm3000_driver_configure_wake_mesh_control_mode(void)
+{
+    int ret;
+
+    ret = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
+          configure_radio_from_reset(DWM3000_PHY_WAKE_MESH_CONTROL) :
+          ensure_phy_mode(DWM3000_PHY_WAKE_MESH_CONTROL);
+    if (ret < 0) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_WAKE_MESH_CTRL_FAIL ret=%d\n", ret);
+        }
+        return ret;
+    }
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_DWM_WAKE_MESH_CTRL_OK sfd=%u\n",
+                            (unsigned int)wake_mesh_control_config.sfdTO);
+    }
+    LOG_INF("DWM3000 configured for channel %u extended-PHR mesh control at 850 kbps",
+            UWB_CHANNEL_WAKE_CONTACT);
+    return 0;
+}
+
 int dwm3000_driver_configure_mesh_payload_mode(void)
 {
     int ret;
@@ -2975,6 +3017,26 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                                failure,
                                                NULL,
                                                true);
+}
+
+int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
+                                                uint8_t *frame,
+                                                size_t frame_cap,
+                                                size_t *frame_len,
+                                                uint8_t *quality,
+                                                int8_t *rsl_dbm,
+                                                enum dwm3000_rx_failure *failure)
+{
+    return receive_frame_with_preamble_timeout(timeout_ms,
+                                               IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC,
+                                               frame,
+                                               frame_cap,
+                                               frame_len,
+                                               quality,
+                                               rsl_dbm,
+                                               failure,
+                                               NULL,
+                                               false);
 }
 
 int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,

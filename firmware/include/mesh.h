@@ -121,6 +121,11 @@ int mesh_append_event_timing_tlvs_at(uint8_t *payload,
                                      size_t *offset,
                                      const struct mesh_event_timing *timing,
                                      uint32_t now_ms);
+int mesh_append_compact_event_timing_tlvs_at(uint8_t *payload,
+                                             size_t payload_cap,
+                                             size_t *offset,
+                                             const struct mesh_event_timing *timing,
+                                             uint32_t now_ms);
 int mesh_event_timing_from_tlvs(struct mesh_event_timing *timing,
                                 const uint8_t *payload,
                                 size_t payload_len,

@@ -26,27 +26,28 @@
 LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+volatile uint32_t mesh_route_test_fatal_reason;
+volatile uint32_t mesh_route_test_fatal_pc;
+volatile uint32_t mesh_route_test_fatal_lr;
+volatile uint32_t mesh_route_test_fatal_thread;
+volatile uint32_t mesh_route_test_fatal_stack_start;
+volatile uint32_t mesh_route_test_fatal_stack_size;
+
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
-    static char line[192];
     k_tid_t thread = k_current_get();
-    const char *name = k_thread_name_get(thread);
 
-    ARG_UNUSED(esf);
-
-    if (name == NULL || name[0] == '\0') {
-        name = "unknown";
+    mesh_route_test_fatal_reason = reason;
+    mesh_route_test_fatal_thread = (uint32_t)thread;
+    mesh_route_test_fatal_stack_start = (uint32_t)thread->stack_info.start;
+    mesh_route_test_fatal_stack_size = (uint32_t)thread->stack_info.size;
+    if (esf != NULL) {
+        mesh_route_test_fatal_pc = esf->basic.pc;
+        mesh_route_test_fatal_lr = esf->basic.lr;
+    } else {
+        mesh_route_test_fatal_pc = 0u;
+        mesh_route_test_fatal_lr = 0u;
     }
-
-    (void)snprintk(line,
-                   sizeof(line),
-                   "DBG_FATAL reason=%u thread=%s tid=%p stack_start=0x%08x stack_size=%u\n",
-                   reason,
-                   name,
-                   thread,
-                   (uint32_t)thread->stack_info.start,
-                   (uint32_t)thread->stack_info.size);
-    status_debug_note(line);
 
     k_fatal_halt(reason);
 }
@@ -230,6 +231,7 @@ int main(void)
     }
     status_debug_tx_boot_test();
     status_debug_gateway_boot_test();
+    status_debug_anchor_boot_test();
 #endif
 #if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
     ret = app_clicker_init(&clicker_callbacks);
@@ -368,6 +370,12 @@ int main(void)
             return 0;
         }
         if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+            high_debug_log_event("MESH_BOOT_STAGE",
+                                 "stage=mesh_rx_anchor_idle_owned_by_low_duty_scan role=%s",
+                                 role_name());
+            status_debug_note("DBG_BOOT_MESH_RX_ANCHOR_LOW_DUTY_OWNER\n");
+#else
             high_debug_log_event("MESH_BOOT_STAGE",
                                  "stage=mesh_rx_start_begin role=%s",
                                  role_name());
@@ -381,6 +389,7 @@ int main(void)
             if (ret < 0) {
                 LOG_ERR("anchor UWB mesh RX unavailable: %d", ret);
             }
+#endif
         } else {
             status_debug_note("DBG_BOOT_MESH_RX_SKIPPED_TX\n");
         }

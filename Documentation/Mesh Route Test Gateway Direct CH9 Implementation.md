@@ -24,6 +24,23 @@ firmware behavior and the assumptions behind it.
   it does not install a synthetic or slotted gateway channel-9 timing.
 - If the direct probe fails, the node falls back to the existing channel-5
   wake-train plus AODV-style route-request flow.
+- The mesh transmitter preset currently enables a relay-required route request
+  debug mode. In that mode, gateway-bound route repair skips the direct
+  channel-9 gateway probe and marks the channel-5 `MSG_ROUTE_REQ` with
+  `TLV_ROUTE_REQUEST_FLAGS = MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED`.
+- In the mesh transmitter preset, `MSG_GATEWAY_ROUTE_ADV` frames are ignored so
+  they cannot seed a direct `transmitter -> gateway` route during relay testing.
+  Anchors still accept and forward gateway route advertisements for normal
+  upstream route repair.
+- A route-test gateway ignores direct, hop-count-0 relay-required route
+  requests from the origin. The request is still eligible to be answered after
+  an anchor has a valid upstream route, because the reply then describes a
+  normal `origin -> anchor -> gateway` path.
+- If an anchor hears a gateway-bound route request but has no selected upstream
+  route after reset, it treats that as normal route repair: it forwards the
+  route request on channel 5 and starts its own gateway route discovery. Once
+  an upstream is learned, a repeated route-request frame can be answered by the
+  anchor.
 - Route initiators own the channel-9 timing proposal for their next hop.
   Channel-5 route requests can carry proposed channel-9 timing relative to the
   request reference time. Receivers install that proposal as local-RX-first.
@@ -37,6 +54,7 @@ firmware behavior and the assumptions behind it.
 - Gateway immediate ACK guard: `MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS = 10 ms`.
 - Direct gateway probe ACK guard: `MESH_GATEWAY_DIRECT_PROBE_ACK_GUARD_MS = 10 ms`.
 - Direct gateway probe ACK listen: `MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS = 120 ms`.
+- Gateway route advertisement period: `MESH_GATEWAY_ROUTE_ADV_PERIOD_MS = 600000 ms`.
 - Route-test channel-9 event guard: `MESH_EVENT_DEFAULT_GUARD_MS = 30 ms`.
 - Route-test channel-5 scan slot: `CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS = 50 ms`.
 - Route-test channel-5 scan RX: `CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US = 50000 us`.
@@ -46,17 +64,34 @@ firmware behavior and the assumptions behind it.
 The guards are intentionally conservative for current bring-up. They are not
 optimized for final latency or power.
 
+## Debug LEDs
+
+- Mesh transmitter: LED0 blinks red as the power indicator.
+- Mesh gateway: LED0 stays red as the power indicator.
+- Mesh anchors: LED0 stays blue as the power indicator.
+- LED1 is reserved for short raw UWB channel activity pulses in route-test
+  builds.
+- On mesh anchors, LED1 pulses red for channel-5 route-control activity and
+  green for channel-9 activity.
+
 ## Implementation Touchpoints
 
 - `firmware/include/protocol.h` and `firmware/src/protocol.c`
-  add `MSG_GATEWAY_ROUTE_REQ`.
+  add `MSG_GATEWAY_ROUTE_REQ` and the route-request flags TLV.
 - `firmware/src/mesh_relay.c`
   adds timed route-request preparation, direct gateway route installation, route
-  reply timing propagation back downstream, and route-reply timing installation
-  at the origin.
+  reply timing propagation back downstream, route-reply timing installation at
+  the origin, and gateway suppression of direct relay-required route requests.
 - `firmware/app/src/app_mesh_report.c`
   adds direct gateway probing, immediate direct gateway TX, continuous gateway
-  channel-9 RX, and gateway ACK turnaround guard logging.
+  channel-9 RX, relay-required route request emission for the transmitter
+  preset, and gateway ACK turnaround guard logging.
+- `firmware/app/src/app_mesh_rx_policy.c`
+  keeps the mesh transmitter preset from installing routes from broadcast
+  gateway route advertisements while leaving anchor behavior unchanged.
+- `firmware/app/src/app_board.c`
+  owns the mesh-route-test LED0 power indicators and LED1 channel activity
+  pulses.
 - `firmware/app/src/app_mesh_gateway_ack_policy.c`
   changes route-test gateway channel-9 ACKs from batched ACKs to immediate
   current-channel ACKs.
@@ -73,7 +108,9 @@ optimized for final latency or power.
 - Verify the gateway route-test RX path returns before ACK TX and does not call
   `mesh_select_channel9_rx_event()` for gateway RX.
 - Verify direct gateway traffic bypasses `mesh_relay_start_channel9_tx()` and
-  uses immediate channel-9 TX when the selected next hop is the gateway.
+  uses immediate channel-9 TX when the selected next hop is the gateway, except
+  in the relay-required transmitter preset where direct gateway route
+  advertisements are intentionally ignored.
 - Verify fallback CH5 route requests still carry only the initiating hop's
   proposed channel-9 timing.
 - Verify relays clear timing on upstream route-request forwarding and reattach

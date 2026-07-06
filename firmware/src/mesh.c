@@ -1,5 +1,8 @@
 #include "mesh.h"
 
+#define MESH_EVENT_COMPACT_DEFAULT_MAX_MISSED 3u
+#define MESH_EVENT_COMPACT_SUPERVISION_INTERVALS 12u
+
 static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
 {
     return src_id != 0u && dst_id != 0u && src_id != dst_id;
@@ -36,6 +39,17 @@ static uint32_t nonzero_deadline_after(uint32_t now_ms, uint32_t delay_ms)
     uint32_t deadline_ms = now_ms + (delay_ms == 0u ? 1u : delay_ms);
 
     return deadline_ms == 0u ? 1u : deadline_ms;
+}
+
+static uint32_t compact_supervision_timeout_ms(uint32_t event_interval_ms)
+{
+    if (event_interval_ms == 0u) {
+        return 0u;
+    }
+    if (event_interval_ms > UINT32_MAX / MESH_EVENT_COMPACT_SUPERVISION_INTERVALS) {
+        return UINT32_MAX;
+    }
+    return event_interval_ms * MESH_EVENT_COMPACT_SUPERVISION_INTERVALS;
 }
 
 static void counter_add(uint32_t *counter, uint32_t delta)
@@ -487,6 +501,41 @@ int mesh_append_event_timing_tlvs(uint8_t *payload,
     return mesh_append_event_timing_tlvs_at(payload, payload_cap, offset, timing, 0u);
 }
 
+int mesh_append_compact_event_timing_tlvs_at(uint8_t *payload,
+                                             size_t payload_cap,
+                                             size_t *offset,
+                                             const struct mesh_event_timing *timing,
+                                             uint32_t now_ms)
+{
+    int ret;
+
+    if (timing == NULL || timing->mesh_channel != MESH_EVENT_CHANNEL) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_MESH_EVENT_INTERVAL_MS,
+                         timing->event_interval_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_MESH_EVENT_WINDOW_MS,
+                         timing->event_window_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_MESH_NEXT_EVENT_TIME_MS,
+                         time_until_deadline(now_ms, timing->next_event_time_ms));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_u16(payload, payload_cap, offset,
+                          TLV_MESH_EVENT_GUARD_MS,
+                          timing->guard_ms);
+}
+
 int mesh_event_timing_from_tlvs_at(struct mesh_event_timing *timing,
                                    const uint8_t *payload,
                                    size_t payload_len,
@@ -505,7 +554,9 @@ int mesh_event_timing_from_tlvs_at(struct mesh_event_timing *timing,
     }
 
     ret = find_u8_tlv(payload, payload_len, TLV_MESH_CHANNEL, &mesh_channel);
-    if (ret != PROTO_OK) {
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        mesh_channel = MESH_EVENT_CHANNEL;
+    } else if (ret != PROTO_OK) {
         return ret;
     }
     if (mesh_channel != MESH_EVENT_CHANNEL) {
@@ -544,21 +595,28 @@ int mesh_event_timing_from_tlvs_at(struct mesh_event_timing *timing,
                        payload_len,
                        TLV_MESH_CLOCK_SKEW_PPM,
                        &clock_skew);
-    if (ret != PROTO_OK) {
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        clock_skew = 0u;
+    } else if (ret != PROTO_OK) {
         return ret;
     }
     ret = find_u8_tlv(payload,
                       payload_len,
                       TLV_MESH_MAX_MISSED_EVENTS,
                       &params.max_missed_events);
-    if (ret != PROTO_OK) {
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        params.max_missed_events = MESH_EVENT_COMPACT_DEFAULT_MAX_MISSED;
+    } else if (ret != PROTO_OK) {
         return ret;
     }
     ret = find_u32_tlv(payload,
                        payload_len,
                        TLV_MESH_SUPERVISION_TIMEOUT_MS,
                        &params.supervision_timeout_ms);
-    if (ret != PROTO_OK) {
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        params.supervision_timeout_ms =
+            compact_supervision_timeout_ms(params.event_interval_ms);
+    } else if (ret != PROTO_OK) {
         return ret;
     }
 

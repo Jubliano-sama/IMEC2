@@ -98,8 +98,19 @@ bool mesh_queue_from_frame(const uint8_t *frame,
                            uint8_t radio_channel,
                            bool *valid_mesh_frame,
                            uint64_t *previous_hop_id);
+bool mesh_queue_from_frame_deferred(const uint8_t *frame,
+                                    size_t frame_len,
+                                    uint8_t link_quality,
+                                    uint8_t radio_channel,
+                                    bool *valid_mesh_frame,
+                                    uint64_t *previous_hop_id);
+void mesh_submit_queued_rx(void);
+bool mesh_process_queued_rx_now(const char *reason);
 int mesh_start_uwb_rx(const char *reason);
 bool mesh_route_waiting_tx_active(void);
+uint32_t mesh_rx_pending_count(void);
+bool mesh_rx_response_active(void);
+bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
 void mesh_gateway_route_adv_start(void);
 void mesh_gateway_route_adv_request(uint32_t delay_ms, const char *reason);
 

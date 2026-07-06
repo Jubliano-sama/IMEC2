@@ -15,6 +15,7 @@ bool uwb_rf_active;
 struct k_spinlock uwb_rf_lock;
 struct k_spinlock anchor_uwb_lock;
 bool anchor_uwb_busy;
+bool anchor_click_window_busy;
 bool mesh_uwb_rx_active;
 bool anchor_heartbeat_enabled;
 struct mesh_relay mesh_runtime;
@@ -22,6 +23,8 @@ struct mesh_event_diagnostics mesh_event_stats;
 struct uwb_anchor_session anchor_uwb_session;
 uint32_t anchor_uwb_scan_interval_ms = ANCHOR_UWB_SCAN_INTERVAL_MS;
 uint16_t mesh_event_control_seq;
+static const char *uwb_rf_owner_reason;
+static uint32_t uwb_rf_owner_since_ms;
 
 const char *role_name(void)
 {
@@ -156,16 +159,26 @@ int radio_guard_uwb_start(const char *reason)
 {
     k_spinlock_key_t key;
     bool already_active;
+    const char *owner_reason;
+    uint32_t owner_since_ms;
+    uint32_t now_ms = k_uptime_get_32();
 
     key = k_spin_lock(&uwb_rf_lock);
     already_active = uwb_rf_active;
     if (!already_active) {
         uwb_rf_active = true;
+        uwb_rf_owner_reason = reason;
+        uwb_rf_owner_since_ms = now_ms;
     }
+    owner_reason = uwb_rf_owner_reason;
+    owner_since_ms = uwb_rf_owner_since_ms;
     k_spin_unlock(&uwb_rf_lock, key);
 
     if (already_active) {
-        LOG_ERR("blocked nested UWB operation: %s", reason);
+        LOG_ERR("blocked nested UWB operation: %s owner=%s age_ms=%u",
+                reason,
+                owner_reason == NULL ? "unknown" : owner_reason,
+                now_ms - owner_since_ms);
         return -EBUSY;
     }
 
@@ -181,10 +194,23 @@ void radio_guard_uwb_stop(void)
 
     key = k_spin_lock(&uwb_rf_lock);
     uwb_rf_active = false;
+    uwb_rf_owner_reason = NULL;
+    uwb_rf_owner_since_ms = 0u;
     k_spin_unlock(&uwb_rf_lock, key);
 #if defined(CONFIG_IMEC_GATEWAY_BLE)
     gateway_ble_exit_uwb_quiet("radio_guard");
 #endif
+}
+
+bool radio_guard_uwb_busy(void)
+{
+    k_spinlock_key_t key;
+    bool busy;
+
+    key = k_spin_lock(&uwb_rf_lock);
+    busy = uwb_rf_active;
+    k_spin_unlock(&uwb_rf_lock, key);
+    return busy;
 }
 
 bool anchor_uwb_window_active(void)
@@ -196,6 +222,26 @@ bool anchor_uwb_window_active(void)
     busy = anchor_uwb_busy;
     k_spin_unlock(&anchor_uwb_lock, key);
     return busy;
+}
+
+bool anchor_click_window_active(void)
+{
+    k_spinlock_key_t key;
+    bool busy;
+
+    key = k_spin_lock(&anchor_uwb_lock);
+    busy = anchor_click_window_busy;
+    k_spin_unlock(&anchor_uwb_lock, key);
+    return busy;
+}
+
+void anchor_click_window_set_active(bool active)
+{
+    k_spinlock_key_t key;
+
+    key = k_spin_lock(&anchor_uwb_lock);
+    anchor_click_window_busy = active;
+    k_spin_unlock(&anchor_uwb_lock, key);
 }
 
 void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)

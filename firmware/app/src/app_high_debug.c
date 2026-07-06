@@ -333,6 +333,10 @@ void high_debug_log_event(const char *event, const char *fmt, ...)
     va_list args;
     int ret;
 
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+
     if (event == NULL) {
         event = "UNKNOWN";
     }
