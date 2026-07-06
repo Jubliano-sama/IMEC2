@@ -66,6 +66,8 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_CH9_ACK_BATCH_MAX 8u
 #define MESH_CH9_TX_BATCH_MAX 8u
 #define MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP 128u
+#define MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS 60000u
+#define MESH_ROUTE_EXHAUSTED_RETRY_JITTER_MS 30000u
 
 BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS + FLOOD_RELAY_BURST_MS +
              MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS <
@@ -73,6 +75,8 @@ BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS + FLOOD_RELAY_BURST_MS +
              "route-ad response delay must fit the route reply listen window");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "direct gateway ACK scratch must fit the mesh payload limit");
+BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
+             "exhausted route retry must be slower than one ACK timeout");
 #define MESH_CH9_DATA_RATE_BPS 850000u
 #define MESH_CH9_PHY_OVERHEAD_US 1500u
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
@@ -2187,6 +2191,61 @@ static void mesh_schedule_route_waiting_retry(const char *reason)
                now + REPORT_TX_RETRY_DELAY_MS;
     delay_ms = uptime_ms_until_deadline(now, deadline);
     mesh_schedule_route_waiting_retry_after(reason, delay_ms);
+}
+
+static uint32_t mesh_route_exhausted_retry_delay_ms(uint32_t random_value)
+{
+    return MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS +
+           (random_value % (MESH_ROUTE_EXHAUSTED_RETRY_JITTER_MS + 1u));
+}
+
+static void mesh_schedule_route_waiting_exhausted_retry(const char *reason)
+{
+    uint32_t now_ms;
+    uint32_t random_value;
+    uint32_t delay_ms;
+
+    if (!mesh_route_waiting_tx_valid) {
+        return;
+    }
+
+    mesh_relay_reset_route_discovery(&mesh_runtime);
+    now_ms = k_uptime_get_32();
+    random_value = sys_rand32_get();
+    delay_ms = mesh_route_exhausted_retry_delay_ms(random_value);
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ROUTE_WAIT_EXHAUSTED_RETRY reason=%s base=%u jitter=%u rand=%u delay=%u next=%u msg=0x%02x dst=0x%llx seq=%u lost=%u\n",
+                            reason == NULL ? "route-exhausted" : reason,
+                            MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS,
+                            MESH_ROUTE_EXHAUSTED_RETRY_JITTER_MS,
+                            random_value,
+                            delay_ms,
+                            now_ms + delay_ms,
+                            mesh_route_waiting_tx.packet.msg_type,
+                            (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
+                            mesh_route_waiting_tx.packet.seq,
+                            app_mesh_paused_delivery_lost_count(
+                                &mesh_paused_delivery));
+    }
+    high_debug_log_event("MESH_ROUTE_WAIT_EXHAUSTED",
+                         "reason=%s msg=0x%02x dst=0x%016llx seq=%u retry_in_ms=%u lost=%u",
+                         reason == NULL ? "route-exhausted" : reason,
+                         mesh_route_waiting_tx.packet.msg_type,
+                         (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
+                         mesh_route_waiting_tx.packet.seq,
+                         delay_ms,
+                         app_mesh_paused_delivery_lost_count(
+                             &mesh_paused_delivery));
+    LOG_WRN("mesh route discovery exhausted; retained packet will retry: reason=%s msg=0x%02x dst=0x%016llx seq=%u retry_in_ms=%u",
+            reason == NULL ? "route-exhausted" : reason,
+            mesh_route_waiting_tx.packet.msg_type,
+            (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
+            mesh_route_waiting_tx.packet.seq,
+            delay_ms);
+    mesh_schedule_route_waiting_retry_after(reason == NULL ?
+                                            "route-exhausted" : reason,
+                                            delay_ms);
 }
 
 void mesh_report_resume_restored_outbox(const char *reason)
@@ -6808,7 +6867,10 @@ static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *t
                             (unsigned long long)tx->next_hop_id,
                             reason == NULL ? "direct-gateway" : reason);
     }
-    return route_ret == -ETIMEDOUT ? route_ret : -EHOSTUNREACH;
+    if (route_ret == -ETIMEDOUT) {
+        mesh_schedule_route_waiting_exhausted_retry("direct-gateway-route-exhausted");
+    }
+    return -EHOSTUNREACH;
 }
 
 static int mesh_try_deferred_gateway_ack_on_channel9(const struct mesh_outbound *pending,
@@ -7048,6 +7110,9 @@ static void mesh_try_route_waiting_tx(void)
         mesh_schedule_route_waiting_retry_after(wait_decision.reason,
                                                 wait_decision.delay_ms);
         break;
+    case APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_EXHAUSTED_RETRY:
+        mesh_schedule_route_waiting_exhausted_retry(wait_decision.reason);
+        break;
     case APP_MESH_ROUTE_WAIT_TX_ACTION_NONE:
     default:
         break;
@@ -7103,8 +7168,9 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
             mesh_store_route_waiting_tx(&aged_out);
             route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
             if (route_ret == -ETIMEDOUT) {
-                mesh_drop_route_waiting_tx("result-offer-route-exhausted");
-                return route_ret;
+                mesh_schedule_route_waiting_exhausted_retry(
+                    "result-offer-route-exhausted");
+                return -EHOSTUNREACH;
             }
             return -EHOSTUNREACH;
         }
@@ -7162,8 +7228,9 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
                 mesh_store_route_waiting_tx(&aged_out);
                 route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
                 if (route_ret == -ETIMEDOUT) {
-                    mesh_drop_route_waiting_tx("direct-gateway-route-exhausted");
-                    return route_ret;
+                    mesh_schedule_route_waiting_exhausted_retry(
+                        "direct-gateway-route-exhausted");
+                    return -EHOSTUNREACH;
                 }
                 return -EHOSTUNREACH;
             }
@@ -7273,8 +7340,9 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
             mesh_store_route_waiting_tx(&aged_out);
             route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
             if (route_ret == -ETIMEDOUT) {
-                mesh_drop_route_waiting_tx("route-discovery-exhausted");
-                return route_ret;
+                mesh_schedule_route_waiting_exhausted_retry(
+                    "route-discovery-exhausted");
+                return -EHOSTUNREACH;
             }
             return -EHOSTUNREACH;
         }
@@ -7296,8 +7364,9 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
             mesh_store_route_waiting_tx(&aged_out);
             route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
             if (route_ret == -ETIMEDOUT) {
-                mesh_drop_route_waiting_tx("route-discovery-exhausted");
-                return route_ret;
+                mesh_schedule_route_waiting_exhausted_retry(
+                    "route-discovery-exhausted");
+                return -EHOSTUNREACH;
             }
         }
         return mesh_errno_from_proto(ret);
@@ -7379,8 +7448,9 @@ send_prepared:
             mesh_store_route_waiting_tx(&tx);
             route_ret = mesh_request_route(tx.packet.dst_id, reason);
             if (route_ret == -ETIMEDOUT) {
-                mesh_drop_route_waiting_tx("send-failure-route-exhausted");
-                return route_ret;
+                mesh_schedule_route_waiting_exhausted_retry(
+                    "send-failure-route-exhausted");
+                return -EHOSTUNREACH;
             }
         }
         return ret;
@@ -9082,7 +9152,8 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                                 (unsigned long long)pending_waiting->packet.dst_id);
         }
         if (route_ret == -ETIMEDOUT && !mesh_relay_tx_active(&mesh_runtime)) {
-            mesh_drop_route_waiting_tx("pending-tx-route-exhausted");
+            mesh_schedule_route_waiting_exhausted_retry(
+                "pending-tx-route-exhausted");
         }
     }
 

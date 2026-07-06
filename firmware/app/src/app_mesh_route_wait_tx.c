@@ -37,14 +37,16 @@ void app_mesh_route_wait_tx_decide(
             return;
         }
         if (state->route_request_ret == -ETIMEDOUT) {
-            decision->action = APP_MESH_ROUTE_WAIT_TX_ACTION_DROP;
-            decision->reason = "route-waiting-timeout";
+            decision->action =
+                APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_EXHAUSTED_RETRY;
+            decision->reason = "route-waiting-exhausted";
         }
         return;
     }
 
     if (state->tx_ret == -ETIMEDOUT) {
-        decision->action = APP_MESH_ROUTE_WAIT_TX_ACTION_DROP;
+        decision->action =
+            APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_EXHAUSTED_RETRY;
         decision->reason = "route-waiting-stale";
         return;
     }

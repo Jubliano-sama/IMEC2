@@ -53,7 +53,7 @@ static void test_unreachable_requests_route_once(void)
     assert(strcmp(decision.reason, "route-waiting-packet") == 0);
 }
 
-static void test_unreachable_route_request_timeout_drops(void)
+static void test_unreachable_route_request_timeout_schedules_slow_retry(void)
 {
     struct app_mesh_route_wait_tx_state state = base_state();
     struct app_mesh_route_wait_tx_decision decision;
@@ -63,8 +63,9 @@ static void test_unreachable_route_request_timeout_drops(void)
     state.route_request_ret = -ETIMEDOUT;
     app_mesh_route_wait_tx_decide(&state, &decision);
 
-    assert(decision.action == APP_MESH_ROUTE_WAIT_TX_ACTION_DROP);
-    assert(strcmp(decision.reason, "route-waiting-timeout") == 0);
+    assert(decision.action ==
+           APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_EXHAUSTED_RETRY);
+    assert(strcmp(decision.reason, "route-waiting-exhausted") == 0);
 }
 
 static void test_unreachable_successful_route_request_waits(void)
@@ -80,7 +81,7 @@ static void test_unreachable_successful_route_request_waits(void)
     assert(decision.action == APP_MESH_ROUTE_WAIT_TX_ACTION_NONE);
 }
 
-static void test_tx_timeout_drops_stale_packet(void)
+static void test_tx_timeout_schedules_slow_retry(void)
 {
     struct app_mesh_route_wait_tx_state state = base_state();
     struct app_mesh_route_wait_tx_decision decision;
@@ -88,7 +89,8 @@ static void test_tx_timeout_drops_stale_packet(void)
     state.tx_ret = -ETIMEDOUT;
     app_mesh_route_wait_tx_decide(&state, &decision);
 
-    assert(decision.action == APP_MESH_ROUTE_WAIT_TX_ACTION_DROP);
+    assert(decision.action ==
+           APP_MESH_ROUTE_WAIT_TX_ACTION_SCHEDULE_EXHAUSTED_RETRY);
     assert(strcmp(decision.reason, "route-waiting-stale") == 0);
 }
 
@@ -123,9 +125,9 @@ int main(void)
     test_not_ready_schedules_route_retry();
     test_success_clears_waiting_packet();
     test_unreachable_requests_route_once();
-    test_unreachable_route_request_timeout_drops();
+    test_unreachable_route_request_timeout_schedules_slow_retry();
     test_unreachable_successful_route_request_waits();
-    test_tx_timeout_drops_stale_packet();
+    test_tx_timeout_schedules_slow_retry();
     test_busy_schedules_channel9_retry();
     test_other_failure_schedules_busy_retry();
     return 0;
