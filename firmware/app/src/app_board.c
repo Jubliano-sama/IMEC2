@@ -184,9 +184,32 @@ static bool reserve_status1_for_power_indicator(void)
     return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST);
 }
 
+static bool reserve_status0_for_route_test_power(void)
+{
+    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST);
+}
+
+static void status0_route_test_power_apply(void)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        !status_power_indicator_enabled) {
+        return;
+    }
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
+        status_led0_set(status0_power_red_on, false, false);
+    } else if (DEVICE_ROLE == ROLE_GATEWAY) {
+        status_led0_set(true, false, false);
+    } else if (DEVICE_ROLE == ROLE_ANCHOR) {
+        status_led0_set(false, false, true);
+    }
+}
+
 void status_leds_set(bool red, bool green, bool blue)
 {
-    status_led0_set(red, green, blue);
+    if (!reserve_status0_for_route_test_power()) {
+        status_led0_set(red, green, blue);
+    }
     if (reserve_status1_for_power_indicator()) {
         return;
     }
@@ -222,7 +245,13 @@ void status_led1_set(bool red, bool green, bool blue)
 void status_power_indicator_set(bool enabled)
 {
     status_power_indicator_enabled = enabled;
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        if (enabled) {
+            status0_route_test_power_apply();
+        } else {
+            status_led0_set(false, false, false);
+        }
+    } else {
         status_led1_set(false, false, enabled);
     }
 }
@@ -244,7 +273,7 @@ static void status0_power_blink_handler(struct k_work *work)
         return;
     }
     status0_power_red_on = !status0_power_red_on;
-    status_led0_set(status0_power_red_on, false, false);
+    status0_route_test_power_apply();
     (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
 }
 
@@ -279,6 +308,11 @@ static void status1_debug_channel_pulse(uint8_t uwb_channel)
     } else {
         status1_debug_pulse(true, false, false);
     }
+}
+
+static void status1_debug_gateway_ch9_tx_pulse(void)
+{
+    status1_debug_pulse(false, false, true);
 }
 
 static void debug_rtt_write(const char *text)
@@ -334,10 +368,10 @@ void status_debug_gateway_uwb_rx_channel_pulse(uint8_t uwb_channel)
         return;
     }
 
-    if (uwb_channel == 9u) {
+    if (uwb_channel == UWB_CHANNEL_MESH_PAYLOAD) {
         status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_CH9\n");
-    } else if (uwb_channel == 5u) {
+    } else if (uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
         status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_RX_CH5\n");
     } else {
@@ -352,10 +386,14 @@ void status_debug_uwb_tx_channel_pulse(uint8_t uwb_channel)
         return;
     }
 
-    if (uwb_channel == 9u) {
-        status1_debug_channel_pulse(uwb_channel);
+    if (uwb_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        if (DEVICE_ROLE == ROLE_GATEWAY) {
+            status1_debug_gateway_ch9_tx_pulse();
+        } else {
+            status1_debug_channel_pulse(uwb_channel);
+        }
         debug_rtt_write("DBG_UWB_TX_CH9\n");
-    } else if (uwb_channel == 5u) {
+    } else if (uwb_channel == UWB_CHANNEL_WAKE_CONTACT) {
         status1_debug_channel_pulse(uwb_channel);
         debug_rtt_write("DBG_UWB_TX_CH5\n");
     } else {
@@ -372,7 +410,7 @@ void status_debug_tx_boot_test(void)
 
     ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
     status0_power_red_on = true;
-    status_led0_set(true, false, false);
+    status_power_indicator_set(true);
     if (status0_power_blink_work_ready) {
         (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
     }
@@ -386,7 +424,7 @@ void status_debug_gateway_boot_test(void)
 
     ARG_UNUSED(DEBUG_TX_BOOT_TEST_MS);
     status0_power_red_on = true;
-    status_led0_set(true, false, false);
+    status_power_indicator_set(true);
 }
 
 void status_debug_anchor_boot_test(void)
@@ -397,7 +435,7 @@ void status_debug_anchor_boot_test(void)
         return;
     }
 
-    status_led0_set(false, false, true);
+    status_power_indicator_set(true);
 }
 
 void status_debug_tx_packet_sent_pulse(void)
