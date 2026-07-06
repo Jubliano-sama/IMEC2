@@ -195,6 +195,8 @@ static uint32_t gateway_route_adv_seq;
 static uint32_t gateway_route_adv_response_due_ms;
 static bool mesh_route_reply_handoff_pending;
 static uint32_t mesh_route_reply_handoff_deadline_ms;
+static bool mesh_coordinator_last_state_valid;
+static enum app_mesh_coordinator_state mesh_coordinator_last_state;
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
@@ -733,6 +735,78 @@ static bool mesh_defer_for_click_priority(const char *reason)
                             reason == NULL ? "mesh" : reason);
     }
     return true;
+}
+
+static void mesh_coordinator_decide_now(
+    const char *owner,
+    struct app_mesh_coordinator_decision *decision)
+{
+    struct app_mesh_coordinator_inputs inputs = {
+        .click_priority = mesh_click_priority_active(),
+        .survey_pending = DEVICE_ROLE == ROLE_ANCHOR &&
+                          mesh_report_anchor_survey_discovery_is_pending(),
+        .rx_queue_pending = k_msgq_num_used_get(&mesh_rx_msgq) > 0u,
+        .relay_tx_active = mesh_relay_tx_active(&mesh_runtime),
+        .route_waiting_tx_active = mesh_route_waiting_tx_valid,
+        .ch9_ack_wait_active = mesh_ch9_tx_pending.active,
+        .report_queue_pending = k_msgq_num_used_get(&report_tx_msgq) > 0u,
+        .gateway_continuous_ch9 = mesh_gateway_route_test_role(),
+    };
+
+    app_mesh_coordinator_decide(&inputs, decision);
+    if (decision == NULL) {
+        return;
+    }
+
+    if (!mesh_coordinator_last_state_valid ||
+        mesh_coordinator_last_state != decision->state) {
+        const char *state_name =
+            app_mesh_coordinator_state_name(decision->state);
+
+        high_debug_log_event("MESH_COORDINATOR",
+                             "owner=%s state=%s reason=%s q_rx=%u q_tx=%u relay=%u route_wait=%u ack_wait=%u ch9=%u",
+                             owner == NULL ? "mesh" : owner,
+                             state_name,
+                             decision->reason == NULL ? "none" : decision->reason,
+                             k_msgq_num_used_get(&mesh_rx_msgq),
+                             k_msgq_num_used_get(&report_tx_msgq),
+                             inputs.relay_tx_active ? 1u : 0u,
+                             inputs.route_waiting_tx_active ? 1u : 0u,
+                             inputs.ch9_ack_wait_active ? 1u : 0u,
+                             mesh_channel9_connection_count());
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_COORD state=%s owner=%s reason=%s rx=%u tx=%u relay=%u route=%u ack=%u\n",
+                                state_name,
+                                owner == NULL ? "mesh" : owner,
+                                decision->reason == NULL ? "none" :
+                                decision->reason,
+                                k_msgq_num_used_get(&mesh_rx_msgq),
+                                k_msgq_num_used_get(&report_tx_msgq),
+                                inputs.relay_tx_active ? 1u : 0u,
+                                inputs.route_waiting_tx_active ? 1u : 0u,
+                                inputs.ch9_ack_wait_active ? 1u : 0u);
+        }
+        mesh_coordinator_last_state = decision->state;
+        mesh_coordinator_last_state_valid = true;
+    }
+}
+
+static bool mesh_coordinator_mesh_work_allowed(const char *owner)
+{
+    struct app_mesh_coordinator_decision decision;
+
+    mesh_coordinator_decide_now(owner, &decision);
+    if (decision.mesh_work_allowed) {
+        return true;
+    }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_COORD_MESH_DEFER owner=%s state=%s reason=%s\n",
+                            owner == NULL ? "mesh" : owner,
+                            app_mesh_coordinator_state_name(decision.state),
+                            decision.reason == NULL ? "none" :
+                            decision.reason);
+    }
+    return false;
 }
 
 static bool mesh_outbound_reports_local_delivery_loss(const struct mesh_outbound *out)
@@ -3002,7 +3076,7 @@ int mesh_send_outbound(const struct mesh_outbound *out, const char *reason)
     if (out == NULL) {
         return -EINVAL;
     }
-    if (mesh_defer_for_click_priority(reason)) {
+    if (!mesh_coordinator_mesh_work_allowed(reason)) {
         return -EBUSY;
     }
     if (out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
@@ -3021,6 +3095,9 @@ int mesh_send_outbound(const struct mesh_outbound *out, const char *reason)
                                     out->packet.msg_type);
             }
             mesh_wait_until_ms(guard_start_ms);
+        }
+        if (!mesh_coordinator_mesh_work_allowed(reason)) {
+            return -EBUSY;
         }
     }
 
@@ -3260,10 +3337,16 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
 static bool mesh_c5_flood_defer_active_cb(void *ctx)
 {
     const struct mesh_c5_flood_tx_context *flood_ctx = ctx;
+    struct app_mesh_coordinator_decision coordinator_decision;
     struct app_mesh_c5_flood_priority_state state = {
         .response_priority = flood_ctx != NULL && flood_ctx->response_priority,
     };
     uint32_t now_ms;
+
+    mesh_coordinator_decide_now("c5-flood", &coordinator_decision);
+    if (!coordinator_decision.mesh_work_allowed) {
+        return true;
+    }
 
     if (DEVICE_ROLE == ROLE_ANCHOR) {
         state.anchor_busy = anchor_uwb_window_active();
@@ -5512,6 +5595,12 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                             mesh_runtime.route_discovery.next_request_ms);
     }
 
+    if (!mesh_coordinator_mesh_work_allowed(reason == NULL ? "route-request" :
+                                            reason)) {
+        mesh_schedule_route_waiting_retry(reason);
+        return -EBUSY;
+    }
+
     if (!relay_required_route_req) {
         ret = mesh_try_direct_gateway_route_probe(target_id, reason);
         if (ret == 0) {
@@ -6519,6 +6608,7 @@ static void mesh_try_route_waiting_tx(void)
     struct app_mesh_tx_handoff_result handoff_result;
     struct app_mesh_route_ready_handoff_result route_ready_result;
     struct app_mesh_route_wait_tx_decision wait_decision;
+    struct app_mesh_coordinator_decision coordinator_decision;
     struct app_mesh_route_wait_tx_state wait_state = {
         .channel9_retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
         .busy_retry_delay_ms = REPORT_TX_RETRY_DELAY_MS,
@@ -6529,6 +6619,20 @@ static void mesh_try_route_waiting_tx(void)
     if (!mesh_route_waiting_tx_valid ||
         (DEVICE_ROLE == ROLE_ANCHOR && mesh_report_anchor_survey_discovery_is_pending()) ||
         mesh_relay_tx_active(&mesh_runtime)) {
+        return;
+    }
+    mesh_coordinator_decide_now("route-wait", &coordinator_decision);
+    if (!coordinator_decision.route_wait_allowed) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ROUTE_WAIT_COORD_DEFER state=%s reason=%s q=%u\n",
+                                app_mesh_coordinator_state_name(
+                                    coordinator_decision.state),
+                                coordinator_decision.reason == NULL ? "none" :
+                                coordinator_decision.reason,
+                                k_msgq_num_used_get(&mesh_rx_msgq));
+        }
+        mesh_schedule_route_waiting_retry_after("route-wait-coordinator",
+                                                MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         return;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
@@ -7045,6 +7149,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
     };
     struct mesh_channel5_requirements requirements;
     struct mesh_event_plan plan = {0};
+    struct app_mesh_coordinator_decision coordinator_decision;
     uint64_t next_hop_id = 0u;
     uint32_t now_ms;
     uint32_t deadline_ms;
@@ -7139,6 +7244,18 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                 status_debug_printf("DBG_CH9_TX_BATCH_STOP reason=empty sent=%u now=%u q=%u\n",
                                     sent_count,
                                     k_uptime_get_32(),
+                                    k_msgq_num_used_get(&report_tx_msgq));
+            }
+            break;
+        }
+        mesh_coordinator_decide_now("ch9-batch", &coordinator_decision);
+        if (!coordinator_decision.mesh_work_allowed) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CH9_TX_BATCH_STOP reason=coord sent=%u state=%s seq=%u q=%u\n",
+                                    sent_count,
+                                    app_mesh_coordinator_state_name(
+                                        coordinator_decision.state),
+                                    queued->packet.seq,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
             break;
@@ -7458,17 +7575,7 @@ static void report_tx_work_handler(struct k_work *work)
     rx_queue_pending = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                        k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
     route_handoff_active = mesh_route_reply_handoff_active();
-    app_mesh_coordinator_decide(
-        &(const struct app_mesh_coordinator_inputs) {
-            .click_priority = anchor_busy,
-            .survey_pending = survey_busy,
-            .rx_queue_pending = rx_queue_pending,
-            .relay_tx_active = relay_tx_active,
-            .route_waiting_tx_active = route_waiting_active,
-            .ch9_ack_wait_active = ch9_ack_wait_active,
-            .report_queue_pending = report_queue_pending,
-        },
-        &coordinator_decision);
+    mesh_coordinator_decide_now("report-tx", &coordinator_decision);
     if (anchor_busy || !coordinator_decision.report_tx_allowed ||
         route_handoff_active) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
@@ -8441,18 +8548,23 @@ bool mesh_process_queued_rx_now(const char *reason)
 {
     uint32_t pending_count = k_msgq_num_used_get(&mesh_rx_msgq);
     uint32_t handled_count;
+    struct app_mesh_coordinator_decision coordinator_decision;
     int lock_ret;
     int submit_ret;
 
     if (pending_count == 0u) {
         return false;
     }
-    if (mesh_defer_for_click_priority(reason)) {
+    mesh_coordinator_decide_now(reason == NULL ? "queued-rx" : reason,
+                                &coordinator_decision);
+    if (!coordinator_decision.mesh_work_allowed) {
         submit_ret = mesh_submit_work(&mesh_rx_work);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_MESH_RX_DIRECT_CLICK_DEFER submit=%d q=%u reason=%s\n",
+            status_debug_printf("DBG_MESH_RX_DIRECT_COORD_DEFER submit=%d q=%u state=%s reason=%s\n",
                                 submit_ret,
                                 k_msgq_num_used_get(&mesh_rx_msgq),
+                                app_mesh_coordinator_state_name(
+                                    coordinator_decision.state),
                                 reason == NULL ? "direct" : reason);
         }
         return false;
@@ -9103,12 +9215,35 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     bool frame_processed_inline = false;
     bool channel9_peer_observed = false;
     uint32_t channel5_gap_window_ms = 0u;
+    struct app_mesh_coordinator_decision coordinator_decision;
     int ret;
 
     ARG_UNUSED(work);
 
     if (!mesh_role_uses_uwb_rx()) {
         mesh_uwb_rx_active = false;
+        return;
+    }
+    mesh_coordinator_decide_now("uwb-rx", &coordinator_decision);
+    if (!coordinator_decision.uwb_rx_allowed) {
+        if (coordinator_decision.route_wait_allowed &&
+            DEVICE_ROLE == ROLE_ANCHOR &&
+            mesh_route_waiting_tx_valid) {
+            mesh_try_route_waiting_tx();
+        }
+        if (coordinator_decision.report_tx_allowed) {
+            report_tx_schedule(0u);
+        }
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_UWB_RX_COORD_DEFER state=%s reason=%s route=%u q=%u\n",
+                                app_mesh_coordinator_state_name(
+                                    coordinator_decision.state),
+                                coordinator_decision.reason == NULL ? "none" :
+                                coordinator_decision.reason,
+                                mesh_route_waiting_tx_valid ? 1u : 0u,
+                                k_msgq_num_used_get(&report_tx_msgq));
+        }
+        mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         return;
     }
     if ((DEVICE_ROLE == ROLE_ANCHOR &&

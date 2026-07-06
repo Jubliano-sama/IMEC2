@@ -57,6 +57,27 @@ instead of rewriting all radio workers at once.
 - `app_mesh_coordinator` has native tests covering click priority, mesh-TX
   ownership, replacement counting, TLV update, and no-space behavior.
 
+## Implemented Second Pass
+
+The second implementation pass wires the coordinator into the main mesh worker
+entry points and makes state changes visible in the logs.
+
+- `app_mesh_report` now builds one coordinator snapshot from click, survey,
+  queued RX, relay TX, route-waiting TX, channel-9 ACK-wait, report queue, and
+  gateway continuous receive state.
+- Coordinator state transitions emit one structured `MESH_COORDINATOR` event,
+  with RTT breadcrumbs enabled in mesh-route-test builds.
+- Report TX, route-waiting TX, scheduled UWB RX, direct queued-RX processing,
+  channel-5 flooding, route discovery, and late channel-9 payload sends now
+  consult the same coordinator decision before starting new mesh work.
+- A click or survey window prevents new route discovery, wake trains, floods,
+  report sends, and scheduled background RX from starting. Existing blocking
+  listen helpers still keep their local click guard for the narrow receive
+  window they own.
+- Channel-9 batch TX checks the coordinator before each packet, so a click that
+  becomes active while the batch is waiting for a slot can stop the batch before
+  the next packet leaves.
+
 ## Radio Coordinator Overview
 
 ```mermaid

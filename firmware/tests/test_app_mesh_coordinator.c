@@ -69,6 +69,41 @@ static void test_mesh_tx_blocks_background_rx(void)
     assert(strcmp(decision.reason, "mesh-tx") == 0);
 }
 
+static void test_survey_blocks_mesh_work(void)
+{
+    const struct app_mesh_coordinator_inputs inputs = {
+        .survey_pending = true,
+        .report_queue_pending = true,
+    };
+    struct app_mesh_coordinator_decision decision;
+
+    app_mesh_coordinator_decide(&inputs, &decision);
+
+    assert(decision.state == APP_MESH_COORDINATOR_SURVEY);
+    assert(!decision.mesh_work_allowed);
+    assert(!decision.route_wait_allowed);
+    assert(!decision.report_tx_allowed);
+    assert(!decision.uwb_rx_allowed);
+    assert(strcmp(app_mesh_coordinator_state_name(decision.state), "survey") == 0);
+}
+
+static void test_rx_queue_blocks_route_wait_and_report_tx(void)
+{
+    const struct app_mesh_coordinator_inputs inputs = {
+        .rx_queue_pending = true,
+        .route_waiting_tx_active = true,
+        .report_queue_pending = true,
+    };
+    struct app_mesh_coordinator_decision decision;
+
+    app_mesh_coordinator_decide(&inputs, &decision);
+
+    assert(decision.state == APP_MESH_COORDINATOR_MESH_RX);
+    assert(!decision.route_wait_allowed);
+    assert(!decision.report_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+}
+
 static void test_report_queue_can_drive_mesh_tx_state(void)
 {
     const struct app_mesh_coordinator_inputs inputs = {
@@ -178,6 +213,8 @@ int main(void)
 {
     test_click_priority_blocks_mesh_work();
     test_mesh_tx_blocks_background_rx();
+    test_survey_blocks_mesh_work();
+    test_rx_queue_blocks_route_wait_and_report_tx();
     test_report_queue_can_drive_mesh_tx_state();
     test_replacing_paused_packet_counts_loss();
     test_same_paused_packet_does_not_count_loss();

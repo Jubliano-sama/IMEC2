@@ -55,6 +55,7 @@ struct app_mesh_paused_delivery_attach_result {
 void app_mesh_coordinator_decide(
     const struct app_mesh_coordinator_inputs *inputs,
     struct app_mesh_coordinator_decision *decision);
+const char *app_mesh_coordinator_state_name(enum app_mesh_coordinator_state state);
 void app_mesh_paused_delivery_reset(struct app_mesh_paused_delivery_state *state);
 void app_mesh_paused_delivery_note_store(
     struct app_mesh_paused_delivery_state *state,

@@ -38,6 +38,7 @@ void app_mesh_coordinator_decide(
 
     if (inputs->survey_pending) {
         decision->state = APP_MESH_COORDINATOR_SURVEY;
+        decision->mesh_work_allowed = false;
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
         decision->uwb_rx_allowed = false;
@@ -47,6 +48,7 @@ void app_mesh_coordinator_decide(
 
     if (inputs->rx_queue_pending) {
         decision->state = APP_MESH_COORDINATOR_MESH_RX;
+        decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
         decision->reason = "mesh-rx";
         return;
@@ -72,6 +74,26 @@ void app_mesh_coordinator_decide(
     if (inputs->gateway_continuous_ch9) {
         decision->state = APP_MESH_COORDINATOR_GATEWAY_RX;
         decision->reason = "gateway-rx";
+    }
+}
+
+const char *app_mesh_coordinator_state_name(enum app_mesh_coordinator_state state)
+{
+    switch (state) {
+    case APP_MESH_COORDINATOR_IDLE:
+        return "idle";
+    case APP_MESH_COORDINATOR_CLICK:
+        return "click";
+    case APP_MESH_COORDINATOR_SURVEY:
+        return "survey";
+    case APP_MESH_COORDINATOR_MESH_RX:
+        return "mesh-rx";
+    case APP_MESH_COORDINATOR_MESH_TX:
+        return "mesh-tx";
+    case APP_MESH_COORDINATOR_GATEWAY_RX:
+        return "gateway-rx";
+    default:
+        return "unknown";
     }
 }
 
