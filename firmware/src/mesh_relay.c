@@ -1203,6 +1203,7 @@ static int build_result_offer_from_pending(const struct mesh_relay *relay,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = pending->next_hop_id;
     out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms;
     return PROTO_OK;
 }
 
@@ -1215,6 +1216,7 @@ static int outbound_from_pending(const struct mesh_relay *relay,
         return build_result_offer_from_pending(relay, pending, now_ms, out);
     }
 
+    memset(out, 0, sizeof(*out));
     out->packet = pending->packet;
     out->packet.message_age_ms = packet_age_add(pending->packet.message_age_ms,
                                                 now_ms - pending->queued_at_ms);
@@ -1225,6 +1227,7 @@ static int outbound_from_pending(const struct mesh_relay *relay,
     out->radio_channel = pending->radio_channel;
     out->next_hop_id = pending->next_hop_id;
     out->queued_at_ms = now_ms;
+    out->earliest_tx_ms = now_ms;
     return PROTO_OK;
 }
 

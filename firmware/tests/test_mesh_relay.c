@@ -3736,6 +3736,33 @@ static void test_local_gateway_bound_tx_accepts_batched_gateway_ack(void)
     assert(!mesh_relay_tx_active(&relay));
 }
 
+static void test_start_tx_initializes_earliest_tx_time(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 5u, 80u);
+    struct proto_packet report;
+    struct mesh_outbound tx;
+    uint8_t payload[1] = {0x42u};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 5u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(report_init_click_packet(&report,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    188u,
+                                    7u,
+                                    sizeof(payload)) == PROTO_OK);
+
+    memset(&tx, 0xa5, sizeof(tx));
+    assert(mesh_relay_start_tx(&relay,
+                               &report,
+                               payload,
+                               sizeof(payload),
+                               5000u,
+                               &tx) == PROTO_OK);
+    assert(tx.earliest_tx_ms == 5000u);
+}
+
 static void test_relayed_tx_completes_after_next_hop_send(void)
 {
     struct mesh_relay relay;
@@ -7282,6 +7309,7 @@ int main(void)
     test_relay_busy_defers_matching_pending_tx();
     test_local_gateway_bound_tx_waits_for_gateway_ack();
     test_local_gateway_bound_tx_accepts_batched_gateway_ack();
+    test_start_tx_initializes_earliest_tx_time();
     test_relayed_tx_completes_after_next_hop_send();
     test_gateway_ack_timeout_retries_then_requests_route_discovery();
     test_gateway_ack_timeout_handles_ms_wrap();
