@@ -5263,6 +5263,7 @@ static void test_relay_required_route_request_ignores_direct_gateway_copy(void)
                NULL,
                0u,
                MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED,
+               0u,
                &route_req,
                1000u) == PROTO_OK);
     assert(require_tlv_u8(route_req.payload,
@@ -5307,6 +5308,74 @@ static void test_relay_required_route_request_ignores_direct_gateway_copy(void)
                           TLV_HOP_COUNT) == 1u);
     assert(relay_result.route_request.next_hop_id == MESH_BROADCAST_ID);
     assert(relay_result.route_request.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+}
+
+static void test_route_request_carries_reply_rx_eta(void)
+{
+    struct mesh_relay origin;
+    struct mesh_outbound route_req;
+    uint16_t delay_ms = 0u;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 1u);
+
+    assert(mesh_relay_build_route_request_with_timing_flags(
+               &origin,
+               GATEWAY,
+               NULL,
+               0u,
+               0u,
+               620u,
+               &route_req,
+               1000u) == PROTO_OK);
+    assert(require_tlv_u16(route_req.payload,
+                           route_req.payload_len,
+                           TLV_ROUTE_REPLY_RX_DELAY_MS) == 620u);
+    assert(mesh_route_request_reply_rx_delay_ms(&route_req, &delay_ms));
+    assert(delay_ms == 620u);
+
+    assert(mesh_route_request_set_reply_rx_delay_ms(&route_req, 125u) == PROTO_OK);
+    assert(require_tlv_u16(route_req.payload,
+                           route_req.payload_len,
+                           TLV_ROUTE_REPLY_RX_DELAY_MS) == 125u);
+}
+
+static void test_route_reply_waits_for_request_reply_eta(void)
+{
+    struct mesh_relay relay;
+    struct mesh_relay origin;
+    struct mesh_outbound route_req;
+    struct mesh_relay_result result;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 50u, 90u);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 1u);
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 1u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+
+    assert(mesh_relay_build_route_request_with_timing_flags(
+               &origin,
+               GATEWAY,
+               NULL,
+               0u,
+               0u,
+               620u,
+               &route_req,
+               1000u) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                2000u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(result.route_reply.next_hop_id == ANCHOR_A);
+    assert(result.route_reply.earliest_tx_ms == 2620u);
+    assert(tlv_present(result.route_reply.payload,
+                       result.route_reply.payload_len,
+                       TLV_ROUTE_REPLY_RX_DELAY_MS) == PROTO_ERR_NOT_FOUND);
 }
 
 static void test_gateway_route_request_without_upstream_repairs_by_forwarding(void)
@@ -7242,6 +7311,8 @@ int main(void)
     test_malformed_route_reply_does_not_poison_upstream_route();
     test_reactive_route_and_report_flow_over_uwb_mesh_frames();
     test_reactive_gateway_discovers_downlink_anchor();
+    test_route_request_carries_reply_rx_eta();
+    test_route_reply_waits_for_request_reply_eta();
     test_channel9_guard_allows_one_upstream_and_one_downstream();
     test_channel9_guard_rejects_second_peer_in_same_direction();
     test_channel9_guard_rejects_third_peer();

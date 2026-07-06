@@ -444,6 +444,7 @@ int mesh_relay_build_route_request_with_timing_flags(
     const struct mesh_event_timing *proposed_channel9_timing,
     uint32_t timing_reference_ms,
     uint8_t request_flags,
+    uint16_t route_reply_rx_delay_ms,
     struct mesh_outbound *out,
     uint32_t now_ms);
 int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
@@ -469,6 +470,7 @@ int mesh_relay_prepare_route_request_with_timing_flags(
     const struct mesh_event_timing *proposed_channel9_timing,
     uint32_t timing_reference_ms,
     uint8_t request_flags,
+    uint16_t route_reply_rx_delay_ms,
     uint32_t now_ms,
     uint32_t random_value,
     struct mesh_outbound *out);
@@ -482,6 +484,10 @@ uint32_t mesh_relay_route_discovery_backoff_ms(uint8_t attempt_count,
                                                uint32_t random_value);
 uint32_t mesh_relay_collection_retry_delay_ms(uint32_t base_delay_ms,
                                               uint32_t random_value);
+bool mesh_route_request_reply_rx_delay_ms(const struct mesh_outbound *out,
+                                          uint16_t *delay_ms);
+int mesh_route_request_set_reply_rx_delay_ms(struct mesh_outbound *out,
+                                             uint16_t delay_ms);
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   uint8_t *payload,
                                   size_t payload_cap,

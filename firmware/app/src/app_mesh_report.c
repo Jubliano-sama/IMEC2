@@ -44,6 +44,7 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS 50u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_COUNT 2u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS 25u
+#define MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS 20u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS 80u
 #define MESH_ROUTE_TEST_REPLY_HANDOFF_WAIT_MS 250u
 #define MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS 1000u
@@ -58,6 +59,8 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
+#define MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS \
+    (FLOOD_RELAY_BURST_MS + MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS)
 #define MESH_RX_WINDOW_IDLE_LOG_INTERVAL_MS 1000u
 #define MESH_CH9_ACK_BATCH_MAX 8u
 #define MESH_CH9_TX_BATCH_MAX 8u
@@ -101,7 +104,7 @@ BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
 #define MESH_GATEWAY_ROUTE_ADV_STARTUP_DELAY_MS 500u
 #define MESH_GATEWAY_ROUTE_ADV_PERIOD_MS 600000u
 #define MESH_GATEWAY_ROUTE_ADV_DEFER_MS 1000u
-#define MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES 51u
+#define MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES 55u
 #define MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN 125u
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC0 0x4du
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC1 0x52u
@@ -115,6 +118,8 @@ BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(MESH_RELAY_EVENT_TIMINGS >= MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
              "mesh route-test needs room for upstream and downstream channel-9 timings");
+BUILD_ASSERT(MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS <= UINT16_MAX,
+             "mesh route-test route-reply ETA must fit in the uint16_t TLV");
 BUILD_ASSERT(MESH_ROUTE_TEST_CH9_TX_OFFSET_MS + MESH_CH9_TX_SLOT_TRAILER_MS <
              MESH_EVENT_DEFAULT_WINDOW_MS,
              "mesh route-test TX offset must fit inside the channel-9 window");
@@ -5423,6 +5428,8 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         target_id == GATEWAY_ID;
     uint8_t route_request_flags = relay_required_route_req ?
                                   MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED : 0u;
+    uint16_t route_reply_rx_delay_ms = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
+                                       MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS : 0u;
     int ret;
 
     if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
@@ -5474,6 +5481,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                                                              proposed_timing_ptr,
                                                              timing_reference_ms,
                                                              route_request_flags,
+                                                             route_reply_rx_delay_ms,
                                                              now_ms,
                                                              sys_rand32_get(),
                                                              &route_req);
@@ -7502,6 +7510,21 @@ static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
                             result->route_reply_backup_valid ? 1u : 0u);
     }
     mesh_route_embedded_wait_before_reply(&result->route_reply);
+    if (result->route_reply.earliest_tx_ms != 0u) {
+        uint32_t now_ms = k_uptime_get_32();
+        uint32_t delay_ms = uptime_ms_until_deadline(now_ms,
+                                                     result->route_reply.earliest_tx_ms);
+
+        if (delay_ms > 0u) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_ROUTE_REPLY_ETA_WAIT delay=%u earliest=%u now=%u\n",
+                                    delay_ms,
+                                    result->route_reply.earliest_tx_ms,
+                                    now_ms);
+            }
+            mesh_wait_until_ms(result->route_reply.earliest_tx_ms);
+        }
+    }
     if (mesh_id_is_unicast(result->route_reply.next_hop_id)) {
         mesh_c5_contact_exchange(result->route_reply.next_hop_id,
                                  C5_CONTACT_PURPOSE_ROUTE_REPLY,
