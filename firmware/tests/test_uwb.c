@@ -509,6 +509,30 @@ static struct uwb_wake_claim_frame wake_claim(void)
     return claim;
 }
 
+static struct uwb_range_release_frame valid_range_release_for_claim(
+    const struct uwb_wake_claim_frame *claim)
+{
+    uint8_t min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS;
+    uint8_t flags = claim->flags;
+
+    if (min_anchor_count == 1u) {
+        min_anchor_count = 2u;
+        flags = FLAG_DIAGNOSTIC;
+    }
+
+    return (struct uwb_range_release_frame){
+        .network_id = claim->network_id,
+        .clicker_id = claim->clicker_id,
+        .click_event_id = claim->click_event_id,
+        .attempt_index = claim->attempt_index,
+        .nonce = claim->nonce,
+        .discovered_anchor_count = min_anchor_count - 1u,
+        .min_anchor_count = min_anchor_count,
+        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+        .flags = flags,
+    };
+}
+
 static void test_wake_discovery_and_schedule_round_trip(void)
 {
     const struct uwb_wake_claim_frame claim = wake_claim();
@@ -542,17 +566,8 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .slot_count = UWB_DISCOVERY_SLOT_COUNT,
         .flags = FLAG_DIAGNOSTIC,
     };
-    const struct uwb_range_release_frame release = {
-        .network_id = claim.network_id,
-        .clicker_id = claim.clicker_id,
-        .click_event_id = claim.click_event_id,
-        .attempt_index = claim.attempt_index,
-        .nonce = claim.nonce,
-        .discovered_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u,
-        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
-        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
-        .flags = claim.flags,
-    };
+    const struct uwb_range_release_frame release =
+        valid_range_release_for_claim(&claim);
     struct uwb_range_schedule_frame schedule = {
         .network_id = claim.network_id,
         .clicker_id = claim.clicker_id,
@@ -778,10 +793,11 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_schedule.max_exchanges == schedule.max_exchanges);
     assert(decoded_schedule.sts_mode == UWB_RANGE_SCHEDULE_STS_DISABLED);
     assert(decoded_schedule.diagnostics_required == UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
-    assert(decoded_schedule.entries[0].anchor_id == schedule.entries[0].anchor_id);
-    assert(decoded_schedule.entries[1].seq == schedule.entries[1].seq);
-    assert(decoded_schedule.entries[1].sample_count == schedule.samples_per_anchor);
-    assert(decoded_schedule.entries[2].anchor_id == schedule.entries[2].anchor_id);
+    for (uint8_t i = 0u; i < schedule.selected_count; i++) {
+        assert(decoded_schedule.entries[i].anchor_id == schedule.entries[i].anchor_id);
+        assert(decoded_schedule.entries[i].seq == schedule.entries[i].seq);
+        assert(decoded_schedule.entries[i].sample_count == schedule.samples_per_anchor);
+    }
 }
 
 static void test_discovery_slot_hash_is_bounded_and_deterministic(void)
@@ -855,17 +871,8 @@ static void test_control_frames_reject_bad_crc(void)
         .battery_mv = 3010u,
         .flags = claim.flags,
     };
-    const struct uwb_range_release_frame release = {
-        .network_id = claim.network_id,
-        .clicker_id = claim.clicker_id,
-        .click_event_id = claim.click_event_id,
-        .attempt_index = claim.attempt_index,
-        .nonce = claim.nonce,
-        .discovered_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u,
-        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
-        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
-        .flags = claim.flags,
-    };
+    const struct uwb_range_release_frame release =
+        valid_range_release_for_claim(&claim);
     const struct uwb_range_schedule_frame schedule = {
         .network_id = claim.network_id,
         .clicker_id = claim.clicker_id,
@@ -1105,17 +1112,8 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
 static void test_range_release_decode_rejects_valid_crc_malformed_fields(void)
 {
     const struct uwb_wake_claim_frame claim = wake_claim();
-    const struct uwb_range_release_frame release = {
-        .network_id = claim.network_id,
-        .clicker_id = claim.clicker_id,
-        .click_event_id = claim.click_event_id,
-        .attempt_index = claim.attempt_index,
-        .nonce = claim.nonce,
-        .discovered_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS - 1u,
-        .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
-        .reason = UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
-        .flags = FLAG_DIAGNOSTIC,
-    };
+    const struct uwb_range_release_frame release =
+        valid_range_release_for_claim(&claim);
     uint8_t buf[UWB_RANGE_RELEASE_LEN];
     size_t written = 0u;
 
@@ -1202,15 +1200,15 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
         .click_event_id = 3u,
         .attempt_index = 1u,
         .nonce = 4u,
-        .selected_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .selected_count = 3u,
         .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
         .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
         .first_poll_delay_ms = 3u,
         .poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
         .burst_window_ms = UWB_RANGE_SCHEDULE_MIN_BURST_WINDOW_MS,
         .exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
-        .max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS,
-        .min_successful_unique_anchors = UWB_NORMAL_CLICK_MIN_ANCHORS,
+        .max_exchanges = 3u,
+        .min_successful_unique_anchors = 3u,
         .sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED,
         .diagnostics_required = UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED,
         .samples_per_anchor = 1u,
@@ -1260,7 +1258,7 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
     schedule.entries[0].sample_count = 2u;
     schedule.entries[1].sample_count = 2u;
     schedule.entries[2].sample_count = 2u;
-    schedule.max_exchanges = UWB_NORMAL_CLICK_MIN_ANCHORS * 2u;
+    schedule.max_exchanges = 6u;
     schedule.entries[1].seq = 255u;
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
 }

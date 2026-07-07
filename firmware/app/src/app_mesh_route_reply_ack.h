@@ -49,6 +49,7 @@ void app_mesh_route_reply_ack_decide_backup(
 
 uint32_t app_mesh_route_reply_ack_deadline_after_preemption(
     uint32_t preempted_at_ms,
-    uint32_t timeout_ms);
+    uint32_t timeout_ms,
+    uint32_t latest_deadline_ms);
 
 #endif

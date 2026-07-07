@@ -49,11 +49,13 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS 80u
 #define MESH_ROUTE_TEST_REPLY_HANDOFF_WAIT_MS 250u
 #define MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS 1000u
-#define MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS 6000u
 #define MESH_ROUTE_TEST_REPLY_WINDOW_GUARD_MS 250u
+#define RREP_ACK_MAX_C5_PREEMPTIONS 2u
+#define RREP_ACK_ATTEMPT_MAX_MS \
+    (RREP_ACK_TIMEOUT_MS * (RREP_ACK_MAX_C5_PREEMPTIONS + 1u))
 #define MESH_ROUTE_TEST_ROUTE_REPLY_EXCHANGE_MS \
     ((uint32_t)(RREP_RETRY_COUNT_PER_HOP + 1u) * \
-     (RREP_ACK_TIMEOUT_MS + MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS + \
+     (RREP_ACK_ATTEMPT_MAX_MS + MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS + \
       MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS + 50u))
 #define MESH_ROUTE_TEST_REPLY_CAPTURE_MAX 4u
 #define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
@@ -74,11 +76,6 @@ BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS + FLOOD_RELAY_BURST_MS +
              MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS <
              MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
              "route-ad response delay must fit the route reply listen window");
-BUILD_ASSERT(MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS >=
-             WAKE_ADV_MS + MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS + FLOOD_WAVE_MS +
-             MESH_ROUTE_TEST_ROUTE_REPLY_EXCHANGE_MS +
-             MESH_ROUTE_TEST_REPLY_WINDOW_GUARD_MS,
-             "forced relay route-reply window must cover one relay hop");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "direct gateway ACK scratch must fit the mesh payload limit");
 BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
@@ -3859,6 +3856,7 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
     struct mesh_frame_parse_context *parsed = &mesh_route_reply_ack_parsed;
     int64_t uwb_window_start_ms = -1;
     uint32_t deadline_ms;
+    uint32_t latest_deadline_ms = 0u;
     bool captured = false;
     uint8_t capture_quality = 0u;
     int last_ret = -ETIMEDOUT;
@@ -3898,7 +3896,14 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
     uwb_window_start_ms = k_uptime_get();
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
-        deadline_ms = k_uptime_get_32() + RREP_ACK_TIMEOUT_MS;
+        uint32_t listen_start_ms = k_uptime_get_32();
+
+        deadline_ms = listen_start_ms + RREP_ACK_TIMEOUT_MS;
+        latest_deadline_ms = u32_saturating_add(listen_start_ms,
+                                                RREP_ACK_ATTEMPT_MAX_MS);
+        if (latest_deadline_ms == 0u) {
+            latest_deadline_ms = 1u;
+        }
         while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms)) {
             enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
             uint32_t now_ms = k_uptime_get_32();
@@ -3956,14 +3961,16 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                     }
                     deadline_ms = app_mesh_route_reply_ack_deadline_after_preemption(
                         preempted_at_ms,
-                        RREP_ACK_TIMEOUT_MS);
+                        RREP_ACK_TIMEOUT_MS,
+                        latest_deadline_ms);
                     status_debug_note("DBG_ROUTE_REPLY_ACK_PREEMPT_EXTEND\n");
                     high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                                         "phase=c5-preempt-click next=0x%016llx seq=%u attempt=%u extended_deadline=%u",
+                                         "phase=c5-preempt-click next=0x%016llx seq=%u attempt=%u extended_deadline=%u latest_deadline=%u",
                                          (unsigned long long)route_reply->next_hop_id,
                                          route_reply->packet.seq,
                                          attempt,
-                                         deadline_ms);
+                                         deadline_ms,
+                                         latest_deadline_ms);
                     continue;
                 }
             }
@@ -6063,10 +6070,6 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         return mesh_errno_from_proto(ret);
     }
     route_reply_window_ms = mesh_route_reply_listen_window_ms(route_req.packet.ttl);
-    if (relay_required_route_req &&
-        route_reply_window_ms > MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS) {
-        route_reply_window_ms = MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS;
-    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         uint32_t route_backoff_ms =
             uptime_ms_until_deadline(now_ms,

@@ -110,9 +110,16 @@ static void test_primary_failure_without_distinct_backup_fails(void)
 
 static void test_c5_preemption_extends_ack_deadline_by_full_timeout(void)
 {
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(1000u, 150u) == 1150u);
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(UINT32_MAX, 1u) == 1u);
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(10u, 0u) == 11u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(1000u, 150u, 0u) == 1150u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(UINT32_MAX, 1u, 0u) == 1u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(10u, 0u, 0u) == 11u);
+}
+
+static void test_c5_preemption_deadline_is_capped_by_attempt_budget(void)
+{
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(1000u, 150u, 1200u) == 1150u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(1100u, 150u, 1200u) == 1200u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(UINT32_MAX, 2u, 1u) == 1u);
 }
 
 int main(void)
@@ -124,5 +131,6 @@ int main(void)
     test_primary_failure_uses_valid_backup_hop();
     test_primary_failure_without_distinct_backup_fails();
     test_c5_preemption_extends_ack_deadline_by_full_timeout();
+    test_c5_preemption_deadline_is_capped_by_attempt_budget();
     return 0;
 }

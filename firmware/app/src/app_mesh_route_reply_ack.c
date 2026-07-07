@@ -26,6 +26,11 @@ static bool id_is_unicast(uint64_t node_id)
     return node_id != 0u && node_id != UINT64_MAX;
 }
 
+static bool deadline_after(uint32_t candidate_ms, uint32_t reference_ms)
+{
+    return (int32_t)(candidate_ms - reference_ms) > 0;
+}
+
 void app_mesh_route_reply_ack_decide_attempt(
     const struct app_mesh_route_reply_ack_attempt_state *state,
     struct app_mesh_route_reply_ack_attempt_result *result)
@@ -82,9 +87,17 @@ void app_mesh_route_reply_ack_decide_backup(
 
 uint32_t app_mesh_route_reply_ack_deadline_after_preemption(
     uint32_t preempted_at_ms,
-    uint32_t timeout_ms)
+    uint32_t timeout_ms,
+    uint32_t latest_deadline_ms)
 {
     uint32_t deadline_ms = preempted_at_ms + (timeout_ms == 0u ? 1u : timeout_ms);
 
-    return deadline_ms == 0u ? 1u : deadline_ms;
+    if (deadline_ms == 0u) {
+        deadline_ms = 1u;
+    }
+    if (latest_deadline_ms != 0u &&
+        deadline_after(deadline_ms, latest_deadline_ms)) {
+        return latest_deadline_ms;
+    }
+    return deadline_ms;
 }
