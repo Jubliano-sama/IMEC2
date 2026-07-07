@@ -139,7 +139,7 @@ static void test_direct_gateway_ack_matches_local_source(void)
                                                GATEWAY_ID_TEST));
 }
 
-static void test_gateway_ack_relay_path_limits_in_flight_payloads(void)
+static void test_gateway_ack_relay_path_keeps_configured_in_flight_limit(void)
 {
     struct proto_packet packet = {
         .msg_type = MSG_MESH_DATA,
@@ -148,7 +148,7 @@ static void test_gateway_ack_relay_path_limits_in_flight_payloads(void)
         .dst_id = GATEWAY_ID_TEST,
     };
 
-    assert(app_mesh_ch9_tx_max_in_flight(&packet, RELAY_ID, 8u) == 1u);
+    assert(app_mesh_ch9_tx_max_in_flight(&packet, RELAY_ID, 8u) == 8u);
 }
 
 static void test_direct_next_hop_keeps_configured_in_flight_limit(void)
@@ -182,7 +182,7 @@ int main(void)
     test_direct_gateway_ack_matches_transit_original_source();
     test_direct_gateway_ack_rejects_relay_address_for_transit();
     test_direct_gateway_ack_matches_local_source();
-    test_gateway_ack_relay_path_limits_in_flight_payloads();
+    test_gateway_ack_relay_path_keeps_configured_in_flight_limit();
     test_direct_next_hop_keeps_configured_in_flight_limit();
     test_non_ack_payload_keeps_configured_in_flight_limit();
     return 0;

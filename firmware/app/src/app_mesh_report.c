@@ -64,15 +64,20 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS \
-    (FLOOD_RELAY_BURST_MS + MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS)
+    MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS
 #define MESH_RX_WINDOW_IDLE_LOG_INTERVAL_MS 1000u
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#define MESH_CH9_ACK_BATCH_MAX 4u
+#define MESH_CH9_TX_BATCH_MAX 4u
+#else
 #define MESH_CH9_ACK_BATCH_MAX 8u
 #define MESH_CH9_TX_BATCH_MAX 8u
+#endif
 #define MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP 128u
 #define MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS 60000u
 #define MESH_ROUTE_EXHAUSTED_RETRY_JITTER_MS 30000u
 
-BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS + FLOOD_RELAY_BURST_MS +
+BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS +
              MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS <
              MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
              "route-ad response delay must fit the route reply listen window");
@@ -102,6 +107,10 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
      ((MESH_GATEWAY_DIRECT_PROBE_ATTEMPTS - 1u) * \
       MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MAX_MS) + 50u)
 #define MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS 10u
+#define MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS \
+    (MESH_CH9_TX_CONFIG_GUARD_MS + MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS + \
+     MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS)
+#define MESH_CH9_BATCH_FLAG_FINAL 0x01u
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 #define MESH_GATEWAY_CH5_CONTINUOUS_RX_MS 2000u
 #define MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS 20u
@@ -112,6 +121,7 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_GATEWAY_ROUTE_ADV_STARTUP_DELAY_MS 500u
 #define MESH_GATEWAY_ROUTE_ADV_PERIOD_MS 600000u
 #define MESH_GATEWAY_ROUTE_ADV_DEFER_MS 1000u
+#define MESH_C5_FLOOD_DELAY_LISTEN_SLICE_MS 80u
 #define MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES 55u
 #define MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN 125u
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC0 0x4du
@@ -182,6 +192,10 @@ struct mesh_route_embedded_rx_state {
     struct proto_packet packet;
     uint32_t received_at_ms;
 };
+
+static bool mesh_packet_prefers_channel9(const struct proto_packet *packet);
+static size_t mesh_outbound_encoded_frame_len(const struct mesh_outbound *out);
+static uint32_t mesh_ch9_estimated_airtime_ms(size_t frame_len);
 
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
@@ -255,9 +269,19 @@ struct mesh_ch9_tx_pending_batch {
 };
 
 static struct mesh_ch9_tx_pending_batch mesh_ch9_tx_pending;
+struct mesh_ch9_batch_metadata {
+    uint32_t batch_id;
+    uint8_t flags;
+    bool present;
+    bool final_packet;
+};
+
+static K_MUTEX_DEFINE(mesh_ch9_batch_payload_lock);
 static K_MUTEX_DEFINE(mesh_send_scratch_lock);
 static struct mesh_outbound mesh_send_scratch_tx;
 static uint8_t mesh_send_scratch_frame[UWB_MESH_MAX_FRAME_LEN];
+static uint8_t mesh_ch9_batch_payload_scratch[UWB_MESH_MAX_PAYLOAD_LEN];
+static uint32_t mesh_ch9_batch_next_id;
 
 struct mesh_ch9_slot_tx_context {
     int64_t uwb_window_start_ms;
@@ -273,6 +297,7 @@ static struct mesh_outbound report_tx_batch_first;
 static struct mesh_outbound report_tx_batch_queued;
 static struct mesh_outbound report_tx_batch_tx;
 static struct mesh_outbound report_tx_batch_dropped;
+static struct mesh_outbound report_tx_batch_candidates[MESH_CH9_TX_BATCH_MAX];
 static struct mesh_outbound report_tx_work_outbound;
 static struct mesh_outbound report_tx_work_dropped;
 static struct mesh_outbound report_tx_queue_overflow_dropped;
@@ -1116,8 +1141,6 @@ static int mesh_install_channel9_timing(uint64_t peer_id,
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         if (DEVICE_ROLE == ROLE_GATEWAY) {
-            int ret;
-
             if (!mesh_event_timing_local_rx_slot(timing)) {
                 status_debug_note("DBG_GATEWAY_CH9_REJECT_TX_FIRST\n");
                 status_debug_printf("DBG_GATEWAY_CH9_REJECT peer=0x%llx active=%u reason=tx-first\n",
@@ -1128,28 +1151,13 @@ static int mesh_install_channel9_timing(uint64_t peer_id,
                         reason == NULL ? "install" : reason);
                 return PROTO_ERR_MALFORMED;
             }
-            if (mesh_gateway_route_test_slots_full_for(peer_id)) {
-                status_debug_note("DBG_GATEWAY_CH9_FULL\n");
-                status_debug_printf("DBG_GATEWAY_CH9_FULL peer=0x%llx active=%u reason=%s\n",
-                                    (unsigned long long)peer_id,
-                                    mesh_channel9_connection_count(),
-                                    reason == NULL ? "install" : reason);
-                LOG_WRN("mesh gateway rejected channel-9 timing: two upstream slots already active peer=0x%016llx reason=%s",
-                        (unsigned long long)peer_id,
-                        reason == NULL ? "install" : reason);
-                return PROTO_ERR_NO_SPACE;
-            }
-
-            ret = mesh_relay_set_channel9_timing(&mesh_runtime, peer_id, timing);
-            if (ret == PROTO_OK) {
-                status_debug_note("DBG_GATEWAY_CH9_UPSTREAM_INSTALLED\n");
-                status_debug_printf("DBG_GATEWAY_CH9_UPSTREAM peer=0x%llx active=%u cnt=%u next=%u\n",
-                                    (unsigned long long)peer_id,
-                                    mesh_channel9_connection_count(),
-                                    timing->event_counter,
-                                    timing->next_event_time_ms);
-            }
-            return ret;
+            status_debug_note("DBG_GATEWAY_CH9_CONTINUOUS_RX_NO_SLOT\n");
+            status_debug_printf("DBG_GATEWAY_CH9_NO_SLOT peer=0x%llx cnt=%u next=%u reason=%s\n",
+                                (unsigned long long)peer_id,
+                                timing->event_counter,
+                                timing->next_event_time_ms,
+                                reason == NULL ? "install" : reason);
+            return PROTO_OK;
         }
         struct mesh_relay_channel9_guard_status guard = {0};
         int ret = mesh_relay_set_channel9_timing_guarded(&mesh_runtime,
@@ -2617,7 +2625,7 @@ static void gateway_route_adv_work_handler(struct k_work *work)
     struct app_mesh_flood_result flood_result = {0};
     uint32_t now_ms = k_uptime_get_32();
     uint32_t route_seq;
-    bool response_priority;
+    bool route_solicit_response;
     bool retry_soon = false;
     int ret;
 
@@ -2627,39 +2635,17 @@ static void gateway_route_adv_work_handler(struct k_work *work)
         return;
     }
     gateway_route_adv_due_ms = 0u;
-    response_priority = gateway_route_adv_response_priority_due(now_ms);
+    route_solicit_response = gateway_route_adv_response_priority_due(now_ms);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_GW_ADV_WORK now=%u resp=%u active=%u due=%u wait=%u pre=%u ch9=%u\n",
                             now_ms,
-                            response_priority ? 1u : 0u,
+                            route_solicit_response ? 1u : 0u,
                             gateway_route_adv_response_priority_active(now_ms) ? 1u : 0u,
                             gateway_route_adv_response_due_ms,
                             gateway_route_adv_response_priority_wait_ms(now_ms),
                             mesh_gateway_route_test_preempt_window_ms(now_ms),
                             mesh_channel9_connection_count());
     }
-    if (mesh_gateway_route_test_preempt_active(now_ms) && !response_priority) {
-        uint32_t delay_ms = mesh_gateway_route_test_preempt_window_ms(now_ms) +
-                            MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS;
-
-        high_debug_log_event("GATEWAY_ROUTE_ADV",
-                             "phase=defer-c5-preempt delay_ms=%u",
-                             delay_ms);
-        status_debug_printf("DBG_GATEWAY_ROUTE_ADV_DEFER_C5 delay=%u wait=%u due=%u\n",
-                            delay_ms,
-                            gateway_route_adv_response_priority_wait_ms(now_ms),
-                            gateway_route_adv_response_due_ms);
-        gateway_route_adv_schedule(delay_ms);
-        return;
-    }
-    if (mesh_channel9_connection_count() > 0u && !response_priority) {
-        high_debug_log_event("GATEWAY_ROUTE_ADV",
-                             "phase=defer-ch9-active active=%u",
-                             mesh_channel9_connection_count());
-        gateway_route_adv_schedule(MESH_GATEWAY_ROUTE_ADV_DEFER_MS);
-        return;
-    }
-
     route_seq = gateway_route_adv_next_seq();
     ret = mesh_relay_build_gateway_route_adv(&mesh_runtime,
                                              route_seq,
@@ -2677,21 +2663,21 @@ static void gateway_route_adv_work_handler(struct k_work *work)
         ret = mesh_send_c5_flood_now(&adv,
                                      C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH,
                                      "gateway-route-adv",
-                                     !response_priority,
-                                     response_priority,
+                                     !route_solicit_response,
+                                     true,
                                      &flood_result);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_GW_ADV_TX seq=%u ret=%d resp=%u sent=%u busy=%u defer=%u\n",
                                 route_seq,
                                 ret,
-                                response_priority ? 1u : 0u,
+                                route_solicit_response ? 1u : 0u,
                                 flood_result.sent_count,
                                 flood_result.busy_skip_count,
                                 flood_result.deferred_count);
         }
         if (ret == 0) {
             mesh_relay_note_tx_sent(&mesh_runtime, &adv, k_uptime_get_32());
-            if (response_priority) {
+            if (route_solicit_response) {
                 mesh_gateway_route_test_clear_preempt(0u, "route-adv-sent");
             }
             high_debug_log_event("GATEWAY_ROUTE_ADV",
@@ -2699,7 +2685,7 @@ static void gateway_route_adv_work_handler(struct k_work *work)
                                  route_seq,
                                  adv.packet.ttl);
         } else {
-            if (response_priority && ret == -EAGAIN) {
+            if (ret == -EAGAIN) {
                 retry_soon = true;
             }
             high_debug_log_event("GATEWAY_ROUTE_ADV",
@@ -2976,7 +2962,6 @@ static uint32_t mesh_next_channel9_rx_delay_ms(uint32_t now_ms)
 static uint32_t mesh_active_channel9_ch5_gap_window_ms(uint32_t now_ms)
 {
     uint32_t delay_ms;
-    uint32_t available_ms;
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         mesh_channel9_connection_count() == 0u ||
@@ -2985,22 +2970,14 @@ static uint32_t mesh_active_channel9_ch5_gap_window_ms(uint32_t now_ms)
     }
 
     delay_ms = mesh_next_channel9_rx_delay_ms(now_ms);
-    if (delay_ms == 0u) {
-        return 0u;
-    }
-
-    if (delay_ms <= MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS) {
-        return 0u;
-    }
-    available_ms = delay_ms - MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS;
-    if (available_ms < MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS) {
-        return 0u;
-    }
-
-    if (DEVICE_ROLE == ROLE_GATEWAY) {
-        return available_ms;
-    }
-    return MIN(available_ms, MESH_ROUTE_TEST_CH5_GAP_SCAN_MS);
+    return app_mesh_c5_connected_gap_window_ms(
+        &(const struct app_mesh_c5_connected_gap_timing) {
+            .next_channel9_delay_ms = delay_ms,
+            .scan_cap_ms = DEVICE_ROLE == ROLE_GATEWAY ? UINT32_MAX :
+                           MESH_ROUTE_TEST_CH5_GAP_SCAN_MS,
+            .min_scan_ms = MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS,
+            .retune_margin_ms = MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS,
+        });
 }
 
 static void mesh_anchor_yield_idle_ch5_to_low_duty_scan(const char *reason)
@@ -3050,11 +3027,18 @@ static bool mesh_route_test_keeps_radio_idle_between_channel9_turns(void)
             mesh_ch9_ack_batch.valid);
 }
 
+bool mesh_anchor_connected_radio_active(void)
+{
+    return DEVICE_ROLE == ROLE_ANCHOR &&
+           mesh_route_test_keeps_radio_idle_between_channel9_turns();
+}
+
 static void mesh_release_radio_after_mesh_turn(bool channel9_turn,
                                                const char *reason)
 {
-    if (channel9_turn &&
-        mesh_route_test_keeps_radio_idle_between_channel9_turns()) {
+    ARG_UNUSED(channel9_turn);
+
+    if (mesh_route_test_keeps_radio_idle_between_channel9_turns()) {
         (void)dwm3000_driver_idle();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_KEEP_IDLE reason=%s ch9=%u ack=%u qack=%u\n",
@@ -3552,9 +3536,69 @@ static uint32_t mesh_c5_flood_now_ms(void *ctx)
 
 static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
 {
-    ARG_UNUSED(ctx);
+    int64_t uwb_window_start_ms;
 
-    mesh_wait_until_ms(due_ms);
+    while (!uptime_deadline_reached(k_uptime_get_32(), due_ms)) {
+        uint32_t now_ms = k_uptime_get_32();
+        uint32_t remaining_ms = uptime_ms_until_deadline(now_ms, due_ms);
+        uint32_t listen_ms = MIN(remaining_ms, MESH_C5_FLOOD_DELAY_LISTEN_SLICE_MS);
+        enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+        bool valid_mesh_frame = false;
+        size_t frame_len = 0u;
+        uint8_t quality = 0u;
+        int ret;
+
+        if (listen_ms == 0u) {
+            break;
+        }
+
+        mesh_stop_role_scan();
+        ret = radio_guard_uwb_start("mesh C5 flood delay listen");
+        if (ret < 0) {
+            mesh_restart_role_scan();
+            mesh_wait_until_ms(due_ms);
+            return;
+        }
+        uwb_window_start_ms = k_uptime_get();
+        ret = dwm3000_driver_configure_wake_mesh_control_mode();
+        if (ret == 0) {
+            ret = dwm3000_driver_receive_frame_continuous(listen_ms,
+                                                          mesh_uwb_rx_frame,
+                                                          sizeof(mesh_uwb_rx_frame),
+                                                          &frame_len,
+                                                          &quality,
+                                                          NULL,
+                                                          &rx_failure);
+        }
+        (void)dwm3000_driver_standby();
+        mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
+        radio_guard_uwb_stop();
+        mesh_restart_role_scan();
+
+        if (ret == 0) {
+            (void)mesh_queue_from_frame_at_internal(mesh_uwb_rx_frame,
+                                                    frame_len,
+                                                    quality,
+                                                    UWB_CHANNEL_WAKE_CONTACT,
+                                                    k_uptime_get_32(),
+                                                    NULL,
+                                                    0u,
+                                                    false,
+                                                    &valid_mesh_frame,
+                                                    NULL);
+            if (valid_mesh_frame) {
+                (void)mesh_process_queued_rx_now("c5-flood-delay-listen");
+            }
+        } else if (ret < 0 && ret != -ETIMEDOUT &&
+                   IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_C5_FLOOD_DELAY_RX_CONTINUE ret=%d fail=%u rem=%u\n",
+                                ret,
+                                (unsigned int)rx_failure,
+                                remaining_ms);
+        }
+    }
+
+    ARG_UNUSED(ctx);
 }
 
 static bool mesh_c5_flood_defer_active_cb(void *ctx)
@@ -3645,6 +3689,12 @@ static void mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
     (void)mesh_reschedule_delayable(&mesh_c5_flood_work, MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
 }
 
+static bool mesh_c5_flood_purpose_is_priority(uint8_t purpose)
+{
+    return purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD ||
+           purpose == C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH;
+}
+
 static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   uint8_t purpose,
                                   const char *reason,
@@ -3672,7 +3722,8 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
     if (out == NULL || purpose == 0u ||
         out->packet.dst_id != MESH_BROADCAST_ID ||
         out->next_hop_id != MESH_BROADCAST_ID ||
-        out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ||
+        out->packet.msg_type == MSG_ROUTE_REQ) {
         return -EINVAL;
     }
 
@@ -3766,11 +3817,12 @@ int mesh_send_c5_flood(const struct mesh_outbound *out,
                        const char *reason)
 {
     struct app_mesh_flood_result result = {0};
+    bool priority = mesh_c5_flood_purpose_is_priority(purpose);
     int ret;
 
-    ret = mesh_send_c5_flood_now(out, purpose, reason, true, false, &result);
+    ret = mesh_send_c5_flood_now(out, purpose, reason, true, priority, &result);
     if (ret == -EAGAIN && (result.sent_count == 0u)) {
-        mesh_c5_flood_store_deferred(out, purpose, reason, false);
+        mesh_c5_flood_store_deferred(out, purpose, reason, priority);
     }
     return ret;
 }
@@ -4244,22 +4296,226 @@ static bool mesh_payload_find_u32(const uint8_t *payload,
     return true;
 }
 
-static bool mesh_payload_find_u64(const uint8_t *payload,
-                                  size_t payload_len,
-                                  uint8_t type,
-                                  uint64_t *value)
+static uint32_t mesh_ch9_next_batch_id(void)
 {
-    const uint8_t *tlv_value = NULL;
-    uint8_t tlv_len = 0u;
+    if (mesh_ch9_batch_next_id == 0u) {
+        mesh_ch9_batch_next_id =
+            sys_rand32_get() ^ k_uptime_get_32() ^ (uint32_t)DEVICE_ID;
+    }
+    mesh_ch9_batch_next_id++;
+    if (mesh_ch9_batch_next_id == 0u) {
+        mesh_ch9_batch_next_id = 1u;
+    }
+    return mesh_ch9_batch_next_id;
+}
 
-    if (value == NULL ||
-        tlv_find(payload, payload_len, type, &tlv_value, &tlv_len) != PROTO_OK ||
-        tlv_len != sizeof(uint64_t)) {
-        return false;
+static int mesh_ch9_batch_metadata_parse(const uint8_t *payload,
+                                         size_t payload_len,
+                                         struct mesh_ch9_batch_metadata *metadata)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (metadata == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(metadata, 0, sizeof(*metadata));
+
+    ret = tlv_find(payload,
+                   payload_len,
+                   TLV_MESH_CH9_BATCH_ID,
+                   &value,
+                   &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
     }
 
-    *value = proto_get_u64_le(tlv_value);
-    return true;
+    metadata->batch_id = proto_get_u32_le(value);
+    metadata->present = true;
+
+    ret = tlv_find(payload,
+                   payload_len,
+                   TLV_MESH_CH9_BATCH_FLAGS,
+                   &value,
+                   &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    metadata->flags = value[0];
+    metadata->final_packet =
+        (metadata->flags & MESH_CH9_BATCH_FLAG_FINAL) != 0u;
+    return PROTO_OK;
+}
+
+static int mesh_payload_copy_without_ch9_batch_metadata(uint8_t *dst,
+                                                        size_t dst_cap,
+                                                        size_t *dst_len,
+                                                        const uint8_t *src,
+                                                        size_t src_len)
+{
+    size_t src_offset = 0u;
+    size_t out_len = 0u;
+
+    if (dst == NULL || dst_len == NULL || (src == NULL && src_len > 0u)) {
+        return PROTO_ERR_ARG;
+    }
+
+    while (src_offset < src_len) {
+        uint8_t type;
+        uint8_t len;
+        size_t tlv_len;
+
+        if (src_len - src_offset < 2u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = src[src_offset];
+        len = src[src_offset + 1u];
+        tlv_len = (size_t)len + 2u;
+        if (src_len - src_offset < tlv_len) {
+            return PROTO_ERR_MALFORMED;
+        }
+
+        if (type != TLV_MESH_CH9_BATCH_ID &&
+            type != TLV_MESH_CH9_BATCH_FLAGS) {
+            if (dst_cap - out_len < tlv_len) {
+                return PROTO_ERR_NO_SPACE;
+            }
+            memcpy(&dst[out_len], &src[src_offset], tlv_len);
+            out_len += tlv_len;
+        }
+        src_offset += tlv_len;
+    }
+
+    *dst_len = out_len;
+    return PROTO_OK;
+}
+
+static int mesh_outbound_set_ch9_batch_metadata(struct mesh_outbound *out,
+                                                uint32_t batch_id,
+                                                bool final_packet)
+{
+    size_t payload_len = 0u;
+    int ret;
+
+    if (out == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    k_mutex_lock(&mesh_ch9_batch_payload_lock, K_FOREVER);
+    ret = mesh_payload_copy_without_ch9_batch_metadata(
+        mesh_ch9_batch_payload_scratch,
+        sizeof(mesh_ch9_batch_payload_scratch),
+        &payload_len,
+        out->payload,
+        out->payload_len);
+    if (ret != PROTO_OK) {
+        goto out_unlock;
+    }
+
+    ret = tlv_append_u32(mesh_ch9_batch_payload_scratch,
+                         sizeof(mesh_ch9_batch_payload_scratch),
+                         &payload_len,
+                         TLV_MESH_CH9_BATCH_ID,
+                         batch_id);
+    if (ret != PROTO_OK) {
+        goto out_unlock;
+    }
+    ret = tlv_append_u8(mesh_ch9_batch_payload_scratch,
+                        sizeof(mesh_ch9_batch_payload_scratch),
+                        &payload_len,
+                        TLV_MESH_CH9_BATCH_FLAGS,
+                        final_packet ? MESH_CH9_BATCH_FLAG_FINAL : 0u);
+    if (ret != PROTO_OK) {
+        goto out_unlock;
+    }
+
+    memcpy(out->payload, mesh_ch9_batch_payload_scratch, payload_len);
+    out->payload_len = (uint16_t)payload_len;
+    out->packet.payload_len = (uint16_t)payload_len;
+    ret = PROTO_OK;
+
+out_unlock:
+    k_mutex_unlock(&mesh_ch9_batch_payload_lock);
+    return ret;
+}
+
+static int mesh_outbound_clear_ch9_batch_metadata(struct mesh_outbound *out)
+{
+    size_t payload_len = 0u;
+    int ret;
+
+    if (out == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    k_mutex_lock(&mesh_ch9_batch_payload_lock, K_FOREVER);
+    ret = mesh_payload_copy_without_ch9_batch_metadata(
+        mesh_ch9_batch_payload_scratch,
+        sizeof(mesh_ch9_batch_payload_scratch),
+        &payload_len,
+        out->payload,
+        out->payload_len);
+    if (ret != PROTO_OK) {
+        goto out_unlock;
+    }
+
+    memcpy(out->payload, mesh_ch9_batch_payload_scratch, payload_len);
+    out->payload_len = (uint16_t)payload_len;
+    out->packet.payload_len = (uint16_t)payload_len;
+    ret = PROTO_OK;
+
+out_unlock:
+    k_mutex_unlock(&mesh_ch9_batch_payload_lock);
+    return ret;
+}
+
+static uint8_t mesh_requeue_ch9_batch_candidates(struct mesh_outbound *candidates,
+                                                 uint8_t start_index,
+                                                 uint8_t count,
+                                                 const char *reason)
+{
+    uint8_t requeued = 0u;
+
+    if (candidates == NULL) {
+        return 0u;
+    }
+
+    for (uint8_t i = start_index; i < count; i++) {
+        struct mesh_outbound clean = candidates[i];
+        int strip_ret = mesh_outbound_clear_ch9_batch_metadata(&clean);
+        int ret;
+
+        ret = queue_anchor_report(strip_ret == PROTO_OK ? &clean : &candidates[i]);
+        if (ret == 0) {
+            requeued++;
+        } else {
+            HIGH_DEBUG_COUNTER_INC(mesh_drop);
+        }
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CH9_TX_BATCH_REQUEUE idx=%u count=%u ret=%d strip=%d seq=%u r=%s\n",
+                                i,
+                                count,
+                                ret,
+                                strip_ret,
+                                candidates[i].packet.seq,
+                                reason == NULL ? "batch" : reason);
+        }
+    }
+    return requeued;
 }
 
 static int mesh_ack_payload_packet_id_summary(const uint8_t *payload,
@@ -4523,6 +4779,59 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
     return ret;
 }
 
+static int mesh_send_current_ch9_ack_batch(uint64_t peer_id,
+                                           const char *reason)
+{
+    struct mesh_outbound ack = {0};
+    uint8_t count;
+    int ret;
+
+    if (!mesh_ch9_ack_batch.valid ||
+        mesh_ch9_ack_batch.count == 0u ||
+        mesh_ch9_ack_batch.template_ack.next_hop_id != peer_id) {
+        return -ENOENT;
+    }
+
+    count = mesh_ch9_ack_batch.count;
+    ret = mesh_ch9_ack_batch_build(&ack);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ack.radio_channel = MESH_EVENT_CHANNEL;
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_GATEWAY_BATCH_ACK_GUARD ms=%u n=%u peer=0x%llx reason=%s\n",
+                            MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
+                            count,
+                            (unsigned long long)peer_id,
+                            reason == NULL ? "batch-ack" : reason);
+    }
+    k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
+    ret = mesh_send_outbound_keep_channel9_awake(
+        &ack,
+        reason == NULL ? "gateway-batch-ack-current-channel9" : reason);
+    if (ret == 0) {
+        mesh_relay_note_tx_sent(&mesh_runtime, &ack, k_uptime_get_32());
+        mesh_note_channel9_local_tx(ack.next_hop_id, k_uptime_get_32());
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_GATEWAY_BATCH_ACK_SENT\n");
+            status_debug_printf("DBG_GATEWAY_BATCH_ACK_SENT n=%u dst=0x%llx next=0x%llx seq=%u\n",
+                                count,
+                                (unsigned long long)ack.packet.dst_id,
+                                (unsigned long long)ack.next_hop_id,
+                                ack.packet.seq);
+        }
+        memset(&mesh_ch9_ack_batch, 0, sizeof(mesh_ch9_ack_batch));
+    } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_note("DBG_GATEWAY_BATCH_ACK_FAIL\n");
+        status_debug_printf("DBG_GATEWAY_BATCH_ACK_FAIL ret=%d n=%u peer=0x%llx\n",
+                            ret,
+                            count,
+                            (unsigned long long)peer_id);
+    }
+    return ret;
+}
+
 static void mesh_ch9_tx_pending_clear(void)
 {
     memset(&mesh_ch9_tx_pending, 0, sizeof(mesh_ch9_tx_pending));
@@ -4532,8 +4841,23 @@ static int mesh_ch9_tx_retry_queue_put(const struct mesh_outbound *outbound,
                                        void *ctx)
 {
     struct k_msgq *queue = (struct k_msgq *)ctx;
+    struct mesh_outbound clean;
+    int strip_ret;
 
-    return k_msgq_put(queue, outbound, K_NO_WAIT);
+    if (outbound == NULL) {
+        return -EINVAL;
+    }
+
+    clean = *outbound;
+    strip_ret = mesh_outbound_clear_ch9_batch_metadata(&clean);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && strip_ret != PROTO_OK) {
+        status_debug_printf("DBG_CH9_TX_RETRY_STRIP_FAIL ret=%d seq=%u\n",
+                            strip_ret,
+                            outbound->packet.seq);
+    }
+    return k_msgq_put(queue,
+                      strip_ret == PROTO_OK ? &clean : outbound,
+                      K_NO_WAIT);
 }
 
 static int mesh_ch9_tx_retry_queue_get(struct mesh_outbound *outbound,
@@ -4873,7 +5197,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     config->samples_per_anchor = 1u;
     config->wake_channel = UWB_CHANNEL_WAKE_CONTACT;
     config->ranging_channel = UWB_CHANNEL_WAKE_CONTACT;
-    config->flags = FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    config->flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
 
     ret = uwb_clicker_session_start(session, config);
     if (ret != PROTO_OK) {
@@ -5800,6 +6124,406 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     return 0;
 }
 
+static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
+    const struct mesh_event_plan *plan,
+    uint64_t next_hop_id,
+    uint8_t max_sent,
+    uint32_t selected_at_ms)
+{
+    struct mesh_event_plan tx_plan;
+    struct mesh_ch9_slot_tx_context slot_tx = {
+        .uwb_window_start_ms = -1,
+    };
+    struct mesh_direct_gateway_ack_debug ack_debug = {0};
+    struct mesh_outbound *queued = &report_tx_batch_queued;
+    struct mesh_outbound *dropped = &report_tx_batch_dropped;
+    struct app_mesh_coordinator_decision coordinator_decision;
+    uint32_t batch_id;
+    uint32_t reserve_ms = MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS;
+    uint32_t slot_ms;
+    uint32_t now_ms;
+    uint32_t deadline_ms;
+    uint32_t projected_done_ms = 0u;
+    uint8_t candidate_count = 0u;
+    uint8_t sent_count = 0u;
+    bool ack_wait_started = false;
+    int ret;
+
+    if (plan == NULL || next_hop_id != GATEWAY_ID || max_sent == 0u) {
+        return -EINVAL;
+    }
+
+    tx_plan = *plan;
+    slot_ms = uptime_ms_until_deadline(plan->start_ms, plan->end_ms);
+    if (slot_ms <= reserve_ms) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_CH9_TX_BATCH_DIRECT_NO_RESERVE\n");
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_RESERVE_FAIL now=%u start=%u end=%u slot=%u reserve=%u\n",
+                                k_uptime_get_32(),
+                                plan->start_ms,
+                                plan->end_ms,
+                                slot_ms,
+                                reserve_ms);
+        }
+        report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+        return -EBUSY;
+    }
+    tx_plan.end_ms = plan->end_ms - reserve_ms;
+    batch_id = mesh_ch9_next_batch_id();
+    now_ms = k_uptime_get_32();
+    deadline_ms = now_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS;
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_RESERVE batch=%u now=%u start=%u end=%u tx_end=%u reserve=%u cfg=%u guard=%u rx=%u q=%u max=%u\n",
+                            batch_id,
+                            now_ms,
+                            plan->start_ms,
+                            plan->end_ms,
+                            tx_plan.end_ms,
+                            reserve_ms,
+                            MESH_CH9_TX_CONFIG_GUARD_MS,
+                            MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
+                            MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS,
+                            k_msgq_num_used_get(&report_tx_msgq),
+                            max_sent);
+    }
+
+    while (candidate_count < max_sent) {
+        uint64_t queued_next_hop_id = 0u;
+        uint32_t required_ms = 0u;
+        uint32_t send_start_ms;
+        bool fits;
+
+        if (k_msgq_peek(&report_tx_msgq, queued) != 0) {
+            break;
+        }
+        mesh_coordinator_decide_now("ch9-direct-batch-collect",
+                                    &coordinator_decision);
+        if (!coordinator_decision.mesh_work_allowed) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=coord n=%u state=%s q=%u\n",
+                                    candidate_count,
+                                    app_mesh_coordinator_state_name(
+                                        coordinator_decision.state),
+                                    k_msgq_num_used_get(&report_tx_msgq));
+            }
+            break;
+        }
+
+        now_ms = k_uptime_get_32();
+        if (!mesh_outbound_ready_for_tx(queued, now_ms) ||
+            !mesh_packet_prefers_channel9(&queued->packet)) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=blocked n=%u ready=%u ch9=%u seq=%u earliest=%u q=%u\n",
+                                    candidate_count,
+                                    mesh_outbound_ready_for_tx(queued, now_ms) ? 1u : 0u,
+                                    mesh_packet_prefers_channel9(&queued->packet) ? 1u : 0u,
+                                    queued->packet.seq,
+                                    queued->earliest_tx_ms,
+                                    k_msgq_num_used_get(&report_tx_msgq));
+            }
+            break;
+        }
+        ret = mesh_relay_select_next_hop(&mesh_runtime,
+                                         queued->packet.dst_id,
+                                         &queued_next_hop_id);
+        if (ret != PROTO_OK || queued_next_hop_id != next_hop_id) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=next-hop n=%u ret=%d next=0x%llx want=0x%llx seq=%u q=%u\n",
+                                    candidate_count,
+                                    ret,
+                                    (unsigned long long)queued_next_hop_id,
+                                    (unsigned long long)next_hop_id,
+                                    queued->packet.seq,
+                                    k_msgq_num_used_get(&report_tx_msgq));
+            }
+            break;
+        }
+
+        report_tx_batch_candidates[candidate_count] = *queued;
+        mesh_outbound_refresh_age(&report_tx_batch_candidates[candidate_count],
+                                  now_ms);
+        report_tx_batch_candidates[candidate_count].radio_channel =
+            UWB_CHANNEL_MESH_PAYLOAD;
+        report_tx_batch_candidates[candidate_count].next_hop_id = next_hop_id;
+        ret = mesh_outbound_set_ch9_batch_metadata(
+            &report_tx_batch_candidates[candidate_count],
+            batch_id,
+            false);
+        if (ret != PROTO_OK) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_META_FAIL ret=%d n=%u seq=%u\n",
+                                    ret,
+                                    candidate_count,
+                                    queued->packet.seq);
+            }
+            break;
+        }
+
+        if (candidate_count == 0u) {
+            send_start_ms = mesh_ch9_slot_send_start_ms(
+                &report_tx_batch_candidates[candidate_count],
+                &tx_plan,
+                now_ms);
+        } else {
+            send_start_ms = projected_done_ms + MESH_CH9_TX_FRAME_GAP_MS;
+        }
+        report_tx_batch_candidates[candidate_count].earliest_tx_ms =
+            send_start_ms;
+        fits = mesh_ch9_tx_fits_plan(&report_tx_batch_candidates[candidate_count],
+                                     &tx_plan,
+                                     now_ms,
+                                     &required_ms);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FIT batch=%u n=%u now=%u start=%u tx_end=%u txstart=%u req=%u fit=%u seq=%u len=%u\n",
+                                batch_id,
+                                candidate_count,
+                                now_ms,
+                                tx_plan.start_ms,
+                                tx_plan.end_ms,
+                                send_start_ms,
+                                required_ms,
+                                fits ? 1u : 0u,
+                                report_tx_batch_candidates[candidate_count].packet.seq,
+                                (unsigned int)mesh_outbound_encoded_frame_len(
+                                    &report_tx_batch_candidates[candidate_count]));
+        }
+        if (!fits) {
+            break;
+        }
+
+        ret = k_msgq_get(&report_tx_msgq, dropped, K_NO_WAIT);
+        if (ret != 0) {
+            break;
+        }
+        projected_done_ms = send_start_ms +
+            mesh_ch9_estimated_airtime_ms(mesh_outbound_encoded_frame_len(
+                &report_tx_batch_candidates[candidate_count]));
+        candidate_count++;
+    }
+
+    if (candidate_count == 0u) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_EMPTY batch=%u q=%u\n",
+                                batch_id,
+                                k_msgq_num_used_get(&report_tx_msgq));
+        }
+        return -EBUSY;
+    }
+
+    ret = mesh_outbound_set_ch9_batch_metadata(
+        &report_tx_batch_candidates[candidate_count - 1u],
+        batch_id,
+        true);
+    if (ret != PROTO_OK) {
+        (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
+                                                0u,
+                                                candidate_count,
+                                                "direct-final-meta-fail");
+        return mesh_errno_from_proto(ret);
+    }
+
+    k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
+    ret = mesh_ch9_slot_tx_begin(&slot_tx);
+    if (ret < 0) {
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
+                                                0u,
+                                                candidate_count,
+                                                "direct-config-fail");
+        return ret;
+    }
+
+    projected_done_ms = 0u;
+    for (uint8_t i = 0u; i < candidate_count; i++) {
+        uint32_t required_ms = 0u;
+        uint32_t send_start_ms;
+
+        now_ms = k_uptime_get_32();
+        send_start_ms = (i == 0u) ?
+            mesh_ch9_slot_send_start_ms(&report_tx_batch_candidates[i],
+                                        &tx_plan,
+                                        now_ms) :
+            projected_done_ms + MESH_CH9_TX_FRAME_GAP_MS;
+        report_tx_batch_candidates[i].earliest_tx_ms = send_start_ms;
+        if (!mesh_ch9_tx_fits_configured_slot(&report_tx_batch_candidates[i],
+                                              &tx_plan,
+                                              now_ms,
+                                              send_start_ms,
+                                              &required_ms)) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_note("DBG_CH9_TX_BATCH_DIRECT_CONFIGURED_TRIM\n");
+                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_TRIM batch=%u keep=%u old=%u now=%u tx_end=%u req=%u seq=%u\n",
+                                    batch_id,
+                                    i,
+                                    candidate_count,
+                                    now_ms,
+                                    tx_plan.end_ms,
+                                    required_ms,
+                                    report_tx_batch_candidates[i].packet.seq);
+            }
+            (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
+                                                    i,
+                                                    candidate_count,
+                                                    "direct-configured-trim");
+            candidate_count = i;
+            if (candidate_count > 0u) {
+                (void)mesh_outbound_set_ch9_batch_metadata(
+                    &report_tx_batch_candidates[candidate_count - 1u],
+                    batch_id,
+                    true);
+            }
+            break;
+        }
+        projected_done_ms = send_start_ms +
+            mesh_ch9_estimated_airtime_ms(mesh_outbound_encoded_frame_len(
+                &report_tx_batch_candidates[i]));
+    }
+
+    if (candidate_count == 0u) {
+        mesh_ch9_event_set(CH9_EVENT_WINDOW_EXPIRED,
+                           next_hop_id,
+                           plan,
+                           "queued-direct-gateway-batch-fit");
+        mesh_relay_note_channel9_missed(&mesh_runtime,
+                                        next_hop_id,
+                                        &mesh_event_stats);
+        app_mesh_test_note_ch9_missed();
+        report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+        mesh_ch9_slot_tx_end(&slot_tx);
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        return -EALREADY;
+    }
+
+    mesh_ch9_event_set(CH9_EVENT_TX_PAYLOAD,
+                       next_hop_id,
+                       plan,
+                       "queued-direct-gateway-batch");
+
+    for (uint8_t i = 0u; i < candidate_count; i++) {
+        size_t sent_frame_len = 0u;
+
+        ret = mesh_send_outbound_preconfigured_ch9_locked(
+            &report_tx_batch_candidates[i],
+            "queued-direct-gateway-batch",
+            &sent_frame_len);
+        if (ret < 0) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_note("DBG_CH9_TX_BATCH_DIRECT_SEND_FAIL\n");
+                status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FAIL batch=%u ret=%d sent=%u n=%u seq=%u final=%u\n",
+                                    batch_id,
+                                    ret,
+                                    sent_count,
+                                    candidate_count,
+                                    report_tx_batch_candidates[i].packet.seq,
+                                    i == candidate_count - 1u ? 1u : 0u);
+            }
+            (void)mesh_requeue_ch9_batch_candidates(report_tx_batch_candidates,
+                                                    i,
+                                                    candidate_count,
+                                                    "direct-send-fail");
+            if (mesh_ch9_tx_pending.active) {
+                (void)mesh_ch9_tx_pending_requeue_unacked(k_uptime_get_32());
+                mesh_ch9_tx_pending_clear();
+            }
+            mesh_ch9_event_set(CH9_EVENT_BUSY_RETRY_LATER,
+                               next_hop_id,
+                               plan,
+                               "queued-direct-gateway-batch-send");
+            mesh_ch9_slot_tx_end(&slot_tx);
+            k_mutex_unlock(&mesh_send_scratch_lock);
+            report_tx_schedule(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+            return ret;
+        }
+
+        mesh_relay_note_tx_sent(&mesh_runtime,
+                                &report_tx_batch_candidates[i],
+                                k_uptime_get_32());
+        app_mesh_paused_delivery_note_sent(&mesh_paused_delivery,
+                                           &report_tx_batch_candidates[i]);
+        if (mesh_ch9_tx_pending_track_sent(&report_tx_batch_candidates[i],
+                                           deadline_ms)) {
+            ack_wait_started = true;
+        }
+        sent_count++;
+
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            uint32_t done_ms = k_uptime_get_32();
+
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FRAME batch=%u sent=%u n=%u done=%u tx_end=%u rem=%u len=%u seq=%u final=%u\n",
+                                batch_id,
+                                sent_count,
+                                candidate_count,
+                                done_ms,
+                                tx_plan.end_ms,
+                                uptime_ms_until_deadline(done_ms, tx_plan.end_ms),
+                                (unsigned int)sent_frame_len,
+                                report_tx_batch_candidates[i].packet.seq,
+                                i == candidate_count - 1u ? 1u : 0u);
+        }
+    }
+
+    (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
+
+    if (ack_wait_started) {
+        int ack_ret;
+
+        mesh_ch9_event_note_persistent_ack_wait(next_hop_id,
+                                                deadline_ms,
+                                                "queued-direct-gateway-batch");
+        ack_ret = mesh_wait_for_direct_gateway_ack_configured(
+            &report_tx_batch_candidates[candidate_count - 1u],
+            "queued-direct-gateway-batch",
+            true,
+            &ack_debug);
+        mesh_debug_log_direct_gateway_ack_result("queued-direct-gateway-batch",
+                                                 ack_ret,
+                                                 &ack_debug,
+                                                 0u);
+        app_mesh_test_note_direct_gateway_ack(
+            report_tx_batch_candidates[candidate_count - 1u].packet.seq,
+            ack_ret,
+            report_tx_queue_used());
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_ACK batch=%u ret=%d sent=%u deadline=%u active=%u\n",
+                                batch_id,
+                                ack_ret,
+                                sent_count,
+                                deadline_ms,
+                                mesh_ch9_tx_pending.active ? 1u : 0u);
+        }
+        if (ack_ret == 0) {
+            route_record_success_at(&mesh_runtime.upstream, k_uptime_get_32());
+        } else {
+            mesh_schedule_tx_timeout();
+        }
+    } else {
+        report_tx_schedule(0u);
+    }
+
+    mesh_ch9_slot_tx_end(&slot_tx);
+    k_mutex_unlock(&mesh_send_scratch_lock);
+
+    mesh_note_channel9_local_tx(next_hop_id, plan->start_ms);
+    mesh_ch9_event_set(CH9_EVENT_COMPLETE,
+                       next_hop_id,
+                       plan,
+                       "queued-direct-gateway-batch");
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_SENT batch=%u selected_at=%u sent=%u ack=%u deadline=%u q=%u\n",
+                            batch_id,
+                            selected_at_ms,
+                            sent_count,
+                            ack_wait_started ? 1u : 0u,
+                            deadline_ms,
+                            report_tx_queue_used());
+    }
+    if (ack_wait_started) {
+        mesh_schedule_tx_timeout();
+    }
+    return 0;
+}
+
 static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *probe,
                                                    const char *reason,
                                                    bool apply_tracked_ack,
@@ -6166,27 +6890,12 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                              C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
                              k_uptime_get_32() + route_reply_window_ms,
                              reason);
-    {
-        struct app_mesh_flood_result flood_result = {0};
-
-        ret = mesh_send_c5_flood_now(&route_req,
-                                     C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
-                                     "route-request",
-                                     false,
-                                     true,
-                                     &flood_result);
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ROUTE_REQ_FLOOD ret=%d sent=%u busy=%u defer=%u first=%u last=%u\n",
-                                ret,
-                                flood_result.sent_count,
-                                flood_result.busy_skip_count,
-                                flood_result.deferred_count,
-                                flood_result.first_due_ms,
-                                flood_result.last_due_ms);
-        }
-        if (ret == -EAGAIN && flood_result.sent_count == 0u) {
-            mesh_schedule_route_waiting_retry(reason);
-        }
+    ret = mesh_send_outbound(&route_req, "route-request-control");
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ROUTE_REQ_CONTROL_TX ret=%d seq=%u ttl=%u\n",
+                            ret,
+                            route_req.packet.seq,
+                            route_req.packet.ttl);
     }
     high_debug_log_event("MESH_ROUTE_REQ_TX",
                          "phase=done target=0x%016llx attempt=%u ret=%d reason=%s",
@@ -7671,6 +8380,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
     uint8_t sent_count = 0u;
     uint8_t max_sent;
     bool ack_wait_started = false;
+    bool direct_gateway_batch = false;
     int ret;
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
@@ -7696,6 +8406,10 @@ static int mesh_try_send_report_tx_ch9_batch(void)
     max_sent = app_mesh_ch9_tx_max_in_flight(&first->packet,
                                              next_hop_id,
                                              MESH_CH9_TX_BATCH_MAX);
+    direct_gateway_batch =
+        next_hop_id == GATEWAY_ID &&
+        first->packet.dst_id == GATEWAY_ID &&
+        (first->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
     (void)mesh_advance_channel9_timing_past(next_hop_id, now_ms, "tx-batch-select");
     mesh_fill_channel5_requirements(&requirements);
     (void)mesh_expire_channel9_timings(now_ms, "queued-ch9-batch");
@@ -7744,11 +8458,26 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                             plan.end_ms,
                             k_msgq_num_used_get(&report_tx_msgq),
                             max_sent);
+        if (direct_gateway_batch) {
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_SELECT cnt=%u reserve=%u rx=%u guard=%u cfg=%u\n",
+                                event_counter,
+                                MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS,
+                                MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS,
+                                MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
+                                MESH_CH9_TX_CONFIG_GUARD_MS);
+        }
     }
     mesh_ch9_event_set(CH9_EVENT_GRANTED,
                        next_hop_id,
                        &plan,
                        "queued-ch9-batch");
+
+    if (direct_gateway_batch) {
+        return mesh_try_send_report_tx_ch9_direct_gateway_batch(&plan,
+                                                                next_hop_id,
+                                                                max_sent,
+                                                                now_ms);
+    }
 
     deadline_ms = now_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS;
     k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
@@ -8316,20 +9045,6 @@ queued:
     return 0;
 }
 
-static bool mesh_route_request_targets_gateway(const struct mesh_outbound *out)
-{
-    uint64_t target_id = 0u;
-
-    return out != NULL &&
-           out->packet.msg_type == MSG_ROUTE_REQ &&
-           out->packet.dst_id == MESH_BROADCAST_ID &&
-           mesh_payload_find_u64(out->payload,
-                                 out->payload_len,
-                                 TLV_RESPONDER_ID,
-                                 &target_id) &&
-           target_id == GATEWAY_ID;
-}
-
 static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
                                          const char *reason)
 {
@@ -8395,76 +9110,12 @@ static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
     return false;
 }
 
-static bool mesh_requeue_after_gateway_route_forward_repair(
-    const struct mesh_rx_pending *rx)
-{
-    struct mesh_rx_pending requeued;
-    int ret;
-
-    if (rx == NULL ||
-        rx->packet.msg_type != MSG_ROUTE_REQ ||
-        rx->packet.dst_id != MESH_BROADCAST_ID) {
-        return false;
-    }
-
-    requeued = *rx;
-    mesh_rx_pending_refresh_age(&requeued, k_uptime_get_32());
-    ret = k_msgq_put(&mesh_rx_msgq, &requeued, K_NO_WAIT);
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_ROUTE_REQ_REPROCESS_QUEUED ret=%d q=%u prev=0x%llx seq=%u\n",
-                            ret,
-                            k_msgq_num_used_get(&mesh_rx_msgq),
-                            (unsigned long long)rx->previous_hop_id,
-                            rx->packet.seq);
-    }
-    if (ret != 0) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
-        return false;
-    }
-
-    (void)mesh_submit_work(&mesh_rx_work);
-    return true;
-}
-
-static bool mesh_try_gateway_route_forward_repair(
-    const struct mesh_relay_result *result,
-    const struct mesh_rx_pending *rx)
-{
-    bool requeued = false;
-    int ret;
-
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
-        DEVICE_ROLE == ROLE_GATEWAY ||
-        result == NULL ||
-        !mesh_route_request_targets_gateway(&result->route_request)) {
-        return false;
-    }
-
-    status_debug_printf("DBG_ROUTE_REQ_FORWARD_DIRECT prev=0x%llx seq=%u ttl=%u\n",
-                        rx == NULL ? 0ull : (unsigned long long)rx->previous_hop_id,
-                        rx == NULL ? 0u : rx->packet.seq,
-                        result->route_request.packet.ttl);
-    ret = mesh_try_direct_gateway_route_probe(GATEWAY_ID,
-                                              "route-request-forward");
-    if (ret < 0) {
-        status_debug_printf("DBG_ROUTE_REQ_FORWARD_DIRECT_MISS ret=%d\n", ret);
-        return false;
-    }
-
-    requeued = mesh_requeue_after_gateway_route_forward_repair(rx);
-    status_debug_printf("DBG_ROUTE_REQ_FORWARD_DIRECT_DONE requeued=%u\n",
-                        requeued ? 1u : 0u);
-    return true;
-}
-
 static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                                        uint8_t received_radio_channel,
                                        const struct mesh_rx_pending *rx)
 {
     bool forward_sent = false;
     bool child_custody_ready = true;
-    bool route_reply_attempted = false;
-    bool route_reply_sent = false;
     struct app_mesh_result_handoff_ops handoff_ops = {
         .save_child_custody = mesh_handoff_save_child_custody,
         .note_result_bundle_forwarded = mesh_handoff_note_result_bundle_forwarded,
@@ -8489,6 +9140,43 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
         int ret;
 
         *gateway_ack = result->gateway_ack;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+            DEVICE_ROLE == ROLE_GATEWAY &&
+            received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+            rx != NULL) {
+            struct mesh_ch9_batch_metadata batch_metadata;
+            int meta_ret = mesh_ch9_batch_metadata_parse(rx->payload,
+                                                         rx->payload_len,
+                                                         &batch_metadata);
+
+            if (meta_ret == PROTO_OK && batch_metadata.present) {
+                gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
+                mesh_ch9_ack_batch_queue(gateway_ack, rx);
+                status_debug_printf("DBG_GATEWAY_BATCH_ACK_QUEUE batch=%u final=%u n=%u rxseq=%u ackseq=%u next=0x%llx\n",
+                                    batch_metadata.batch_id,
+                                    batch_metadata.final_packet ? 1u : 0u,
+                                    mesh_ch9_ack_batch.count,
+                                    rx->packet.seq,
+                                    gateway_ack->packet.seq,
+                                    (unsigned long long)gateway_ack->next_hop_id);
+                if (batch_metadata.final_packet) {
+                    ret = mesh_send_current_ch9_ack_batch(
+                        gateway_ack->next_hop_id,
+                        "gateway-batch-ack-final");
+                    status_debug_printf("DBG_GATEWAY_BATCH_ACK_FINAL batch=%u ret=%d n=%u\n",
+                                        batch_metadata.batch_id,
+                                        ret,
+                                        mesh_ch9_ack_batch.count);
+                }
+                goto after_gateway_ack;
+            }
+            if (meta_ret != PROTO_OK) {
+                status_debug_printf("DBG_GATEWAY_BATCH_ACK_META_BAD ret=%d rxseq=%u len=%u\n",
+                                    meta_ret,
+                                    rx->packet.seq,
+                                    rx->payload_len);
+            }
+        }
         app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
         if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_QUEUE_ROUTE_TEST_ACK) {
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
@@ -8664,21 +9352,7 @@ after_gateway_ack:
                                        "route-reply-ack-failed");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
-        route_reply_attempted = true;
-        route_reply_sent = mesh_send_route_reply_action(result, "route-reply-action");
-    }
-    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
-        if (route_reply_attempted &&
-            mesh_route_request_targets_gateway(&result->route_request)) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_ROUTE_REQ_FORWARD_SUPPRESS_REPLY_READY sent=%u\n",
-                                    route_reply_sent ? 1u : 0u);
-            }
-        } else if (!mesh_try_gateway_route_forward_repair(result, rx)) {
-            (void)mesh_send_c5_flood_response(&result->route_request,
-                                              C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
-                                              "route-request-forward");
-        }
+        (void)mesh_send_route_reply_action(result, "route-reply-action");
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
         int ret;
@@ -8782,8 +9456,13 @@ after_gateway_ack:
                         (unsigned long long)retransmit->packet.dst_id,
                         ret);
                 mesh_store_route_waiting_tx(retransmit);
-                (void)mesh_request_route(retransmit->packet.dst_id,
-                                         "retransmit-channel9-refresh");
+                if (mesh_channel9_connection_count() == 0u) {
+                    (void)mesh_request_route(retransmit->packet.dst_id,
+                                             "retransmit-channel9-refresh");
+                } else {
+                    mesh_schedule_route_waiting_retry_after("retransmit-channel9-wait",
+                                                            MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+                }
             }
         }
         if (ret == PROTO_OK && mesh_send_outbound(retransmit, "retransmit") == 0) {
@@ -8800,8 +9479,13 @@ after_gateway_ack:
             result->route_discovery_target_id != DEVICE_ID) {
             status_debug_printf("DBG_ROUTE_REQ_UPSTREAM_REPAIR target=0x%llx\n",
                                 (unsigned long long)result->route_discovery_target_id);
-            mesh_schedule_async_route_request(result->route_discovery_target_id,
-                                              "rx-route-request-upstream");
+            if (mesh_channel9_connection_count() == 0u) {
+                mesh_schedule_async_route_request(result->route_discovery_target_id,
+                                                  "rx-route-request-upstream");
+            } else {
+                mesh_schedule_route_waiting_retry_after("rx-route-request-ch9-wait",
+                                                        MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+            }
         } else {
             LOG_WRN("mesh route discovery needed after delivery failure");
         }
@@ -9218,7 +9902,16 @@ static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
             acked++;
             continue;
         }
-        if (queue_anchor_report(&entry->outbound) == 0) {
+        struct mesh_outbound clean = entry->outbound;
+        int strip_ret = mesh_outbound_clear_ch9_batch_metadata(&clean);
+
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && strip_ret != PROTO_OK) {
+            status_debug_printf("DBG_CH9_TX_ACK_TIMEOUT_STRIP_FAIL ret=%d seq=%u\n",
+                                strip_ret,
+                                entry->outbound.packet.seq);
+        }
+        if (queue_anchor_report(strip_ret == PROTO_OK ?
+                                &clean : &entry->outbound) == 0) {
             requeued++;
         } else {
             HIGH_DEBUG_COUNTER_INC(mesh_drop);
@@ -9987,7 +10680,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                                    &channel9_plan,
                                                    &channel9_peer_id,
                                                    &channel9_timing_index);
-    if (DEVICE_ROLE == ROLE_ANCHOR && !channel9_event) {
+    if (DEVICE_ROLE == ROLE_ANCHOR && !channel9_event &&
+        mesh_channel9_connection_count() == 0u) {
         mesh_anchor_yield_idle_ch5_to_low_duty_scan("anchor-low-duty-ch5-owner");
         return;
     }
@@ -10011,9 +10705,11 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                     k_uptime_get_32(),
                                     next_delay_ms);
             }
-            if (next_delay_ms > 0u) {
-                next_delay_ms++;
-            }
+            next_delay_ms =
+                app_mesh_c5_connected_gap_reschedule_ms(
+                    next_delay_ms,
+                    MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS,
+                    MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS);
             mesh_schedule_uwb_rx(next_delay_ms);
             return;
         }
@@ -10269,7 +10965,15 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         }
     }
 
-    if (app_mesh_c5_gateway_rx_should_yield_to_response(
+    if (channel5_gap_scan) {
+        uint32_t next_delay_ms = mesh_next_channel9_rx_delay_ms(k_uptime_get_32());
+
+        mesh_schedule_uwb_rx(
+            app_mesh_c5_connected_gap_reschedule_ms(
+                next_delay_ms,
+                MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS,
+                MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS));
+    } else if (app_mesh_c5_gateway_rx_should_yield_to_response(
             &(const struct app_mesh_c5_flood_priority_state) {
                 .response_priority =
                     gateway_route_adv_response_priority_due(k_uptime_get_32()),

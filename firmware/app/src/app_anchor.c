@@ -2235,6 +2235,16 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
 
     if (packet != NULL && packet->msg_type == MSG_COMMAND) {
         ret = gateway_command_extract_id(payload, payload_len, &command_id);
+        if (ret == PROTO_OK &&
+            command_id == CMD_FORCE_REDISCOVERY &&
+            packet->dst_id == DEVICE_ID) {
+            mesh_gateway_route_adv_request(0u, "force-rediscovery-ble");
+            gateway_emit_host_command_result(packet,
+                                             command_id,
+                                             COMMAND_OK,
+                                             0u);
+            return 0;
+        }
         if (ret == PROTO_OK && gateway_command_uses_survey_mesh(command_id)) {
             return gateway_route_survey_command(packet, payload, payload_len, command_id);
         }
@@ -3898,8 +3908,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                             first_claim->discovery_starts_in_ms,
                             first_quality);
     }
-    mesh_preempt_for_click_event();
-
     collect_deadline_ms = k_uptime_get() + ANCHOR_CLAIM_COLLECTION_MS;
     while (k_uptime_get() < collect_deadline_ms) {
         struct uwb_wake_claim_frame claim;
@@ -3979,8 +3987,15 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             anchor_uwb_session.epoch.attempt_index,
             (unsigned long long)anchor_uwb_session.epoch.priority_id,
             selected_decision);
-    anchor_click_window_set_active(
-        app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags));
+    {
+        bool click_priority =
+            app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
+
+        if (click_priority) {
+            mesh_preempt_for_click_event();
+        }
+        anchor_click_window_set_active(click_priority);
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_CLICK_WINDOW active=%u flags=0x%02x\n",
                             anchor_click_window_active() ? 1u : 0u,
@@ -4480,6 +4495,20 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+        mesh_anchor_connected_radio_active()) {
+        scan_debug_now_ms = k_uptime_get_32();
+        if (anchor_ch5_scan_debug_next_ms == 0u ||
+            uptime_deadline_reached(scan_debug_now_ms,
+                                    anchor_ch5_scan_debug_next_ms)) {
+            anchor_ch5_scan_debug_next_ms =
+                scan_debug_now_ms + ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS;
+            status_debug_printf("DBG_ANCHOR_CH5_SCAN_MESH_CONNECTED_OWNER retry=%u\n",
+                                ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS);
+        }
+        anchor_uwb_scan_schedule_ms(ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS);
+        return;
+    }
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
@@ -4734,7 +4763,12 @@ focused_scan_attempt:
     }
 
 scan_complete:
-    (void)dwm3000_driver_standby();
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+        mesh_anchor_connected_radio_active()) {
+        (void)dwm3000_driver_idle();
+    } else {
+        (void)dwm3000_driver_standby();
+    }
     anchor_note_uwb_awake_since(
         uwb_window_start_ms,
         u32_saturating_add(ANCHOR_UWB_IDLE_SCAN_AWAKE_US, retained_sleep_us));

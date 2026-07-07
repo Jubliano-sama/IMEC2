@@ -97,31 +97,22 @@ uint32_t app_mesh_c5_route_reply_listen_window_ms(
     uint8_t route_ttl,
     const struct app_mesh_c5_route_reply_window_timing *timing)
 {
-    uint32_t request_forward_waves;
-    uint32_t reply_hops;
     uint32_t post_wake_route_ms;
-    uint32_t per_forward_wave_ms;
     uint32_t window_ms;
 
     if (timing == NULL) {
         return 0u;
     }
 
-    request_forward_waves = route_ttl > 0u ? (uint32_t)route_ttl - 1u : 0u;
-    reply_hops = route_ttl > 0u ? route_ttl : 1u;
+    (void)route_ttl;
     post_wake_route_ms = timing->post_wake_route_rx_ms;
-    if (post_wake_route_ms <
-        timing->wake_to_route_delay_ms + timing->request_flood_burst_ms) {
-        post_wake_route_ms =
-            timing->wake_to_route_delay_ms + timing->request_flood_burst_ms;
+    if (post_wake_route_ms < timing->wake_to_route_delay_ms) {
+        post_wake_route_ms = timing->wake_to_route_delay_ms;
     }
 
-    per_forward_wave_ms = timing->flood_forward_wave_ms +
-                          timing->wake_train_ms +
-                          post_wake_route_ms;
     window_ms = timing->direct_gateway_probe_ms +
-                (request_forward_waves * per_forward_wave_ms) +
-                (reply_hops * timing->route_reply_exchange_ms) +
+                post_wake_route_ms +
+                timing->route_reply_exchange_ms +
                 timing->guard_ms;
     if (window_ms < timing->base_reply_window_ms) {
         return timing->base_reply_window_ms;
@@ -145,6 +136,40 @@ uint32_t app_mesh_c5_route_adv_response_delay_ms(
 
     return (uint32_t)wake_train_ends_in_ms +
            timing->wake_to_route_delay_ms +
-           timing->request_flood_burst_ms +
            timing->route_adv_reply_guard_ms;
+}
+
+uint32_t app_mesh_c5_connected_gap_window_ms(
+    const struct app_mesh_c5_connected_gap_timing *timing)
+{
+    uint32_t available_ms;
+
+    if (timing == NULL ||
+        timing->next_channel9_delay_ms <= timing->retune_margin_ms) {
+        return 0u;
+    }
+
+    available_ms = timing->next_channel9_delay_ms - timing->retune_margin_ms;
+    if (available_ms < timing->min_scan_ms) {
+        return 0u;
+    }
+    if (available_ms > timing->scan_cap_ms) {
+        return timing->scan_cap_ms;
+    }
+    return available_ms;
+}
+
+uint32_t app_mesh_c5_connected_gap_reschedule_ms(
+    uint32_t next_channel9_delay_ms,
+    uint32_t min_scan_ms,
+    uint32_t retune_margin_ms)
+{
+    uint32_t available_ms;
+
+    if (next_channel9_delay_ms <= retune_margin_ms) {
+        return next_channel9_delay_ms;
+    }
+
+    available_ms = next_channel9_delay_ms - retune_margin_ms;
+    return available_ms >= min_scan_ms ? 0u : available_ms;
 }

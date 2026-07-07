@@ -112,6 +112,7 @@ bool mesh_route_waiting_tx_active(void);
 uint32_t mesh_rx_pending_count(void);
 bool mesh_rx_response_active(void);
 bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
+bool mesh_anchor_connected_radio_active(void);
 void mesh_gateway_route_adv_start(void);
 void mesh_gateway_route_adv_request(uint32_t delay_ms, const char *reason);
 

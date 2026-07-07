@@ -220,11 +220,6 @@ uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
         return configured_max;
     }
 
-    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
-        packet->dst_id != next_hop_id) {
-        return 1u;
-    }
-
     return configured_max;
 }
 

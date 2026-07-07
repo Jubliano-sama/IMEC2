@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 enum {
-    TEST_ANCHOR = 0x2301u,
     TEST_GATEWAY = 0x6601u,
 };
 
@@ -43,18 +42,26 @@ static bool test_c5_quiet(uint32_t sniff_ms, void *ctx)
 static int test_send(const struct mesh_outbound *out, void *ctx)
 {
     struct flood_test_ctx *test = ctx;
-    uint16_t delay_ms = 0u;
 
     assert(test->send_count < sizeof(test->delays) / sizeof(test->delays[0]));
-    assert(mesh_route_request_reply_rx_delay_ms(out, &delay_ms));
-    test->delays[test->send_count++] = delay_ms;
+    assert(out->packet.msg_type == MSG_GATEWAY_ROUTE_ADV);
+    test->delays[test->send_count++] = (uint16_t)test->now_ms;
     return 0;
 }
 
-static void test_route_request_eta_counts_down_per_repeat(void)
+static void test_gateway_flood_repeats_at_burst_interval(void)
 {
-    struct mesh_relay relay;
-    struct mesh_outbound route_req;
+    struct mesh_outbound gateway_adv = {
+        .packet = {
+            .msg_type = MSG_GATEWAY_ROUTE_ADV,
+            .src_id = TEST_GATEWAY,
+            .dst_id = MESH_BROADCAST_ID,
+            .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+        },
+        .next_hop_id = MESH_BROADCAST_ID,
+        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .earliest_tx_ms = 1000u,
+    };
     struct app_mesh_flood_result result;
     struct flood_test_ctx ctx = {
         .now_ms = 900u,
@@ -67,25 +74,9 @@ static void test_route_request_eta_counts_down_per_repeat(void)
         .send = test_send,
         .ctx = &ctx,
     };
-    uint16_t original_delay_ms = 0u;
     uint8_t repeat_limit = app_mesh_flood_repeat_limit();
 
-    mesh_relay_init(&relay,
-                    MESH_RELAY_ROLE_ANCHOR,
-                    TEST_ANCHOR,
-                    TEST_GATEWAY,
-                    1u);
-    assert(mesh_relay_build_route_request_with_timing_flags(
-               &relay,
-               TEST_GATEWAY,
-               NULL,
-               0u,
-               0u,
-               620u,
-               &route_req,
-               1000u) == PROTO_OK);
-
-    assert(app_mesh_flood_send_bounded(&route_req, &ops, &result) == 0);
+    assert(app_mesh_flood_send_bounded(&gateway_adv, &ops, &result) == 0);
     assert(result.sent_count == repeat_limit);
     assert(result.busy_skip_count == 0u);
     assert(result.deferred_count == 0u);
@@ -93,16 +84,14 @@ static void test_route_request_eta_counts_down_per_repeat(void)
     assert(result.last_due_ms == 1000u +
            ((uint32_t)(repeat_limit - 1u) * FLOOD_RELAY_REPEAT_MS));
     assert(ctx.send_count == repeat_limit);
-    assert(ctx.delays[0] == 620u);
-    assert(ctx.delays[1] == 620u - FLOOD_RELAY_REPEAT_MS);
+    assert(ctx.delays[0] == 1000u);
+    assert(ctx.delays[1] == 1000u + FLOOD_RELAY_REPEAT_MS);
     assert(ctx.delays[repeat_limit - 1u] ==
-           620u - ((uint16_t)(repeat_limit - 1u) * FLOOD_RELAY_REPEAT_MS));
-    assert(mesh_route_request_reply_rx_delay_ms(&route_req, &original_delay_ms));
-    assert(original_delay_ms == 620u);
+           1000u + ((uint16_t)(repeat_limit - 1u) * FLOOD_RELAY_REPEAT_MS));
 }
 
 int main(void)
 {
-    test_route_request_eta_counts_down_per_repeat();
+    test_gateway_flood_repeats_at_burst_interval();
     return 0;
 }

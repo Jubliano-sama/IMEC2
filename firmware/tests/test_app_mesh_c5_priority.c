@@ -160,12 +160,12 @@ static void test_route_adv_delay_targets_requester_reply_window(void)
     };
 
     assert(app_mesh_c5_route_adv_response_delay_ms(315u, false, &timing) ==
-           975u);
+           375u);
     assert(app_mesh_c5_route_adv_response_delay_ms(315u, true, &timing) ==
            320u);
 }
 
-static void test_route_reply_window_scales_with_ttl(void)
+static void test_route_reply_window_covers_direct_probe_and_reply_exchange(void)
 {
     const struct app_mesh_c5_route_reply_window_timing timing = {
         .base_reply_window_ms = 1000u,
@@ -187,14 +187,45 @@ static void test_route_reply_window_scales_with_ttl(void)
     uint32_t ttl8_window =
         app_mesh_c5_route_reply_listen_window_ms(8u, &timing);
 
-    assert(ttl1_window == 1825u);
-    assert(ttl2_window == 5800u);
-    assert(ttl4_window == 13750u);
-    assert(ttl8_window == 29650u);
+    assert(ttl1_window == 2625u);
+    assert(ttl2_window == 2625u);
+    assert(ttl4_window == 2625u);
+    assert(ttl8_window == 2625u);
     assert(ttl1_window > timing.base_reply_window_ms);
-    assert(ttl2_window > ttl1_window);
-    assert(ttl4_window > ttl2_window);
-    assert(ttl8_window > ttl4_window);
+}
+
+static void test_connected_gap_window_uses_channel5_until_retune_guard(void)
+{
+    const struct app_mesh_c5_connected_gap_timing long_gap = {
+        .next_channel9_delay_ms = 220u,
+        .scan_cap_ms = 100u,
+        .min_scan_ms = 20u,
+        .retune_margin_ms = 30u,
+    };
+    const struct app_mesh_c5_connected_gap_timing short_gap = {
+        .next_channel9_delay_ms = 45u,
+        .scan_cap_ms = 100u,
+        .min_scan_ms = 20u,
+        .retune_margin_ms = 30u,
+    };
+    const struct app_mesh_c5_connected_gap_timing capped_gap = {
+        .next_channel9_delay_ms = 75u,
+        .scan_cap_ms = 100u,
+        .min_scan_ms = 20u,
+        .retune_margin_ms = 30u,
+    };
+
+    assert(app_mesh_c5_connected_gap_window_ms(&long_gap) == 100u);
+    assert(app_mesh_c5_connected_gap_window_ms(&short_gap) == 0u);
+    assert(app_mesh_c5_connected_gap_window_ms(&capped_gap) == 45u);
+}
+
+static void test_connected_gap_reschedules_immediate_c5_until_ch9_is_close(void)
+{
+    assert(app_mesh_c5_connected_gap_reschedule_ms(220u, 20u, 30u) == 0u);
+    assert(app_mesh_c5_connected_gap_reschedule_ms(45u, 20u, 30u) == 15u);
+    assert(app_mesh_c5_connected_gap_reschedule_ms(30u, 20u, 30u) == 30u);
+    assert(app_mesh_c5_connected_gap_reschedule_ms(0u, 20u, 30u) == 0u);
 }
 
 int main(void)
@@ -210,6 +241,8 @@ int main(void)
     test_channel5_control_phr_policy();
     test_wake_claim_click_priority_policy();
     test_route_adv_delay_targets_requester_reply_window();
-    test_route_reply_window_scales_with_ttl();
+    test_route_reply_window_covers_direct_probe_and_reply_exchange();
+    test_connected_gap_window_uses_channel5_until_retune_guard();
+    test_connected_gap_reschedules_immediate_c5_until_ch9_is_close();
     return 0;
 }

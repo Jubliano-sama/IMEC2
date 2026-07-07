@@ -42,6 +42,13 @@ struct app_mesh_c5_route_reply_window_timing {
     uint32_t guard_ms;
 };
 
+struct app_mesh_c5_connected_gap_timing {
+    uint32_t next_channel9_delay_ms;
+    uint32_t scan_cap_ms;
+    uint32_t min_scan_ms;
+    uint32_t retune_margin_ms;
+};
+
 bool app_mesh_c5_flood_should_defer(
     const struct app_mesh_c5_flood_priority_state *state);
 bool app_mesh_c5_gateway_rx_should_yield_to_response(
@@ -61,5 +68,11 @@ uint32_t app_mesh_c5_route_adv_response_delay_ms(
     uint16_t wake_train_ends_in_ms,
     bool embedded_route_frame,
     const struct app_mesh_c5_route_adv_timing *timing);
+uint32_t app_mesh_c5_connected_gap_window_ms(
+    const struct app_mesh_c5_connected_gap_timing *timing);
+uint32_t app_mesh_c5_connected_gap_reschedule_ms(
+    uint32_t next_channel9_delay_ms,
+    uint32_t min_scan_ms,
+    uint32_t retune_margin_ms);
 
 #endif

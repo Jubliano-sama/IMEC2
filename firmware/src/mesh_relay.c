@@ -7,6 +7,7 @@
 #define LEGACY_MSG_ROUTE_ADV 0x33u
 #define LEGACY_MSG_ROUTE_STATUS 0x34u
 #define MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION 1u
+#define FLOOD_BETTER_METRIC_MARGIN_PERCENT 20u
 
 struct route_discovery_fields {
     uint64_t origin_id;
@@ -630,7 +631,7 @@ static void flood_control_defaults(struct flood_control_fields *control)
     }
     control->random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
     control->random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
-    control->retry_count = 0u;
+    control->retry_count = FLOOD_DEFAULT_RETRY_COUNT;
 }
 
 static int parse_flood_control_tlvs(const uint8_t *payload,
@@ -1190,6 +1191,7 @@ static struct flood_seen_entry *flood_seen_alloc_or_replace(struct mesh_relay *r
 {
     struct flood_seen_entry *entry;
 
+    flood_seen_expire_stale(relay, now_ms);
     for (uint8_t i = 0u; i < MESH_RELAY_FLOOD_SEEN_SIZE; i++) {
         if (!relay->flood_seen[i].valid) {
             return &relay->flood_seen[i];
@@ -1199,7 +1201,6 @@ static struct flood_seen_entry *flood_seen_alloc_or_replace(struct mesh_relay *r
     entry = &relay->flood_seen[relay->flood_seen_next];
     relay->flood_seen_next = (uint8_t)((relay->flood_seen_next + 1u) %
                                        MESH_RELAY_FLOOD_SEEN_SIZE);
-    (void)now_ms;
     return entry;
 }
 
@@ -1278,6 +1279,49 @@ static bool route_solicit_forward_allowed(const struct flood_seen_entry *entry)
            entry->forward_count < FLOOD_FORWARD_MAX_NORMAL &&
            (entry->forward_count == 0u ||
             entry->heard_count < FLOOD_FORWARD_SUPPRESS_AFTER_HEARD);
+}
+
+static int build_route_request_forward(const struct proto_packet *packet,
+                                       const struct route_discovery_fields *fields,
+                                       uint32_t now_ms,
+                                       uint32_t random_value,
+                                       struct mesh_outbound *out)
+{
+    struct route_discovery_fields forwarded = *fields;
+    struct flood_control_fields flood_control;
+    size_t out_payload_len = 0u;
+    int ret;
+
+    if (packet->ttl <= 1u || fields->hop_count == UINT8_MAX) {
+        return PROTO_ERR_STALE;
+    }
+
+    forwarded.hop_count++;
+    ret = append_route_discovery_tlvs(out->payload,
+                                      sizeof(out->payload),
+                                      &out_payload_len,
+                                      &forwarded);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    out->packet = *packet;
+    out->packet.ttl = packet->ttl - 1u;
+    out->packet.payload_len = (uint16_t)out_payload_len;
+    out->payload_len = (uint16_t)out_payload_len;
+    out->next_hop_id = MESH_BROADCAST_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    out->queued_at_ms = now_ms;
+    out->flood_retry_count = 0u;
+    flood_control.random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
+    flood_control.random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
+    flood_control.retry_count = 0u;
+    out->earliest_tx_ms = now_ms + flood_forward_total_delay_ms(packet->src_id,
+                                                                forwarded.slot_seed,
+                                                                forwarded.hop_count,
+                                                                &flood_control,
+                                                                random_value);
+    return PROTO_OK;
 }
 
 static int ack_payload_contains_seq(const uint8_t *payload,
@@ -3924,63 +3968,6 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
-static int build_route_request_forward(const struct mesh_relay *relay,
-                                       const struct proto_packet *packet,
-                                       const uint8_t *payload,
-                                       size_t payload_len,
-                                       uint8_t link_quality,
-                                       uint32_t now_ms,
-                                       struct mesh_outbound *out)
-{
-    struct route_discovery_fields fields = {0};
-    size_t out_payload_len = 0u;
-    int ret;
-
-    if (relay == NULL || packet == NULL || out == NULL ||
-        !id_is_unicast(relay->local_id)) {
-        return PROTO_ERR_ARG;
-    }
-    if (packet->ttl <= 1u) {
-        return PROTO_ERR_STALE;
-    }
-
-    ret = parse_route_discovery_tlvs(payload,
-                                     payload_len,
-                                     packet->session_id,
-                                     now_ms,
-                                     &fields);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (fields.hop_count == UINT8_MAX) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    fields.quality = combined_quality(fields.quality, link_quality);
-    fields.hop_count++;
-    fields.proposed_channel9_timing_valid = false;
-    fields.timing_reference_ms = 0u;
-    ret = append_route_discovery_tlvs(out->payload,
-                                      sizeof(out->payload),
-                                      &out_payload_len,
-                                      &fields);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-
-    out->packet = *packet;
-    out->packet.ttl = packet->ttl - 1u;
-    out->packet.payload_len = (uint16_t)out_payload_len;
-    out->payload_len = (uint16_t)out_payload_len;
-    out->queued_at_ms = now_ms;
-    out->next_hop_id = MESH_BROADCAST_ID;
-    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-    out->earliest_tx_ms = now_ms + flood_forward_delay_ms(relay->local_id,
-                                                          fields.slot_seed,
-                                                          fields.hop_count);
-    return PROTO_OK;
-}
-
 static int build_route_reply(struct mesh_relay *relay,
                              const struct route_discovery_fields *request,
                              uint64_t next_hop_id,
@@ -3989,6 +3976,7 @@ static int build_route_reply(struct mesh_relay *relay,
                              struct mesh_outbound *out)
 {
     struct route_discovery_fields fields;
+    const struct route_candidate *selected = NULL;
     size_t payload_len = 0u;
     int ret;
 
@@ -4003,8 +3991,17 @@ static int build_route_reply(struct mesh_relay *relay,
 
     fields = *request;
     fields.route_epoch = route_epoch;
-    fields.hop_count = 0u;
-    fields.quality = 100u;
+    if (request->target_id == relay->gateway_id &&
+        request->target_id != relay->local_id) {
+        selected = route_selected(&relay->upstream);
+    }
+    if (selected != NULL && selected->hop_count < UINT8_MAX) {
+        fields.hop_count = selected->hop_count + 1u;
+        fields.quality = selected->link_quality;
+    } else {
+        fields.hop_count = 0u;
+        fields.quality = 100u;
+    }
     fields.relay_capacity_state = relay_current_capacity_state(relay);
     fields.queue_free_hint = relay_current_queue_free_hint(relay);
     fields.channel9_busy_hint = relay_active_channel9_timing_count(relay);
@@ -4117,17 +4114,14 @@ static int handle_route_request(struct mesh_relay *relay,
                                 uint64_t previous_hop_id,
                                 uint8_t link_quality,
                                 uint32_t now_ms,
+                                uint32_t random_value,
                                 struct mesh_relay_result *result,
                                 bool duplicate_packet)
 {
     struct route_discovery_fields fields = {0};
-    struct flood_seen_entry *flood_entry;
-    const struct flood_seen_entry *existing_flood_entry;
+    struct flood_seen_entry *flood_entry = NULL;
     const struct route_candidate *selected = NULL;
-    uint64_t prior_best_previous_hop = 0u;
-    bool flood_first_seen = false;
-    bool forward_allowed;
-    bool duplicate_suppressed;
+    bool first_seen = false;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
@@ -4156,22 +4150,22 @@ static int handle_route_request(struct mesh_relay *relay,
         (fields.hop_count == 0u || previous_hop_id == fields.origin_id)) {
         return PROTO_ERR_STALE;
     }
+    if (duplicate_packet) {
+        relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
+        return PROTO_ERR_STALE;
+    }
+    if (relay->role == MESH_RELAY_ROLE_ANCHOR &&
+        relay_active_channel9_timing_count(relay) != 0u) {
+        return PROTO_ERR_BUSY;
+    }
 
     fields.quality = combined_quality(fields.quality, link_quality);
-    existing_flood_entry = flood_seen_find_route_solicit(relay,
-                                                         &fields,
-                                                         packet->session_id);
-    if (existing_flood_entry != NULL) {
-        prior_best_previous_hop = existing_flood_entry->best_previous_hop;
-    }
     flood_entry = route_solicit_flood_note(relay,
                                            &fields,
                                            packet->session_id,
                                            previous_hop_id,
                                            now_ms,
-                                           &flood_first_seen);
-    forward_allowed = route_solicit_forward_allowed(flood_entry);
-    duplicate_suppressed = !flood_first_seen && !forward_allowed;
+                                           &first_seen);
     ret = upsert_reactive_route(relay,
                                 fields.origin_id,
                                 previous_hop_id,
@@ -4227,18 +4221,6 @@ static int handle_route_request(struct mesh_relay *relay,
             return ret;
         }
     }
-    if (duplicate_packet || duplicate_suppressed) {
-        bool reply_allowed =
-            prior_best_previous_hop == previous_hop_id &&
-            (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u;
-
-        relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
-        if (reply_allowed) {
-            return PROTO_OK;
-        }
-        result->actions &= ~MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
-        return PROTO_ERR_STALE;
-    }
     if (mesh_relay_tx_active(relay)) {
         if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u) {
             return PROTO_OK;
@@ -4247,20 +4229,27 @@ static int handle_route_request(struct mesh_relay *relay,
         return PROTO_ERR_BUSY;
     }
 
-    ret = build_route_request_forward(relay,
-                                      packet,
-                                      payload,
-                                      payload_len,
-                                      link_quality,
-                                      now_ms,
-                                      &result->route_request);
-    if (ret == PROTO_OK) {
-        if (flood_entry != NULL && flood_entry->forward_count < UINT8_MAX) {
-            flood_entry->forward_count++;
-        }
-        result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REQ;
+    if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u) {
+        return PROTO_OK;
     }
-    return ret;
+    if (first_seen &&
+        route_solicit_forward_allowed(flood_entry)) {
+        ret = build_route_request_forward(packet,
+                                          &fields,
+                                          now_ms,
+                                          random_value,
+                                          &result->route_request);
+        if (ret == PROTO_OK) {
+            flood_entry->forward_count++;
+            result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REQ;
+            return PROTO_OK;
+        }
+        if (ret != PROTO_ERR_STALE) {
+            return ret;
+        }
+    }
+
+    return PROTO_ERR_NOT_FOUND;
 }
 
 static int handle_route_reply(struct mesh_relay *relay,
@@ -4933,7 +4922,7 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
                                                    fields.gateway_epoch);
     fields.random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
     fields.random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
-    fields.flood_retry_count = 0u;
+    fields.flood_retry_count = FLOOD_DEFAULT_RETRY_COUNT;
     fields.flood_packet_age_ms = 0u;
 
     ret = append_gateway_route_adv_tlvs(out->payload,
@@ -6192,6 +6181,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                        previous_hop_id,
                                        link_quality,
                                        now_ms,
+                                       random_value,
                                        result,
                                        true);
             if (ret != PROTO_OK) {
@@ -6252,6 +6242,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                    previous_hop_id,
                                    link_quality,
                                    now_ms,
+                                   random_value,
                                    result,
                                    false);
         if (ret != PROTO_OK) {

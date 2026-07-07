@@ -389,7 +389,8 @@ static void test_prepare_outbound_accepts_all_registered_command_flood_with_rost
                            out.payload_len,
                            TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS) ==
            FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
-    assert(require_tlv_u8(out.payload, out.payload_len, TLV_FLOOD_RETRY_COUNT) == 0u);
+    assert(require_tlv_u8(out.payload, out.payload_len, TLV_FLOOD_RETRY_COUNT) ==
+           FLOOD_DEFAULT_RETRY_COUNT);
     assert(require_tlv_u32(out.payload, out.payload_len, TLV_FLOOD_PACKET_AGE_MS) == 0u);
 }
 

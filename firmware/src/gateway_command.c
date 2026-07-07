@@ -137,7 +137,7 @@ static int append_default_flood_controls(struct mesh_outbound *out)
                         original_len,
                         &offset,
                         TLV_FLOOD_RETRY_COUNT,
-                        0u);
+                        FLOOD_DEFAULT_RETRY_COUNT);
     if (ret != PROTO_OK) {
         return ret;
     }

@@ -6,7 +6,17 @@ static bool flags_valid(uint8_t flags)
 {
     uint8_t mode_flags = flags & (FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK);
 
-    if ((flags & ~(FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK | FLAG_RANGE_ONLY)) != 0u) {
+    if ((flags & ~(FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC |
+                   FLAG_COUNT_AS_CLICK | FLAG_RANGE_ONLY)) != 0u) {
+        return false;
+    }
+    if ((flags & FLAG_ROUTE_SETUP) != 0u) {
+        return (flags & FLAG_RANGE_ONLY) != 0u &&
+               (flags & FLAG_COUNT_AS_CLICK) == 0u &&
+               mode_flags == FLAG_DIAGNOSTIC;
+    }
+    if ((flags & FLAG_RANGE_ONLY) != 0u &&
+        (flags & FLAG_COUNT_AS_CLICK) != 0u) {
         return false;
     }
     if ((flags & FLAG_RANGE_ONLY) != 0u) {

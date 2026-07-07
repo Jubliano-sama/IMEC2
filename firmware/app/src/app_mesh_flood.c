@@ -46,6 +46,7 @@ int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
         out->packet.dst_id != MESH_BROADCAST_ID ||
         out->next_hop_id != MESH_BROADCAST_ID ||
         out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ||
+        out->packet.msg_type == MSG_ROUTE_REQ ||
         FLOOD_RELAY_REPEAT_MS == 0u) {
         return -EINVAL;
     }
@@ -53,8 +54,7 @@ int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
     first_due_ms = out->earliest_tx_ms != 0u ? out->earliest_tx_ms : ops->now_ms(ops->ctx);
     local_result.first_due_ms = first_due_ms;
     repeat_limit = app_mesh_flood_repeat_limit();
-    update_route_reply_rx_eta =
-        mesh_route_request_reply_rx_delay_ms(out, &route_reply_rx_delay_ms);
+    update_route_reply_rx_eta = false;
     if (update_route_reply_rx_eta) {
         route_reply_rx_open_ms = first_due_ms + route_reply_rx_delay_ms;
     }
