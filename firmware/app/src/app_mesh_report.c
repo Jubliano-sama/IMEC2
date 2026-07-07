@@ -9316,6 +9316,17 @@ out:
     return handled;
 }
 
+static bool mesh_forward_uses_gateway_batch_queue(const struct mesh_outbound *out)
+{
+    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+           DEVICE_ROLE == ROLE_ANCHOR &&
+           out != NULL &&
+           out->packet.dst_id == GATEWAY_ID &&
+           out->next_hop_id == GATEWAY_ID &&
+           mesh_packet_prefers_channel9(&out->packet) &&
+           (out->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
 static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                                        uint8_t received_radio_channel,
                                        const struct mesh_rx_pending *rx)
@@ -9482,6 +9493,14 @@ after_gateway_ack:
                 &result->forward,
                 mesh_c5_purpose_for_packet(&result->forward.packet),
                 "broadcast-forward");
+        } else if (mesh_forward_uses_gateway_batch_queue(&result->forward)) {
+            ret = queue_anchor_report(&result->forward);
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_FORWARD_GATEWAY_BATCH_QUEUE ret=%d seq=%u q=%u\n",
+                                    ret,
+                                    result->forward.packet.seq,
+                                    report_tx_queue_used());
+            }
         } else {
             ret = mesh_start_tracked_tx(&result->forward, "forward");
         }
