@@ -49,6 +49,7 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS 80u
 #define MESH_ROUTE_TEST_REPLY_HANDOFF_WAIT_MS 250u
 #define MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS 1000u
+#define MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS 6000u
 #define MESH_ROUTE_TEST_REPLY_WINDOW_GUARD_MS 250u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_EXCHANGE_MS \
     ((uint32_t)(RREP_RETRY_COUNT_PER_HOP + 1u) * \
@@ -73,6 +74,11 @@ BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS + FLOOD_RELAY_BURST_MS +
              MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS <
              MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
              "route-ad response delay must fit the route reply listen window");
+BUILD_ASSERT(MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS >=
+             WAKE_ADV_MS + MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS + FLOOD_WAVE_MS +
+             MESH_ROUTE_TEST_ROUTE_REPLY_EXCHANGE_MS +
+             MESH_ROUTE_TEST_REPLY_WINDOW_GUARD_MS,
+             "forced relay route-reply window must cover one relay hop");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "direct gateway ACK scratch must fit the mesh payload limit");
 BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
@@ -5131,10 +5137,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                        uint32_t window_ms,
                                        bool *route_reply_captured)
 {
-    struct mesh_reply_capture captures[MESH_ROUTE_TEST_REPLY_CAPTURE_MAX];
+    uint8_t *frame = mesh_uwb_rx_frame;
     size_t capture_count = 0u;
     bool captured_route_reply = false;
-    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
     int64_t uwb_window_start_ms = -1;
     uint32_t deadline_ms;
     uint8_t contact_purpose;
@@ -5192,7 +5197,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     if (ret == 0) {
         deadline_ms = k_uptime_get_32() + window_ms;
         while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms) &&
-               capture_count < ARRAY_SIZE(captures)) {
+               capture_count < MESH_ROUTE_TEST_REPLY_CAPTURE_MAX) {
             struct mesh_frame_parse_context parsed = {0};
             enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
             uint32_t now_ms = k_uptime_get_32();
@@ -5206,7 +5211,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
 
             ret = dwm3000_driver_receive_frame_continuous(remaining_ms,
                                                           frame,
-                                                          sizeof(frame),
+                                                          UWB_MESH_MAX_FRAME_LEN,
                                                           &frame_len,
                                                           &quality,
                                                           NULL,
@@ -5341,10 +5346,21 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 continue;
             }
 
-            memcpy(captures[capture_count].frame, frame, frame_len);
-            captures[capture_count].frame_len = frame_len;
-            captures[capture_count].quality = quality;
-            captures[capture_count].received_at_ms = k_uptime_get_32();
+            if (!mesh_queue_from_frame_at_internal(frame,
+                                                   frame_len,
+                                                   quality,
+                                                   UWB_CHANNEL_WAKE_CONTACT,
+                                                   k_uptime_get_32(),
+                                                   NULL,
+                                                   0u,
+                                                   false,
+                                                   NULL,
+                                                   NULL)) {
+                status_debug_printf("DBG_ROUTE_REPLY_QUEUE_FAIL msg=0x%02x seq=%u\n",
+                                    parsed.packet.msg_type,
+                                    parsed.packet.seq);
+                continue;
+            }
             capture_count++;
             if (app_mesh_c5_route_capture_requires_ack_hold(parsed.packet.msg_type)) {
                 captured_route_reply = true;
@@ -5420,21 +5436,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     radio_guard_uwb_stop();
     mesh_restart_role_scan();
 
-    for (size_t i = 0u; i < capture_count; i++) {
-        bool valid_mesh_frame = false;
-        uint64_t previous_hop_id = 0u;
-
-        (void)mesh_queue_from_frame_at(captures[i].frame,
-                                       captures[i].frame_len,
-                                       captures[i].quality,
-                                       UWB_CHANNEL_WAKE_CONTACT,
-                                       captures[i].received_at_ms,
-                                       NULL,
-                                       0u,
-                                       &valid_mesh_frame,
-                                       &previous_hop_id);
-        ARG_UNUSED(valid_mesh_frame);
-        ARG_UNUSED(previous_hop_id);
+    if (capture_count > 0u) {
+        (void)mesh_submit_work(&mesh_rx_work);
     }
 
     high_debug_log_event("MESH_ROUTE_REPLY_RX",
@@ -6060,6 +6063,10 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         return mesh_errno_from_proto(ret);
     }
     route_reply_window_ms = mesh_route_reply_listen_window_ms(route_req.packet.ttl);
+    if (relay_required_route_req &&
+        route_reply_window_ms > MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS) {
+        route_reply_window_ms = MESH_ROUTE_TEST_FORCED_RELAY_REPLY_WINDOW_MS;
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         uint32_t route_backoff_ms =
             uptime_ms_until_deadline(now_ms,

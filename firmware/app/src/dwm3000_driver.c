@@ -741,18 +741,17 @@ static int apply_radio_config(const dwt_config_t *config,
     return 0;
 }
 
-static int restore_txrx_after_sleep(void)
+static int restore_txrx_after_sleep(enum dwm3000_phy_mode phy_mode)
 {
     int ret;
 
-    dwt_restore_common();
     ret = dwt_restore_txrx(DWT_RESTORE_TXRX_MODE);
     if (ret != DWT_SUCCESS) {
         return -EIO;
     }
 
     configure_first_path_sensitivity();
-    dwt_configuretxrf(&default_txconfig);
+    dwt_configuretxrf(txconfig_for_phy(phy_mode));
     dwt_configciadiag(DWM3000_CIA_DIAG_MODE);
     dwt_setrxantennadelay(DWM3000_RX_ANT_DLY);
     dwt_settxantennadelay(DWM3000_TX_ANT_DLY);
@@ -847,10 +846,11 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
     return apply_radio_config(config, phy_mode);
 }
 
-static int wake_configured_radio(void)
+static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
 {
-    enum dwm3000_phy_mode requested_phy = active_phy_mode == DWM3000_PHY_NONE ?
-        DWM3000_PHY_RANGE : active_phy_mode;
+    const dwt_config_t *active_config;
+    const dwt_config_t *requested_config;
+    bool restore_txrx;
     uint32_t wake_start_us;
     uint32_t wake_elapsed_us;
     int ret;
@@ -858,6 +858,15 @@ static int wake_configured_radio(void)
     if (!radio_configured || radio_awake) {
         return 0;
     }
+
+    if (requested_phy == DWM3000_PHY_NONE) {
+        requested_phy = active_phy_mode == DWM3000_PHY_NONE ?
+            DWM3000_PHY_RANGE : active_phy_mode;
+    }
+    active_config = config_for_phy(active_phy_mode);
+    requested_config = config_for_phy(requested_phy);
+    restore_txrx = active_phy_mode == requested_phy ||
+                   phy_configs_equal(active_config, requested_config);
 
     wake_start_us = k_cyc_to_us_floor32(k_cycle_get_32());
     driver_stats.sleep_wake_count++;
@@ -901,20 +910,23 @@ static int wake_configured_radio(void)
         return ret;
     }
 
-    ret = restore_txrx_after_sleep();
-    if (ret < 0) {
-        driver_stats.sleep_wake_failures++;
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
+    dwt_restore_common();
+    if (restore_txrx) {
+        ret = restore_txrx_after_sleep(requested_phy);
+        if (ret < 0) {
+            driver_stats.sleep_wake_failures++;
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
 
-            status_debug_printf("DBG_DWM_WAKE_RESTORE_FAIL phy=%d ret=%d sys=0x%08x\n",
-                                requested_phy, ret, (unsigned int)sys_status);
+                status_debug_printf("DBG_DWM_WAKE_RESTORE_FAIL phy=%d ret=%d sys=0x%08x\n",
+                                    requested_phy, ret, (unsigned int)sys_status);
+            }
+            return ret;
         }
-        return ret;
+        active_phy_mode = requested_phy;
     }
     radio_awake = true;
-    active_phy_mode = requested_phy;
-    radio_restored_from_sleep = true;
+    radio_restored_from_sleep = !restore_txrx;
 
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
@@ -930,8 +942,9 @@ static int wake_configured_radio(void)
     if (wake_elapsed_us > driver_stats.sleep_wake_max_us) {
         driver_stats.sleep_wake_max_us = wake_elapsed_us;
     }
-    LOG_DBG("DWM3000 PHY mode %d restored after sleep wake without full PHY reconfigure",
-            active_phy_mode);
+    LOG_DBG("DWM3000 PHY mode %d woke from sleep%s",
+            requested_phy,
+            restore_txrx ? " with TX/RX restore" : " for reconfigure");
     return 0;
 }
 
@@ -947,7 +960,7 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
             return ret;
         }
     } else {
-        ret = wake_configured_radio();
+        ret = wake_configured_radio(phy_mode);
         if (ret < 0) {
             LOG_WRN("DWM3000 retained sleep wake/restore failed: phy=%d ret=%d; forcing full reinit",
                     phy_mode,
@@ -969,16 +982,24 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
         }
     }
 
-    if (active_phy_mode == phy_mode && !radio_restored_from_sleep) {
-        return 0;
-    }
-
     config = config_for_phy(phy_mode);
     active_config = config_for_phy(active_phy_mode);
-    if (!radio_restored_from_sleep && phy_configs_equal(active_config, config)) {
+    if (active_phy_mode == phy_mode || phy_configs_equal(active_config, config)) {
+        if (radio_restored_from_sleep) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
+
+                status_debug_printf("DBG_DWM_RETAIN_REUSE phy=%d active=%d sys=0x%08x\n",
+                                    phy_mode,
+                                    active_phy_mode,
+                                    (unsigned int)sys_status);
+            }
+            radio_restored_from_sleep = false;
+        } else if (active_phy_mode != phy_mode) {
+            LOG_DBG("DWM3000 PHY mode %d selected without redundant reconfigure",
+                    phy_mode);
+        }
         active_phy_mode = phy_mode;
-        LOG_DBG("DWM3000 PHY mode %d selected without redundant reconfigure",
-                phy_mode);
         return 0;
     }
 
@@ -1016,7 +1037,8 @@ static int ensure_current_phy_or_range(void)
         return dwm3000_driver_configure_default();
     }
 
-    return wake_configured_radio();
+    return wake_configured_radio(active_phy_mode == DWM3000_PHY_NONE ?
+                                 DWM3000_PHY_RANGE : active_phy_mode);
 }
 
 static void clear_status(uint32_t mask)
