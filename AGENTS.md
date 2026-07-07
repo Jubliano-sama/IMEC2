@@ -60,6 +60,8 @@ For deterministic ML anchors, replace `build/ml-anchor-1` with the anchor image 
 
 Flashing at 4MHz has been proven to work, if a flash fails, assume the cabling is at fault and do not reduce flash speed.
 
+When capturing RTT logs for startup or boot behavior, use pyOCD's `pre-reset` connect mode so the capture includes reset-time output, for example `pyocd rtt -t nrf52833 -M pre-reset -u <probe-id>`. `pyocd rtt` needs a TTY; run it interactively or under `script`, and do not redirect its stdout directly to a file because that can fail with `Inappropriate ioctl for device`.
+
 ## Coding Style & Naming Conventions
 
 Code is C using Zephyr conventions: 4-space indentation, braces on the same line for functions/control blocks, and `snake_case` for functions and variables. Do not add project-wide prefixes such as `IMEC_` to new identifiers; use descriptive module-scoped names and the existing protocol/route/status naming style. Keep hardware-independent logic in `firmware/src`; keep Zephyr, GPIO, BLE, and SPI code in `firmware/app`.
@@ -77,6 +79,8 @@ Use clear imperative commit subjects, for example `Add BLE-gated anchor ranging 
 Do not edit imported dependency trees unless the task explicitly targets them. Prefer documenting protocol changes in `Documentation/` alongside code changes.
 
 For timing, radio state, routing, queues, packet capacity, or success/failure accounting, add a worst-case test or build-time guard before relying on the path. Keep hardware assumptions aligned across code, docs, and this file.
+
+Before changing mesh routing, channel 5/channel 9 scheduling, DWM3000 sleep/idle behavior in mesh roles, ACK retry, route discovery, wake-train semantics, blind flooding, or click preemption, read `Documentation/Mesh Connected Routing Contract.md`. Treat it as the high-level design contract, state which invariants the change preserves, and update it alongside any intentional design change. Do not push through a change that contradicts the contract without explicit user permission; first generate a clear list of the new behavior, affected roles, changed or removed invariants, and required tests or hardware checks.
 
 For difficult DWM3000 bring-up failures, explicitly audit SPI speed transitions and sleep/wake configuration retention before assuming the protocol or RF path is at fault. Both fast/slow SPI ordering and retained sleep configuration have caused hard-to-find behavior where a path works once after reset but fails after sleep or wake.
 

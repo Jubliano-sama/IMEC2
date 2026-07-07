@@ -204,6 +204,11 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DWM3000_SLEEP_MODE DWT_CONFIG
 #define DWM3000_SLEEP_WAKE_FLAGS \
     (DWT_PRES_SLEEP | DWT_WAKE_CSN | DWT_WAKE_WUP | DWT_SLP_EN)
+BUILD_ASSERT((DWM3000_SLEEP_MODE & DWT_CONFIG) != 0u,
+             "DW3000 retained sleep must restore saved configuration on wake");
+BUILD_ASSERT((DWM3000_SLEEP_WAKE_FLAGS & (DWT_WAKE_CSN | DWT_WAKE_WUP | DWT_SLP_EN)) ==
+             (DWT_WAKE_CSN | DWT_WAKE_WUP | DWT_SLP_EN),
+             "DW3000 retained sleep must wake via CSn or WAKEUP pin");
 #define DWM3000_WAKE_IDLE_RC_TIMEOUT_US 3000u
 #define DWM3000_FIRST_PATH_NTM_LOW 12u
 #define DWM3000_STATUS_POLL_INTERVAL_US 50u
@@ -715,6 +720,12 @@ static int apply_radio_config(const dwt_config_t *config,
         return -EINVAL;
     }
 
+    /* Qorvo requires the IC to be returned to idle before dwt_configure(). */
+    if (radio_configured && radio_awake) {
+        dwt_forcetrxoff();
+        clear_all_events();
+    }
+
     if (dwt_configure((dwt_config_t *)config) != DWT_SUCCESS) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
@@ -804,6 +815,11 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
 {
     const dwt_config_t *config = config_for_phy(phy_mode);
     int ret;
+
+    radio_configured = false;
+    radio_awake = false;
+    radio_restored_from_sleep = false;
+    active_phy_mode = DWM3000_PHY_NONE;
 
     ret = dwm3000_port_init();
     if (ret < 0) {
@@ -1007,27 +1023,29 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
     if (ret == 0) {
         return 0;
     }
-    if (!radio_restored_from_sleep) {
-        return ret;
-    }
 
-    LOG_WRN("DWM3000 PHY configure failed after retained sleep restore: phy=%d ret=%d; forcing full reinit",
+    LOG_WRN("DWM3000 PHY configure failed: phy=%d ret=%d restored=%u active=%d; forcing full reinit",
             phy_mode,
-            ret);
+            ret,
+            radio_restored_from_sleep ? 1u : 0u,
+            active_phy_mode);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_DWM_RETAIN_REINIT phy=%d ret=%d\n", phy_mode, ret);
+        status_debug_printf("DBG_DWM_CONFIG_REINIT phy=%d ret=%d restored=%u active=%d\n",
+                            phy_mode,
+                            ret,
+                            radio_restored_from_sleep ? 1u : 0u,
+                            active_phy_mode);
     }
     ret = configure_radio_from_reset(phy_mode);
     if (ret < 0) {
-        LOG_WRN("DWM3000 full reinit after retained sleep configure failure failed: ret=%d",
+        LOG_WRN("DWM3000 full reinit after PHY configure failure failed: ret=%d",
                 ret);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_REINIT_FAIL ret=%d\n", ret);
         }
         return ret;
     }
-    LOG_INF("DWM3000 PHY mode %d configured directly after full reinit",
-            phy_mode);
+    LOG_INF("DWM3000 PHY mode %d configured after full reinit", phy_mode);
     return 0;
 }
 

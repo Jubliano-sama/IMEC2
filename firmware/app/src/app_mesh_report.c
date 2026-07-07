@@ -327,6 +327,9 @@ static K_MUTEX_DEFINE(mesh_c5_control_scratch_lock);
 static struct mesh_outbound mesh_c5_control_scratch_tx;
 static K_MUTEX_DEFINE(mesh_route_reply_scratch_lock);
 static struct mesh_outbound mesh_route_reply_backup_scratch;
+static K_MUTEX_DEFINE(mesh_route_request_action_scratch_lock);
+static struct mesh_outbound mesh_route_request_action_tx;
+static struct mesh_outbound mesh_route_request_reply_tx;
 static struct mesh_outbound mesh_result_action_tx;
 static K_MUTEX_DEFINE(mesh_route_discovery_lock);
 static uint64_t mesh_route_discovery_target_id;
@@ -4296,6 +4299,24 @@ static bool mesh_payload_find_u32(const uint8_t *payload,
     return true;
 }
 
+static bool mesh_payload_find_u64(const uint8_t *payload,
+                                  size_t payload_len,
+                                  uint8_t type,
+                                  uint64_t *value)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t tlv_len = 0u;
+
+    if (value == NULL ||
+        tlv_find(payload, payload_len, type, &tlv_value, &tlv_len) != PROTO_OK ||
+        tlv_len != sizeof(uint64_t)) {
+        return false;
+    }
+
+    *value = proto_get_u64_le(tlv_value);
+    return true;
+}
+
 static uint32_t mesh_ch9_next_batch_id(void)
 {
     if (mesh_ch9_batch_next_id == 0u) {
@@ -6597,7 +6618,8 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
 }
 
 static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
-                                               const char *reason)
+                                               const char *reason,
+                                               bool install_direct_route)
 {
     struct mesh_outbound *probe = &mesh_direct_gateway_probe_scratch;
     int last_ret = -ETIMEDOUT;
@@ -6645,6 +6667,17 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                                                       false,
                                                       attempt + 1u);
         if (ret == 0) {
+            if (!install_direct_route) {
+                status_debug_note("DBG_DIRECT_GW_PROBE_CONTACT_ONLY\n");
+                high_debug_log_event("MESH_DIRECT_GATEWAY_PROBE",
+                                     "target=0x%016llx attempt=%u mode=contact-only reason=%s",
+                                     (unsigned long long)target_id,
+                                     (unsigned int)(attempt + 1u),
+                                     reason == NULL ? "route" : reason);
+                last_ret = 0;
+                goto out_unlock;
+            }
+
             ret = mesh_relay_note_direct_gateway_route(&mesh_runtime,
                                                        k_uptime_get_32());
             if (ret != PROTO_OK) {
@@ -6659,7 +6692,6 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                                  (unsigned long long)target_id,
                                  (unsigned int)(attempt + 1u),
                                  reason == NULL ? "route" : reason);
-            mesh_schedule_route_waiting_retry_after("gateway-direct-route", 0u);
             last_ret = 0;
             goto out_unlock;
         }
@@ -6724,15 +6756,21 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         return -EBUSY;
     }
 
-    if (!relay_required_route_req) {
-        ret = mesh_try_direct_gateway_route_probe(target_id, reason);
-        if (ret == 0) {
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_note("DBG_ROUTE_REQ_DIRECT_READY\n");
-            }
-            return 0;
+    ret = mesh_try_direct_gateway_route_probe(target_id,
+                                              reason,
+                                              !relay_required_route_req);
+    if (ret == 0 && !relay_required_route_req) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_ROUTE_REQ_DIRECT_READY\n");
         }
-    } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        mesh_schedule_route_waiting_retry_after("gateway-direct-route", 0u);
+        return 0;
+    }
+    if (ret == 0 && relay_required_route_req &&
+        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_note("DBG_ROUTE_REQ_DIRECT_CONTACT_RELAY_REQUIRED\n");
+    }
+    if (relay_required_route_req && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_REQ_RELAY_REQUIRED target=0x%llx reason=%s\n",
                             (unsigned long long)target_id,
                             reason == NULL ? "route" : reason);
@@ -9045,50 +9083,51 @@ queued:
     return 0;
 }
 
-static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
-                                         const char *reason)
+static bool mesh_send_route_reply_outbound_action(const struct mesh_outbound *route_reply,
+                                                  bool backup_valid,
+                                                  uint64_t backup_next_hop_id,
+                                                  const char *reason)
 {
     uint64_t route_reply_acked_next_hop = 0u;
     int ret;
 
-    if (result == NULL ||
-        (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) == 0u) {
+    if (route_reply == NULL) {
         return false;
     }
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_REPLY_ACTION reason=%s next=0x%llx seq=%u backup=%u\n",
                             reason == NULL ? "route-reply" : reason,
-                            (unsigned long long)result->route_reply.next_hop_id,
-                            result->route_reply.packet.seq,
-                            result->route_reply_backup_valid ? 1u : 0u);
+                            (unsigned long long)route_reply->next_hop_id,
+                            route_reply->packet.seq,
+                            backup_valid ? 1u : 0u);
     }
-    mesh_route_embedded_wait_before_reply(&result->route_reply);
-    if (result->route_reply.earliest_tx_ms != 0u) {
+    mesh_route_embedded_wait_before_reply(route_reply);
+    if (route_reply->earliest_tx_ms != 0u) {
         uint32_t now_ms = k_uptime_get_32();
         uint32_t delay_ms = uptime_ms_until_deadline(now_ms,
-                                                     result->route_reply.earliest_tx_ms);
+                                                     route_reply->earliest_tx_ms);
 
         if (delay_ms > 0u) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_ROUTE_REPLY_ETA_WAIT delay=%u earliest=%u now=%u\n",
                                     delay_ms,
-                                    result->route_reply.earliest_tx_ms,
+                                    route_reply->earliest_tx_ms,
                                     now_ms);
             }
-            mesh_wait_until_ms(result->route_reply.earliest_tx_ms);
+            mesh_wait_until_ms(route_reply->earliest_tx_ms);
         }
     }
-    if (mesh_id_is_unicast(result->route_reply.next_hop_id)) {
-        mesh_c5_contact_exchange(result->route_reply.next_hop_id,
+    if (mesh_id_is_unicast(route_reply->next_hop_id)) {
+        mesh_c5_contact_exchange(route_reply->next_hop_id,
                                  C5_CONTACT_PURPOSE_ROUTE_REPLY,
                                  k_uptime_get_32() +
                                  MESH_ROUTE_TEST_ROUTE_REPLY_EXCHANGE_MS,
                                  "route-reply-action");
     }
-    ret = mesh_send_route_reply_train(&result->route_reply,
-                                      result->route_reply_backup_valid,
-                                      result->route_reply_backup_next_hop_id,
+    ret = mesh_send_route_reply_train(route_reply,
+                                      backup_valid,
+                                      backup_next_hop_id,
                                       &route_reply_acked_next_hop);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_REPLY_ACTION_DONE ret=%d ack=0x%llx reason=%s\n",
@@ -9108,6 +9147,166 @@ static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
     }
 
     return false;
+}
+
+static bool mesh_send_route_reply_action(const struct mesh_relay_result *result,
+                                         const char *reason)
+{
+    if (result == NULL ||
+        (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) == 0u) {
+        return false;
+    }
+
+    return mesh_send_route_reply_outbound_action(
+        &result->route_reply,
+        result->route_reply_backup_valid,
+        result->route_reply_backup_next_hop_id,
+        reason);
+}
+
+static bool mesh_send_route_request_action(const struct mesh_relay_result *result,
+                                           const struct mesh_rx_pending *rx)
+{
+    struct mesh_outbound *route_req = &mesh_route_request_action_tx;
+    struct mesh_outbound *route_reply = &mesh_route_request_reply_tx;
+    uint64_t target_id = GATEWAY_ID;
+    uint32_t route_reply_window_ms;
+    bool embedded_route_sent = false;
+    bool handled = false;
+    int ret;
+
+    if (result == NULL ||
+        (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) == 0u) {
+        return false;
+    }
+
+    k_mutex_lock(&mesh_route_request_action_scratch_lock, K_FOREVER);
+    *route_req = result->route_request;
+    route_reply_window_ms = mesh_route_reply_listen_window_ms(route_req->packet.ttl);
+    if (!mesh_payload_find_u64(route_req->payload,
+                               route_req->payload_len,
+                               TLV_RESPONDER_ID,
+                               &target_id)) {
+        target_id = GATEWAY_ID;
+    }
+
+    if (route_req->earliest_tx_ms != 0u) {
+        uint32_t now_ms = k_uptime_get_32();
+        uint32_t delay_ms = uptime_ms_until_deadline(now_ms, route_req->earliest_tx_ms);
+
+        if (delay_ms > 0u) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_JITTER delay=%u earliest=%u now=%u\n",
+                                    delay_ms,
+                                    route_req->earliest_tx_ms,
+                                    now_ms);
+            }
+            mesh_wait_until_ms(route_req->earliest_tx_ms);
+        }
+    }
+
+    ret = mesh_try_direct_gateway_route_probe(target_id,
+                                              "route-request-rebroadcast-probe",
+                                              true);
+    if (ret == 0 && rx != NULL && rx->packet.msg_type == MSG_ROUTE_REQ) {
+        memset(route_reply, 0, sizeof(*route_reply));
+
+        ret = mesh_relay_build_route_reply_for_request(&mesh_runtime,
+                                                       &rx->packet,
+                                                       rx->payload,
+                                                       rx->payload_len,
+                                                       rx->previous_hop_id,
+                                                       k_uptime_get_32(),
+                                                       route_reply);
+        if (ret == PROTO_OK) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_DIRECT_REPLY next=0x%llx seq=%u\n",
+                                    (unsigned long long)route_reply->next_hop_id,
+                                    route_reply->packet.seq);
+            }
+            handled = mesh_send_route_reply_outbound_action(route_reply,
+                                                            false,
+                                                            0u,
+                                                            "route-request-direct-probe-reply");
+            goto out;
+        }
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_DIRECT_REPLY_FAIL ret=%d\n",
+                                ret);
+        }
+    }
+
+    ret = mesh_send_route_wake_train(MESH_BROADCAST_ID,
+                                     route_req,
+                                     &embedded_route_sent,
+                                     "route-request-rebroadcast");
+    if (ret < 0) {
+        LOG_WRN("mesh route-request rebroadcast wake train failed: target=0x%016llx ret=%d",
+                (unsigned long long)target_id,
+                ret);
+        mesh_restart_role_scan();
+        goto out;
+    }
+
+    if (embedded_route_sent) {
+        bool route_reply_captured = false;
+        int listen_ret = mesh_listen_for_route_reply(target_id,
+                                                     "embedded-route-request-rebroadcast",
+                                                     route_reply_window_ms,
+                                                     &route_reply_captured);
+
+        if (route_reply_captured) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_note("DBG_ROUTE_REQ_REBROADCAST_EMBEDDED_REPLY\n");
+            }
+            handled = true;
+            goto out;
+        }
+        if (listen_ret < 0 && listen_ret != -ETIMEDOUT) {
+            LOG_WRN("mesh embedded rebroadcast route-reply listen failed: target=0x%016llx ret=%d",
+                    (unsigned long long)target_id,
+                    listen_ret);
+        }
+    }
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_TURNAROUND delay=%u\n",
+                            MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS);
+        k_msleep(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS);
+    }
+
+    ret = mesh_send_outbound(route_req, "route-request-rebroadcast-control");
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_TX ret=%d seq=%u ttl=%u\n",
+                            ret,
+                            route_req->packet.seq,
+                            route_req->packet.ttl);
+    }
+    if (ret == 0) {
+        bool route_reply_captured = false;
+        int listen_ret = mesh_listen_for_route_reply(target_id,
+                                                     "route-request-rebroadcast",
+                                                     route_reply_window_ms,
+                                                     &route_reply_captured);
+
+        if (route_reply_captured && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_ROUTE_REQ_REBROADCAST_REPLY_CAPTURED\n");
+        } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ROUTE_REQ_REBROADCAST_REPLY_MISS listen_ret=%d win=%u\n",
+                                listen_ret,
+                                route_reply_window_ms);
+        }
+        handled = route_reply_captured || listen_ret == 0;
+        goto out;
+    }
+
+    LOG_WRN("mesh route-request rebroadcast control TX failed: target=0x%016llx ret=%d",
+            (unsigned long long)target_id,
+            ret);
+
+out:
+    k_mutex_unlock(&mesh_route_request_action_scratch_lock);
+    return handled;
 }
 
 static void mesh_handle_result_actions(const struct mesh_relay_result *result,
@@ -9353,6 +9552,9 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) {
         (void)mesh_send_route_reply_action(result, "route-reply-action");
+    }
+    if (result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) {
+        (void)mesh_send_route_request_action(result, rx);
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
         int ret;

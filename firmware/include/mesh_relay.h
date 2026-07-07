@@ -306,6 +306,7 @@ struct mesh_relay_outbox_snapshot {
 struct mesh_route_discovery_state {
     uint64_t target_id;
     uint8_t attempts;
+    uint32_t next_request_id;
     uint32_t next_request_ms;
     bool active;
 };
@@ -479,6 +480,13 @@ int mesh_relay_prepare_route_request_with_timing_flags(
     struct mesh_outbound *out);
 int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                          uint32_t now_ms);
+int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
+                                             const struct proto_packet *packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             uint32_t now_ms,
+                                             struct mesh_outbound *out);
 void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
                                            uint64_t target_id);
 void mesh_relay_reset_route_discovery(struct mesh_relay *relay);

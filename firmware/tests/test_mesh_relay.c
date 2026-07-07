@@ -3932,9 +3932,9 @@ static void test_route_discovery_attempts_are_capped_with_backoff(void)
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 11u);
 
     for (uint8_t attempt = 1u; attempt <= MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS; attempt++) {
-        uint8_t expected_ttl = attempt == 1u ? FLOOD_EPOCH_LOCAL_TTL :
-                               (attempt == 2u ? FLOOD_EPOCH_REGIONAL_TTL :
-                                FLOOD_EPOCH_GLOBAL_TTL);
+        uint8_t expected_ttl = attempt == 1u ? 1u :
+                               (attempt == 2u ? 2u :
+                                (attempt == 3u ? 4u : 6u));
 
         assert(mesh_relay_prepare_route_request(&relay,
                                                 GATEWAY,
@@ -3985,7 +3985,7 @@ static void test_idle_route_solicit_without_upstream_is_forwarded_once(void)
                                             1000u,
                                             0u,
                                             &route_req) == PROTO_OK);
-    assert(route_req.packet.ttl == FLOOD_EPOCH_LOCAL_TTL);
+    route_req.packet.ttl = 2u;
     flood_epoch_id = require_tlv_u32(route_req.payload,
                                      route_req.payload_len,
                                      TLV_FLOOD_EPOCH_ID);
@@ -4031,6 +4031,69 @@ static void test_idle_route_solicit_without_upstream_is_forwarded_once(void)
     assert(result.status == PROTO_ERR_NOT_FOUND);
     assert(has_action(&result, MESH_RELAY_ACTION_DROP));
     assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+}
+
+static void test_route_request_retry_uses_new_flood_identity(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    struct mesh_relay_result result;
+    uint32_t first_session_id;
+    uint32_t first_flood_id;
+    uint32_t retry_session_id;
+    uint32_t retry_flood_id;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 12u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 12u);
+
+    assert(mesh_relay_prepare_route_request(&origin,
+                                            GATEWAY,
+                                            1000u,
+                                            0u,
+                                            &route_req) == PROTO_OK);
+    first_session_id = route_req.packet.session_id;
+    first_flood_id = require_tlv_u32(route_req.payload,
+                                     route_req.payload_len,
+                                     TLV_FLOOD_EPOCH_ID);
+    assert(route_req.packet.ttl == 1u);
+    assert(first_flood_id == first_session_id);
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1010u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_NOT_FOUND);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+
+    assert(mesh_relay_prepare_route_request(&origin,
+                                            GATEWAY,
+                                            origin.route_discovery.next_request_ms,
+                                            0u,
+                                            &route_req) == PROTO_OK);
+    retry_session_id = route_req.packet.session_id;
+    retry_flood_id = require_tlv_u32(route_req.payload,
+                                     route_req.payload_len,
+                                     TLV_FLOOD_EPOCH_ID);
+    assert(route_req.packet.ttl == 2u);
+    assert(retry_flood_id == retry_session_id);
+    assert(retry_flood_id != first_flood_id);
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1020u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    assert(result.route_request.packet.ttl == route_req.packet.ttl - 1u);
 }
 
 static void test_parent_relay_replies_without_child_route_discovery(void)
@@ -5258,6 +5321,7 @@ static void test_gateway_route_request_without_upstream_waits_for_route(void)
                                           GATEWAY,
                                           &route_req,
                                           1000u) == PROTO_OK);
+    route_req.packet.ttl = 2u;
     assert(mesh_relay_handle_rx(&relay,
                                 &route_req.packet,
                                 route_req.payload,
@@ -6958,6 +7022,44 @@ static void test_direct_gateway_route_probe_marks_route_ready(void)
     assert(next_hop_id == GATEWAY);
 }
 
+static void test_direct_gateway_probe_route_answers_pending_request(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    struct mesh_outbound route_reply;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 11u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 11u);
+
+    assert(mesh_relay_build_route_request_with_timing_flags(
+               &origin,
+               GATEWAY,
+               NULL,
+               0u,
+               0u,
+               25u,
+               &route_req,
+               1000u) == PROTO_OK);
+    assert(mesh_relay_note_direct_gateway_route(&relay, 1040u) == PROTO_OK);
+
+    assert(mesh_relay_build_route_reply_for_request(&relay,
+                                                    &route_req.packet,
+                                                    route_req.payload,
+                                                    route_req.payload_len,
+                                                    ANCHOR_A,
+                                                    1050u,
+                                                    &route_reply) == PROTO_OK);
+    assert(route_reply.packet.msg_type == MSG_ROUTE_REPLY);
+    assert(route_reply.packet.src_id == GATEWAY);
+    assert(route_reply.packet.dst_id == ANCHOR_A);
+    assert(route_reply.next_hop_id == ANCHOR_A);
+    assert(route_reply.earliest_tx_ms == 1075u);
+    assert(require_tlv_u8(route_reply.payload,
+                          route_reply.payload_len,
+                          TLV_HOP_COUNT) == 1u);
+}
+
 int main(void)
 {
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
@@ -7017,6 +7119,7 @@ int main(void)
     test_gateway_ack_timeout_handles_ms_wrap();
     test_route_discovery_attempts_are_capped_with_backoff();
     test_idle_route_solicit_without_upstream_is_forwarded_once();
+    test_route_request_retry_uses_new_flood_identity();
     test_parent_relay_replies_without_child_route_discovery();
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
     test_gateway_route_advertisement_reports_busy_capacity();
@@ -7064,5 +7167,6 @@ int main(void)
     test_channel9_timing_expires_idle_connection_state();
     test_mesh_hop_ack_is_protocol_valid();
     test_direct_gateway_route_probe_marks_route_ready();
+    test_direct_gateway_probe_route_answers_pending_request();
     return 0;
 }

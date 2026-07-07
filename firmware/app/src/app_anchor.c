@@ -4495,20 +4495,6 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-        mesh_anchor_connected_radio_active()) {
-        scan_debug_now_ms = k_uptime_get_32();
-        if (anchor_ch5_scan_debug_next_ms == 0u ||
-            uptime_deadline_reached(scan_debug_now_ms,
-                                    anchor_ch5_scan_debug_next_ms)) {
-            anchor_ch5_scan_debug_next_ms =
-                scan_debug_now_ms + ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS;
-            status_debug_printf("DBG_ANCHOR_CH5_SCAN_MESH_CONNECTED_OWNER retry=%u\n",
-                                ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS);
-        }
-        anchor_uwb_scan_schedule_ms(ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS);
-        return;
-    }
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);

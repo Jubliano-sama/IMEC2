@@ -142,12 +142,15 @@ static uint8_t route_request_ttl_for_attempt(uint8_t previous_attempts, bool cri
         return FLOOD_EPOCH_CRITICAL_TTL;
     }
     if (previous_attempts == 0u) {
-        return FLOOD_EPOCH_LOCAL_TTL;
+        return 1u;
     }
     if (previous_attempts == 1u) {
-        return FLOOD_EPOCH_REGIONAL_TTL;
+        return 2u;
     }
-    return FLOOD_EPOCH_GLOBAL_TTL;
+    if (previous_attempts == 2u) {
+        return 4u;
+    }
+    return 6u;
 }
 
 static uint32_t route_discovery_slot_seed(uint64_t origin_id,
@@ -4769,7 +4772,7 @@ uint8_t mesh_relay_expire_channel9_timings(struct mesh_relay *relay,
     return expired;
 }
 
-int mesh_relay_build_route_request_with_timing_flags(
+static int build_route_request_with_timing_flags_id(
     struct mesh_relay *relay,
     uint64_t target_id,
     const struct mesh_event_timing *proposed_channel9_timing,
@@ -4777,7 +4780,8 @@ int mesh_relay_build_route_request_with_timing_flags(
     uint8_t request_flags,
     uint16_t route_reply_rx_delay_ms,
     struct mesh_outbound *out,
-    uint32_t now_ms)
+    uint32_t now_ms,
+    uint32_t request_id)
 {
     struct route_discovery_fields fields = {0};
     uint32_t route_epoch;
@@ -4797,7 +4801,10 @@ int mesh_relay_build_route_request_with_timing_flags(
     memset(out, 0, sizeof(*out));
 
     route_epoch = relay->upstream.current_epoch;
-    session_id = now_ms != 0u ? now_ms : route_epoch;
+    session_id = request_id;
+    if (session_id == 0u) {
+        session_id = now_ms != 0u ? now_ms : route_epoch;
+    }
     if (session_id == 0u) {
         session_id = 1u;
     }
@@ -4846,7 +4853,7 @@ int mesh_relay_build_route_request_with_timing_flags(
     out->packet.dst_id = MESH_BROADCAST_ID;
     out->packet.session_id = session_id;
     out->packet.seq = relay_next_seq(relay);
-    out->packet.ttl = FLOOD_EPOCH_REGIONAL_TTL;
+    out->packet.ttl = route_request_ttl_for_attempt(0u, false);
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = MESH_BROADCAST_ID;
@@ -4854,6 +4861,27 @@ int mesh_relay_build_route_request_with_timing_flags(
     out->queued_at_ms = now_ms;
     out->earliest_tx_ms = now_ms;
     return PROTO_OK;
+}
+
+int mesh_relay_build_route_request_with_timing_flags(
+    struct mesh_relay *relay,
+    uint64_t target_id,
+    const struct mesh_event_timing *proposed_channel9_timing,
+    uint32_t timing_reference_ms,
+    uint8_t request_flags,
+    uint16_t route_reply_rx_delay_ms,
+    struct mesh_outbound *out,
+    uint32_t now_ms)
+{
+    return build_route_request_with_timing_flags_id(relay,
+                                                    target_id,
+                                                    proposed_channel9_timing,
+                                                    timing_reference_ms,
+                                                    request_flags,
+                                                    route_reply_rx_delay_ms,
+                                                    out,
+                                                    now_ms,
+                                                    now_ms);
 }
 
 int mesh_relay_build_route_request_with_timing(
@@ -4976,6 +5004,11 @@ int mesh_relay_prepare_route_request_with_timing_flags(
         memset(&relay->route_discovery, 0, sizeof(relay->route_discovery));
         relay->route_discovery.active = true;
         relay->route_discovery.target_id = target_id;
+        relay->route_discovery.next_request_id = now_ms != 0u ? now_ms :
+                                                 relay->upstream.current_epoch;
+        if (relay->route_discovery.next_request_id == 0u) {
+            relay->route_discovery.next_request_id = 1u;
+        }
     }
 
     if (relay->route_discovery.attempts >= MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS) {
@@ -4986,20 +5019,26 @@ int mesh_relay_prepare_route_request_with_timing_flags(
         return PROTO_ERR_BUSY;
     }
 
-    ret = mesh_relay_build_route_request_with_timing_flags(relay,
-                                                           target_id,
-                                                           proposed_channel9_timing,
-                                                           timing_reference_ms,
-                                                           request_flags,
-                                                           route_reply_rx_delay_ms,
-                                                           out,
-                                                           now_ms);
+    ret = build_route_request_with_timing_flags_id(
+        relay,
+        target_id,
+        proposed_channel9_timing,
+        timing_reference_ms,
+        request_flags,
+        route_reply_rx_delay_ms,
+        out,
+        now_ms,
+        relay->route_discovery.next_request_id);
     if (ret != PROTO_OK) {
         return ret;
     }
     out->packet.ttl = route_request_ttl_for_attempt(relay->route_discovery.attempts, false);
 
     relay->route_discovery.attempts++;
+    relay->route_discovery.next_request_id++;
+    if (relay->route_discovery.next_request_id == 0u) {
+        relay->route_discovery.next_request_id = 1u;
+    }
     delay_ms = mesh_relay_route_discovery_backoff_ms(relay->route_discovery.attempts,
                                                      random_value);
     relay->route_discovery.next_request_ms = now_ms + delay_ms;
@@ -5067,6 +5106,69 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                 now_ms);
     if (ret == PROTO_OK) {
         mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
+    }
+    return ret;
+}
+
+int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
+                                             const struct proto_packet *packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id,
+                                             uint32_t now_ms,
+                                             struct mesh_outbound *out)
+{
+    struct route_discovery_fields fields = {0};
+    const struct route_candidate *selected = NULL;
+    uint32_t reply_epoch;
+    int ret;
+
+    if (relay == NULL || packet == NULL || out == NULL ||
+        (payload_len > 0u && payload == NULL) ||
+        packet->msg_type != MSG_ROUTE_REQ ||
+        packet->dst_id != MESH_BROADCAST_ID ||
+        packet->payload_len != payload_len ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = parse_route_discovery_tlvs(payload,
+                                     payload_len,
+                                     packet->session_id,
+                                     now_ms,
+                                     &fields);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (fields.origin_id != packet->src_id ||
+        !id_is_unicast(fields.target_id) ||
+        fields.target_id == fields.origin_id ||
+        fields.flood_epoch_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    selected = route_selected(&relay->upstream);
+    if (fields.target_id != relay->local_id &&
+        !(fields.target_id == relay->gateway_id && selected != NULL)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    reply_epoch = fields.route_epoch;
+    if (selected != NULL && selected->route_epoch > reply_epoch) {
+        reply_epoch = selected->route_epoch;
+    } else if (relay->upstream.current_epoch > reply_epoch) {
+        reply_epoch = relay->upstream.current_epoch;
+    }
+
+    ret = build_route_reply(relay,
+                            &fields,
+                            previous_hop_id,
+                            packet->session_id,
+                            reply_epoch,
+                            out);
+    if (ret == PROTO_OK && fields.route_reply_rx_delay_ms != 0u) {
+        out->earliest_tx_ms = now_ms + fields.route_reply_rx_delay_ms;
     }
     return ret;
 }
