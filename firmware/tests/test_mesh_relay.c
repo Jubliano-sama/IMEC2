@@ -4096,6 +4096,76 @@ static void test_route_request_retry_uses_new_flood_identity(void)
     assert(result.route_request.packet.ttl == route_req.packet.ttl - 1u);
 }
 
+static void test_unanswered_timed_route_request_does_not_reserve_channel9(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    struct mesh_relay_result result;
+    struct mesh_event_params params = channel9_params(5000u);
+    struct mesh_event_timing proposed_timing;
+    uint32_t first_flood_id;
+    uint32_t retry_flood_id;
+    uint32_t retry_ms;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 12u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 12u);
+
+    assert(mesh_event_timing_negotiate(&proposed_timing, &params, true) == PROTO_OK);
+    mesh_event_timing_set_local_first_slot_tx(&proposed_timing, true);
+    assert(mesh_relay_prepare_route_request_with_timing(&origin,
+                                                        GATEWAY,
+                                                        &proposed_timing,
+                                                        1000u,
+                                                        1000u,
+                                                        0u,
+                                                        &route_req) == PROTO_OK);
+    first_flood_id = require_tlv_u32(route_req.payload,
+                                     route_req.payload_len,
+                                     TLV_FLOOD_EPOCH_ID);
+    assert(route_req.packet.ttl == 1u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1010u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_NOT_FOUND);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(channel9_timing_count(&relay) == 0u);
+    assert(find_event_timing(&relay, ANCHOR_A) == NULL);
+
+    retry_ms = origin.route_discovery.next_request_ms;
+    assert(mesh_relay_prepare_route_request_with_timing(&origin,
+                                                        GATEWAY,
+                                                        &proposed_timing,
+                                                        1000u,
+                                                        retry_ms,
+                                                        0u,
+                                                        &route_req) == PROTO_OK);
+    retry_flood_id = require_tlv_u32(route_req.payload,
+                                     route_req.payload_len,
+                                     TLV_FLOOD_EPOCH_ID);
+    assert(route_req.packet.ttl == 2u);
+    assert(retry_flood_id != first_flood_id);
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                retry_ms + 10u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    assert(result.route_request.packet.ttl == route_req.packet.ttl - 1u);
+    assert(channel9_timing_count(&relay) == 0u);
+    assert(find_event_timing(&relay, ANCHOR_A) == NULL);
+}
+
 static void test_parent_relay_replies_without_child_route_discovery(void)
 {
     struct mesh_relay origin;
@@ -5311,6 +5381,7 @@ static void test_gateway_route_request_without_upstream_waits_for_route(void)
     struct mesh_relay_result first_result;
     struct mesh_relay_result repaired_duplicate_result;
     struct mesh_relay_result ttl1_result;
+    struct mesh_relay_result ttl1_route_result;
     struct mesh_relay_result retry_result;
     struct route_candidate route = direct_gateway_route(GATEWAY, 60u, 90u);
 
@@ -5384,6 +5455,28 @@ static void test_gateway_route_request_without_upstream_waits_for_route(void)
     assert(has_action(&retry_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
     assert(!has_action(&retry_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     assert(retry_result.route_reply.next_hop_id == ANCHOR_A);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 1u);
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 1u);
+    assert(mesh_relay_build_route_request(&origin,
+                                          GATEWAY,
+                                          &route_req,
+                                          1100u) == PROTO_OK);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(route_req.packet.ttl == 1u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                70u,
+                                1110u,
+                                &ttl1_route_result) == PROTO_OK);
+    assert(ttl1_route_result.status == PROTO_OK);
+    assert(has_action(&ttl1_route_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(!has_action(&ttl1_route_result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    assert(!has_action(&ttl1_route_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
+    assert(ttl1_route_result.route_reply.next_hop_id == ANCHOR_A);
 }
 
 static void test_malformed_route_request_does_not_poison_downlink_route(void)
@@ -7120,6 +7213,7 @@ int main(void)
     test_route_discovery_attempts_are_capped_with_backoff();
     test_idle_route_solicit_without_upstream_is_forwarded_once();
     test_route_request_retry_uses_new_flood_identity();
+    test_unanswered_timed_route_request_does_not_reserve_channel9();
     test_parent_relay_replies_without_child_route_discovery();
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
     test_gateway_route_advertisement_reports_busy_capacity();

@@ -4125,6 +4125,7 @@ static int handle_route_request(struct mesh_relay *relay,
     struct flood_seen_entry *flood_entry = NULL;
     const struct route_candidate *selected = NULL;
     bool first_seen = false;
+    bool install_reply_timing = false;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
@@ -4183,17 +4184,8 @@ static int handle_route_request(struct mesh_relay *relay,
     if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
         return ret;
     }
-    if (ret == PROTO_OK && fields.proposed_channel9_timing_valid) {
-        struct mesh_event_timing downstream_timing = fields.proposed_channel9_timing;
-
-        mesh_event_timing_set_local_first_slot_tx(&downstream_timing, false);
-        (void)mesh_relay_set_channel9_timing_guarded(
-            relay,
-            previous_hop_id,
-            &downstream_timing,
-            MESH_RELAY_EVENT_TIMINGS,
-            NULL);
-    }
+    install_reply_timing = (ret == PROTO_OK &&
+                            fields.proposed_channel9_timing_valid);
 
     selected = route_selected(&relay->upstream);
 
@@ -4219,6 +4211,17 @@ static int handle_route_request(struct mesh_relay *relay,
             }
             add_route_reply_backup(relay, fields.origin_id, previous_hop_id, result);
             result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
+            if (install_reply_timing) {
+                struct mesh_event_timing downstream_timing = fields.proposed_channel9_timing;
+
+                mesh_event_timing_set_local_first_slot_tx(&downstream_timing, false);
+                (void)mesh_relay_set_channel9_timing_guarded(
+                    relay,
+                    previous_hop_id,
+                    &downstream_timing,
+                    MESH_RELAY_EVENT_TIMINGS,
+                    NULL);
+            }
         }
         if (fields.target_id == relay->local_id) {
             return ret;

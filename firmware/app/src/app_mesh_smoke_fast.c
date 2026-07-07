@@ -271,7 +271,6 @@ int mesh_smoke_fast_payload_append(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-
     while (target_payload_len > offset + 4u) {
         uint8_t pad[UINT8_MAX] = {0};
         size_t remaining = target_payload_len - offset - 4u;
@@ -385,7 +384,11 @@ int mesh_smoke_fast_payload_decode(const uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return tlv_read_u8(payload, payload_len, TLV_MESH_CHANNEL, &out->mesh_channel);
+    ret = tlv_read_u8(payload, payload_len, TLV_MESH_CHANNEL, &out->mesh_channel);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return PROTO_OK;
 }
 
 void mesh_smoke_fast_tx_decide(const struct mesh_smoke_fast_tx_gate *gate,

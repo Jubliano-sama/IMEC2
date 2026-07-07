@@ -24,6 +24,7 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
 #define MESH_TEST_FLAG_CHANNEL9_PAYLOAD     (1u << 1)
 #define MESH_TEST_FLAG_CH5_WAKE_CONTINUOUS  (1u << 2)
 #define MESH_TEST_SUMMARY_INTERVAL_MS 5000u
+#define MESH_TEST_ROUTE_SUMMARY_REPEATS 8u
 
 #ifndef CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
 #define CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS 1000
@@ -61,6 +62,27 @@ static uint32_t mesh_test_retryable_before_first_ack;
 static uint32_t mesh_test_backoff_before_first_ack;
 static uint32_t mesh_test_ack_fail_before_first_success;
 static bool mesh_test_first_ack_logged;
+static uint32_t mesh_test_route_start_ms;
+static uint32_t mesh_test_route_ready_ms;
+static uint16_t mesh_test_route_reply_misses;
+static uint16_t mesh_test_route_prep_backoffs;
+static uint16_t mesh_test_direct_probe_successes;
+static uint16_t mesh_test_direct_probe_failures;
+static int32_t mesh_test_route_start_status;
+static uint8_t mesh_test_route_start_attempts;
+static uint8_t mesh_test_route_start_ttl;
+static uint64_t mesh_test_route_next_hop_id;
+static uint32_t mesh_test_route_next_summary_ms;
+static uint8_t mesh_test_route_summary_repeats;
+static bool mesh_test_route_start_seen;
+static bool mesh_test_route_ready_logged;
+
+static void mesh_test_inc_u16(uint16_t *counter)
+{
+    if (counter != NULL && *counter < UINT16_MAX) {
+        (*counter)++;
+    }
+}
 
 static uint8_t mesh_test_ch9_state_for_parent(uint64_t parent_id)
 {
@@ -137,6 +159,90 @@ static void mesh_test_note_queued(uint32_t packet_id, uint16_t seq)
         mesh_test_first_queue_id = packet_id;
         mesh_test_first_queue_seq = seq;
     }
+}
+
+static bool mesh_test_route_telemetry_enabled(uint64_t target_id)
+{
+    return DEVICE_ROLE == ROLE_ANCHOR &&
+           IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) &&
+           target_id == GATEWAY_ID;
+}
+
+static void mesh_test_route_start_if_needed(void)
+{
+    if (!mesh_test_route_start_seen) {
+        mesh_test_route_start_seen = true;
+        mesh_test_route_start_ms = k_uptime_get_32();
+        mesh_test_route_next_summary_ms =
+            mesh_test_route_start_ms + MESH_TEST_SUMMARY_INTERVAL_MS;
+        mesh_test_route_start_status = 0;
+    }
+}
+
+static uint32_t mesh_test_route_latency_ms(uint32_t now_ms)
+{
+    if (!mesh_test_route_start_seen) {
+        return 0u;
+    }
+    if (mesh_test_route_ready_logged) {
+        return mesh_test_route_ready_ms - mesh_test_route_start_ms;
+    }
+    return now_ms - mesh_test_route_start_ms;
+}
+
+static void mesh_test_route_summary_print(const char *phase,
+                                          uint64_t target_id,
+                                          uint64_t next_hop_id)
+{
+    uint32_t now_ms = k_uptime_get_32();
+
+    status_debug_printf("DBG_STARTUP_ROUTE_SUMMARY phase=%s ready=%u target=0x%llx next=0x%llx\n",
+                        phase == NULL ? "route" : phase,
+                        mesh_test_route_ready_logged ? 1u : 0u,
+                        (unsigned long long)target_id,
+                        (unsigned long long)next_hop_id);
+    status_debug_printf("DBG_STARTUP_ROUTE_COUNTS attempts=%u ttl=%u miss=%u prep=%u probe_ok=%u probe_fail=%u status=%d\n",
+                        mesh_test_route_start_attempts,
+                        mesh_test_route_start_ttl,
+                        mesh_test_route_reply_misses,
+                        mesh_test_route_prep_backoffs,
+                        mesh_test_direct_probe_successes,
+                        mesh_test_direct_probe_failures,
+                        (int)mesh_test_route_start_status);
+    status_debug_printf("DBG_STARTUP_ROUTE_TIMING start=%u ready_ms=%u latency=%u queued=%u now=%u\n",
+                        mesh_test_route_start_ms,
+                        mesh_test_route_ready_ms,
+                        mesh_test_route_latency_ms(now_ms),
+                        mesh_test_queued_total,
+                        now_ms);
+}
+
+static void mesh_test_route_periodic_summary(void)
+{
+    uint32_t now_ms;
+
+    if (!mesh_test_route_start_seen) {
+        return;
+    }
+    if (mesh_test_route_ready_logged &&
+        mesh_test_route_summary_repeats >= MESH_TEST_ROUTE_SUMMARY_REPEATS) {
+        return;
+    }
+
+    now_ms = k_uptime_get_32();
+    if (mesh_test_route_next_summary_ms != 0u &&
+        (int32_t)(now_ms - mesh_test_route_next_summary_ms) < 0) {
+        return;
+    }
+
+    mesh_test_route_summary_print(mesh_test_route_ready_logged ? "periodic" : "waiting",
+                                  GATEWAY_ID,
+                                  mesh_test_route_next_hop_id);
+    if (mesh_test_route_ready_logged &&
+        mesh_test_route_summary_repeats < UINT8_MAX) {
+        mesh_test_route_summary_repeats++;
+    }
+    mesh_test_route_next_summary_ms = now_ms + MESH_TEST_SUMMARY_INTERVAL_MS;
 }
 
 static int mesh_test_append_payload(uint8_t *payload,
@@ -222,6 +328,7 @@ static uint32_t mesh_test_tx_once(void)
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
         return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
     }
+    mesh_test_route_periodic_summary();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
     route_waiting_active = mesh_route_waiting_tx_active();
     ack_wait_active = mesh_report_ch9_ack_wait_active();
@@ -449,6 +556,83 @@ void app_mesh_test_note_ch9_missed(void)
     mesh_smoke_fast_note_ch9_missed(&mesh_test_gateway_state);
 }
 
+void app_mesh_test_note_direct_gateway_route_probe(uint64_t target_id, int ret)
+{
+    if (!mesh_test_route_telemetry_enabled(target_id) ||
+        mesh_test_route_ready_logged) {
+        return;
+    }
+
+    mesh_test_route_start_if_needed();
+    if (ret == 0) {
+        mesh_test_inc_u16(&mesh_test_direct_probe_successes);
+    } else {
+        mesh_test_inc_u16(&mesh_test_direct_probe_failures);
+    }
+    mesh_test_route_start_status = ret;
+}
+
+void app_mesh_test_note_route_request_attempt(uint64_t target_id,
+                                              uint8_t attempt_count,
+                                              uint8_t ttl)
+{
+    if (!mesh_test_route_telemetry_enabled(target_id) ||
+        mesh_test_route_ready_logged) {
+        return;
+    }
+
+    mesh_test_route_start_if_needed();
+    mesh_test_route_start_attempts = attempt_count;
+    mesh_test_route_start_ttl = ttl;
+    mesh_test_route_start_status = 0;
+}
+
+void app_mesh_test_note_route_request_prepare_result(uint64_t target_id, int ret)
+{
+    if (!mesh_test_route_telemetry_enabled(target_id) ||
+        mesh_test_route_ready_logged ||
+        ret == PROTO_OK) {
+        return;
+    }
+
+    mesh_test_route_start_if_needed();
+    if (ret == PROTO_ERR_BUSY) {
+        mesh_test_inc_u16(&mesh_test_route_prep_backoffs);
+    }
+    mesh_test_route_start_status = ret;
+}
+
+void app_mesh_test_note_route_reply_miss(uint64_t target_id, int ret)
+{
+    if (!mesh_test_route_telemetry_enabled(target_id) ||
+        mesh_test_route_ready_logged) {
+        return;
+    }
+
+    mesh_test_route_start_if_needed();
+    mesh_test_inc_u16(&mesh_test_route_reply_misses);
+    mesh_test_route_start_status = ret;
+}
+
+void app_mesh_test_note_route_ready(uint64_t target_id,
+                                    uint64_t next_hop_id,
+                                    int status)
+{
+    if (!mesh_test_route_telemetry_enabled(target_id)) {
+        return;
+    }
+
+    mesh_test_route_start_if_needed();
+    mesh_test_route_next_hop_id = next_hop_id;
+    mesh_test_route_ready_ms = k_uptime_get_32();
+    mesh_test_route_start_status = status;
+    mesh_test_route_ready_logged = true;
+    mesh_test_route_summary_repeats = 0u;
+    mesh_test_route_next_summary_ms =
+        mesh_test_route_ready_ms + MESH_TEST_SUMMARY_INTERVAL_MS;
+    mesh_test_route_summary_print("ready", target_id, next_hop_id);
+}
+
 void app_mesh_test_note_report_tx_retryable(uint16_t seq, int ret)
 {
     if (DEVICE_ROLE != ROLE_ANCHOR ||
@@ -598,6 +782,42 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
 
 void app_mesh_test_note_ch9_missed(void)
 {
+}
+
+void app_mesh_test_note_direct_gateway_route_probe(uint64_t target_id, int ret)
+{
+    ARG_UNUSED(target_id);
+    ARG_UNUSED(ret);
+}
+
+void app_mesh_test_note_route_request_attempt(uint64_t target_id,
+                                              uint8_t attempt_count,
+                                              uint8_t ttl)
+{
+    ARG_UNUSED(target_id);
+    ARG_UNUSED(attempt_count);
+    ARG_UNUSED(ttl);
+}
+
+void app_mesh_test_note_route_request_prepare_result(uint64_t target_id, int ret)
+{
+    ARG_UNUSED(target_id);
+    ARG_UNUSED(ret);
+}
+
+void app_mesh_test_note_route_reply_miss(uint64_t target_id, int ret)
+{
+    ARG_UNUSED(target_id);
+    ARG_UNUSED(ret);
+}
+
+void app_mesh_test_note_route_ready(uint64_t target_id,
+                                    uint64_t next_hop_id,
+                                    int status)
+{
+    ARG_UNUSED(target_id);
+    ARG_UNUSED(next_hop_id);
+    ARG_UNUSED(status);
 }
 
 void app_mesh_test_note_report_tx_retryable(uint16_t seq, int ret)

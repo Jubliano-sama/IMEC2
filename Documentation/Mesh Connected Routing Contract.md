@@ -631,10 +631,16 @@ Useful tests or guards include:
   exponentially, caps the base at 60000 ms, and applies percentage-based
   jitter with fresh randomness per attempt.
 - Idle anchors with a usable route to the target answer the route request and
-  do not rebroadcast it.
+  do not rebroadcast it. This includes TTL=1 route requests: TTL limits further
+  route-request rebroadcast depth, not whether a one-hop anchor with a usable
+  route may reply.
+- For gateway discovery, a TTL=1 channel 5 route request means "ask one-hop
+  anchors whether they already have a usable gateway route." It is not a direct
+  gateway request; direct gateway contact is handled by the separate short
+  channel 9 probe before the route request or rebroadcast.
 - Idle anchors without a usable route may rebroadcast accepted route requests
   when TTL allows, then open a channel 5 route-reply listening window for any
-  downstream reply.
+  downstream reply. If TTL does not allow another hop, they do not rebroadcast.
 - Every original route request, rebroadcast, and retry first attempts the short
   direct channel 9 gateway probe. Direct-or-relayed mode may accept the direct
   gateway route; forced-relay mode must continue route discovery after a direct

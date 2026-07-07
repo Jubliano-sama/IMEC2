@@ -6759,10 +6759,12 @@ int mesh_request_route(uint64_t target_id, const char *reason)
     ret = mesh_try_direct_gateway_route_probe(target_id,
                                               reason,
                                               !relay_required_route_req);
+    app_mesh_test_note_direct_gateway_route_probe(target_id, ret);
     if (ret == 0 && !relay_required_route_req) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_ROUTE_REQ_DIRECT_READY\n");
         }
+        app_mesh_test_note_route_ready(target_id, GATEWAY_ID, 0);
         mesh_schedule_route_waiting_retry_after("gateway-direct-route", 0u);
         return 0;
     }
@@ -6804,6 +6806,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
                                                              route_random_value,
                                                              &route_req);
     if (ret != PROTO_OK) {
+        app_mesh_test_note_route_request_prepare_result(target_id, ret);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ROUTE_REQ_PREP_FAIL ret=%d target=0x%llx active=%u attempts=%u next=%u\n",
                                 ret,
@@ -6831,6 +6834,9 @@ int mesh_request_route(uint64_t target_id, const char *reason)
         }
         return mesh_errno_from_proto(ret);
     }
+    app_mesh_test_note_route_request_attempt(target_id,
+                                             mesh_runtime.route_discovery.attempts,
+                                             route_req.packet.ttl);
     route_reply_window_ms = mesh_route_reply_listen_window_ms(route_req.packet.ttl);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         uint32_t route_backoff_ms =
@@ -6966,6 +6972,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
             }
             mesh_route_reply_handoff_after_capture(target_id, reason);
         } else {
+            app_mesh_test_note_route_reply_miss(target_id, listen_ret);
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_ROUTE_REQ_REPLY_MISS listen_ret=%d win=%u\n",
                                     listen_ret,
@@ -9694,11 +9701,13 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY) {
         const struct route_candidate *selected = route_selected(&mesh_runtime.upstream);
+        uint64_t route_ready_target_id = selected != NULL ? selected->gateway_id : GATEWAY_ID;
+        uint64_t route_ready_next_hop_id = selected != NULL ? selected->next_hop_id : 0u;
         const struct app_mesh_route_ready_handoff_state route_ready_state = {
             .selected_route_valid = selected != NULL,
             .rx_queue_pending = k_msgq_num_used_get(&mesh_rx_msgq) > 0u,
             .deferred_peer_valid = mesh_id_is_unicast(mesh_route_ready_event_peer_id),
-            .selected_peer_id = selected != NULL ? selected->next_hop_id : 0u,
+            .selected_peer_id = route_ready_next_hop_id,
             .deferred_peer_id = mesh_route_ready_event_peer_id,
         };
         struct app_mesh_route_ready_handoff_result route_ready_result;
@@ -9706,6 +9715,9 @@ after_gateway_ack:
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_ROUTE_READY\n");
         }
+        app_mesh_test_note_route_ready(route_ready_target_id,
+                                       route_ready_next_hop_id,
+                                       result->status);
         app_mesh_route_ready_handoff_on_ready(&route_ready_state,
                                               &route_ready_result);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
