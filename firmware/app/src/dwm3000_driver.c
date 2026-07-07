@@ -1019,6 +1019,16 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
         return 0;
     }
 
+    /*
+     * Cross-PHY changes retune the DW3000 PLL. In practice the active channel-5
+     * wake PHY does not reliably transition back to an IDLE_RC state suitable
+     * for dwt_configure(); the reset configure path is the supported recovery
+     * path used by Qorvo examples when PLL calibration fails.
+     */
+    if (radio_awake) {
+        return configure_radio_from_reset(phy_mode);
+    }
+
     ret = apply_radio_config(config, phy_mode);
     if (ret == 0) {
         return 0;
