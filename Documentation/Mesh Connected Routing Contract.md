@@ -575,9 +575,13 @@ events, not by ordinary ACK retry failures:
   current-epoch candidate is learned.
 
 Parent hold-down is temporary. A held-down parent may become selectable again
-after the 30 second hold-down expires, or it may be refreshed by a newer valid
-route advertisement or route reply. A successful delivery through a selected
-parent resets its failure count and records recent success.
+after the 30 second hold-down expires, or immediately when the same candidate is
+learned again through any valid route evidence: route advertisement, route
+reply, direct gateway probe, or another route-discovery result. Rediscovering a
+candidate means the failed downstream route is assumed to have healed or been
+replaced, so the candidate's failure count and hold-down are cleared before
+route selection runs. A successful delivery through a selected parent also
+resets its failure count and records recent success.
 
 Route discovery should be started or restarted only when:
 

@@ -288,9 +288,9 @@ int route_upsert_candidate(struct route_table *table,
     }
 
     if (updating_existing) {
-        stored.failure_count = previous.failure_count;
         stored.last_success_ms = previous.last_success_ms;
-        stored.hold_down_until_ms = previous.hold_down_until_ms;
+        stored.failure_count = 0u;
+        stored.hold_down_until_ms = 0u;
         stored.channel9_timing_valid = stored.channel9_timing_valid ||
                                        previous.channel9_timing_valid;
     } else {
@@ -399,6 +399,35 @@ void route_record_success_at(struct route_table *table, uint32_t now_ms)
         candidate->last_success_ms = now_ms;
         candidate->hold_down_until_ms = 0u;
     }
+}
+
+int route_record_candidate_success_at(struct route_table *table,
+                                      uint64_t next_hop_id,
+                                      uint64_t gateway_id,
+                                      uint32_t now_ms)
+{
+    struct route_candidate *candidate;
+    int index;
+
+    if (table == NULL || next_hop_id == 0u || gateway_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    index = find_candidate_index(table, next_hop_id, gateway_id);
+    if (index < 0) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    candidate = &table->candidates[index];
+    if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
+        return PROTO_ERR_STALE;
+    }
+
+    candidate->failure_count = 0u;
+    candidate->last_seen_ms = now_ms;
+    candidate->last_success_ms = now_ms;
+    candidate->hold_down_until_ms = 0u;
+    return route_select_best_at(table, now_ms);
 }
 
 void route_refresh_selected_at(struct route_table *table, uint32_t now_ms)

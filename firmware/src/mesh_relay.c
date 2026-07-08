@@ -5107,6 +5107,12 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                 0u,
                                 0u,
                                 now_ms);
+    if (ret == PROTO_OK || ret == PROTO_ERR_NOT_FOUND) {
+        ret = route_record_candidate_success_at(&relay->upstream,
+                                                relay->gateway_id,
+                                                relay->gateway_id,
+                                                now_ms);
+    }
     if (ret == PROTO_OK) {
         mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
     }

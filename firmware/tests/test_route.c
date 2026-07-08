@@ -239,6 +239,67 @@ static void test_parent_hold_down_recovers_without_age_expiry(void)
     assert(selected->next_hop_id == 0x02u);
 }
 
+static void test_candidate_success_clears_hold_down(void)
+{
+    struct route_table table;
+    struct route_candidate route = candidate(0x02u, 1u, 1u, 90u, 1000u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route) == PROTO_OK);
+
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2000u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
+           ROUTE_DELIVERY_DISCOVER);
+    assert(route_selected(&table) == NULL);
+
+    assert(route_record_candidate_success_at(&table,
+                                             route.next_hop_id,
+                                             route.gateway_id,
+                                             2400u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == route.next_hop_id);
+    assert(selected->failure_count == 0u);
+    assert(selected->hold_down_until_ms == 0u);
+    assert(selected->last_success_ms == 2400u);
+}
+
+static void test_rediscovered_candidate_clears_hold_down(void)
+{
+    struct route_table table;
+    struct route_candidate route = candidate(0x02u, 1u, 1u, 90u, 1000u);
+    struct route_candidate rediscovered = candidate(0x02u, 1u, 1u, 95u, 2400u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route) == PROTO_OK);
+
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2000u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
+           ROUTE_DELIVERY_DISCOVER);
+    assert(route_selected(&table) == NULL);
+
+    assert(route_upsert_candidate(&table, &rediscovered) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == route.next_hop_id);
+    assert(selected->failure_count == 0u);
+    assert(selected->hold_down_until_ms == 0u);
+    assert(selected->last_seen_ms == 2400u);
+    assert(selected->link_quality == 95u);
+}
+
 static void test_channel9_timing_breaks_equal_cost_tie(void)
 {
     struct route_table table;
@@ -384,6 +445,8 @@ int main(void)
     test_failures_try_alternate_then_discovery();
     test_parent_candidate_count_replaces_worst_route();
     test_parent_hold_down_recovers_without_age_expiry();
+    test_candidate_success_clears_hold_down();
+    test_rediscovered_candidate_clears_hold_down();
     test_channel9_timing_breaks_equal_cost_tie();
     test_capacity_breaks_equal_cost_tie();
     test_expired_capacity_hint_does_not_invalidate_route();

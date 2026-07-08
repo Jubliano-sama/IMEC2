@@ -7115,6 +7115,37 @@ static void test_direct_gateway_route_probe_marks_route_ready(void)
     assert(next_hop_id == GATEWAY);
 }
 
+static void test_direct_gateway_route_probe_clears_hold_down(void)
+{
+    struct mesh_relay relay;
+    const struct route_candidate *selected;
+    uint64_t next_hop_id = 0u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 7u);
+    assert(mesh_relay_note_direct_gateway_route(&relay, 1000u) == PROTO_OK);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop_id) == PROTO_OK);
+    assert(next_hop_id == GATEWAY);
+
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2000u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2100u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2200u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&relay.upstream, ROUTE_FAILURE_GATEWAY_ACK, 2300u) ==
+           ROUTE_DELIVERY_DISCOVER);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop_id) == PROTO_ERR_NOT_FOUND);
+
+    assert(mesh_relay_note_direct_gateway_route(&relay, 2400u) == PROTO_OK);
+    assert(mesh_relay_select_next_hop(&relay, GATEWAY, &next_hop_id) == PROTO_OK);
+    assert(next_hop_id == GATEWAY);
+    selected = route_selected(&relay.upstream);
+    assert(selected != NULL);
+    assert(selected->failure_count == 0u);
+    assert(selected->hold_down_until_ms == 0u);
+    assert(selected->last_success_ms == 2400u);
+}
+
 static void test_direct_gateway_probe_route_answers_pending_request(void)
 {
     struct mesh_relay origin;
@@ -7261,6 +7292,7 @@ int main(void)
     test_channel9_timing_expires_idle_connection_state();
     test_mesh_hop_ack_is_protocol_valid();
     test_direct_gateway_route_probe_marks_route_ready();
+    test_direct_gateway_route_probe_clears_hold_down();
     test_direct_gateway_probe_route_answers_pending_request();
     return 0;
 }
