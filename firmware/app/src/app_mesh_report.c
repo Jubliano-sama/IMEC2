@@ -89,6 +89,8 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_DATA_RATE_BPS 850000u
 #define MESH_CH9_PHY_OVERHEAD_US 1500u
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
+#define MESH_GATEWAY_RX_REARM_GUARD_MS 20u
+#define MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS 25u
 #define MESH_CH9_TX_CONFIG_GUARD_MS 25u
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
 #define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS 15u
@@ -156,6 +158,11 @@ BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS < ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MAX_MS >=
              MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MIN_MS,
              "direct gateway probe retry backoff range must be ordered");
+BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS >= MESH_GATEWAY_RX_REARM_GUARD_MS,
+             "direct gateway batches must leave time for gateway RX re-arm");
+BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS +
+             MESH_CH9_TX_CONFIG_GUARD_MS < MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS,
+             "direct gateway batch spacing must still leave payload TX time");
 BUILD_ASSERT(UWB_WAKE_CLAIM_LEN + MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_LEN <=
              MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN,
              "mesh route-test compact wake route request must fit standard channel-5 PHR");
@@ -6399,7 +6406,8 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                 &tx_plan,
                 now_ms);
         } else {
-            send_start_ms = projected_done_ms + MESH_CH9_TX_FRAME_GAP_MS;
+            send_start_ms = projected_done_ms +
+                MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS;
         }
         report_tx_batch_candidates[candidate_count].earliest_tx_ms =
             send_start_ms;
@@ -6477,7 +6485,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
             mesh_ch9_slot_send_start_ms(&report_tx_batch_candidates[i],
                                         &tx_plan,
                                         now_ms) :
-            projected_done_ms + MESH_CH9_TX_FRAME_GAP_MS;
+            projected_done_ms + MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS;
         report_tx_batch_candidates[i].earliest_tx_ms = send_start_ms;
         if (!mesh_ch9_tx_fits_configured_slot(&report_tx_batch_candidates[i],
                                               &tx_plan,
