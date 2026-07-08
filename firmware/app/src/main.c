@@ -64,7 +64,6 @@ static const struct app_clicker_wake_train_config clicker_wake_train_config = {
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS * 1000u >= ANCHOR_UWB_SCAN_RX_US,
              "anchor scan millisecond timeout must cover configured RX microseconds");
 #if DEVICE_ROLE == ROLE_ANCHOR && \
-    !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && \
     !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) && \
     !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN) && \
     !IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_SCAN_ALLOW_OVER_RX_BUDGET)

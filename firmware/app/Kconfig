@@ -152,17 +152,21 @@ config IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES
 config IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS
     int "Mesh-test channel-5 anchor scan idle interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST
-    default 0
+    default IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
     range 0 60000
     help
       Delay between channel-5 wake/contact scans for mesh-test anchors. A
       value of zero makes the anchor immediately reschedule the next scan.
+      The default tracks the normal anchor low-duty wake-scan cadence.
 
 config IMEC_MESH_ROUTE_TEST_CH5_SCAN_RX_US
     int "Mesh-test channel-5 anchor scan receive window in microseconds"
     depends on IMEC_MESH_ROUTE_TEST
-    default 20000
+    default IMEC_ANCHOR_UWB_SCAN_RX_US
     range 1000 1000000
+    help
+      Active UWB receive time for each mesh-test channel-5 scan slice. The
+      default tracks the normal anchor low-duty wake-scan receive slice.
 
 config IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS
     int "Mesh-test startup delay before UWB activity"
