@@ -3812,11 +3812,19 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     struct proto_packet report;
     struct mesh_outbound tx;
     struct mesh_relay_result result;
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(7000u);
     uint8_t payload[1] = {0x44u};
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 9u);
     route.last_seen_ms = 7000u;
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&relay, ANCHOR_B, ANCHOR_B, 9u, 1u, 80u, 7000u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+    params = channel9_params(7100u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, ANCHOR_B, &timing) == PROTO_OK);
     assert(report_init_click_packet(&report, ANCHOR_A, GATEWAY, 90u, 9u, sizeof(payload)) == PROTO_OK);
     report.message_age_ms = 123u;
 
@@ -3880,6 +3888,12 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     assert(!mesh_relay_tx_active(&relay));
     assert(route_selected(&relay.upstream) == NULL);
+    assert(relay.upstream.candidates[0].valid);
+    assert(relay.upstream.candidates[0].hold_down_until_ms != 0u);
+    assert(!relay.upstream.candidates[0].channel9_timing_valid);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_B) == NULL);
+    assert(find_event_timing(&relay, GATEWAY) == NULL);
+    assert(find_event_timing(&relay, ANCHOR_B) == NULL);
 }
 
 static void test_gateway_ack_timeout_handles_ms_wrap(void)

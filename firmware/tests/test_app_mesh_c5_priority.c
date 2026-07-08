@@ -36,6 +36,12 @@ static void test_gateway_rx_yields_to_priority_response(void)
     assert(!app_mesh_c5_gateway_rx_should_yield_to_response(&background_state));
 }
 
+static void test_mesh_route_test_gateway_does_not_advertise_on_channel5(void)
+{
+    assert(!app_mesh_c5_gateway_route_adv_allowed(true));
+    assert(app_mesh_c5_gateway_route_adv_allowed(false));
+}
+
 static void test_protected_anchor_work_still_defers_priority_response(void)
 {
     const struct app_mesh_c5_flood_priority_state anchor_state = {
@@ -233,6 +239,7 @@ int main(void)
     test_passive_gateway_preempt_defers_background_flood();
     test_priority_response_bypasses_passive_gateway_preempt();
     test_gateway_rx_yields_to_priority_response();
+    test_mesh_route_test_gateway_does_not_advertise_on_channel5();
     test_protected_anchor_work_still_defers_priority_response();
     test_idle_state_does_not_defer();
     test_gateway_route_adv_counts_as_route_capture();

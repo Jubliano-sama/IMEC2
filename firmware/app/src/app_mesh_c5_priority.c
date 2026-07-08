@@ -39,6 +39,11 @@ bool app_mesh_c5_gateway_rx_should_yield_to_response(
            !state->anchor_busy && !state->survey_busy;
 }
 
+bool app_mesh_c5_gateway_route_adv_allowed(bool mesh_route_test_enabled)
+{
+    return !mesh_route_test_enabled;
+}
+
 bool app_mesh_c5_route_capture_relevant(
     const struct app_mesh_c5_route_capture_state *state)
 {

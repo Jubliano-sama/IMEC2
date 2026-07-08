@@ -65,6 +65,9 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
 bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
                                       bool relay_collection_result_active);
 
+bool app_mesh_ch9_tx_should_track_sent(const struct mesh_outbound *sent,
+                                       uint64_t local_id);
+
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,
                                       uint8_t configured_max);

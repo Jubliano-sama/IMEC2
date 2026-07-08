@@ -209,6 +209,20 @@ bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
            !relay_collection_result_active;
 }
 
+bool app_mesh_ch9_tx_should_track_sent(const struct mesh_outbound *sent,
+                                       uint64_t local_id)
+{
+    if (sent == NULL || local_id == 0u) {
+        return false;
+    }
+
+    return sent->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+           sent->next_hop_id != 0u &&
+           sent->next_hop_id != local_id &&
+           sent->packet.dst_id != local_id &&
+           (sent->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,
                                       uint8_t configured_max)

@@ -55,7 +55,10 @@ will prove the new behavior.
   general collision-avoidance jitter rule above. In direct-or-relayed mode, a
   successful probe may satisfy route acquisition. In forced-relay mode, the
   probe must still run, but a direct gateway answer must not satisfy route
-  acquisition.
+  acquisition. After repeated direct-to-gateway payload batch ACK failures, the
+  short probe is treated as contact evidence only for the parent hold-down
+  window; it must not suppress the channel 5 route request that lets anchors
+  offer an alternate route.
 - Route-request wake trains must be clearly distinguishable from click/ranging
   wake trains.
 - An anchor has at most one upstream channel 9 connection and one downstream
@@ -194,11 +197,12 @@ Route acquisition should proceed as follows:
 1. The packet producer has gateway-bound traffic and no valid channel 9 path.
 2. Before broadcasting a route request, it sends a short direct channel 9
    gateway probe and listens for the gateway ACK. If this succeeds in
-   direct-or-relayed mode, the producer installs the direct gateway route and
-   does not broadcast a route request. If this succeeds in forced-relay mode,
-   the producer records that direct gateway contact was possible, but it still
-   continues route acquisition because the final route must include at least
-   one anchor hop.
+   direct-or-relayed mode, the producer may install the direct gateway route and
+   skip the route request. If this succeeds in forced-relay mode, or during the
+   parent hold-down window after repeated direct-to-gateway payload batch ACK
+   failures, the producer records that direct gateway contact was possible, but
+   it still continues route acquisition because the direct probe is not
+   sufficient route evidence for that context.
 3. If the direct probe does not satisfy route acquisition, it sends a
    route-request wake train on channel 5. The wake train must be
    typed as route setup, not click/ranging.
@@ -583,6 +587,14 @@ replaced, so the candidate's failure count and hold-down are cleared before
 route selection runs. A successful delivery through a selected parent also
 resets its failure count and records recent success.
 
+The direct gateway probe has one special recovery mode. If the held-down parent
+is the gateway itself because repeated direct-to-gateway payload batches missed
+their gateway batch ACK, the short probe is not treated as valid direct bulk
+route evidence until the parent hold-down window expires or a direct payload
+delivery succeeds. The probe still runs before each route request, but a
+successful answer is contact-only and the channel 5 route request continues so
+idle anchors can offer an alternate gateway route.
+
 Route discovery should be started or restarted only when:
 
 - There is no selected valid parent for the target.
@@ -656,8 +668,8 @@ Useful tests or guards include:
   downstream reply. If TTL does not allow another hop, they do not rebroadcast.
 - Every original route request, rebroadcast, and retry first attempts the short
   direct channel 9 gateway probe. Direct-or-relayed mode may accept the direct
-  gateway route; forced-relay mode must continue route discovery after a direct
-  gateway answer.
+  gateway route; forced-relay mode and direct-bulk-failure recovery must
+  continue route discovery after a direct gateway answer.
 - Route-request rebroadcast jitter is sized from airtime and guard-time math so
   the expected fanout, normally up to eight receivers, is unlikely to collide
   while probing or rebroadcasting.

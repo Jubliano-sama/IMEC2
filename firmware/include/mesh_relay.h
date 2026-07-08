@@ -417,6 +417,7 @@ int mesh_relay_set_channel9_timing_guarded(struct mesh_relay *relay,
                                            struct mesh_relay_channel9_guard_status *status);
 void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
                                       uint64_t next_hop_id);
+void mesh_relay_invalidate_active_route_path(struct mesh_relay *relay);
 void mesh_relay_invalidate_routes(struct mesh_relay *relay);
 int mesh_relay_require_channel9_event(const struct mesh_relay *relay,
                                       uint64_t next_hop_id,

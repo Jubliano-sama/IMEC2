@@ -4650,6 +4650,26 @@ void mesh_relay_reset_route_discovery(struct mesh_relay *relay)
     }
 }
 
+void mesh_relay_invalidate_active_route_path(struct mesh_relay *relay)
+{
+    if (relay == NULL) {
+        return;
+    }
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct route_candidate *candidate = &relay->upstream.candidates[i];
+
+        if (candidate->valid &&
+            candidate->route_epoch == relay->upstream.current_epoch) {
+            candidate->channel9_timing_valid = false;
+        }
+    }
+    relay->upstream.selected_index = ROUTE_NO_SELECTION;
+    memset(relay->downlinks, 0, sizeof(relay->downlinks));
+    memset(relay->event_timings, 0, sizeof(relay->event_timings));
+    mesh_relay_reset_route_discovery(relay);
+}
+
 void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
                                            uint64_t target_id)
 {
@@ -6122,6 +6142,7 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
                                          now_ms);
         if (action == ROUTE_DELIVERY_DISCOVER ||
             mesh_relay_select_next_hop(relay, relay->pending.packet.dst_id, &next_hop_id) != PROTO_OK) {
+            mesh_relay_invalidate_active_route_path(relay);
             if (preserve_pending_gateway_result(relay, now_ms)) {
                 result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
                 result->status = PROTO_ERR_NOT_FOUND;

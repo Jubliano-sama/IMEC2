@@ -177,6 +177,14 @@ target_include_directories(test_app_mesh_route_wait_tx PRIVATE app/src)
 target_link_libraries(test_app_mesh_route_wait_tx PRIVATE core)
 add_test(NAME app_mesh_route_wait_tx COMMAND test_app_mesh_route_wait_tx)
 
+add_executable(test_app_mesh_route_request_policy
+    tests/test_app_mesh_route_request_policy.c
+    app/src/app_mesh_route_request_policy.c
+)
+target_include_directories(test_app_mesh_route_request_policy PRIVATE app/src)
+target_link_libraries(test_app_mesh_route_request_policy PRIVATE core)
+add_test(NAME app_mesh_route_request_policy COMMAND test_app_mesh_route_request_policy)
+
 add_executable(test_app_mesh_gateway_ack_policy
     tests/test_app_mesh_gateway_ack_policy.c
     app/src/app_mesh_gateway_ack_policy.c

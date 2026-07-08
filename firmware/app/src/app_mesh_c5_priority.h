@@ -53,6 +53,7 @@ bool app_mesh_c5_flood_should_defer(
     const struct app_mesh_c5_flood_priority_state *state);
 bool app_mesh_c5_gateway_rx_should_yield_to_response(
     const struct app_mesh_c5_flood_priority_state *state);
+bool app_mesh_c5_gateway_route_adv_allowed(bool mesh_route_test_enabled);
 bool app_mesh_c5_route_capture_relevant(
     const struct app_mesh_c5_route_capture_state *state);
 bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type);

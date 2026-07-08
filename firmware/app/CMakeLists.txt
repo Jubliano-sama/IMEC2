@@ -359,6 +359,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_tx_handoff_gate.c
     src/app_mesh_route_reply_ack.c
     src/app_mesh_route_ready_handoff.c
+    src/app_mesh_route_request_policy.c
     src/app_mesh_route_wait_tx.c
     src/app_mesh_gateway_ack_policy.c
     src/app_mesh_result_handoff.c
