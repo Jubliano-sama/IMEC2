@@ -6239,6 +6239,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
 
     result_reset(result);
     (void)mesh_relay_expire_routes(relay, now_ms);
+    (void)mesh_relay_expire_channel9_timings(relay, now_ms);
 
     if ((packet->msg_type == MSG_GATEWAY_ACK || packet->msg_type == MSG_MESH_HOP_ACK) &&
         packet->dst_id == relay->local_id) {

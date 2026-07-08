@@ -4257,6 +4257,45 @@ static void test_parent_relay_replies_to_existing_child_route_request(void)
     assert(result.route_reply.next_hop_id == ANCHOR_A);
 }
 
+static void test_route_request_expires_stale_channel9_before_capacity_check(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    struct mesh_relay_result result;
+    struct route_candidate parent = direct_gateway_route(GATEWAY, 21u, 88u);
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(2500u);
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_C, GATEWAY, 21u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 21u);
+    assert(route_upsert_candidate(&relay.upstream, &parent) == PROTO_OK);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, ANCHOR_A, &timing) == PROTO_OK);
+    mesh_relay_note_channel9_missed(&relay, ANCHOR_A, NULL);
+    mesh_relay_note_channel9_missed(&relay, ANCHOR_A, NULL);
+    assert(find_event_timing(&relay, ANCHOR_A) != NULL);
+
+    assert(mesh_relay_prepare_route_request(&origin,
+                                            GATEWAY,
+                                            2600u,
+                                            0u,
+                                            &route_req) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_C,
+                                80u,
+                                2610u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(find_event_timing(&relay, ANCHOR_A) == NULL);
+}
+
 static void test_parent_relay_rejects_unrelated_child_route_request_while_connected(void)
 {
     struct mesh_relay origin;
@@ -7331,6 +7370,7 @@ int main(void)
     test_unanswered_timed_route_request_does_not_reserve_channel9();
     test_parent_relay_replies_without_child_route_discovery();
     test_parent_relay_replies_to_existing_child_route_request();
+    test_route_request_expires_stale_channel9_before_capacity_check();
     test_parent_relay_rejects_unrelated_child_route_request_while_connected();
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
     test_gateway_route_advertisement_reports_busy_capacity();
