@@ -10767,6 +10767,14 @@ static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
                             skipped);
     }
     mesh_ch9_tx_pending_clear();
+    if (requeued > 0u || report_tx_queue_used() > 0u) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CH9_TX_ACK_REQUEUE_SCHED requeued=%u q=%u\n",
+                                requeued,
+                                report_tx_queue_used());
+        }
+        report_tx_schedule(0u);
+    }
 }
 
 static void mesh_tx_timeout_handler(struct k_work *work)
