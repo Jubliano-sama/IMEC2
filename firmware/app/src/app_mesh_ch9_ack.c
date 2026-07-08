@@ -223,6 +223,21 @@ uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
     return configured_max;
 }
 
+bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
+    const struct mesh_outbound *outbound,
+    uint64_t next_hop_id,
+    uint64_t gateway_id)
+{
+    if (outbound == NULL || gateway_id == 0u) {
+        return false;
+    }
+
+    return outbound->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+           outbound->packet.dst_id == gateway_id &&
+           next_hop_id == gateway_id &&
+           (outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
 bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
                                          const struct proto_packet *ack_packet,
                                          const uint8_t *payload,

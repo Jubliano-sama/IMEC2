@@ -69,6 +69,11 @@ uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,
                                       uint8_t configured_max);
 
+bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
+    const struct mesh_outbound *outbound,
+    uint64_t next_hop_id,
+    uint64_t gateway_id);
+
 bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
                                          const struct proto_packet *ack_packet,
                                          const uint8_t *payload,

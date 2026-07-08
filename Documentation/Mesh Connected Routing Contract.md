@@ -470,7 +470,9 @@ Packet delivery should preserve connection state.
    that ACK in its next channel 9 transmit window.
 4. A hop-level ACK can acknowledge one packet or multiple packets. Every packet
    listed in that hop ACK is considered received by the next hop. Packets not
-   listed remain pending for retry.
+   listed remain pending for channel 9 retry. A packet is not removed from the
+   sender's pending set merely because it was transmitted; hop-level custody is
+   transferred only when the hop ACK lists that packet.
 5. The packet continues toward the gateway.
 6. Each relay hop bubbles hop-level ACKs back toward the original transmitter
    one hop at a time.
@@ -509,6 +511,13 @@ is alive. If a gateway ACK or gateway batch ACK is missed but hop ACKs, partial
 batch progress, or other progress continue, keep the connection and retry on
 channel 9. Do not restart the wake train or route acquisition unless the
 connection is declared dead.
+
+Duplicate payload reception must be ACK-sticky. If an anchor receives a packet
+that it has already accepted within the packet deduplication window, it may
+suppress duplicate processing and must not forward the payload twice. It must
+nevertheless include that packet in the hop-level ACK for the applicable
+response window, so a lost ACK can be repaired by retransmitting the same
+packet without causing another timeout.
 
 ## Route Candidate Retry And Invalidation
 
@@ -667,6 +676,9 @@ Useful tests or guards include:
 - Hop ACK extends or resets the gateway ACK timeout.
 - Anchor-to-anchor channel 9 TX can send multiple packets per slot, and a
   hop-level ACK can acknowledge multiple listed packets from that receive window.
+- Packets missing from a hop-level ACK remain queued for channel 9 retry; a
+  duplicate packet inside the deduplication window is still listed in the next
+  hop-level ACK response window even if its payload is not processed again.
 - Gateway ACK has priority over hop-level ACK when both are ready for the same
   channel 9 transmit opportunity.
 - Direct-to-gateway channel 9 TX calculates batch capacity with the gateway

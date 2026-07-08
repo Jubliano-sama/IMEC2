@@ -23,6 +23,7 @@ static struct mesh_outbound gateway_bound_outbound(uint64_t src_id)
         },
         .payload_len = 0u,
         .next_hop_id = GATEWAY_ID_TEST,
+        .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
     };
 }
 
@@ -174,6 +175,42 @@ static void test_non_ack_payload_keeps_configured_in_flight_limit(void)
     assert(app_mesh_ch9_tx_max_in_flight(&packet, RELAY_ID, 8u) == 8u);
 }
 
+static void test_direct_gateway_timeout_counts_gateway_failure(void)
+{
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    assert(app_mesh_ch9_tx_timeout_counts_gateway_failure(&sent,
+                                                          GATEWAY_ID_TEST,
+                                                          GATEWAY_ID_TEST));
+}
+
+static void test_relay_hop_timeout_does_not_count_gateway_failure(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    sent.next_hop_id = RELAY_ID;
+
+    assert(!app_mesh_ch9_tx_timeout_counts_gateway_failure(&sent,
+                                                           RELAY_ID,
+                                                           GATEWAY_ID_TEST));
+}
+
+static void test_non_gateway_ack_timeout_does_not_count_gateway_failure(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    sent.packet.flags = 0u;
+    assert(!app_mesh_ch9_tx_timeout_counts_gateway_failure(&sent,
+                                                           GATEWAY_ID_TEST,
+                                                           GATEWAY_ID_TEST));
+
+    sent = gateway_bound_outbound(TRANSMITTER_ID);
+    sent.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    assert(!app_mesh_ch9_tx_timeout_counts_gateway_failure(&sent,
+                                                           GATEWAY_ID_TEST,
+                                                           GATEWAY_ID_TEST));
+}
+
 int main(void)
 {
     test_ack_complete_keeps_idle_route_test_timing_open();
@@ -185,5 +222,8 @@ int main(void)
     test_gateway_ack_relay_path_keeps_configured_in_flight_limit();
     test_direct_next_hop_keeps_configured_in_flight_limit();
     test_non_ack_payload_keeps_configured_in_flight_limit();
+    test_direct_gateway_timeout_counts_gateway_failure();
+    test_relay_hop_timeout_does_not_count_gateway_failure();
+    test_non_gateway_ack_timeout_does_not_count_gateway_failure();
     return 0;
 }

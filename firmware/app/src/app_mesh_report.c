@@ -110,6 +110,10 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS \
     (MESH_CH9_TX_CONFIG_GUARD_MS + MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS + \
      MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS)
+#define MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS MESH_EVENT_DEFAULT_WINDOW_MS
+#define MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS \
+    (MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS + \
+     MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS)
 #define MESH_CH9_BATCH_FLAG_FINAL 0x01u
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 #define MESH_GATEWAY_CH5_CONTINUOUS_RX_MS 2000u
@@ -146,6 +150,8 @@ BUILD_ASSERT(MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS >= MESH_EVENT_DEFAULT_GUARD_MS,
 BUILD_ASSERT(MESH_EVENT_DEFAULT_WINDOW_MS + MESH_EVENT_RX_LATE_GUARD_MS <
              MESH_EVENT_DEFAULT_SECOND_SLOT_OFFSET_MS,
              "mesh route-test late RX guard must not overlap the second channel-9 slot");
+BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS < ROUTE_GATEWAY_ACK_TIMEOUT_MS,
+             "direct gateway batch window must fit inside the ACK timeout");
 BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MAX_MS >=
              MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MIN_MS,
              "direct gateway probe retry backoff range must be ordered");
@@ -196,6 +202,7 @@ struct mesh_route_embedded_rx_state {
 static bool mesh_packet_prefers_channel9(const struct proto_packet *packet);
 static size_t mesh_outbound_encoded_frame_len(const struct mesh_outbound *out);
 static uint32_t mesh_ch9_estimated_airtime_ms(size_t frame_len);
+static void report_tx_schedule_backoff(uint32_t delay_ms, const char *reason);
 
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
@@ -6145,6 +6152,19 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     return 0;
 }
 
+static void mesh_init_direct_gateway_batch_plan(struct mesh_event_plan *plan,
+                                                uint32_t now_ms)
+{
+    if (plan == NULL) {
+        return;
+    }
+
+    plan->action = MESH_EVENT_PLAN_START;
+    plan->start_ms = now_ms;
+    plan->window_ms = MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
+    plan->end_ms = now_ms + MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS;
+}
+
 static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
     const struct mesh_event_plan *plan,
     uint64_t next_hop_id,
@@ -8455,47 +8475,62 @@ static int mesh_try_send_report_tx_ch9_batch(void)
         next_hop_id == GATEWAY_ID &&
         first->packet.dst_id == GATEWAY_ID &&
         (first->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
-    (void)mesh_advance_channel9_timing_past(next_hop_id, now_ms, "tx-batch-select");
-    mesh_fill_channel5_requirements(&requirements);
-    (void)mesh_expire_channel9_timings(now_ms, "queued-ch9-batch");
-    ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
-                                               next_hop_id,
-                                               &requirements,
-                                               now_ms,
-                                               &plan);
-    if (ret != PROTO_ERR_STALE) {
-        mesh_event_note_plan_action(&mesh_event_stats, plan.action);
-    }
-    mesh_debug_channel5_preemption("tx-batch",
-                                   "queued-ch9-batch",
-                                   next_hop_id,
-                                   &requirements,
-                                   &plan,
-                                   now_ms);
-    if (ret != PROTO_OK) {
+    if (direct_gateway_batch) {
+        mesh_init_direct_gateway_batch_plan(&plan, now_ms);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_note(ret == PROTO_ERR_STALE ?
-                              "DBG_CH9_TX_BATCH_STALE\n" :
-                              "DBG_CH9_TX_BATCH_WAIT\n");
-            status_debug_printf("DBG_CH9_TX_BATCH_WAIT ret=%d act=%u now=%u start=%u q=%u\n",
-                                ret,
-                                (unsigned int)plan.action,
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_IMMEDIATE now=%u start=%u end=%u q=%u max=%u reserve=%u\n",
                                 now_ms,
                                 plan.start_ms,
-                                k_msgq_num_used_get(&report_tx_msgq));
+                                plan.end_ms,
+                                k_msgq_num_used_get(&report_tx_msgq),
+                                max_sent,
+                                MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS);
         }
-        if (mesh_event_plan_debugs_channel5(plan.action)) {
-            mesh_ch9_event_set(CH9_EVENT_PREEMPTED_BY_C5,
-                               next_hop_id,
-                               &plan,
-                               "queued-ch9-batch");
+    } else {
+        (void)mesh_advance_channel9_timing_past(next_hop_id, now_ms, "tx-batch-select");
+        mesh_fill_channel5_requirements(&requirements);
+        (void)mesh_expire_channel9_timings(now_ms, "queued-ch9-batch");
+        ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
+                                                   next_hop_id,
+                                                   &requirements,
+                                                   now_ms,
+                                                   &plan);
+        if (ret != PROTO_ERR_STALE) {
+            mesh_event_note_plan_action(&mesh_event_stats, plan.action);
         }
-        return ret == PROTO_ERR_BUSY ? -EBUSY : -ENOTSUP;
+        mesh_debug_channel5_preemption("tx-batch",
+                                       "queued-ch9-batch",
+                                       next_hop_id,
+                                       &requirements,
+                                       &plan,
+                                       now_ms);
+        if (ret != PROTO_OK) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_note(ret == PROTO_ERR_STALE ?
+                                  "DBG_CH9_TX_BATCH_STALE\n" :
+                                  "DBG_CH9_TX_BATCH_WAIT\n");
+                status_debug_printf("DBG_CH9_TX_BATCH_WAIT ret=%d act=%u now=%u start=%u q=%u\n",
+                                    ret,
+                                    (unsigned int)plan.action,
+                                    now_ms,
+                                    plan.start_ms,
+                                    k_msgq_num_used_get(&report_tx_msgq));
+            }
+            if (mesh_event_plan_debugs_channel5(plan.action)) {
+                mesh_ch9_event_set(CH9_EVENT_PREEMPTED_BY_C5,
+                                   next_hop_id,
+                                   &plan,
+                                   "queued-ch9-batch");
+            }
+            return ret == PROTO_ERR_BUSY ? -EBUSY : -ENOTSUP;
+        }
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         uint32_t event_counter = 0u;
 
-        (void)mesh_debug_channel9_state(next_hop_id, &event_counter, NULL);
+        if (!direct_gateway_batch) {
+            (void)mesh_debug_channel9_state(next_hop_id, &event_counter, NULL);
+        }
         status_debug_printf("DBG_CH9_TX_BATCH_SLOT cnt=%u now=%u start=%u end=%u q=%u max=%u\n",
                             event_counter,
                             now_ms,
@@ -10116,11 +10151,69 @@ bool mesh_process_queued_rx_now(const char *reason)
     return handled_count > 0u;
 }
 
+static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
+    const struct mesh_outbound *failed,
+    uint64_t timed_out_next_hop_id,
+    uint8_t gateway_unacked,
+    uint8_t requeued,
+    uint32_t now_ms)
+{
+    const struct route_candidate *selected;
+    enum route_delivery_action action;
+    uint64_t next_hop_id = 0u;
+    uint32_t random_value = sys_rand32_get();
+    uint32_t delay_ms = 0u;
+    uint8_t failure_count = 0u;
+    int select_ret = PROTO_ERR_NOT_FOUND;
+    int route_ret = 0;
+
+    if (failed == NULL || gateway_unacked == 0u) {
+        return;
+    }
+
+    action = route_record_failure_at(&mesh_runtime.upstream,
+                                     ROUTE_FAILURE_GATEWAY_ACK,
+                                     now_ms);
+    if (action != ROUTE_DELIVERY_DISCOVER) {
+        select_ret = mesh_relay_select_next_hop(&mesh_runtime,
+                                                failed->packet.dst_id,
+                                                &next_hop_id);
+    }
+    if (action == ROUTE_DELIVERY_RETRY_CURRENT && select_ret == PROTO_OK) {
+        selected = route_selected(&mesh_runtime.upstream);
+        failure_count = selected == NULL ? 1u : selected->failure_count;
+        delay_ms = mesh_relay_retry_backoff_ms(failure_count, random_value);
+        report_tx_schedule_backoff(delay_ms, "ch9-gateway-ack-timeout");
+    } else if (action == ROUTE_DELIVERY_TRY_ALTERNATE && select_ret == PROTO_OK) {
+        report_tx_schedule(0u);
+    } else {
+        mesh_relay_clear_channel9_timing(&mesh_runtime, timed_out_next_hop_id);
+        route_ret = mesh_request_route(failed->packet.dst_id,
+                                       "ch9-gateway-ack-timeout");
+    }
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_CH9_TX_ACK_ROUTE_FAIL action=%s gw_unacked=%u requeued=%u fail=%u delay=%u route_ret=%d select=%d next=0x%llx timed=0x%llx\n",
+                            route_delivery_action_name(action),
+                            gateway_unacked,
+                            requeued,
+                            failure_count,
+                            delay_ms,
+                            route_ret,
+                            select_ret,
+                            (unsigned long long)next_hop_id,
+                            (unsigned long long)timed_out_next_hop_id);
+    }
+}
+
 static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
 {
+    struct mesh_outbound route_failure_packet = {0};
     uint64_t timed_out_next_hop_id = 0u;
     uint8_t requeued = 0u;
     uint8_t acked = 0u;
+    uint8_t gateway_unacked = 0u;
+    bool route_failure_packet_valid = false;
 
     if (!mesh_ch9_tx_pending.active ||
         !uptime_deadline_reached(now_ms, mesh_ch9_tx_pending.deadline_ms)) {
@@ -10137,14 +10230,24 @@ static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
         }
         struct mesh_outbound clean = entry->outbound;
         int strip_ret = mesh_outbound_clear_ch9_batch_metadata(&clean);
+        const struct mesh_outbound *retry =
+            strip_ret == PROTO_OK ? &clean : &entry->outbound;
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && strip_ret != PROTO_OK) {
             status_debug_printf("DBG_CH9_TX_ACK_TIMEOUT_STRIP_FAIL ret=%d seq=%u\n",
                                 strip_ret,
                                 entry->outbound.packet.seq);
         }
-        if (queue_anchor_report(strip_ret == PROTO_OK ?
-                                &clean : &entry->outbound) == 0) {
+        if (app_mesh_ch9_tx_timeout_counts_gateway_failure(retry,
+                                                           timed_out_next_hop_id,
+                                                           GATEWAY_ID)) {
+            gateway_unacked++;
+            if (!route_failure_packet_valid) {
+                route_failure_packet = *retry;
+                route_failure_packet_valid = true;
+            }
+        }
+        if (queue_anchor_report(retry) == 0) {
             requeued++;
         } else {
             HIGH_DEBUG_COUNTER_INC(mesh_drop);
@@ -10164,6 +10267,13 @@ static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
             mesh_ch9_tx_pending.count,
             acked,
             requeued);
+    if (route_failure_packet_valid) {
+        mesh_handle_ch9_gateway_ack_timeout_route_failure(&route_failure_packet,
+                                                          timed_out_next_hop_id,
+                                                          gateway_unacked,
+                                                          requeued,
+                                                          now_ms);
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         uint8_t skipped;
 
