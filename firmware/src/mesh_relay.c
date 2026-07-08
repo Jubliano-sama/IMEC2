@@ -271,6 +271,21 @@ static uint8_t relay_active_channel9_timing_count(const struct mesh_relay *relay
     return count;
 }
 
+static bool relay_has_channel9_timing_for_other_peer(const struct mesh_relay *relay,
+                                                     uint64_t peer_id)
+{
+    if (relay == NULL || !id_is_unicast(peer_id)) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        if (relay->event_timings[i].valid &&
+            relay->event_timings[i].next_hop_id != peer_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static uint8_t relay_current_capacity_state(const struct mesh_relay *relay)
 {
     if (relay == NULL) {
@@ -4159,7 +4174,7 @@ static int handle_route_request(struct mesh_relay *relay,
         return PROTO_ERR_STALE;
     }
     if (relay->role == MESH_RELAY_ROLE_ANCHOR &&
-        relay_active_channel9_timing_count(relay) != 0u) {
+        relay_has_channel9_timing_for_other_peer(relay, previous_hop_id)) {
         return PROTO_ERR_BUSY;
     }
 
