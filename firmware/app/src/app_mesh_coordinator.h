@@ -22,6 +22,7 @@ struct app_mesh_coordinator_inputs {
     bool relay_tx_active;
     bool route_waiting_tx_active;
     bool ch9_ack_wait_active;
+    bool ch9_ack_send_pending;
     bool report_queue_pending;
     bool gateway_continuous_ch9;
 };

@@ -128,6 +128,13 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DS_TWR_RX_DEFAULT_TIMEOUT_UUS \
     (DS_TWR_RX_DEFAULT_GUARD_BEFORE_UUS + DWM3000_DS_TWR_RX_GUARD_AFTER_UUS)
 
+#define RX_TERMINAL_STATUS_MASK \
+    (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)
+#define RX_ACTIVITY_STATUS_MASK \
+    (SYS_STATUS_RXPRD_BIT_MASK | SYS_STATUS_RXSFDD_BIT_MASK | \
+     SYS_STATUS_RXPHD_BIT_MASK | SYS_STATUS_RXFR_BIT_MASK)
+#define RX_CLEAR_STATUS_MASK (RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK)
+
 #ifndef DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
 #define DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS DS_TWR_RX_DEFAULT_AFTER_TX_DLY_UUS
 #endif
@@ -1215,6 +1222,30 @@ static enum dwm3000_rx_failure status_to_rx_failure(uint32_t status)
         return DWM3000_RX_FAILURE_CRC_OR_PHY;
     }
     return DWM3000_RX_FAILURE_NONE;
+}
+
+static bool rx_status_has_activity(uint32_t status)
+{
+    return (status & (RX_ACTIVITY_STATUS_MASK |
+                      SYS_STATUS_RXFCG_BIT_MASK |
+                      SYS_STATUS_RXSTO_BIT_MASK |
+                      SYS_STATUS_RXFTO_BIT_MASK |
+                      SYS_STATUS_RXFCE_BIT_MASK |
+                      SYS_STATUS_RXPHE_BIT_MASK |
+                      SYS_STATUS_RXFSL_BIT_MASK)) != 0u;
+}
+
+static uint32_t remaining_timeout_ms(int64_t deadline_ms)
+{
+    int64_t remaining_ms = deadline_ms - k_uptime_get();
+
+    if (remaining_ms <= 0) {
+        return 0u;
+    }
+    if (remaining_ms > UINT32_MAX) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)remaining_ms;
 }
 
 #if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
@@ -3063,6 +3094,259 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     return 0;
 }
 
+static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_ms,
+                                                       uint32_t completion_timeout_ms,
+                                                       uint8_t *frame,
+                                                       size_t frame_cap,
+                                                       size_t *frame_len,
+                                                       uint8_t *quality,
+                                                       int8_t *rsl_dbm,
+                                                       enum dwm3000_rx_failure *failure,
+                                                       bool log_events)
+{
+    uint8_t rx_buffer[UWB_MESH_MAX_FRAME_LEN + FCS_LEN];
+    uint32_t status = 0u;
+    uint32_t last_status = 0u;
+    enum dwm3000_rx_failure last_failure = DWM3000_RX_FAILURE_NONE;
+    size_t raw_len = 0u;
+    size_t payload_len;
+    uint8_t rx_quality = 0u;
+    int8_t rx_rsl_dbm = 0;
+    int64_t completion_deadline_ms = 0;
+    uint32_t remaining_ms;
+    uint32_t rearm_count = 0u;
+    bool activity_seen = false;
+    bool completion_active = false;
+    int ret;
+
+    if (frame == NULL || frame_len == NULL || frame_cap == 0u ||
+        acquire_timeout_ms == 0u || completion_timeout_ms == 0u) {
+        return -EINVAL;
+    }
+    *frame_len = 0u;
+    if (failure != NULL) {
+        *failure = DWM3000_RX_FAILURE_NONE;
+    }
+
+    ret = ensure_current_phy_or_range();
+    if (ret < 0) {
+        return ret;
+    }
+
+    dwt_setpreambledetecttimeout(0u);
+    dwt_setrxtimeout(0u);
+    clear_all_events();
+    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+        return -EIO;
+    }
+
+    driver_stats.rx_starts++;
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_DWM_CH5_RX_HUNT_START acq=%u complete=%u cap=%u\n",
+                            acquire_timeout_ms,
+                            completion_timeout_ms,
+                            (unsigned int)frame_cap);
+    }
+
+    ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
+                               acquire_timeout_ms,
+                               &status,
+                               log_events);
+    last_status = status;
+    if (ret < 0 && !rx_status_has_activity(status)) {
+        driver_stats.rx_timeouts++;
+        dwt_forcetrxoff();
+        if (failure != NULL) {
+            *failure = DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
+        }
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_CH5_RX_HUNT_EMPTY ret=%d status=0x%08x acq=%u\n",
+                                ret,
+                                status,
+                                acquire_timeout_ms);
+        }
+        return -ETIMEDOUT;
+    }
+
+    if (ret < 0 || (status & RX_ACTIVITY_STATUS_MASK) != 0u ||
+        ((status & RX_TERMINAL_STATUS_MASK) != 0u &&
+         (status & SYS_STATUS_RXFCG_BIT_MASK) == 0u)) {
+        activity_seen = rx_status_has_activity(status);
+    }
+
+    if (activity_seen) {
+        completion_active = true;
+        completion_deadline_ms = k_uptime_get() + completion_timeout_ms;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=%d status=0x%08x complete=%u\n",
+                                ret,
+                                status,
+                                completion_timeout_ms);
+        }
+    }
+
+    while (true) {
+        if ((status & SYS_STATUS_RXFCG_BIT_MASK) != 0u) {
+            payload_len = 0u;
+            if (rsl_dbm != NULL) {
+                read_rx_diagnostics(&rx_rsl_dbm,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL);
+            }
+            if (quality != NULL) {
+                rx_quality = 100u;
+            }
+            raw_len = read_rx_frame(rx_buffer, sizeof(rx_buffer));
+            clear_status(SYS_STATUS_RXFCG_BIT_MASK);
+            if (raw_len == 0u) {
+                driver_stats.rx_failures++;
+                dwt_forcetrxoff();
+                if (failure != NULL) {
+                    *failure = DWM3000_RX_FAILURE_BAD_FRAME;
+                }
+                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_BAD status=0x%08x rearm=%u\n",
+                                        status,
+                                        rearm_count);
+                }
+                return -EMSGSIZE;
+            }
+
+            payload_len = payload_len_without_fcs(raw_len);
+            if (payload_len > frame_cap) {
+                dwt_forcetrxoff();
+                if (failure != NULL) {
+                    *failure = DWM3000_RX_FAILURE_BAD_FRAME;
+                }
+                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_OVERSIZE raw=%u payload=%u cap=%u\n",
+                                        (unsigned int)raw_len,
+                                        (unsigned int)payload_len,
+                                        (unsigned int)frame_cap);
+                }
+                return -EMSGSIZE;
+            }
+
+            memcpy(frame, rx_buffer, payload_len);
+            *frame_len = payload_len;
+            if (quality != NULL) {
+                *quality = rx_quality;
+            }
+            if (rsl_dbm != NULL) {
+                *rsl_dbm = rx_rsl_dbm;
+            }
+            driver_stats.rx_dones++;
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_DONE raw=%u payload=%u status=0x%08x rearm=%u extended=%u\n",
+                                    (unsigned int)raw_len,
+                                    (unsigned int)payload_len,
+                                    status,
+                                    rearm_count,
+                                    completion_active ? 1u : 0u);
+            }
+            return 0;
+        }
+
+        if (!completion_active || !activity_seen) {
+            last_failure = status_to_rx_failure(status);
+            break;
+        }
+
+        if ((status & RX_TERMINAL_STATUS_MASK) != 0u) {
+            last_failure = status_to_rx_failure(status);
+            if (last_failure == DWM3000_RX_FAILURE_NONE) {
+                last_failure = DWM3000_RX_FAILURE_FRAME_TIMEOUT;
+            }
+            clear_status(RX_CLEAR_STATUS_MASK);
+            dwt_forcetrxoff();
+            remaining_ms = remaining_timeout_ms(completion_deadline_ms);
+            if (remaining_ms == 0u) {
+                break;
+            }
+            rearm_count++;
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_REARM status=0x%08x fail=%u remain=%u rearm=%u\n",
+                                    status,
+                                    (unsigned int)last_failure,
+                                    remaining_ms,
+                                    rearm_count);
+            }
+            dwt_setpreambledetecttimeout(0u);
+            dwt_setrxtimeout(0u);
+            if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+                if (failure != NULL) {
+                    *failure = last_failure;
+                }
+                return -EIO;
+            }
+            status = 0u;
+            ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
+                                       remaining_ms,
+                                       &status,
+                                       log_events);
+            last_status = status;
+            if (ret < 0 && !rx_status_has_activity(status)) {
+                break;
+            }
+            if (rx_status_has_activity(status)) {
+                activity_seen = true;
+            }
+            continue;
+        }
+
+        if ((status & RX_ACTIVITY_STATUS_MASK) != 0u || ret < 0) {
+            remaining_ms = remaining_timeout_ms(completion_deadline_ms);
+            if (remaining_ms == 0u) {
+                last_failure = DWM3000_RX_FAILURE_FRAME_TIMEOUT;
+                break;
+            }
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x%08x remain=%u\n",
+                                    status,
+                                    remaining_ms);
+            }
+            ret = wait_status_internal(RX_TERMINAL_STATUS_MASK,
+                                       remaining_ms,
+                                       &status,
+                                       log_events);
+            last_status = status;
+            if (ret < 0) {
+                last_failure = rx_status_has_activity(status) ?
+                               DWM3000_RX_FAILURE_FRAME_TIMEOUT :
+                               DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
+                break;
+            }
+            continue;
+        }
+
+        break;
+    }
+
+    driver_stats.rx_timeouts++;
+    dwt_forcetrxoff();
+    if (last_failure == DWM3000_RX_FAILURE_NONE) {
+        last_failure = activity_seen ? DWM3000_RX_FAILURE_FRAME_TIMEOUT :
+                       DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
+    }
+    if (failure != NULL) {
+        *failure = last_failure;
+    }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_DWM_CH5_RX_ACTIVITY_FAIL ret=%d status=0x%08x last=0x%08x fail=%u activity=%u rearm=%u\n",
+                            ret,
+                            status,
+                            last_status,
+                            (unsigned int)last_failure,
+                            activity_seen ? 1u : 0u,
+                            rearm_count);
+    }
+    return activity_seen ? -EIO : -ETIMEDOUT;
+}
+
 int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                           uint8_t *frame,
                                           size_t frame_cap,
@@ -3119,6 +3403,27 @@ int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                                         rsl_dbm,
                                                         failure,
                                                         NULL);
+}
+
+int dwm3000_driver_receive_frame_continuous_extend_on_activity(
+    uint32_t acquire_timeout_ms,
+    uint32_t completion_timeout_ms,
+    uint8_t *frame,
+    size_t frame_cap,
+    size_t *frame_len,
+    uint8_t *quality,
+    int8_t *rsl_dbm,
+    enum dwm3000_rx_failure *failure)
+{
+    return receive_frame_continuous_extend_on_activity(acquire_timeout_ms,
+                                                       completion_timeout_ms,
+                                                       frame,
+                                                       frame_cap,
+                                                       frame_len,
+                                                       quality,
+                                                       rsl_dbm,
+                                                       failure,
+                                                       !focused_anchor_rx_logs_enabled());
 }
 
 int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,

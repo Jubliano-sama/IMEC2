@@ -274,6 +274,7 @@ struct mesh_ch9_ack_batch {
     struct mesh_ch9_ack_entry entries[MESH_CH9_ACK_BATCH_MAX];
     uint8_t count;
     bool valid;
+    bool preserve_payload;
 };
 
 static struct mesh_ch9_ack_batch mesh_ch9_ack_batch;
@@ -865,6 +866,7 @@ static void mesh_coordinator_decide_now(
         .relay_tx_active = mesh_relay_tx_active(&mesh_runtime),
         .route_waiting_tx_active = mesh_route_waiting_tx_valid,
         .ch9_ack_wait_active = mesh_ch9_tx_pending.active,
+        .ch9_ack_send_pending = mesh_ch9_ack_batch.valid,
         .report_queue_pending = k_msgq_num_used_get(&report_tx_msgq) > 0u,
         .gateway_continuous_ch9 = mesh_gateway_route_test_role(),
     };
@@ -880,7 +882,7 @@ static void mesh_coordinator_decide_now(
             app_mesh_coordinator_state_name(decision->state);
 
         high_debug_log_event("MESH_COORDINATOR",
-                             "owner=%s state=%s reason=%s q_rx=%u q_tx=%u relay=%u route_wait=%u ack_wait=%u ch9=%u",
+                             "owner=%s state=%s reason=%s q_rx=%u q_tx=%u relay=%u route_wait=%u ack_wait=%u ack_send=%u ch9=%u",
                              owner == NULL ? "mesh" : owner,
                              state_name,
                              decision->reason == NULL ? "none" : decision->reason,
@@ -889,9 +891,10 @@ static void mesh_coordinator_decide_now(
                              inputs.relay_tx_active ? 1u : 0u,
                              inputs.route_waiting_tx_active ? 1u : 0u,
                              inputs.ch9_ack_wait_active ? 1u : 0u,
+                             inputs.ch9_ack_send_pending ? 1u : 0u,
                              mesh_channel9_connection_count());
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_COORD state=%s owner=%s reason=%s rx=%u tx=%u relay=%u route=%u ack=%u\n",
+            status_debug_printf("DBG_COORD state=%s owner=%s reason=%s rx=%u tx=%u relay=%u route=%u ack=%u qack=%u\n",
                                 state_name,
                                 owner == NULL ? "mesh" : owner,
                                 decision->reason == NULL ? "none" :
@@ -900,7 +903,8 @@ static void mesh_coordinator_decide_now(
                                 k_msgq_num_used_get(&report_tx_msgq),
                                 inputs.relay_tx_active ? 1u : 0u,
                                 inputs.route_waiting_tx_active ? 1u : 0u,
-                                inputs.ch9_ack_wait_active ? 1u : 0u);
+                                inputs.ch9_ack_wait_active ? 1u : 0u,
+                                inputs.ch9_ack_send_pending ? 1u : 0u);
         }
         mesh_coordinator_last_state = decision->state;
         mesh_coordinator_last_state_valid = true;
@@ -1307,7 +1311,9 @@ static bool mesh_ch9_ack_batch_clear_for_peer(uint64_t peer_id,
     }
 
     count = mesh_ch9_ack_batch.count;
-    first_seq = count == 0u ? 0u : mesh_ch9_ack_batch.entries[0].seq;
+    first_seq = mesh_ch9_ack_batch.preserve_payload ?
+                mesh_ch9_ack_batch.template_ack.packet.seq :
+                count == 0u ? 0u : mesh_ch9_ack_batch.entries[0].seq;
     status_debug_printf("DBG_CH9_ACK_CLEAR peer=0x%llx n=%u first=%u reason=%s\n",
                         (unsigned long long)peer_id,
                         count,
@@ -4770,9 +4776,19 @@ static bool mesh_ch9_ack_batch_matches(const struct mesh_ch9_ack_batch *batch,
                                        const struct mesh_outbound *ack)
 {
     return batch != NULL && ack != NULL && batch->valid &&
+           !batch->preserve_payload &&
            batch->template_ack.packet.msg_type == ack->packet.msg_type &&
            batch->template_ack.packet.dst_id == ack->packet.dst_id &&
            batch->template_ack.next_hop_id == ack->next_hop_id;
+}
+
+static bool mesh_ch9_ack_batch_is_forwarded_gateway_ack(
+    const struct mesh_ch9_ack_batch *batch)
+{
+    return batch != NULL &&
+           batch->valid &&
+           batch->preserve_payload &&
+           batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK;
 }
 
 static void mesh_ch9_ack_batch_reset_from(const struct mesh_outbound *ack)
@@ -4782,6 +4798,7 @@ static void mesh_ch9_ack_batch_reset_from(const struct mesh_outbound *ack)
         mesh_ch9_ack_batch.template_ack = *ack;
         mesh_ch9_ack_batch.template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
         mesh_ch9_ack_batch.valid = true;
+        mesh_ch9_ack_batch.preserve_payload = false;
     }
 }
 
@@ -4796,6 +4813,16 @@ static void mesh_ch9_ack_batch_queue(const struct mesh_outbound *ack,
         rx->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
         (ack->packet.msg_type != MSG_GATEWAY_ACK &&
          ack->packet.msg_type != MSG_MESH_HOP_ACK)) {
+        return;
+    }
+
+    if (mesh_ch9_ack_batch_is_forwarded_gateway_ack(&mesh_ch9_ack_batch) &&
+        ack->packet.msg_type == MSG_MESH_HOP_ACK &&
+        mesh_ch9_ack_batch.template_ack.packet.dst_id == ack->packet.dst_id &&
+        mesh_ch9_ack_batch.template_ack.next_hop_id == ack->next_hop_id) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_CH9_ACK_QUEUE_KEEP_GATEWAY\n");
+        }
         return;
     }
 
@@ -4843,8 +4870,58 @@ static void mesh_ch9_ack_batch_queue(const struct mesh_outbound *ack,
 	    entry->packet_id = entry->has_packet_id ? packet_id : 0u;
 	    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
 	        status_debug_note("DBG_CH9_ACK_QUEUE_ADD\n");
-	    }
+    }
     mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+}
+
+static int mesh_ch9_ack_batch_queue_forwarded_gateway_ack(
+    const struct mesh_outbound *ack,
+    const char *reason)
+{
+    uint8_t packet_id_count = 0u;
+    uint32_t first_packet_id = 0u;
+    uint32_t last_packet_id = 0u;
+    int ret;
+
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        ack == NULL ||
+        ack->packet.msg_type != MSG_GATEWAY_ACK ||
+        !mesh_id_is_unicast(ack->next_hop_id)) {
+        return -EINVAL;
+    }
+
+    if (mesh_ch9_ack_batch.valid && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_note("DBG_CH9_ACK_QUEUE_REPLACE_GATEWAY\n");
+        status_debug_printf("DBG_CH9_ACK_QUEUE_REPLACE_GATEWAY old_msg=%02x old_n=%u new_seq=%u\n",
+                            mesh_ch9_ack_batch.template_ack.packet.msg_type,
+                            mesh_ch9_ack_batch.count,
+                            ack->packet.seq);
+    }
+    memset(&mesh_ch9_ack_batch, 0, sizeof(mesh_ch9_ack_batch));
+    mesh_ch9_ack_batch.template_ack = *ack;
+    mesh_ch9_ack_batch.template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    mesh_ch9_ack_batch.count = 1u;
+    mesh_ch9_ack_batch.valid = true;
+    mesh_ch9_ack_batch.preserve_payload = true;
+
+    ret = mesh_ack_payload_packet_id_summary(ack->payload,
+                                             ack->payload_len,
+                                             &packet_id_count,
+                                             &first_packet_id,
+                                             &last_packet_id);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_FORWARD_GATEWAY_ACK_QUEUE seq=%u next=0x%llx len=%u ids=%u first=%u last=%u ret=%d reason=%s\n",
+                            ack->packet.seq,
+                            (unsigned long long)ack->next_hop_id,
+                            ack->payload_len,
+                            packet_id_count,
+                            first_packet_id,
+                            last_packet_id,
+                            ret,
+                            reason == NULL ? "forward-gateway-ack" : reason);
+    }
+    mesh_schedule_uwb_rx(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+    return 0;
 }
 
 static int mesh_ch9_ack_batch_build(struct mesh_outbound *out)
@@ -4861,6 +4938,31 @@ static int mesh_ch9_ack_batch_build(struct mesh_outbound *out)
 
     *out = mesh_ch9_ack_batch.template_ack;
     out->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    if (mesh_ch9_ack_batch.preserve_payload) {
+        uint8_t packet_id_count = 0u;
+        uint32_t first_packet_id = 0u;
+        uint32_t last_packet_id = 0u;
+        int summary_ret;
+
+        out->payload_len = mesh_ch9_ack_batch.template_ack.payload_len;
+        out->packet.payload_len = mesh_ch9_ack_batch.template_ack.packet.payload_len;
+        summary_ret = mesh_ack_payload_packet_id_summary(out->payload,
+                                                         out->payload_len,
+                                                         &packet_id_count,
+                                                         &first_packet_id,
+                                                         &last_packet_id);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_CH9_ACK_BUILD_FORWARD msg=%02x seq=%u len=%u ids=%u first=%u last=%u ret=%d\n",
+                                out->packet.msg_type,
+                                out->packet.seq,
+                                out->payload_len,
+                                packet_id_count,
+                                first_packet_id,
+                                last_packet_id,
+                                summary_ret);
+        }
+        return 0;
+    }
 
     for (uint8_t i = 0u; i < mesh_ch9_ack_batch.count; i++) {
         proto_put_u16_le(&seq_list[i * sizeof(uint16_t)], mesh_ch9_ack_batch.entries[i].seq);
@@ -9232,6 +9334,7 @@ static void report_tx_work_handler(struct k_work *work)
     bool survey_busy;
     bool relay_tx_active;
     bool ch9_ack_wait_active;
+    bool ch9_ack_send_pending;
     bool route_waiting_active;
     bool report_queue_pending;
     bool rx_queue_pending;
@@ -9249,6 +9352,7 @@ static void report_tx_work_handler(struct k_work *work)
     survey_busy = mesh_report_anchor_survey_discovery_is_pending();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
     ch9_ack_wait_active = mesh_ch9_tx_pending.active;
+    ch9_ack_send_pending = mesh_ch9_ack_batch.valid;
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     report_queue_pending = k_msgq_num_used_get(&report_tx_msgq) > 0;
@@ -9266,6 +9370,8 @@ static void report_tx_work_handler(struct k_work *work)
                 status_debug_note("DBG_REPORT_WORK_BUSY_RX\n");
             } else if (route_handoff_active) {
                 status_debug_note("DBG_REPORT_WORK_BUSY_HANDOFF\n");
+            } else if (ch9_ack_send_pending) {
+                status_debug_note("DBG_REPORT_WORK_BUSY_QACK\n");
             } else if (route_waiting_active) {
                 status_debug_note("DBG_REPORT_WORK_BUSY_ROUTE\n");
             } else if (ch9_ack_wait_active) {
@@ -9282,6 +9388,9 @@ static void report_tx_work_handler(struct k_work *work)
                     rx_queue_pending,
                     &handoff_result)) {
                 return;
+            }
+            if (ch9_ack_send_pending) {
+                mesh_schedule_uwb_rx(0u);
             }
             report_tx_schedule(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         }
@@ -9680,11 +9789,27 @@ static bool mesh_forward_uses_gateway_batch_queue(const struct mesh_outbound *ou
            (out->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
 }
 
+static bool mesh_forward_uses_child_gateway_ack_queue(
+    const struct mesh_outbound *out,
+    uint8_t received_radio_channel)
+{
+    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+           DEVICE_ROLE == ROLE_ANCHOR &&
+           received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+           out != NULL &&
+           out->packet.msg_type == MSG_GATEWAY_ACK &&
+           out->packet.src_id == GATEWAY_ID &&
+           out->packet.dst_id != DEVICE_ID &&
+           out->packet.dst_id != GATEWAY_ID &&
+           mesh_id_is_unicast(out->next_hop_id);
+}
+
 static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                                        uint8_t received_radio_channel,
                                        const struct mesh_rx_pending *rx)
 {
     bool forward_sent = false;
+    bool forward_queued_gateway_ack = false;
     bool child_custody_ready = true;
     struct app_mesh_result_handoff_ops handoff_ops = {
         .save_child_custody = mesh_handoff_save_child_custody,
@@ -9841,11 +9966,35 @@ after_gateway_ack:
     if (result->actions & MESH_RELAY_ACTION_FORWARD) {
         int ret;
 
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+            result->forward.packet.msg_type == MSG_GATEWAY_ACK) {
+            status_debug_printf("DBG_FORWARD_GATEWAY_ACK_CAND ch=%u src=0x%llx dst=0x%llx next=0x%llx local=0x%llx gw=0x%llx\n",
+                                received_radio_channel,
+                                (unsigned long long)result->forward.packet.src_id,
+                                (unsigned long long)result->forward.packet.dst_id,
+                                (unsigned long long)result->forward.next_hop_id,
+                                (unsigned long long)DEVICE_ID,
+                                (unsigned long long)GATEWAY_ID);
+        }
         if (result->forward.packet.dst_id == MESH_BROADCAST_ID) {
             ret = mesh_send_c5_flood_response(
                 &result->forward,
                 mesh_c5_purpose_for_packet(&result->forward.packet),
                 "broadcast-forward");
+        } else if (mesh_forward_uses_child_gateway_ack_queue(
+                       &result->forward,
+                       received_radio_channel)) {
+            struct mesh_outbound *forward_ack = &mesh_result_action_tx;
+
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_note("DBG_FORWARD_GATEWAY_ACK_MATCH\n");
+            }
+            *forward_ack = result->forward;
+            forward_ack->radio_channel = MESH_EVENT_CHANNEL;
+            ret = mesh_ch9_ack_batch_queue_forwarded_gateway_ack(
+                forward_ack,
+                "forward-gateway-ack");
+            forward_queued_gateway_ack = ret == 0;
         } else if (mesh_forward_uses_gateway_batch_queue(&result->forward)) {
             ret = queue_anchor_report(&result->forward);
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -9857,7 +10006,7 @@ after_gateway_ack:
         } else {
             ret = mesh_start_tracked_tx(&result->forward, "forward");
         }
-        forward_sent = ret == 0;
+        forward_sent = ret == 0 && !forward_queued_gateway_ack;
         app_mesh_result_handoff_after_forward(result,
                                               forward_sent,
                                               DEVICE_ROLE == ROLE_ANCHOR,
@@ -10408,6 +10557,14 @@ bool mesh_process_queued_rx_now(const char *reason)
     int submit_ret;
 
     if (pending_count == 0u) {
+        return false;
+    }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && radio_guard_uwb_busy()) {
+        submit_ret = mesh_submit_work(&mesh_rx_work);
+        status_debug_printf("DBG_MESH_RX_DIRECT_RF_BUSY submit=%d q=%u reason=%s\n",
+                            submit_ret,
+                            k_msgq_num_used_get(&mesh_rx_msgq),
+                            reason == NULL ? "direct" : reason);
         return false;
     }
     mesh_coordinator_decide_now(reason == NULL ? "queued-rx" : reason,
