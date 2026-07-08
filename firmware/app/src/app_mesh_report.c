@@ -223,11 +223,15 @@ static struct mesh_outbound mesh_route_waiting_tx;
 static bool mesh_route_waiting_tx_valid;
 static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_uwb_rx_work;
+static struct k_work mesh_uwb_rx_rearm_work;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable report_tx_work;
 static struct k_work_delayable mesh_c5_flood_work;
 static struct k_work_delayable mesh_route_discovery_work;
 static struct k_work_delayable gateway_route_adv_work;
+static K_MUTEX_DEFINE(mesh_uwb_rx_rearm_lock);
+static uint32_t mesh_uwb_rx_rearm_delay_ms;
+static bool mesh_uwb_rx_rearm_pending;
 static uint32_t report_tx_backoff_until_ms;
 static uint32_t report_tx_retry_delay_override_ms;
 static bool report_tx_retry_delay_override_valid;
@@ -238,6 +242,7 @@ static const char *mesh_rx_handler_lock_owner;
 static uint32_t mesh_rx_handler_lock_since_ms;
 static uint32_t mesh_rx_window_log_next_ms;
 static uint32_t mesh_anchor_rx_yield_log_next_ms;
+static uint32_t gateway_rx_diag_next_ms;
 static uint32_t gateway_route_adv_seq;
 static uint32_t gateway_route_adv_due_ms;
 static uint32_t gateway_route_adv_response_due_ms;
@@ -464,6 +469,8 @@ static int mesh_prepare_event_timing(struct mesh_event_timing *timing, uint32_t 
 static uint32_t mesh_route_test_first_event_time_ms(uint32_t now_ms);
 static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t delay_ms);
 static int mesh_cancel_delayable(struct k_work_delayable *work);
+static int mesh_submit_work(struct k_work *work);
+static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
 static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                      size_t frame_len,
                                      uint8_t link_quality,
@@ -3091,14 +3098,116 @@ static void mesh_anchor_yield_idle_ch5_to_low_duty_scan(const char *reason)
     }
 }
 
+static int mesh_defer_uwb_rx_rearm(uint32_t delay_ms)
+{
+    int ret;
+
+    k_mutex_lock(&mesh_uwb_rx_rearm_lock, K_FOREVER);
+    mesh_uwb_rx_rearm_delay_ms = delay_ms;
+    mesh_uwb_rx_rearm_pending = true;
+    k_mutex_unlock(&mesh_uwb_rx_rearm_lock);
+
+    ret = mesh_submit_work(&mesh_uwb_rx_rearm_work);
+    if (mesh_gateway_route_test_role()) {
+        status_debug_printf("DBG_GATEWAY_RX_REARM_DEFER delay=%u ret=%d active=%u\n",
+                            delay_ms,
+                            ret,
+                            mesh_uwb_rx_active ? 1u : 0u);
+    }
+    return ret;
+}
+
+static bool mesh_take_deferred_uwb_rx_rearm(uint32_t *delay_ms)
+{
+    bool pending;
+
+    k_mutex_lock(&mesh_uwb_rx_rearm_lock, K_FOREVER);
+    pending = mesh_uwb_rx_rearm_pending;
+    if (pending) {
+        if (delay_ms != NULL) {
+            *delay_ms = mesh_uwb_rx_rearm_delay_ms;
+        }
+        mesh_uwb_rx_rearm_pending = false;
+    }
+    k_mutex_unlock(&mesh_uwb_rx_rearm_lock);
+    return pending;
+}
+
+static void mesh_clear_deferred_uwb_rx_rearm(void)
+{
+    k_mutex_lock(&mesh_uwb_rx_rearm_lock, K_FOREVER);
+    mesh_uwb_rx_rearm_pending = false;
+    k_mutex_unlock(&mesh_uwb_rx_rearm_lock);
+    (void)k_work_cancel(&mesh_uwb_rx_rearm_work);
+}
+
+static void mesh_uwb_rx_rearm_work_handler(struct k_work *work)
+{
+    uint32_t delay_ms = 0u;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (!mesh_take_deferred_uwb_rx_rearm(&delay_ms)) {
+        return;
+    }
+    if (!mesh_uwb_rx_active || !mesh_role_uses_uwb_rx()) {
+        return;
+    }
+
+    ret = mesh_reschedule_delayable(&mesh_uwb_rx_work, delay_ms);
+    if (ret == -EBUSY) {
+        (void)mesh_defer_uwb_rx_rearm(delay_ms);
+        return;
+    }
+    if (ret < 0) {
+        mesh_uwb_rx_active = false;
+    }
+    if (mesh_gateway_route_test_role()) {
+        status_debug_printf("DBG_GATEWAY_RX_REARM_RUN delay=%u ret=%d active=%u\n",
+                            delay_ms,
+                            ret,
+                            mesh_uwb_rx_active ? 1u : 0u);
+    }
+}
+
 static void mesh_schedule_uwb_rx(uint32_t delay_ms)
 {
+    int ret;
+    int defer_ret = 0;
+
     if (!mesh_role_uses_uwb_rx()) {
         return;
     }
 
     mesh_uwb_rx_active = true;
-    (void)mesh_reschedule_delayable(&mesh_uwb_rx_work, delay_ms);
+    ret = mesh_reschedule_delayable(&mesh_uwb_rx_work, delay_ms);
+    if (ret == -EBUSY) {
+        defer_ret = mesh_defer_uwb_rx_rearm(delay_ms);
+    }
+    if (ret < 0 && !(ret == -EBUSY && defer_ret >= 0)) {
+        mesh_uwb_rx_active = false;
+    }
+    if (mesh_gateway_route_test_role()) {
+        uint32_t now_ms = k_uptime_get_32();
+
+        if (ret < 0 ||
+            gateway_rx_diag_next_ms == 0u ||
+            uptime_deadline_reached(now_ms, gateway_rx_diag_next_ms)) {
+            gateway_rx_diag_next_ms = now_ms + 1000u;
+            status_debug_printf("DBG_GATEWAY_RX_SCHEDULE delay=%u ret=%d defer=%d qrx=%u qtx=%u relay=%u wait=%u ack=%u adv_due=%u active=%u\n",
+                                delay_ms,
+                                ret,
+                                defer_ret,
+                                k_msgq_num_used_get(&mesh_rx_msgq),
+                                k_msgq_num_used_get(&report_tx_msgq),
+                                mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
+                                mesh_route_waiting_tx_valid ? 1u : 0u,
+                                mesh_ch9_tx_pending.active ? 1u : 0u,
+                                gateway_route_adv_due_ms,
+                                mesh_uwb_rx_active ? 1u : 0u);
+        }
+    }
 }
 
 static bool mesh_route_test_keeps_radio_idle_between_channel9_turns(void)
@@ -3137,6 +3246,7 @@ static void mesh_release_radio_after_mesh_turn(bool channel9_turn,
 
 void mesh_stop_role_scan(void)
 {
+    mesh_clear_deferred_uwb_rx_rearm();
     if (mesh_uwb_rx_active) {
         (void)mesh_cancel_delayable(&mesh_uwb_rx_work);
         mesh_uwb_rx_active = false;
@@ -10612,6 +10722,12 @@ static bool mesh_queue_from_frame_at_internal(
                               context.payload,
                               sizeof(context.payload),
                               &context.payload_len) != PROTO_OK) {
+        if (mesh_gateway_route_test_role()) {
+            status_debug_printf("DBG_GATEWAY_RX_DECODE_FAIL ch=%u len=%u q=%u\n",
+                                radio_channel,
+                                (unsigned int)frame_len,
+                                link_quality);
+        }
         return false;
     }
     if (valid_mesh_frame != NULL) {
@@ -10619,6 +10735,18 @@ static bool mesh_queue_from_frame_at_internal(
     }
     if (previous_hop_id != NULL) {
         *previous_hop_id = context.previous_hop_id;
+    }
+    if (mesh_gateway_route_test_role()) {
+        status_debug_printf("DBG_GATEWAY_RX_DECODE ch=%u msg=0x%02x src=0x%llx dst=0x%llx prev=0x%llx seq=%u flags=0x%02x plen=%u q=%u\n",
+                            radio_channel,
+                            context.packet.msg_type,
+                            (unsigned long long)context.packet.src_id,
+                            (unsigned long long)context.packet.dst_id,
+                            (unsigned long long)context.previous_hop_id,
+                            context.packet.seq,
+                            context.packet.flags,
+                            (unsigned int)context.payload_len,
+                            link_quality);
     }
 
     pending.packet = context.packet;
@@ -11056,6 +11184,24 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
+    if (mesh_gateway_route_test_role()) {
+        uint32_t now_ms = k_uptime_get_32();
+
+        if (gateway_rx_diag_next_ms == 0u ||
+            uptime_deadline_reached(now_ms, gateway_rx_diag_next_ms)) {
+            gateway_rx_diag_next_ms = now_ms + 1000u;
+            status_debug_printf("DBG_GATEWAY_UWB_RX_WORK now=%u active=%u qrx=%u qtx=%u relay=%u wait=%u ack=%u adv_due=%u conn=%u\n",
+                                now_ms,
+                                mesh_uwb_rx_active ? 1u : 0u,
+                                k_msgq_num_used_get(&mesh_rx_msgq),
+                                k_msgq_num_used_get(&report_tx_msgq),
+                                mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
+                                mesh_route_waiting_tx_valid ? 1u : 0u,
+                                mesh_ch9_tx_pending.active ? 1u : 0u,
+                                gateway_route_adv_due_ms,
+                                mesh_channel9_connection_count());
+        }
+    }
     if (!mesh_role_uses_uwb_rx()) {
         mesh_uwb_rx_active = false;
         return;
@@ -11581,6 +11727,14 @@ int mesh_start_uwb_rx(const char *reason)
     }
 
     mesh_schedule_uwb_rx(0u);
+    if (mesh_gateway_route_test_role()) {
+        status_debug_printf("DBG_GATEWAY_RX_START reason=%s active=%u qrx=%u qtx=%u adv_due=%u\n",
+                            reason == NULL ? "start" : reason,
+                            mesh_uwb_rx_active ? 1u : 0u,
+                            k_msgq_num_used_get(&mesh_rx_msgq),
+                            k_msgq_num_used_get(&report_tx_msgq),
+                            gateway_route_adv_due_ms);
+    }
     LOG_INF("mesh UWB RX scheduled: role=%s window_ms=%u idle_ms=%u reason=%s",
             role_name(),
             mesh_uwb_rx_window_ms(),
@@ -11849,6 +12003,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
 #endif
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
     k_work_init_delayable(&mesh_uwb_rx_work, mesh_uwb_rx_work_handler);
+    k_work_init(&mesh_uwb_rx_rearm_work, mesh_uwb_rx_rearm_work_handler);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
     k_work_init_delayable(&mesh_c5_flood_work, mesh_c5_flood_work_handler);

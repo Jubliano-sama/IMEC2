@@ -269,8 +269,7 @@ bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
     if (previous_hop_id != gateway_id ||
         ack_packet->msg_type != MSG_GATEWAY_ACK ||
         ack_packet->src_id != gateway_id ||
-        ack_packet->dst_id != sent->packet.src_id ||
-        ack_packet->session_id != sent->packet.session_id) {
+        ack_packet->dst_id != sent->packet.src_id) {
         return false;
     }
 

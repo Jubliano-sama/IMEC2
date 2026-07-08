@@ -52,6 +52,33 @@ static size_t requested_seq_payload(uint8_t *payload, size_t payload_cap)
     return payload_len;
 }
 
+static size_t batched_ack_payload_with_matching_second(uint8_t *payload,
+                                                       size_t payload_cap)
+{
+    uint8_t seq_list[2u * sizeof(uint16_t)];
+    uint8_t session_list[2u * sizeof(uint32_t)];
+    size_t payload_len = 0u;
+
+    proto_put_u16_le(&seq_list[0], (uint16_t)(SENT_SEQ_TEST + 1u));
+    proto_put_u16_le(&seq_list[sizeof(uint16_t)], SENT_SEQ_TEST);
+    proto_put_u32_le(&session_list[0], SESSION_ID_TEST + 1u);
+    proto_put_u32_le(&session_list[sizeof(uint32_t)], SESSION_ID_TEST);
+
+    assert(tlv_append_bytes(payload,
+                            payload_cap,
+                            &payload_len,
+                            TLV_MESH_ACK_SESSION_LIST,
+                            session_list,
+                            sizeof(session_list)) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            payload_cap,
+                            &payload_len,
+                            TLV_MESH_ACK_SEQ_LIST,
+                            seq_list,
+                            sizeof(seq_list)) == PROTO_OK);
+    return payload_len;
+}
+
 static void test_ack_complete_keeps_idle_route_test_timing_open(void)
 {
     const struct app_mesh_ch9_ack_complete_state state = {
@@ -138,6 +165,43 @@ static void test_direct_gateway_ack_matches_local_source(void)
                                                payload_len,
                                                GATEWAY_ID_TEST,
                                                GATEWAY_ID_TEST));
+}
+
+static void test_direct_gateway_ack_matches_batched_session_list(void)
+{
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    const size_t payload_len =
+        batched_ack_payload_with_matching_second(payload, sizeof(payload));
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    struct proto_packet ack = gateway_ack(TRANSMITTER_ID,
+                                          (uint16_t)payload_len);
+
+    ack.session_id = SESSION_ID_TEST + 1u;
+
+    assert(app_mesh_direct_gateway_ack_matches(&sent,
+                                               &ack,
+                                               payload,
+                                               payload_len,
+                                               GATEWAY_ID_TEST,
+                                               GATEWAY_ID_TEST));
+}
+
+static void test_direct_gateway_legacy_ack_rejects_wrong_session(void)
+{
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    const size_t payload_len = requested_seq_payload(payload, sizeof(payload));
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    struct proto_packet ack = gateway_ack(TRANSMITTER_ID,
+                                          (uint16_t)payload_len);
+
+    ack.session_id = SESSION_ID_TEST + 1u;
+
+    assert(!app_mesh_direct_gateway_ack_matches(&sent,
+                                                &ack,
+                                                payload,
+                                                payload_len,
+                                                GATEWAY_ID_TEST,
+                                                GATEWAY_ID_TEST));
 }
 
 static void test_gateway_ack_relay_path_keeps_configured_in_flight_limit(void)
@@ -249,6 +313,8 @@ int main(void)
     test_direct_gateway_ack_matches_transit_original_source();
     test_direct_gateway_ack_rejects_relay_address_for_transit();
     test_direct_gateway_ack_matches_local_source();
+    test_direct_gateway_ack_matches_batched_session_list();
+    test_direct_gateway_legacy_ack_rejects_wrong_session();
     test_gateway_ack_relay_path_keeps_configured_in_flight_limit();
     test_anchor_tracks_transit_direct_gateway_send();
     test_local_direct_gateway_send_tracks_ack();
