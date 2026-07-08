@@ -11048,6 +11048,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     bool gateway_continuous_ch5 = false;
     bool frame_processed_inline = false;
     bool channel9_peer_observed = false;
+    uint16_t gateway_ch9_recoverable_rx_errors = 0u;
     uint32_t channel5_gap_window_ms = 0u;
     uint32_t route_adv_wait_ms = 0u;
     struct app_mesh_coordinator_decision coordinator_decision;
@@ -11168,6 +11169,12 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_note("DBG_GATEWAY_CH9_RX_RELEASE_IDLE\n");
                 }
+            } else if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                           ret, rx_failure)) {
+                if (gateway_ch9_recoverable_rx_errors < UINT16_MAX) {
+                    gateway_ch9_recoverable_rx_errors++;
+                }
+                (void)dwm3000_driver_idle();
             } else {
                 (void)dwm3000_driver_standby();
             }
@@ -11175,6 +11182,19 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             radio_guard_uwb_stop();
 
             if (ret != 0) {
+                if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                        ret, rx_failure)) {
+                    if (gateway_ch9_recoverable_rx_errors <= 3u ||
+                        (gateway_ch9_recoverable_rx_errors % 64u) == 0u) {
+                        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=%d fail=%u rem=%u errors=%u frames=%u\n",
+                                            ret,
+                                            (unsigned int)rx_failure,
+                                            remaining_ms,
+                                            gateway_ch9_recoverable_rx_errors,
+                                            channel9_frames_seen);
+                    }
+                    continue;
+                }
                 if (ret != -ETIMEDOUT) {
                     status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_FAIL ret=%d fail=%u\n",
                                         ret,
@@ -11192,13 +11212,15 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                               NULL,
                                               observed_packet_ms,
                                               NULL);
+            (void)mesh_process_queued_rx_now("gateway-ch9-continuous-rx");
         }
 
-        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_DONE ret=%d len=%u fail=%u frames=%u\n",
+        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_DONE ret=%d len=%u fail=%u frames=%u recover=%u\n",
                             ret,
                             (unsigned int)frame_len,
                             (unsigned int)rx_failure,
-                            channel9_frames_seen);
+                            channel9_frames_seen,
+                            gateway_ch9_recoverable_rx_errors);
         if (gateway_route_adv_due(k_uptime_get_32())) {
             status_debug_printf("DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=%u due=%u\n",
                                 k_uptime_get_32(),
