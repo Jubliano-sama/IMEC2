@@ -38,6 +38,7 @@ set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
     ml_anchor_8
     mesh_gateway
     mesh_transmitter
+    mesh_transmitter_forcedhop
     mesh_anchor_1
     mesh_anchor_2
     mesh_anchor_3
@@ -76,6 +77,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     ml_anchor_8
     mesh_gateway
     mesh_transmitter
+    mesh_transmitter_forcedhop
     mesh_anchor_1
     mesh_anchor_2
     mesh_anchor_3
@@ -175,7 +177,8 @@ if(IMEC_BUILD_PRESET)
             "Build the isolated mesh-routing test firmware variant" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Test Gateway" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
-    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter")
+    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter" OR
+           IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
@@ -318,6 +321,10 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS=3000\n"
             "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=8192\n"
             "CONFIG_LOG=n\n")
+        if(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
+            file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+                "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n")
+        endif()
     endif()
     list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
 endif()
