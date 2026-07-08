@@ -90,7 +90,8 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_PHY_OVERHEAD_US 1500u
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
 #define MESH_GATEWAY_RX_REARM_GUARD_MS 20u
-#define MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS 25u
+#define MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS 10u
+#define MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS 40u
 #define MESH_CH9_TX_CONFIG_GUARD_MS 25u
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
 #define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS 15u
@@ -160,6 +161,10 @@ BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MAX_MS >=
              "direct gateway probe retry backoff range must be ordered");
 BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS >= MESH_GATEWAY_RX_REARM_GUARD_MS,
              "direct gateway batches must leave time for gateway RX re-arm");
+BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS >=
+             MESH_GATEWAY_RX_REARM_GUARD_MS +
+             MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS,
+             "direct gateway batch gap must tolerate sender-side TX timing slop");
 BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS +
              MESH_CH9_TX_CONFIG_GUARD_MS < MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS,
              "direct gateway batch spacing must still leave payload TX time");
@@ -6541,8 +6546,10 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                        plan,
                        "queued-direct-gateway-batch");
 
+    uint32_t previous_frame_done_ms = 0u;
     for (uint8_t i = 0u; i < candidate_count; i++) {
         size_t sent_frame_len = 0u;
+        uint32_t done_ms;
 
         ret = mesh_send_outbound_preconfigured_ch9_locked(
             &report_tx_batch_candidates[i],
@@ -6587,11 +6594,14 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
             ack_wait_started = true;
         }
         sent_count++;
+        done_ms = k_uptime_get_32();
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            uint32_t done_ms = k_uptime_get_32();
+            uint32_t actual_gap_ms =
+                previous_frame_done_ms == 0u ? 0u :
+                uptime_ms_until_deadline(previous_frame_done_ms, done_ms);
 
-            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FRAME batch=%u sent=%u n=%u done=%u tx_end=%u rem=%u len=%u seq=%u final=%u\n",
+            status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FRAME batch=%u sent=%u n=%u done=%u tx_end=%u rem=%u len=%u seq=%u final=%u gap=%u\n",
                                 batch_id,
                                 sent_count,
                                 candidate_count,
@@ -6600,8 +6610,10 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                 uptime_ms_until_deadline(done_ms, tx_plan.end_ms),
                                 (unsigned int)sent_frame_len,
                                 report_tx_batch_candidates[i].packet.seq,
-                                i == candidate_count - 1u ? 1u : 0u);
+                                i == candidate_count - 1u ? 1u : 0u,
+                                actual_gap_ms);
         }
+        previous_frame_done_ms = done_ms;
     }
 
     (void)app_mesh_persistence_save_outbox(&mesh_runtime, k_uptime_get_32());
