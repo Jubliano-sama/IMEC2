@@ -90,8 +90,8 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_PHY_OVERHEAD_US 1500u
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
 #define MESH_GATEWAY_RX_REARM_GUARD_MS 20u
-#define MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS 10u
-#define MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS 30u
+#define MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS 5u
+#define MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS 25u
 #define MESH_CH9_TX_CONFIG_GUARD_MS 25u
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
 #define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS 15u
@@ -6526,10 +6526,11 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
         }
         report_tx_batch_candidates[candidate_count].earliest_tx_ms =
             send_start_ms;
-        fits = mesh_ch9_tx_fits_plan(&report_tx_batch_candidates[candidate_count],
-                                     &tx_plan,
-                                     now_ms,
-                                     &required_ms);
+        fits = mesh_ch9_tx_fits_configured_slot(&report_tx_batch_candidates[candidate_count],
+                                                &tx_plan,
+                                                now_ms,
+                                                send_start_ms,
+                                                &required_ms);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_FIT batch=%u n=%u now=%u start=%u tx_end=%u txstart=%u req=%u fit=%u seq=%u len=%u\n",
                                 batch_id,
@@ -7866,6 +7867,7 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
     uint32_t needed_ms;
     uint32_t available_ms;
     uint32_t effective_send_start_ms;
+    uint32_t wait_ms;
 
     if (out == NULL || plan == NULL || out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD) {
         return true;
@@ -7874,10 +7876,17 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
     needed_ms = mesh_ch9_estimated_tx_ms(mesh_outbound_encoded_frame_len(out)) +
                 MESH_CH9_TX_SLOT_TRAILER_MS;
     effective_send_start_ms = mesh_ch9_effective_send_start_ms(out, plan, now_ms);
+    wait_ms = uptime_deadline_reached(now_ms, effective_send_start_ms) ?
+              0u : effective_send_start_ms - now_ms;
+    if (uptime_deadline_reached(effective_send_start_ms, plan->end_ms)) {
+        if (required_ms != NULL) {
+            *required_ms = wait_ms + needed_ms;
+        }
+        return false;
+    }
     available_ms = uptime_ms_until_deadline(effective_send_start_ms, plan->end_ms);
     if (required_ms != NULL) {
-        *required_ms = uptime_ms_until_deadline(now_ms, effective_send_start_ms) +
-                       needed_ms;
+        *required_ms = wait_ms + needed_ms;
     }
     return available_ms >= needed_ms;
 }
@@ -7913,10 +7922,18 @@ static bool mesh_ch9_tx_fits_configured_slot(const struct mesh_outbound *out,
         return true;
     }
 
-    wait_ms = uptime_ms_until_deadline(now_ms, send_start_ms);
+    wait_ms = uptime_deadline_reached(now_ms, send_start_ms) ?
+              0u : send_start_ms - now_ms;
     needed_ms = wait_ms +
                 mesh_ch9_estimated_airtime_ms(mesh_outbound_encoded_frame_len(out)) +
                 MESH_CH9_TX_SLOT_TRAILER_MS;
+    if (uptime_deadline_reached(now_ms, plan->end_ms) ||
+        uptime_deadline_reached(send_start_ms, plan->end_ms)) {
+        if (required_ms != NULL) {
+            *required_ms = needed_ms;
+        }
+        return false;
+    }
     available_ms = uptime_ms_until_deadline(now_ms, plan->end_ms);
     if (required_ms != NULL) {
         *required_ms = needed_ms;
