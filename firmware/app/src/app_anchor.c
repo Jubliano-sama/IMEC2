@@ -40,7 +40,7 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
              "post-wake route RX buffer must still fit normal ranging schedules");
-BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 8192u,
+BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 12288u,
              "post-wake mesh route RX needs the enlarged anchor scan stack");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_BUSY_RETRY_MS > 0u,
              "blocked mesh route-test anchor scans must not spin at zero delay");
@@ -68,6 +68,7 @@ static const struct k_work_queue_config anchor_survey_work_q_config = {
 static uint16_t anchor_heartbeat_seq;
 static uint16_t anchor_survey_seq;
 static uint32_t anchor_ch5_scan_debug_next_ms;
+static uint8_t anchor_uwb_scan_frame[UWB_MESH_MAX_FRAME_LEN];
 static uint32_t anchor_heartbeat_interval_ms = ANCHOR_HEARTBEAT_DEFAULT_INTERVAL_MS;
 static bool anchor_reboot_pending;
 static uint32_t anchor_reboot_deadline_ms;
@@ -4462,7 +4463,7 @@ discovery_miss:
 
 static void anchor_uwb_scan_work_handler(struct k_work *work)
 {
-    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    uint8_t *frame = anchor_uwb_scan_frame;
     size_t frame_len = 0u;
     uint8_t quality = 0u;
     uint32_t next_scan_delay_ms = anchor_uwb_scan_interval_ms;
@@ -4596,7 +4597,7 @@ focused_scan_attempt:
     if (ret == 0) {
         ret = dwm3000_driver_receive_frame_continuous(ANCHOR_UWB_SCAN_RX_MS,
                                                       frame,
-                                                      sizeof(frame),
+                                                      UWB_MESH_MAX_FRAME_LEN,
                                                       &frame_len,
                                                       &quality,
                                                       NULL,
