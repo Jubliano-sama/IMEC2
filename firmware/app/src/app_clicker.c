@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "app_high_debug.h"
 #include "app_state.h"
+#include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "mesh_relay.h"
@@ -511,6 +512,60 @@ int app_clicker_attempt_gate(struct uwb_clicker_session *session,
     return 0;
 }
 
+static int clicker_wake_train_sniff_activity(const char *phase,
+                                             struct uwb_clicker_session *session,
+                                             uint8_t retry_index,
+                                             bool *activity)
+{
+    enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+    int ret;
+
+    if (activity == NULL) {
+        return -EINVAL;
+    }
+    *activity = false;
+
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = dwm3000_driver_sniff_activity(APP_WAKE_TRAIN_POLITE_SNIFF_MS,
+                                        &rx_failure);
+    (void)dwm3000_driver_standby();
+
+    *activity = app_wake_train_politeness_rx_activity(ret, rx_failure);
+    if (*activity) {
+        LOG_INF("clicker wake train C5 activity during %s sniff: event_seq=%u attempt=%u retry=%u ret=%d failure=%u",
+                phase == NULL ? "unknown" : phase,
+                session != NULL ? session->config.click_event_id : 0u,
+                session != NULL ? session->attempt_index : 0u,
+                retry_index,
+                ret,
+                (unsigned int)rx_failure);
+        return 0;
+    }
+
+    return ret == -ETIMEDOUT ? 0 : ret;
+}
+
+static void clicker_wake_train_backoff(struct uwb_clicker_session *session,
+                                       const char *phase,
+                                       uint8_t retry_index)
+{
+    uint32_t delay_ms = app_wake_train_politeness_backoff_ms(
+        retry_index,
+        sys_rand32_get());
+
+    LOG_INF("clicker wake train deferred after C5 activity: event_seq=%u attempt=%u retry=%u/%u phase=%s backoff_ms=%u",
+            session != NULL ? session->config.click_event_id : 0u,
+            session != NULL ? session->attempt_index : 0u,
+            (uint32_t)retry_index + 1u,
+            APP_WAKE_TRAIN_POLITE_MAX_RETRIES,
+            phase == NULL ? "unknown" : phase,
+            delay_ms);
+    k_msleep(delay_ms);
+}
+
 static uint16_t clicker_claimed_duration_ms(
     uint16_t wake_train_ends_in_ms,
     const struct app_clicker_wake_train_config *config)
@@ -526,124 +581,175 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
                                       const struct app_clicker_wake_train_config *config)
 {
     uint8_t frame[UWB_WAKE_CLAIM_LEN];
-    size_t frame_len = 0u;
-    int64_t close_ms;
-    uint16_t sent_count = 0u;
-    int ret;
+    uint8_t polite_retry = 0u;
+    int ret = -EAGAIN;
 
     if (session == NULL || config == NULL) {
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB WAKE_CLAIM train");
-    if (ret < 0) {
-        status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
-        LOG_WRN("clicker UWB WAKE_CLAIM guard failed: ret=%d", ret);
-        return ret;
-    }
-    status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
-    stage1_led_phase(STAGE1_LED_PHASE_WAKE);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
+    while (polite_retry <= APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
+        size_t frame_len = 0u;
+        int64_t close_ms;
+        uint16_t sent_count = 0u;
+        bool c5_activity = false;
+        const char *activity_phase = NULL;
 
-    status_debug_note("DBG_WAKE_TRAIN_CONFIG_BEGIN\n");
-    ret = dwm3000_driver_configure_wake_mode();
-    if (ret < 0) {
-        status_debug_note("DBG_WAKE_TRAIN_CONFIG_FAIL\n");
-        LOG_WRN("clicker UWB WAKE_CLAIM wake-mode config failed: ret=%d",
-                ret);
-        goto out;
-    }
-    status_debug_note("DBG_WAKE_TRAIN_CONFIG_OK\n");
-
-    high_debug_log_event("WAKE_CLAIM_TX",
-                         "phase=start event_seq=%u attempt=%u duration_ms=%u",
-                         session->config.click_event_id,
-                         session->attempt_index,
-                         config->wake_adv_ms);
-    close_ms = k_uptime_get() + config->wake_adv_ms;
-    while (k_uptime_get() < close_ms) {
-        struct uwb_wake_claim_frame claim;
-        int64_t remaining_ms = close_ms - k_uptime_get();
-        uint16_t remaining_u16 = delay_ms_to_u16(remaining_ms);
-
-        ret = uwb_clicker_build_wake_claim(session,
-                                           priority_id,
-                                           remaining_u16,
-                                           remaining_u16,
-                                           clicker_claimed_duration_ms(remaining_u16, config),
-                                           &claim);
-        if (ret != PROTO_OK) {
-            status_debug_note("DBG_WAKE_TRAIN_BUILD_FAIL\n");
-            LOG_WRN("clicker UWB WAKE_CLAIM build failed: proto_ret=%d",
-                    ret);
-            ret = -EINVAL;
-            break;
-        }
-        ret = uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len);
-        if (ret != PROTO_OK) {
-            status_debug_note("DBG_WAKE_TRAIN_ENCODE_FAIL\n");
-            LOG_WRN("clicker UWB WAKE_CLAIM encode failed: proto_ret=%d",
-                    ret);
-            ret = -EINVAL;
-            break;
-        }
-
-        if (sent_count == 0u) {
-            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_BEGIN\n");
-        }
-        ret = dwm3000_driver_send_frame(frame,
-                                        frame_len,
-                                        config->control_tx_timeout_ms);
+        ret = radio_guard_uwb_start("clicker UWB WAKE_CLAIM train");
         if (ret < 0) {
-            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_FAIL\n");
-            LOG_WRN("clicker UWB WAKE_CLAIM send failed: sent=%u ret=%d frame_len=%u",
-                    sent_count,
-                    ret,
-                    (unsigned int)frame_len);
-            break;
+            status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
+            LOG_WRN("clicker UWB WAKE_CLAIM guard failed: ret=%d", ret);
+            return ret;
         }
-        if (sent_count == 0u) {
-            status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_OK\n");
+        status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
+
+        ret = clicker_wake_train_sniff_activity("pre",
+                                                session,
+                                                polite_retry,
+                                                &c5_activity);
+        if (ret < 0) {
+            goto attempt_out;
         }
-        status_debug_tx_wake_claim_sent_pulse();
-        sent_count++;
-        HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
-        uwb_clicker_note_wake_claim_tx(session, 1u);
+        if (c5_activity) {
+            activity_phase = "pre";
+            ret = -EAGAIN;
+            goto attempt_out;
+        }
 
-        if (k_uptime_get() < close_ms) {
-            uint32_t jitter_us = uwb_clicker_wake_claim_jitter_us(sys_rand32_get());
-            int64_t remaining_after_tx_ms = close_ms - k_uptime_get();
+        stage1_led_phase(STAGE1_LED_PHASE_WAKE);
+        stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
-            if (jitter_us > 0u && remaining_after_tx_ms > 0) {
-                k_busy_wait(jitter_us);
+        status_debug_note("DBG_WAKE_TRAIN_CONFIG_BEGIN\n");
+        ret = dwm3000_driver_configure_wake_mode();
+        if (ret < 0) {
+            status_debug_note("DBG_WAKE_TRAIN_CONFIG_FAIL\n");
+            LOG_WRN("clicker UWB WAKE_CLAIM wake-mode config failed: ret=%d",
+                    ret);
+            goto attempt_out;
+        }
+        status_debug_note("DBG_WAKE_TRAIN_CONFIG_OK\n");
+
+        high_debug_log_event("WAKE_CLAIM_TX",
+                             "phase=start event_seq=%u attempt=%u duration_ms=%u retry=%u",
+                             session->config.click_event_id,
+                             session->attempt_index,
+                             config->wake_adv_ms,
+                             polite_retry);
+        close_ms = k_uptime_get() + config->wake_adv_ms;
+        while (k_uptime_get() < close_ms) {
+            struct uwb_wake_claim_frame claim;
+            int64_t remaining_ms = close_ms - k_uptime_get();
+            uint16_t remaining_u16 = delay_ms_to_u16(remaining_ms);
+
+            ret = uwb_clicker_build_wake_claim(
+                session,
+                priority_id,
+                remaining_u16,
+                remaining_u16,
+                clicker_claimed_duration_ms(remaining_u16, config),
+                &claim);
+            if (ret != PROTO_OK) {
+                status_debug_note("DBG_WAKE_TRAIN_BUILD_FAIL\n");
+                LOG_WRN("clicker UWB WAKE_CLAIM build failed: proto_ret=%d",
+                        ret);
+                ret = -EINVAL;
+                break;
+            }
+            ret = uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len);
+            if (ret != PROTO_OK) {
+                status_debug_note("DBG_WAKE_TRAIN_ENCODE_FAIL\n");
+                LOG_WRN("clicker UWB WAKE_CLAIM encode failed: proto_ret=%d",
+                        ret);
+                ret = -EINVAL;
+                break;
+            }
+
+            if (sent_count == 0u) {
+                status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_BEGIN\n");
+            }
+            ret = dwm3000_driver_send_frame(frame,
+                                            frame_len,
+                                            config->control_tx_timeout_ms);
+            if (ret < 0) {
+                status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_FAIL\n");
+                LOG_WRN("clicker UWB WAKE_CLAIM send failed: sent=%u ret=%d frame_len=%u",
+                        sent_count,
+                        ret,
+                        (unsigned int)frame_len);
+                break;
+            }
+            if (sent_count == 0u) {
+                status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_OK\n");
+            }
+            status_debug_tx_wake_claim_sent_pulse();
+            sent_count++;
+            HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
+            uwb_clicker_note_wake_claim_tx(session, 1u);
+
+            if (k_uptime_get() < close_ms) {
+                uint32_t jitter_us =
+                    uwb_clicker_wake_claim_jitter_us(sys_rand32_get());
+                int64_t remaining_after_tx_ms = close_ms - k_uptime_get();
+
+                if (jitter_us > 0u && remaining_after_tx_ms > 0) {
+                    k_busy_wait(jitter_us);
+                }
             }
         }
-    }
 
-out:
-    (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
-    if (ret < 0) {
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
-        LOG_WRN("clicker UWB WAKE_CLAIM train failed: sent=%u ret=%d",
+        if (ret >= 0 && sent_count > 0u) {
+            ret = clicker_wake_train_sniff_activity("post",
+                                                    session,
+                                                    polite_retry,
+                                                    &c5_activity);
+            if (ret < 0) {
+                goto attempt_out;
+            }
+            if (c5_activity) {
+                activity_phase = "post";
+                ret = -EAGAIN;
+                goto attempt_out;
+            }
+        }
+
+attempt_out:
+        (void)dwm3000_driver_standby();
+        radio_guard_uwb_stop();
+        if (ret == -EAGAIN && c5_activity &&
+            polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
+            clicker_wake_train_backoff(session, activity_phase, polite_retry);
+            polite_retry++;
+            continue;
+        }
+        if (ret < 0) {
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            LOG_WRN("clicker UWB WAKE_CLAIM train failed: sent=%u ret=%d retry=%u activity=%u phase=%s",
+                    sent_count,
+                    ret,
+                    polite_retry,
+                    c5_activity ? 1u : 0u,
+                    activity_phase == NULL ? "none" : activity_phase);
+            return ret;
+        }
+
+        stage1_led_result(sent_count == 0u ?
+                          STAGE1_LED_RESULT_TIMEOUT :
+                          STAGE1_LED_RESULT_OK);
+        high_debug_log_event("WAKE_CLAIM_TX",
+                             "phase=done event_seq=%u attempt=%u sent=%u duration_ms=%u retry=%u",
+                             session->config.click_event_id,
+                             session->attempt_index,
+                             sent_count,
+                             config->wake_adv_ms,
+                             polite_retry);
+        LOG_INF("clicker UWB WAKE_CLAIM train complete: sent=%u duration_ms=%u retry=%u",
                 sent_count,
-                ret);
-        return ret;
+                config->wake_adv_ms,
+                polite_retry);
+        return sent_count == 0u ? -ETIMEDOUT : 0;
     }
 
-    stage1_led_result(sent_count == 0u ?
-                      STAGE1_LED_RESULT_TIMEOUT :
-                      STAGE1_LED_RESULT_OK);
-    high_debug_log_event("WAKE_CLAIM_TX",
-                         "phase=done event_seq=%u attempt=%u sent=%u duration_ms=%u",
-                         session->config.click_event_id,
-                         session->attempt_index,
-                         sent_count,
-                         config->wake_adv_ms);
-    LOG_INF("clicker UWB WAKE_CLAIM train complete: sent=%u duration_ms=%u",
-            sent_count,
-            config->wake_adv_ms);
-    return sent_count == 0u ? -ETIMEDOUT : 0;
+    return ret;
 }
 
 static void clicker_log_range_schedule_entries(const struct uwb_range_schedule_frame *schedule)

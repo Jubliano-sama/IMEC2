@@ -3387,6 +3387,61 @@ int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
                                                false);
 }
 
+int dwm3000_driver_sniff_activity(uint32_t timeout_ms,
+                                  enum dwm3000_rx_failure *failure)
+{
+    uint32_t status = 0u;
+    enum dwm3000_rx_failure local_failure = DWM3000_RX_FAILURE_NONE;
+    bool activity_seen;
+    int ret;
+
+    if (timeout_ms == 0u) {
+        return -EINVAL;
+    }
+    if (failure != NULL) {
+        *failure = DWM3000_RX_FAILURE_NONE;
+    }
+
+    ret = ensure_current_phy_or_range();
+    if (ret < 0) {
+        return ret;
+    }
+
+    dwt_setpreambledetecttimeout(0u);
+    dwt_setrxtimeout(0u);
+    clear_all_events();
+    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
+        return -EIO;
+    }
+
+    driver_stats.rx_starts++;
+    ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
+                               timeout_ms,
+                               &status,
+                               false);
+    ARG_UNUSED(ret);
+    activity_seen = rx_status_has_activity(status);
+    dwt_forcetrxoff();
+    clear_status(RX_CLEAR_STATUS_MASK);
+    if (!activity_seen) {
+        driver_stats.rx_timeouts++;
+        if (failure != NULL) {
+            *failure = DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
+        }
+        return -ETIMEDOUT;
+    }
+
+    local_failure = status_to_rx_failure(status);
+    if (local_failure == DWM3000_RX_FAILURE_NONE &&
+        (status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
+        local_failure = DWM3000_RX_FAILURE_FRAME_TIMEOUT;
+    }
+    if (failure != NULL) {
+        *failure = local_failure;
+    }
+    return 0;
+}
+
 int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                             uint8_t *frame,
                                             size_t frame_cap,

@@ -157,6 +157,8 @@ int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
                                                 uint8_t *quality,
                                                 int8_t *rsl_dbm,
                                                 enum dwm3000_rx_failure *failure);
+int dwm3000_driver_sniff_activity(uint32_t timeout_ms,
+                                  enum dwm3000_rx_failure *failure);
 int dwm3000_driver_receive_frame_continuous(uint32_t timeout_ms,
                                             uint8_t *frame,
                                             size_t frame_cap,

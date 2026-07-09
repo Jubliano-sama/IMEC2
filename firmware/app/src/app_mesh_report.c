@@ -22,6 +22,7 @@
 #include "app_mesh_test.h"
 #include "app_mesh_tx_handoff_gate.h"
 #include "app_state.h"
+#include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
 #include "mesh.h"
 #include "mesh_preemption.h"
@@ -5466,6 +5467,80 @@ static uint16_t mesh_route_wake_claimed_duration_ms(
     return claimed_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)claimed_ms;
 }
 
+static int mesh_route_wake_sniff_activity(const char *phase,
+                                          uint64_t target_id,
+                                          const char *reason,
+                                          uint8_t retry_index,
+                                          bool *activity)
+{
+    enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+    int ret;
+
+    if (activity == NULL) {
+        return -EINVAL;
+    }
+    *activity = false;
+
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = dwm3000_driver_sniff_activity(APP_WAKE_TRAIN_POLITE_SNIFF_MS,
+                                        &rx_failure);
+    (void)dwm3000_driver_standby();
+
+    *activity = app_wake_train_politeness_rx_activity(ret, rx_failure);
+    if (*activity) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_MESH_WAKE_POLITE_ACTIVITY phase=%s target=0x%llx retry=%u ret=%d fail=%u reason=%s\n",
+                                phase == NULL ? "unknown" : phase,
+                                (unsigned long long)target_id,
+                                retry_index,
+                                ret,
+                                (unsigned int)rx_failure,
+                                reason == NULL ? "route" : reason);
+        }
+        LOG_INF("mesh route wake train C5 activity during %s sniff: target=0x%016llx retry=%u ret=%d failure=%u reason=%s",
+                phase == NULL ? "unknown" : phase,
+                (unsigned long long)target_id,
+                retry_index,
+                ret,
+                (unsigned int)rx_failure,
+                reason == NULL ? "route" : reason);
+        return 0;
+    }
+
+    return ret == -ETIMEDOUT ? 0 : ret;
+}
+
+static void mesh_route_wake_backoff(uint64_t target_id,
+                                    const char *phase,
+                                    const char *reason,
+                                    uint8_t retry_index)
+{
+    uint32_t delay_ms = app_wake_train_politeness_backoff_ms(
+        retry_index,
+        sys_rand32_get());
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_MESH_WAKE_POLITE_BACKOFF phase=%s target=0x%llx retry=%u/%u delay=%u reason=%s\n",
+                            phase == NULL ? "unknown" : phase,
+                            (unsigned long long)target_id,
+                            (uint32_t)retry_index + 1u,
+                            APP_WAKE_TRAIN_POLITE_MAX_RETRIES,
+                            delay_ms,
+                            reason == NULL ? "route" : reason);
+    }
+    LOG_INF("mesh route wake train deferred after C5 activity: target=0x%016llx retry=%u/%u phase=%s backoff_ms=%u reason=%s",
+            (unsigned long long)target_id,
+            (uint32_t)retry_index + 1u,
+            APP_WAKE_TRAIN_POLITE_MAX_RETRIES,
+            phase == NULL ? "unknown" : phase,
+            delay_ms,
+            reason == NULL ? "route" : reason);
+    k_msleep(delay_ms);
+}
+
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
@@ -5487,6 +5562,9 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     int64_t close_ms;
     uint16_t sent_count = 0u;
     uint16_t embedded_count = 0u;
+    uint8_t polite_retry = 0u;
+    bool c5_activity = false;
+    const char *activity_phase = NULL;
     int ret;
 
     if (embedded_sent != NULL) {
@@ -5557,17 +5635,25 @@ static int mesh_send_route_wake_train(uint64_t target_id,
         }
     }
 
+wake_train_attempt:
+    sent_count = 0u;
+    embedded_count = 0u;
+    c5_activity = false;
+    activity_phase = NULL;
+
     mesh_stop_role_scan();
     high_debug_log_event("MESH_CH5_WAKE_TX",
-                         "phase=start target=0x%016llx event_seq=%u embed=%u reason=%s",
+                         "phase=start target=0x%016llx event_seq=%u embed=%u retry=%u reason=%s",
                          (unsigned long long)target_id,
                          event_seq,
                          embed_route ? 1u : 0u,
+                         polite_retry,
                          reason == NULL ? "route" : reason);
-    LOG_INF("mesh route channel-5 wake train start: target=0x%016llx event_seq=%u embed=%u reason=%s",
+    LOG_INF("mesh route channel-5 wake train start: target=0x%016llx event_seq=%u embed=%u retry=%u reason=%s",
             (unsigned long long)target_id,
             event_seq,
             embed_route ? 1u : 0u,
+            polite_retry,
             reason == NULL ? "route" : reason);
     mesh_c5_contact_open(target_id,
                          C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
@@ -5588,6 +5674,21 @@ static int mesh_send_route_wake_train(uint64_t target_id,
         goto out_unlock;
     }
     status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
+
+    ret = mesh_route_wake_sniff_activity("pre",
+                                         target_id,
+                                         reason,
+                                         polite_retry,
+                                         &c5_activity);
+    if (ret < 0) {
+        goto out;
+    }
+    if (c5_activity) {
+        activity_phase = "pre";
+        ret = -EAGAIN;
+        goto out;
+    }
+
     stage1_led_phase(STAGE1_LED_PHASE_WAKE);
     stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
@@ -5715,6 +5816,22 @@ static int mesh_send_route_wake_train(uint64_t target_id,
         }
     }
 
+    if (ret >= 0 && sent_count > 0u) {
+        ret = mesh_route_wake_sniff_activity("post",
+                                             target_id,
+                                             reason,
+                                             polite_retry,
+                                             &c5_activity);
+        if (ret < 0) {
+            goto out;
+        }
+        if (c5_activity) {
+            activity_phase = "post";
+            ret = -EAGAIN;
+            goto out;
+        }
+    }
+
 out:
     (void)dwm3000_driver_standby();
     radio_guard_uwb_stop();
@@ -5722,19 +5839,34 @@ out:
     if (ret < 0) {
         stage1_led_result(STAGE1_LED_RESULT_ERROR);
         mesh_c5_contact_clear("wake-train-fail");
+        if (ret == -EAGAIN && c5_activity &&
+            polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
+            mesh_restart_role_scan();
+            mesh_route_wake_backoff(target_id,
+                                    activity_phase,
+                                    reason,
+                                    polite_retry);
+            polite_retry++;
+            goto wake_train_attempt;
+        }
         high_debug_log_event("MESH_CH5_WAKE_TX",
-                             "phase=fail target=0x%016llx event_seq=%u ret=%d wake_claims=%u embedded=%u reason=%s",
+                             "phase=fail target=0x%016llx event_seq=%u ret=%d wake_claims=%u embedded=%u retry=%u activity=%u reason=%s",
                              (unsigned long long)target_id,
                              event_seq,
                              ret,
                              sent_count,
                              embedded_count,
+                             polite_retry,
+                             c5_activity ? 1u : 0u,
                              reason == NULL ? "route" : reason);
-        LOG_WRN("mesh route channel-5 wake train failed: target=0x%016llx ret=%d wake_claims=%u embedded=%u reason=%s",
+        LOG_WRN("mesh route channel-5 wake train failed: target=0x%016llx ret=%d wake_claims=%u embedded=%u retry=%u activity=%u phase=%s reason=%s",
                 (unsigned long long)target_id,
                 ret,
                 sent_count,
                 embedded_count,
+                polite_retry,
+                c5_activity ? 1u : 0u,
+                activity_phase == NULL ? "none" : activity_phase,
                 reason == NULL ? "route" : reason);
         goto out_unlock;
     }

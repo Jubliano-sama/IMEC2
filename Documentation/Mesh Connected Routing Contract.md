@@ -61,6 +61,14 @@ will prove the new behavior.
   offer an alternate route.
 - Route-request wake trains must be clearly distinguishable from click/ranging
   wake trains.
+- Every wake train must be channel-5 activity polite. Before transmitting the
+  train, and again immediately after the train, the transmitter must sample
+  channel 5 for a fixed 5 ms slice. Any valid frame or RF progress that reaches
+  SFD/frame/CRC/bad-frame failure status counts as activity, even when the
+  packet cannot be decoded. Activity in either slice defers the entire wake
+  train and retries it after randomized exponential backoff in the 200-2000 ms
+  range. The wake-train politeness slices are probes only; unlike anchor
+  low-duty scanning, they do not extend into a longer receive window.
 - An anchor has at most one upstream channel 9 connection and one downstream
   channel 9 connection. A connected anchor must not answer new route requests
   because no extra channel 9 rhythm is available for a second route.

@@ -368,6 +368,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_route_wait_tx.c
     src/app_mesh_gateway_ack_policy.c
     src/app_mesh_result_handoff.c
+    src/app_wake_train_politeness.c
     src/app_mesh_report.c
     src/app_stack_diag.c
     src/app_anchor.c

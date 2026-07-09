@@ -9,6 +9,7 @@
 #include "app_mesh_test.h"
 #include "app_state.h"
 #include "app_stack_diag.h"
+#include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "gateway_command.h"
@@ -95,6 +96,13 @@ BUILD_ASSERT(UWB_CLICKER_CLAIMED_DURATION_MS <=
 BUILD_ASSERT(UWB_POLITE_RELEVANT_FRAME_WAIT_MS <=
              UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
              "decoded UWB politeness wait fallback must stay bounded");
+BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_SNIFF_MS == 5u,
+             "wake trains must sniff channel 5 for 5 ms before and after TX");
+BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_BACKOFF_MIN_MS == 200u &&
+             APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS == 2000u,
+             "wake train C5 activity backoff must stay within 200-2000 ms");
+BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_MAX_RETRIES > 0u,
+             "wake train C5 activity guard must have at least one retry");
 BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES == 2u,
              "BLE courtesy edge sampling expects one quiet UWB sample at each window edge");
 BUILD_ASSERT((2u * UWB_POLITE_SAMPLE_RX_MS) <= BLE_COURTESY_MIN_WINDOW_MS,

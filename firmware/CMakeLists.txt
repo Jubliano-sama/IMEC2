@@ -105,6 +105,14 @@ target_include_directories(test_app_mesh_flood PRIVATE app/src)
 target_link_libraries(test_app_mesh_flood PRIVATE core)
 add_test(NAME app_mesh_flood COMMAND test_app_mesh_flood)
 
+add_executable(test_app_wake_train_politeness
+    tests/test_app_wake_train_politeness.c
+    app/src/app_wake_train_politeness.c
+)
+target_include_directories(test_app_wake_train_politeness PRIVATE app/src)
+target_link_libraries(test_app_wake_train_politeness PRIVATE core)
+add_test(NAME app_wake_train_politeness COMMAND test_app_wake_train_politeness)
+
 add_executable(test_app_mesh_rx_policy
     tests/test_app_mesh_rx_policy.c
     app/src/app_mesh_rx_policy.c
