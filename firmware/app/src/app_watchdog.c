@@ -15,13 +15,10 @@
 
 LOG_MODULE_REGISTER(app_watchdog, LOG_LEVEL_INF);
 
-#define APP_WATCHDOG_TIMEOUT_MS 10000u
 #define APP_WATCHDOG_CHECK_MS 1000u
-#define APP_WATCHDOG_LEASE_MAX_AGE_MS 5000u
-#define APP_WATCHDOG_STARTUP_GRACE_MS 15000u
 
-BUILD_ASSERT(APP_WATCHDOG_LEASE_MAX_AGE_MS + APP_WATCHDOG_CHECK_MS <
-             APP_WATCHDOG_TIMEOUT_MS,
+BUILD_ASSERT(APP_WATCHDOG_PROGRESS_LEASE_MS + APP_WATCHDOG_CHECK_MS <
+             APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
              "watchdog lease must expire before the hardware timeout");
 
 static const struct device *const watchdog_device =
@@ -32,13 +29,13 @@ static atomic_t system_progress_ms;
 static atomic_t radio_progress_ms;
 static atomic_t feeding_stopped;
 static uint32_t startup_grace_until_ms;
+static bool stale_reported;
 static int watchdog_channel = -1;
 static struct app_watchdog_health watchdog_health;
 
-static bool lease_stale(uint32_t now_ms, atomic_t *lease)
+static uint32_t lease_age_ms(uint32_t now_ms, atomic_t *lease)
 {
-    return (uint32_t)(now_ms - (uint32_t)atomic_get(lease)) >
-           APP_WATCHDOG_LEASE_MAX_AGE_MS;
+    return (uint32_t)(now_ms - (uint32_t)atomic_get(lease));
 }
 
 static bool radio_lease_required(void)
@@ -60,6 +57,8 @@ static void system_progress_work_handler(struct k_work *work)
 static void watchdog_timer_handler(struct k_timer *timer)
 {
     uint32_t now_ms = k_uptime_get_32();
+    uint32_t system_age_ms;
+    uint32_t radio_age_ms;
     bool system_stale;
     bool radio_stale;
 
@@ -68,13 +67,25 @@ static void watchdog_timer_handler(struct k_timer *timer)
     if (atomic_get(&feeding_stopped) != 0 || watchdog_channel < 0) {
         return;
     }
-    system_stale = lease_stale(now_ms, &system_progress_ms);
-    radio_stale = radio_lease_required() && lease_stale(now_ms, &radio_progress_ms);
+    system_age_ms = lease_age_ms(now_ms, &system_progress_ms);
+    radio_age_ms = lease_age_ms(now_ms, &radio_progress_ms);
+    system_stale = system_age_ms > APP_WATCHDOG_PROGRESS_LEASE_MS;
+    radio_stale = radio_lease_required() &&
+                  radio_age_ms > APP_WATCHDOG_PROGRESS_LEASE_MS;
     if ((int32_t)(now_ms - startup_grace_until_ms) < 0) {
         system_stale = false;
         radio_stale = false;
     }
     if (system_stale || radio_stale) {
+        if (!stale_reported) {
+            LOG_ERR("watchdog progress stale: system_age_ms=%u radio_age_ms=%u system_stale=%u radio_stale=%u lease_ms=%u",
+                    system_age_ms,
+                    radio_age_ms,
+                    system_stale ? 1u : 0u,
+                    radio_stale ? 1u : 0u,
+                    APP_WATCHDOG_PROGRESS_LEASE_MS);
+            stale_reported = true;
+        }
         if (system_stale && watchdog_health.stale_system_leases < UINT32_MAX) {
             watchdog_health.stale_system_leases++;
         }
@@ -82,6 +93,12 @@ static void watchdog_timer_handler(struct k_timer *timer)
             watchdog_health.stale_radio_leases++;
         }
         return;
+    }
+    if (stale_reported) {
+        LOG_INF("watchdog progress recovered: system_age_ms=%u radio_age_ms=%u",
+                system_age_ms,
+                radio_age_ms);
+        stale_reported = false;
     }
     if (wdt_feed(watchdog_device, watchdog_channel) == 0 &&
         watchdog_health.feeds < UINT32_MAX) {
@@ -94,7 +111,7 @@ int app_watchdog_init(void)
     const struct wdt_timeout_cfg timeout = {
         .window = {
             .min = 0u,
-            .max = APP_WATCHDOG_TIMEOUT_MS,
+            .max = APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
         },
         .callback = NULL,
         .flags = WDT_FLAG_RESET_SOC,
@@ -107,6 +124,7 @@ int app_watchdog_init(void)
     atomic_set(&system_progress_ms, (atomic_val_t)now_ms);
     atomic_set(&radio_progress_ms, (atomic_val_t)now_ms);
     atomic_clear(&feeding_stopped);
+    stale_reported = false;
     startup_grace_until_ms = now_ms + APP_WATCHDOG_STARTUP_GRACE_MS;
 
     if (watchdog_device == NULL || !device_is_ready(watchdog_device)) {
@@ -132,8 +150,9 @@ int app_watchdog_init(void)
     k_timer_start(&watchdog_timer,
                   K_MSEC(APP_WATCHDOG_CHECK_MS),
                   K_MSEC(APP_WATCHDOG_CHECK_MS));
-    LOG_INF("hardware watchdog active: timeout_ms=%u reset_cause=0x%08x",
-            APP_WATCHDOG_TIMEOUT_MS,
+    LOG_INF("hardware watchdog active: timeout_ms=%u lease_ms=%u reset_cause=0x%08x",
+            APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
+            APP_WATCHDOG_PROGRESS_LEASE_MS,
             watchdog_health.reset_cause);
     return 0;
 }

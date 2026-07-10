@@ -89,6 +89,11 @@ void mesh_event_timing_set_local_first_slot_tx(struct mesh_event_timing *timing,
 bool mesh_event_timing_local_tx_slot(const struct mesh_event_timing *timing);
 bool mesh_event_timing_local_rx_slot(const struct mesh_event_timing *timing);
 uint32_t mesh_event_guard_start_ms(const struct mesh_event_timing *timing);
+void mesh_event_timing_reanchor_after_control_tx(
+    struct mesh_event_timing *timing,
+    uint32_t tx_done_ms,
+    uint32_t encoded_delay_ms,
+    uint32_t rx_reference_offset_ms);
 int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
                              const struct mesh_channel5_requirements *requirements,
                              uint32_t now_ms,

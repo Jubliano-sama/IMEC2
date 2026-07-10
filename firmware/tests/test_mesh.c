@@ -266,6 +266,32 @@ static void test_channel9_accept_reanchors_after_wake_train_delay(void)
     assert(accepted_by_origin.next_event_time_ms != proposal.next_event_time_ms);
 }
 
+static void test_channel9_sender_reanchors_to_control_tx_completion(void)
+{
+    struct mesh_event_timing timing = {
+        .mesh_channel = MESH_EVENT_CHANNEL,
+        .event_interval_ms = 300u,
+        .local_tx_on_even_events = false,
+    };
+    uint32_t peer_start_ms;
+
+    mesh_event_timing_reanchor_after_control_tx(&timing, 1720u, 610u, 10u);
+    peer_start_ms = (1720u - 10u) + 610u;
+    assert(timing.next_event_time_ms == 2320u);
+    assert(timing.next_event_time_ms == peer_start_ms);
+    assert(timing.mesh_channel == MESH_EVENT_CHANNEL);
+    assert(timing.event_interval_ms == 300u);
+    assert(!timing.local_tx_on_even_events);
+
+    mesh_event_timing_reanchor_after_control_tx(&timing, 108040u, 519u, 10u);
+    peer_start_ms = (108040u - 10u) + 519u;
+    assert(timing.next_event_time_ms == 108549u);
+    assert(timing.next_event_time_ms == peer_start_ms);
+
+    mesh_event_timing_reanchor_after_control_tx(&timing, 500u, 5u, 10u);
+    assert(timing.next_event_time_ms == 501u);
+}
+
 static void test_channel9_event_planner_reserves_channel5_scan(void)
 {
     struct mesh_event_timing timing = {0};
@@ -437,8 +463,18 @@ static void test_channel9_skip_elapsed_advances_to_next_live_slot(void)
     assert(mesh_event_skip_elapsed(&timing, 1319u, &diagnostics) == 3u);
     assert(timing.next_event_time_ms == 1300u);
     assert(timing.event_counter == 3u);
-    assert(timing.missed_event_count == 3u);
-    assert(diagnostics.ch9_event_misses == 3u);
+    assert(timing.missed_event_count == 1u);
+    assert(diagnostics.ch9_event_misses == 1u);
+    assert(timing.timing_fresh);
+    assert(!timing.fallback_required);
+
+    assert(mesh_event_skip_elapsed(&timing, 1419u, &diagnostics) == 1u);
+    assert(timing.next_event_time_ms == 1400u);
+    assert(timing.event_counter == 4u);
+    assert(timing.missed_event_count == 2u);
+    assert(diagnostics.ch9_event_misses == 2u);
+    assert(!timing.timing_fresh);
+    assert(timing.fallback_required);
 }
 
 static void test_channel9_traffic_refreshes_supervision_timeout(void)
@@ -486,6 +522,7 @@ int main(void)
     test_channel9_first_slot_direction_follows_initiator();
     test_channel9_timing_crosses_uptime_domains_as_relative_delay();
     test_channel9_accept_reanchors_after_wake_train_delay();
+    test_channel9_sender_reanchors_to_control_tx_completion();
     test_channel9_event_planner_reserves_channel5_scan();
     test_channel9_event_planner_keeps_negotiated_window_when_late();
     test_channel9_observed_rx_keeps_negotiated_cadence();

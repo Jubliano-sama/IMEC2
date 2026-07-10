@@ -492,10 +492,10 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
 uint32_t route_retry_backoff_ms(uint8_t failure_count)
 {
     if (failure_count <= 1u) {
-        return 1500u;
+        return ROUTE_RETRY_BACKOFF_FIRST_MS;
     }
     if (failure_count == 2u) {
-        return 3000u;
+        return ROUTE_RETRY_BACKOFF_SECOND_MS;
     }
-    return 6000u;
+    return ROUTE_RETRY_BACKOFF_MAX_MS;
 }

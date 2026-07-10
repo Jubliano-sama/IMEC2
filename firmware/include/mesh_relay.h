@@ -19,9 +19,15 @@ extern "C" {
 #define MESH_RELAY_FLOOD_SEEN_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
-#define MESH_RELAY_ROUTE_DISCOVERY_MAX_ATTEMPTS 5u
-#define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 250u
-#define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 4000u
+#define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 1000u
+#define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 60000u
+#define MESH_RELAY_RETRY_BACKOFF_MAX_MS \
+    (ROUTE_RETRY_BACKOFF_MAX_MS + (ROUTE_RETRY_BACKOFF_MAX_MS / 2u))
+#define MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS \
+    ((ROUTE_GATEWAY_ACK_TIMEOUT_MS * (ROUTE_RETRIES_PER_CANDIDATE + 1u)) + \
+     ROUTE_RETRY_BACKOFF_FIRST_MS + (ROUTE_RETRY_BACKOFF_FIRST_MS / 2u) + \
+     ROUTE_RETRY_BACKOFF_SECOND_MS + (ROUTE_RETRY_BACKOFF_SECOND_MS / 2u) + \
+     MESH_RELAY_RETRY_BACKOFF_MAX_MS)
 #define FLOOD_EPOCH_LOCAL_TTL 2u
 #define FLOOD_EPOCH_REGIONAL_TTL 4u
 #define FLOOD_EPOCH_GLOBAL_TTL 8u
@@ -34,7 +40,7 @@ extern "C" {
 #define FLOOD_RELAY_REPEAT_MS 40u
 #define FLOOD_RELAY_REPEAT_COUNT 4u
 #define FLOOD_POST_ROOT_GUARD_MS 150u
-#define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 2500u
+#define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 4200u
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
 #define C5_POLITE_SNIFF_MS 20u
@@ -43,6 +49,10 @@ extern "C" {
 #define C5_POLITE_DEFERRAL_MAX 8u
 #define RREP_ACK_TIMEOUT_MS 150u
 #define RREP_RETRY_COUNT_PER_HOP 4u
+#define RREP_RESPONDER_SLOT_MS 25u
+#define RREP_RESPONDER_SLOT_COUNT 8u
+#define RREP_RESPONDER_JITTER_MAX_MS \
+    ((RREP_RESPONDER_SLOT_COUNT - 1u) * RREP_RESPONDER_SLOT_MS)
 #define REVERSE_PATH_CANDIDATE_COUNT 2u
 #define RELAY_BUSY_RETRY_MIN_MS 500u
 #define RELAY_BUSY_RETRY_MAX_MS 5000u
@@ -270,6 +280,7 @@ enum mesh_relay_channel9_guard_reason {
     MESH_RELAY_CHANNEL9_GUARD_AMBIGUOUS_ACTIVE_PEER = 3,
     MESH_RELAY_CHANNEL9_GUARD_TOO_MANY_PEERS = 4,
     MESH_RELAY_CHANNEL9_GUARD_DIRECTION_BUSY = 5,
+    MESH_RELAY_CHANNEL9_GUARD_INTERVAL_CONFLICT = 6,
 };
 
 struct mesh_relay_channel9_guard_status {
@@ -490,6 +501,7 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
                                              size_t payload_len,
                                              uint64_t previous_hop_id,
                                              uint32_t now_ms,
+                                             uint32_t random_value,
                                              struct mesh_outbound *out);
 void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
                                            uint64_t target_id);

@@ -124,6 +124,9 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                     uint8_t radio_channel,
                                     bool *valid_mesh_frame,
                                     uint64_t *previous_hop_id);
+bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
+                                          size_t frame_len,
+                                          uint8_t link_quality);
 void mesh_submit_queued_rx(void);
 bool mesh_process_queued_rx_now(const char *reason);
 int mesh_start_uwb_rx(const char *reason);

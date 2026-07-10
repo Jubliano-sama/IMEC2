@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 180000u
+#define APP_WATCHDOG_PROGRESS_LEASE_MS 120000u
+#define APP_WATCHDOG_STARTUP_GRACE_MS 30000u
+
 struct app_watchdog_health {
     uint32_t feeds;
     uint32_t stale_system_leases;

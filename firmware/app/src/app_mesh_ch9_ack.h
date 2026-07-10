@@ -75,10 +75,23 @@ bool app_mesh_ch9_tx_should_track_ack(const struct proto_packet *packet,
 
 bool app_mesh_ch9_tx_should_track_sent(const struct mesh_outbound *sent,
                                        uint64_t local_id);
+bool app_mesh_ch9_core_ack_wait_active(const struct mesh_pending_tx *pending,
+                                       bool relay_tx_active);
 
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,
                                       uint8_t configured_max);
+bool app_mesh_ch9_tx_requires_tracked_single(const struct proto_packet *packet,
+                                             uint64_t next_hop_id,
+                                             uint8_t configured_max);
+bool app_mesh_ch9_retry_next_local_tx_prepare_ms(
+    const struct mesh_event_timing *timing,
+    uint16_t minimum_guard_ms,
+    uint32_t *prepare_ms);
+bool app_mesh_ch9_wait_plan_retry_delay_ms(uint32_t now_ms,
+                                          uint32_t event_start_ms,
+                                          uint16_t minimum_guard_ms,
+                                          uint32_t *delay_ms);
 
 bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
     const struct mesh_outbound *outbound,

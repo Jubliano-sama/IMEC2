@@ -63,6 +63,12 @@ bool app_mesh_c5_route_capture_relevant(
                state->previous_hop_id != state->local_id;
     }
 
+    if (state->msg_type == MSG_ROUTE_REQ) {
+        return state->src_id == state->target_id &&
+               state->dst_id == MESH_BROADCAST_ID &&
+               state->previous_hop_id == state->target_id;
+    }
+
     if (event_control_type(state->msg_type)) {
         return state->dst_id == state->local_id;
     }
@@ -73,7 +79,8 @@ bool app_mesh_c5_route_capture_relevant(
 bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type)
 {
     return msg_type == MSG_ROUTE_REPLY ||
-           msg_type == MSG_GATEWAY_ROUTE_ADV;
+           msg_type == MSG_GATEWAY_ROUTE_ADV ||
+           msg_type == MSG_ROUTE_REQ;
 }
 
 bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type)
@@ -122,27 +129,36 @@ uint32_t app_mesh_c5_route_reply_listen_window_ms(
     uint8_t route_ttl,
     const struct app_mesh_c5_route_reply_window_timing *timing)
 {
+    uint64_t per_forward_hop_ms;
+    uint64_t total_ms;
     uint32_t post_wake_route_ms;
-    uint32_t window_ms;
+    uint8_t bounded_ttl;
 
     if (timing == NULL) {
         return 0u;
     }
 
-    (void)route_ttl;
     post_wake_route_ms = timing->post_wake_route_rx_ms;
     if (post_wake_route_ms < timing->wake_to_route_delay_ms) {
         post_wake_route_ms = timing->wake_to_route_delay_ms;
     }
 
-    window_ms = timing->direct_gateway_probe_ms +
-                post_wake_route_ms +
-                timing->route_reply_exchange_ms +
-                timing->guard_ms;
-    if (window_ms < timing->base_reply_window_ms) {
+    bounded_ttl = route_ttl == 0u ? 1u : route_ttl;
+    total_ms = (uint64_t)post_wake_route_ms +
+               RREP_RESPONDER_JITTER_MAX_MS +
+               timing->route_reply_exchange_ms +
+               timing->guard_ms;
+    per_forward_hop_ms = (uint64_t)timing->wake_train_ms +
+                         post_wake_route_ms +
+                         timing->request_flood_burst_ms +
+                         timing->flood_forward_wave_ms +
+                         timing->route_reply_exchange_ms +
+                         timing->guard_ms;
+    total_ms += (uint64_t)(bounded_ttl - 1u) * per_forward_hop_ms;
+    if (total_ms < timing->base_reply_window_ms) {
         return timing->base_reply_window_ms;
     }
-    return window_ms;
+    return total_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)total_ms;
 }
 
 uint32_t app_mesh_c5_route_adv_response_delay_ms(

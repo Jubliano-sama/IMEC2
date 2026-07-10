@@ -290,7 +290,7 @@ static void test_direct_gateway_legacy_ack_rejects_wrong_session(void)
                                                 GATEWAY_ID_TEST));
 }
 
-static void test_gateway_ack_relay_path_keeps_configured_in_flight_limit(void)
+static void test_gateway_ack_relay_path_uses_single_core_tracked_packet(void)
 {
     struct proto_packet packet = {
         .msg_type = MSG_MESH_DATA,
@@ -299,7 +299,121 @@ static void test_gateway_ack_relay_path_keeps_configured_in_flight_limit(void)
         .dst_id = GATEWAY_ID_TEST,
     };
 
-    assert(app_mesh_ch9_tx_max_in_flight(&packet, RELAY_ID, 8u) == 8u);
+    assert(app_mesh_ch9_tx_max_in_flight(&packet, RELAY_ID, 8u) == 1u);
+    assert(app_mesh_ch9_tx_requires_tracked_single(&packet, RELAY_ID, 8u));
+
+    packet.flags = 0u;
+    assert(!app_mesh_ch9_tx_requires_tracked_single(&packet, RELAY_ID, 8u));
+}
+
+static void test_final_destination_batch_only_bypasses_core_for_batchable_data(void)
+{
+    struct proto_packet packet = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = TRANSMITTER_ID,
+        .dst_id = GATEWAY_ID_TEST,
+    };
+
+    assert(!app_mesh_ch9_tx_requires_tracked_single(&packet,
+                                                     GATEWAY_ID_TEST,
+                                                     8u));
+
+    packet.msg_type = MSG_COMMAND_RESULT;
+    assert(app_mesh_ch9_tx_requires_tracked_single(&packet,
+                                                    GATEWAY_ID_TEST,
+                                                    8u));
+}
+
+static void test_retry_waits_for_next_local_tx_slot(void)
+{
+    struct mesh_event_timing timing = {
+        .event_interval_ms = 440u,
+        .next_event_time_ms = 105045u,
+        .event_counter = 23u,
+        .guard_ms = 20u,
+        .local_tx_on_even_events = true,
+    };
+    uint32_t prepare_ms = 0u;
+
+    assert(app_mesh_ch9_retry_next_local_tx_prepare_ms(&timing,
+                                                       30u,
+                                                       &prepare_ms));
+    assert(prepare_ms == 105455u);
+    assert(timing.next_event_time_ms == 105045u);
+    assert(timing.event_counter == 23u);
+
+    timing.event_counter = 24u;
+    assert(!app_mesh_ch9_retry_next_local_tx_prepare_ms(&timing,
+                                                        30u,
+                                                        &prepare_ms));
+}
+
+static void test_wait_plan_retries_at_slot_prepare_boundary(void)
+{
+    uint32_t delay_ms = 0u;
+
+    assert(app_mesh_ch9_wait_plan_retry_delay_ms(315561u,
+                                                  315727u,
+                                                  30u,
+                                                  &delay_ms));
+    assert(delay_ms == 136u);
+
+    assert(app_mesh_ch9_wait_plan_retry_delay_ms(315710u,
+                                                  315727u,
+                                                  30u,
+                                                  &delay_ms));
+    assert(delay_ms == 1u);
+
+    assert(app_mesh_ch9_wait_plan_retry_delay_ms(UINT32_MAX - 100u,
+                                                  50u,
+                                                  30u,
+                                                  &delay_ms));
+    assert(delay_ms == 121u);
+    assert(!app_mesh_ch9_wait_plan_retry_delay_ms(1u, 0u, 30u, &delay_ms));
+}
+
+static void test_relay_path_stays_out_of_final_ack_batch_tracker(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    sent.next_hop_id = RELAY_ID;
+    assert(!app_mesh_ch9_tx_should_track_sent(&sent, RELAY_ID));
+}
+
+static void test_relay_path_core_ack_wait_requires_channel9(void)
+{
+    struct mesh_pending_tx pending = {
+        .state = MESH_RELAY_TX_WAIT_GATEWAY_ACK,
+        .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .next_hop_id = RELAY_ID,
+    };
+
+    assert(app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(!app_mesh_ch9_core_ack_wait_active(&pending, false));
+
+    pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+    pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+}
+
+static void test_durable_gateway_result_stays_in_core_tracker(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(RELAY_ID);
+
+    sent.packet.msg_type = MSG_COMMAND_RESULT;
+    assert(!app_mesh_ch9_tx_should_track_sent(&sent, RELAY_ID));
+    assert(app_mesh_ch9_tx_max_in_flight(&sent.packet,
+                                         GATEWAY_ID_TEST,
+                                         8u) == 1u);
+
+    sent.packet.msg_type = MSG_RESULT_BUNDLE;
+    assert(!app_mesh_ch9_tx_should_track_sent(&sent, RELAY_ID));
+    assert(app_mesh_ch9_tx_max_in_flight(&sent.packet,
+                                         GATEWAY_ID_TEST,
+                                         8u) == 1u);
 }
 
 static void test_anchor_tracks_transit_direct_gateway_send(void)
@@ -447,7 +561,13 @@ int main(void)
     test_direct_gateway_ack_matches_local_source();
     test_direct_gateway_ack_matches_batched_session_list();
     test_direct_gateway_legacy_ack_rejects_wrong_session();
-    test_gateway_ack_relay_path_keeps_configured_in_flight_limit();
+    test_gateway_ack_relay_path_uses_single_core_tracked_packet();
+    test_final_destination_batch_only_bypasses_core_for_batchable_data();
+    test_retry_waits_for_next_local_tx_slot();
+    test_wait_plan_retries_at_slot_prepare_boundary();
+    test_relay_path_stays_out_of_final_ack_batch_tracker();
+    test_relay_path_core_ack_wait_requires_channel9();
+    test_durable_gateway_result_stays_in_core_tracker();
     test_anchor_tracks_transit_direct_gateway_send();
     test_downstream_pressure_drops_transit_timeout();
     test_downstream_pressure_defers_nonpriority_local_timeout();

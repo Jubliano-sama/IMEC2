@@ -220,6 +220,23 @@ uint32_t mesh_event_guard_start_ms(const struct mesh_event_timing *timing)
     return timing->next_event_time_ms - guard_ms;
 }
 
+void mesh_event_timing_reanchor_after_control_tx(
+    struct mesh_event_timing *timing,
+    uint32_t tx_done_ms,
+    uint32_t encoded_delay_ms,
+    uint32_t rx_reference_offset_ms)
+{
+    uint32_t delay_after_rx_ms = 1u;
+
+    if (timing == NULL) {
+        return;
+    }
+    if (encoded_delay_ms > rx_reference_offset_ms) {
+        delay_after_rx_ms = encoded_delay_ms - rx_reference_offset_ms;
+    }
+    timing->next_event_time_ms = tx_done_ms + delay_after_rx_ms;
+}
+
 int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
                              const struct mesh_channel5_requirements *requirements,
                              uint32_t now_ms,
@@ -378,7 +395,12 @@ uint8_t mesh_event_skip_elapsed(struct mesh_event_timing *timing,
         if (!time_reached(now_ms, event_end_ms)) {
             break;
         }
-        mesh_event_note_missed(timing, diagnostics);
+        if (mesh_event_timing_local_rx_slot(timing)) {
+            mesh_event_note_missed(timing, diagnostics);
+        } else {
+            timing->next_event_time_ms += timing->event_interval_ms;
+            timing->event_counter++;
+        }
         skipped++;
     }
 

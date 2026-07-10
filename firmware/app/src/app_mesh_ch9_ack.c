@@ -200,8 +200,20 @@ bool app_mesh_ch9_tx_should_track_sent(const struct mesh_outbound *sent,
     return sent->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
            sent->next_hop_id != 0u &&
            sent->next_hop_id != local_id &&
+           sent->next_hop_id == sent->packet.dst_id &&
            sent->packet.dst_id != local_id &&
+           sent->packet.msg_type != MSG_COMMAND_RESULT &&
+           sent->packet.msg_type != MSG_RESULT_BUNDLE &&
            (sent->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
+bool app_mesh_ch9_core_ack_wait_active(const struct mesh_pending_tx *pending,
+                                       bool relay_tx_active)
+{
+    return relay_tx_active && pending != NULL &&
+           pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
+           pending->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+           pending->next_hop_id != 0u;
 }
 
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
@@ -215,7 +227,70 @@ uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
         return configured_max;
     }
 
+    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+        (next_hop_id != packet->dst_id ||
+         packet->msg_type == MSG_COMMAND_RESULT ||
+         packet->msg_type == MSG_RESULT_BUNDLE)) {
+        return 1u;
+    }
+
     return configured_max;
+}
+
+bool app_mesh_ch9_tx_requires_tracked_single(const struct proto_packet *packet,
+                                             uint64_t next_hop_id,
+                                             uint8_t configured_max)
+{
+    return packet != NULL && configured_max > 0u &&
+           app_mesh_ch9_tx_max_in_flight(packet,
+                                         next_hop_id,
+                                         configured_max) == 1u;
+}
+
+bool app_mesh_ch9_retry_next_local_tx_prepare_ms(
+    const struct mesh_event_timing *timing,
+    uint16_t minimum_guard_ms,
+    uint32_t *prepare_ms)
+{
+    struct mesh_event_timing next;
+    uint32_t guard_ms;
+
+    if (timing == NULL || prepare_ms == NULL ||
+        timing->event_interval_ms == 0u ||
+        mesh_event_timing_local_tx_slot(timing)) {
+        return false;
+    }
+
+    next = *timing;
+    next.next_event_time_ms += next.event_interval_ms;
+    next.event_counter++;
+    if (!mesh_event_timing_local_tx_slot(&next)) {
+        return false;
+    }
+
+    guard_ms = next.guard_ms > minimum_guard_ms ?
+               next.guard_ms : minimum_guard_ms;
+    *prepare_ms = next.next_event_time_ms > guard_ms ?
+                  next.next_event_time_ms - guard_ms : 1u;
+    return true;
+}
+
+bool app_mesh_ch9_wait_plan_retry_delay_ms(uint32_t now_ms,
+                                          uint32_t event_start_ms,
+                                          uint16_t minimum_guard_ms,
+                                          uint32_t *delay_ms)
+{
+    uint32_t prepare_ms;
+    int32_t delta_ms;
+
+    if (event_start_ms == 0u || delay_ms == NULL) {
+        return false;
+    }
+
+    prepare_ms = event_start_ms - minimum_guard_ms;
+    delta_ms = (int32_t)(prepare_ms - now_ms);
+    *delay_ms = delta_ms > 0 ? (uint32_t)delta_ms : 1u;
+    return true;
 }
 
 bool app_mesh_ch9_tx_timeout_counts_gateway_failure(

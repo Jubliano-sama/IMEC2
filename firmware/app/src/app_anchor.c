@@ -1436,14 +1436,6 @@ static int anchor_apply_discovery_assignment_command(
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
         return anchor_schedule_discovery_claim(packet, epoch);
     }
-    if (anchor_discovery_assignment_requested_epoch != 0u &&
-        anchor_discovery_assignment_requested_epoch != epoch) {
-        LOG_WRN("anchor ignored discovery-slot table for unexpected epoch: expected=%u received=%u",
-                anchor_discovery_assignment_requested_epoch,
-                epoch);
-        return -ESTALE;
-    }
-
     ret = discovery_assignment_parse_table_tlvs(payload,
                                                 payload_len,
                                                 entries,
@@ -2924,10 +2916,6 @@ static int gateway_discovery_assignment_publish_table(void)
         if (gateway_discovery_assignment_state.table_command_seq == 0u) {
             gateway_discovery_assignment_state.table_command_seq = 1u;
         }
-    } else {
-        gateway_discovery_assignment_state.table_command_seq =
-            gateway_discovery_assignment_next_command_seq(
-                gateway_discovery_assignment_state.table_command_seq);
     }
     if (ret == PROTO_OK) {
         ret = gateway_build_discovery_assignment_command(
@@ -2971,7 +2959,6 @@ static int gateway_discovery_assignment_publish_table(void)
                         ret);
     gateway_discovery_assignment_state.stage =
         GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS;
-    gateway_discovery_assignment_state.ack_mask = 0u;
     gateway_discovery_assignment_state.round_open = ret == 0;
     if (ret == 0) {
         (void)k_work_reschedule(
@@ -5237,6 +5224,16 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     if (first_claim == NULL) {
         return false;
     }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+        !app_mesh_c5_wake_claim_requires_anchor_handoff(first_claim->flags,
+                                                         true)) {
+        status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_REJECT_CLICK_PATH src=0x%llx evt=%u attempt=%u flags=0x%02x\n",
+                            (unsigned long long)first_claim->clicker_id,
+                            first_claim->click_event_id,
+                            first_claim->attempt_index,
+                            first_claim->flags);
+        return false;
+    }
     if (retained_sleep_us != NULL) {
         *retained_sleep_us = 0u;
     }
@@ -5329,6 +5326,17 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                     ret,
                     wake_decode_failure_name(failure),
                     (unsigned int)frame_len);
+            continue;
+        }
+
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+            !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
+                                                             true)) {
+            status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_DROP_DURING_CLICK src=0x%llx evt=%u attempt=%u flags=0x%02x\n",
+                                (unsigned long long)claim.clicker_id,
+                                claim.click_event_id,
+                                claim.attempt_index,
+                                claim.flags);
             continue;
         }
 
@@ -5962,6 +5970,9 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     int64_t focused_spin_deadline_ms = -1;
     bool handled_claim = false;
     bool deferred_mesh_rx_queued = false;
+    bool route_wake_handoff = false;
+    size_t route_wake_frame_len = 0u;
+    uint8_t route_wake_quality = 0u;
     bool route_waiting_active = false;
     bool relay_tx_active = false;
     bool mesh_rx_active = false;
@@ -6140,6 +6151,21 @@ focused_scan_attempt:
         }
         stage1_anchor_focused_note_rx_frame(frame_len, quality, decode_ret);
         if (decode_ret == PROTO_OK) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+                !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
+                                                                 true)) {
+                route_wake_handoff = true;
+                route_wake_frame_len = frame_len;
+                route_wake_quality = quality;
+                status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_DISPATCH src=0x%llx evt=%u attempt=%u flags=0x%02x len=%u q=%u\n",
+                                    (unsigned long long)claim.clicker_id,
+                                    claim.click_event_id,
+                                    claim.attempt_index,
+                                    claim.flags,
+                                    (unsigned int)frame_len,
+                                    quality);
+                goto scan_complete;
+            }
             stage1_anchor_focused_note_wake_claim(&claim);
             if (anchor_handle_uwb_claim(&claim,
                                         quality,
@@ -6275,6 +6301,23 @@ scan_complete:
     radio_guard_uwb_stop();
     anchor_set_uwb_busy(false);
     anchor_click_window_set_active(false);
+    if (route_wake_handoff) {
+        bool handed_off = mesh_anchor_handoff_route_wake_frame(
+            frame,
+            route_wake_frame_len,
+            route_wake_quality);
+
+        status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_DISPATCH_DONE handled=%u len=%u q=%u\n",
+                            handed_off ? 1u : 0u,
+                            (unsigned int)route_wake_frame_len,
+                            route_wake_quality);
+        if (!handed_off) {
+            LOG_ERR("route-class wake claim handoff failed after anchor scan released radio");
+        }
+        if (next_scan_delay_ms < ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS) {
+            next_scan_delay_ms = ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS;
+        }
+    }
     if (deferred_mesh_rx_queued &&
         next_scan_delay_ms < ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS) {
         next_scan_delay_ms = ANCHOR_UWB_SCAN_DEFERRED_MESH_RX_GAP_MS;
@@ -6453,6 +6496,12 @@ int app_anchor_start_anchor_role(void)
             }
         } else if (ret < 0 && ret != -ENOENT && ret != -ENOTSUP) {
             LOG_WRN("anchor discovery assignment restore unavailable: %d", ret);
+        }
+        if (!local_anchor_discovery_assignment_get(&snapshot.epoch,
+                                                   &snapshot.slot,
+                                                   &snapshot.slot_count)) {
+            status_debug_note("DBG_DISCOVERY_SLOT_UNPROVISIONED\n");
+            LOG_WRN("anchor has no discovery-slot assignment; waiting for gateway assignment command");
         }
     }
     ret = uwb_anchor_session_init(&anchor_uwb_session, &anchor_config);

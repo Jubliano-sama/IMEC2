@@ -61,7 +61,15 @@ Until the production-successor presets are renamed, always state and verify the
 exact preset and probe-to-board mapping before flashing; do not infer behavior
 from the generic role name alone.
 
-Zephyr role builds:
+Production-candidate mesh role builds:
+
+```sh
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-clicker -- -DIMEC_BUILD_PRESET=mesh_clicker
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor-1 -- -DIMEC_BUILD_PRESET=mesh_anchor_1
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-gateway -- -DIMEC_BUILD_PRESET=mesh_gateway
+```
+
+Legacy regression role builds:
 
 ```sh
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-clicker -- -DFIRMWARE_ROLE=clicker
@@ -95,6 +103,15 @@ ML collection builds:
 For deterministic ML anchors, replace `build/ml-anchor-2` and `ml_anchor_2` with the anchor slot being programmed, such as `build/ml-anchor-3` / `ml_anchor_3` through `build/ml-anchor-8` / `ml_anchor_8`. Each preset assigns a unique `DEVICE_ID` and deterministic discovery slot.
 
 Flash the exact build directory for the image you intend to program; do not rely on west's previous build context:
+
+```sh
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-clicker -- --frequency 4000000
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor-1 -- --frequency 4000000
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-gateway -- --frequency 4000000
+```
+
+The following flash commands are only for legacy regression and ML collection
+images; do not use them for connected-routing hardware tests:
 
 ```sh
 .venv/bin/west flash --runner pyocd --build-dir build/firmware-clicker -- --frequency 4000000

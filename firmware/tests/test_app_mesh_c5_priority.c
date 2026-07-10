@@ -117,6 +117,14 @@ static void test_route_reply_and_event_control_capture_rules(void)
         .target_id = 0x9999888877776666ull,
         .local_id = 0x3333333333333301ull,
     };
+    const struct app_mesh_c5_route_capture_state route_request = {
+        .msg_type = MSG_ROUTE_REQ,
+        .src_id = 0x3333333333333301ull,
+        .dst_id = MESH_BROADCAST_ID,
+        .previous_hop_id = 0x3333333333333301ull,
+        .target_id = 0x3333333333333301ull,
+        .local_id = 0x2222222222222301ull,
+    };
 
     assert(app_mesh_c5_route_capture_relevant(&route_reply));
     assert(app_mesh_c5_route_capture_completes_discovery(route_reply.msg_type));
@@ -133,6 +141,11 @@ static void test_route_reply_and_event_control_capture_rules(void)
     assert(!app_mesh_c5_route_capture_requires_inline_timing_install(
         MSG_MESH_EVENT_ACCEPT,
         false));
+    assert(app_mesh_c5_route_capture_relevant(&route_request));
+    assert(app_mesh_c5_route_capture_completes_discovery(
+        route_request.msg_type));
+    assert(!app_mesh_c5_route_capture_requires_ack_hold(
+        route_request.msg_type));
 }
 
 static void test_channel5_control_phr_policy(void)
@@ -159,6 +172,9 @@ static void test_wake_claim_click_priority_policy(void)
 {
     assert(!app_mesh_c5_wake_claim_preempts_mesh(FLAG_DIAGNOSTIC |
                                                  FLAG_RANGE_ONLY));
+    assert(!app_mesh_c5_wake_claim_preempts_mesh(FLAG_ROUTE_SETUP |
+                                                 FLAG_DIAGNOSTIC |
+                                                 FLAG_RANGE_ONLY));
     assert(app_mesh_c5_wake_claim_preempts_mesh(FLAG_DIAGNOSTIC));
     assert(app_mesh_c5_wake_claim_preempts_mesh(0u));
     assert(app_mesh_c5_wake_claim_preempts_mesh(FLAG_COUNT_AS_CLICK));
@@ -170,6 +186,8 @@ static void test_wake_claim_click_priority_policy(void)
         FLAG_COUNT_AS_CLICK, true));
     assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(
         FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY, true));
+    assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(
+        FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY, true));
     assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(0u, false));
     assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(
         FLAG_COUNT_AS_CLICK, false));
@@ -229,11 +247,14 @@ static void test_route_reply_window_covers_direct_probe_and_reply_exchange(void)
     uint32_t ttl8_window =
         app_mesh_c5_route_reply_listen_window_ms(8u, &timing);
 
-    assert(ttl1_window == 2625u);
-    assert(ttl2_window == 2625u);
-    assert(ttl4_window == 2625u);
-    assert(ttl8_window == 2625u);
+    assert(ttl1_window == 2600u);
+    assert(ttl2_window == 7425u);
+    assert(ttl4_window == 17075u);
+    assert(ttl8_window == 36375u);
     assert(ttl1_window > timing.base_reply_window_ms);
+    assert(ttl1_window < ttl2_window);
+    assert(ttl2_window < ttl4_window);
+    assert(ttl4_window < ttl8_window);
 }
 
 static void test_connected_gap_window_uses_channel5_until_retune_guard(void)
