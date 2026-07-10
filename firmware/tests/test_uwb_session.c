@@ -182,7 +182,7 @@ static void test_clicker_builds_wake_claim_and_rejects_bad_timing(void)
                                         1365u,
                                         &claim) == PROTO_ERR_ARG);
     assert(uwb_clicker_build_discover(&session, &discover) == PROTO_OK);
-    assert(discover.discovery_slot_count == config.max_anchor_count);
+    assert(discover.discovery_slot_count == UWB_DISCOVERY_SLOT_COUNT);
 
     session.state = UWB_CLICKER_RANGING;
     assert(uwb_clicker_build_wake_claim(&session,

@@ -102,7 +102,7 @@ static void test_queue_full_counts_drop(void)
     assert(diag.max_queue_depth_observed == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
 }
 
-static void test_oversize_click_is_rejected_and_diagnostic_is_truncated(void)
+static void test_max_size_click_is_preserved_and_oversize_is_rejected(void)
 {
     struct gateway_ble_stream_state state;
     struct gateway_ble_stream_diagnostics diag;
@@ -113,6 +113,18 @@ static void test_oversize_click_is_rejected_and_diagnostic_is_truncated(void)
     size_t record_len = 0u;
 
     fill_payload(payload, sizeof(payload));
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN,
+                                             0u,
+                                             1u,
+                                             true) == 1);
+    assert(gateway_ble_stream_peek(&state, &record, &record_len) == 0);
+    assert(record_len == GATEWAY_BLE_STREAM_RECORD_MAX_LEN);
+    assert((record[7] & 0x01u) == 0u);
+
     gateway_ble_stream_init(&state);
     assert(gateway_ble_stream_enqueue_packet(&state,
                                              &click,
@@ -239,13 +251,126 @@ static void test_fast_drain_and_counters(void)
     assert(gateway_ble_stream_depth(&state) == 0u);
 }
 
+static void test_active_head_cannot_be_evicted(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_ble_stream_diagnostics diag;
+    struct send_capture capture = {0};
+    uint8_t active_record[GATEWAY_BLE_STREAM_RECORD_MAX_LEN];
+    uint8_t payload[1] = {0u};
+    size_t active_len = 0u;
+    struct proto_packet diagnostic = packet(MSG_UWB_ANCHOR_DIAG, 0u, 1u);
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 2u);
+
+    gateway_ble_stream_init(&state);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        diagnostic.seq = i;
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &diagnostic,
+                                                 payload,
+                                                 sizeof(payload),
+                                                 0u,
+                                                 i,
+                                                 true) == 1);
+    }
+    assert(gateway_ble_stream_begin_send(&state,
+                                         active_record,
+                                         sizeof(active_record),
+                                         &active_len) == 0);
+    assert(active_len > GATEWAY_BLE_STREAM_RECORD_HEADER_LEN);
+    assert(active_record[8] == MSG_UWB_ANCHOR_DIAG);
+    assert(gateway_ble_stream_begin_send(&state,
+                                         active_record,
+                                         sizeof(active_record),
+                                         &active_len) == -EBUSY);
+
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             20u,
+                                             true) == 1);
+    assert(active_record[8] == MSG_UWB_ANCHOR_DIAG);
+    gateway_ble_stream_get_diagnostics(&state, 20u, &diag);
+    assert(diag.drops_priority == 1u);
+
+    gateway_ble_stream_mark_sent(&state, 21u);
+    assert(gateway_ble_stream_drain(&state,
+                                    capture_send,
+                                    &capture,
+                                    30u,
+                                    true,
+                                    GATEWAY_BLE_STREAM_QUEUE_DEPTH) ==
+           GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u);
+    assert(capture.msg_types[GATEWAY_BLE_STREAM_QUEUE_DEPTH - 2u] ==
+           MSG_CLICK_REPORT);
+
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &diagnostic,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             1u,
+                                             true) == 1);
+    assert(gateway_ble_stream_begin_send(&state,
+                                         active_record,
+                                         sizeof(active_record),
+                                         &active_len) == 0);
+    gateway_ble_stream_cancel_send(&state);
+    assert(gateway_ble_stream_begin_send(&state,
+                                         active_record,
+                                         sizeof(active_record),
+                                         &active_len) == 0);
+}
+
+static void test_pool_holds_core_click_and_two_cir_records(void)
+{
+    struct gateway_ble_stream_state state;
+    uint8_t payload[GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN];
+    struct proto_packet click = packet(MSG_CLICK_REPORT,
+                                       FLAG_DIAGNOSTIC,
+                                       1u);
+
+    fill_payload(payload, sizeof(payload));
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             PACKET_MAX_PAYLOAD_LEN,
+                                             0u,
+                                             1u,
+                                             true) == 1);
+    click.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             PACKET_EXT_MAX_PAYLOAD_LEN,
+                                             0u,
+                                             2u,
+                                             true) == 1);
+    click.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             326u,
+                                             0u,
+                                             3u,
+                                             true) == 1);
+    assert(gateway_ble_stream_depth(&state) == 3u);
+    assert(state.pool_used <= GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
+}
+
 int main(void)
 {
     test_allowlist_excludes_mesh_control();
     test_queue_full_counts_drop();
-    test_oversize_click_is_rejected_and_diagnostic_is_truncated();
+    test_max_size_click_is_preserved_and_oversize_is_rejected();
     test_disconnected_full_queue_counts_not_ready();
     test_click_evicts_lower_priority_diagnostic();
     test_fast_drain_and_counters();
+    test_active_head_cannot_be_evicted();
+    test_pool_holds_core_click_and_two_cir_records();
     return 0;
 }

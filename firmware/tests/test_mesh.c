@@ -225,6 +225,47 @@ static void test_channel9_timing_crosses_uptime_domains_as_relative_delay(void)
     assert(parsed.event_window_ms == timing.event_window_ms);
 }
 
+static void test_channel9_accept_reanchors_after_wake_train_delay(void)
+{
+    struct mesh_event_timing proposal = {0};
+    struct mesh_event_timing accepted_by_peer = {0};
+    struct mesh_event_timing accepted_by_origin = {0};
+    struct mesh_event_params params = event_params();
+    uint8_t proposal_payload[96];
+    uint8_t accept_payload[96];
+    size_t proposal_len = 0u;
+    size_t accept_len = 0u;
+
+    params.first_event_time_ms = 1600u;
+    assert(mesh_event_timing_negotiate(&proposal, &params, true) == PROTO_OK);
+    assert(mesh_append_event_timing_tlvs_at(proposal_payload,
+                                            sizeof(proposal_payload),
+                                            &proposal_len,
+                                            &proposal,
+                                            1000u) == PROTO_OK);
+
+    /* The wake/contact sequence delays proposal reception into another uptime domain. */
+    assert(mesh_event_timing_from_tlvs_at(&accepted_by_peer,
+                                          proposal_payload,
+                                          proposal_len,
+                                          5000u,
+                                          true) == PROTO_OK);
+    assert(accepted_by_peer.next_event_time_ms == 5600u);
+
+    assert(mesh_append_event_timing_tlvs_at(accept_payload,
+                                            sizeof(accept_payload),
+                                            &accept_len,
+                                            &accepted_by_peer,
+                                            5100u) == PROTO_OK);
+    assert(mesh_event_timing_from_tlvs_at(&accepted_by_origin,
+                                          accept_payload,
+                                          accept_len,
+                                          2200u,
+                                          true) == PROTO_OK);
+    assert(accepted_by_origin.next_event_time_ms == 2700u);
+    assert(accepted_by_origin.next_event_time_ms != proposal.next_event_time_ms);
+}
+
 static void test_channel9_event_planner_reserves_channel5_scan(void)
 {
     struct mesh_event_timing timing = {0};
@@ -444,6 +485,7 @@ int main(void)
     test_channel9_timing_requires_channel5_contact();
     test_channel9_first_slot_direction_follows_initiator();
     test_channel9_timing_crosses_uptime_domains_as_relative_delay();
+    test_channel9_accept_reanchors_after_wake_train_delay();
     test_channel9_event_planner_reserves_channel5_scan();
     test_channel9_event_planner_keeps_negotiated_window_when_late();
     test_channel9_observed_rx_keeps_negotiated_cadence();

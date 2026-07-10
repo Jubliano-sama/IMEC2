@@ -130,9 +130,10 @@ Add these new constants with defaults in the protocol/config layer. These are no
 #define FLOOD_WAVE_MS                         1400
 #define FLOOD_RELAY_BURST_MS                  600
 #define FLOOD_RELAY_REPEAT_MS                 40
+#define FLOOD_RELAY_REPEAT_COUNT              4
 #define FLOOD_POST_ROOT_GUARD_MS              150
 
-#define C5_POLITE_SNIFF_MS                    6
+#define C5_POLITE_SNIFF_MS                    20
 #define C5_POLITE_BACKOFF_MIN_MS              20
 #define C5_POLITE_BACKOFF_MAX_MS              1600
 #define C5_POLITE_DEFERRAL_MAX                8

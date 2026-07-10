@@ -7307,8 +7307,30 @@ static void test_direct_gateway_probe_route_answers_pending_request(void)
                           TLV_HOP_COUNT) == 1u);
 }
 
+static void test_gateway_commands_use_channel5_control_lane(void)
+{
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+    };
+
+    assert(!mesh_relay_packet_requires_channel9_payload_event(NULL));
+    assert(!mesh_relay_packet_requires_channel9_payload_event(&packet));
+    packet.msg_type = MSG_SURVEY_DISCOVERY_START;
+    assert(!mesh_relay_packet_requires_channel9_payload_event(&packet));
+    packet.msg_type = MSG_SURVEY_PAIR_PREPARE;
+    assert(!mesh_relay_packet_requires_channel9_payload_event(&packet));
+
+    packet.msg_type = MSG_CLICK_REPORT;
+    assert(mesh_relay_packet_requires_channel9_payload_event(&packet));
+    packet.msg_type = MSG_COMMAND_RESULT;
+    assert(mesh_relay_packet_requires_channel9_payload_event(&packet));
+    packet.msg_type = MSG_GATEWAY_ACK;
+    assert(mesh_relay_packet_requires_channel9_payload_event(&packet));
+}
+
 int main(void)
 {
+    test_gateway_commands_use_channel5_control_lane();
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
     test_duplicate_cache_expires_by_time_window();
     test_channel9_tx_requires_local_tx_slot();

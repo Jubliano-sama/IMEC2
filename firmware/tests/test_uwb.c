@@ -51,7 +51,7 @@ static void test_poll_round_trip_diagnostic_not_click(void)
     assert(buf[2] == MSG_UWB_POLL);
     assert(UWB_POLL_LEN == 42u);
     assert(UWB_RESP_LEN == 50u);
-    assert(UWB_FINAL_LEN == 54u);
+    assert(UWB_FINAL_LEN == 57u);
     assert(UWB_REPORT_LEN == 50u);
 
     assert(uwb_decode_poll(buf, written, &decoded) == PROTO_OK);
@@ -72,6 +72,8 @@ static void test_response_final_and_report_round_trip(void)
         .poll_tx_ts_32 = 0x11111111u,
         .resp_rx_ts_32 = 0x22222222u,
         .final_tx_ts_32 = 0x33333333u,
+        .diagnostic_flags = UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT,
+        .clicker_clock_offset_raw = -456,
     };
     const struct uwb_report_frame report = {
         .header = header(MSG_UWB_REPORT, FLAG_COUNT_AS_CLICK),
@@ -100,6 +102,9 @@ static void test_response_final_and_report_round_trip(void)
     assert(decoded_final.poll_tx_ts_32 == final.poll_tx_ts_32);
     assert(decoded_final.resp_rx_ts_32 == final.resp_rx_ts_32);
     assert(decoded_final.final_tx_ts_32 == final.final_tx_ts_32);
+    assert(decoded_final.diagnostic_flags == final.diagnostic_flags);
+    assert(decoded_final.clicker_clock_offset_raw ==
+           final.clicker_clock_offset_raw);
 
     assert(uwb_encode_report(&report, buf, sizeof(buf), &written) == PROTO_OK);
     assert(written == UWB_REPORT_LEN);

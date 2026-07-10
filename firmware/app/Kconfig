@@ -179,6 +179,17 @@ config IMEC_MESH_ROUTE_TEST_STARTUP_GRACE_MS
 
 endmenu
 
+menu "IMEC bench diagnostics"
+
+config IMEC_DS_TWR_RTT_DEBUG
+    bool "Emit compact DS-TWR stage diagnostics over RTT"
+    help
+      Emits one compact record at each POLL, RESPONSE, FINAL, and REPORT stage.
+      This is intended for timing-sensitive bench captures where subsystem
+      debug logging would overflow RTT and obscure the exchange itself.
+
+endmenu
+
 menu "IMEC high-debug bring-up"
 
 config IMEC_HIGH_DEBUG

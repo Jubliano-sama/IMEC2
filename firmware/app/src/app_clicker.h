@@ -74,13 +74,11 @@ struct app_clicker_attempt_gate_config {
     uint32_t wake_adv_ms;
     uint32_t max_politeness_wait_ms;
     uint32_t polite_sample_rx_ms;
-    uint32_t polite_sample_period_ms;
     uint8_t polite_required_quiet_samples;
     uint16_t polite_relevant_frame_wait_ms;
     uint32_t ble_courtesy_min_window_ms;
     uint32_t ble_courtesy_peer_finish_ms;
     uint8_t ble_courtesy_max_defers_per_attempt;
-    uint32_t ble_courtesy_poll_sleep_ms;
 };
 
 struct app_clicker_wake_train_config {

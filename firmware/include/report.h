@@ -15,6 +15,10 @@ extern "C" {
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 13u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 13u
 #define RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET 48u
+#define RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES 890u
+#define RANGE_REPORT_CIR_PACKET_METADATA_BYTES 60u
+#define RANGE_REPORT_CIR_PACKET_CHUNK_TLV_COUNT \
+    ((RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES + UINT8_MAX - 1u) / UINT8_MAX)
 
 enum range_diagnostic_status_flag {
     RANGE_DIAG_CLICKER_PRESENT = 1u << 0,
@@ -42,12 +46,17 @@ struct range_report_diagnostics {
     uint32_t gateway_ack_latency_ms;
     uint8_t phy_config_id;
     int16_t clock_offset_raw;
+    int16_t clicker_clock_offset_raw;
     int32_t carrier_integrator;
     const uint8_t *clicker_diag;
     uint8_t clicker_diag_len;
     const uint8_t *anchor_diag;
     uint8_t anchor_diag_len;
+    bool click_latency_present;
+    bool channel9_report_latency_present;
+    bool gateway_ack_latency_present;
     bool clock_offset_present;
+    bool clicker_clock_offset_present;
     bool carrier_integrator_present;
 };
 
@@ -72,6 +81,21 @@ struct range_report_fields {
     const struct range_report_diagnostics *diagnostics;
 };
 
+struct range_report_cir_fragment {
+    uint64_t clicker_id;
+    uint64_t anchor_id;
+    uint32_t event_seq;
+    uint64_t timestamp_ms;
+    uint16_t fragment_index;
+    uint16_t fragment_count;
+    uint16_t byte_offset;
+    uint16_t total_bytes;
+    uint16_t first_path_index;
+    uint16_t start_index;
+    const uint8_t *chunk;
+    uint16_t chunk_len;
+};
+
 struct self_test_report_fields {
     uint64_t clicker_id;
     uint32_t event_seq;
@@ -91,6 +115,11 @@ int report_append_range_tlvs(uint8_t *payload,
                                   size_t payload_cap,
                                   size_t *offset,
                                   const struct range_report_fields *fields);
+int report_append_cir_fragment_tlvs(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct range_report_cir_fragment *fragment);
 int report_append_self_test_tlvs(uint8_t *payload,
                                       size_t payload_cap,
                                       size_t *offset,
@@ -105,7 +134,7 @@ int report_init_range_packet(struct proto_packet *packet,
                                   uint32_t session_id,
                                   uint16_t seq,
                                   uint8_t report_flags,
-                                  uint8_t payload_len);
+                                  uint16_t payload_len);
 int report_init_click_packet(struct proto_packet *packet,
                                   uint64_t anchor_id,
                                   uint64_t gateway_id,

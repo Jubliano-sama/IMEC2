@@ -49,13 +49,11 @@ static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config 
     .wake_adv_ms = WAKE_ADV_MS,
     .max_politeness_wait_ms = MAX_POLITENESS_WAIT_MS,
     .polite_sample_rx_ms = UWB_POLITE_SAMPLE_RX_MS,
-    .polite_sample_period_ms = UWB_POLITE_SAMPLE_PERIOD_MS,
     .polite_required_quiet_samples = UWB_POLITE_REQUIRED_QUIET_SAMPLES,
     .polite_relevant_frame_wait_ms = UWB_POLITE_RELEVANT_FRAME_WAIT_MS,
     .ble_courtesy_min_window_ms = BLE_COURTESY_MIN_WINDOW_MS,
     .ble_courtesy_peer_finish_ms = BLE_COURTESY_PEER_FINISH_MS,
     .ble_courtesy_max_defers_per_attempt = BLE_COURTESY_MAX_DEFERS_PER_ATTEMPT,
-    .ble_courtesy_poll_sleep_ms = BLE_COURTESY_POLL_SLEEP_MS,
 };
 
 static const struct app_clicker_wake_train_config clicker_wake_train_config = {
@@ -157,34 +155,6 @@ uint32_t app_clicker_apply_retry_delay(struct uwb_clicker_session *session,
     return delay_ms;
 }
 
-static uint32_t clicker_sleep_until_ble_or_timeout(
-    uint32_t sleep_ms,
-    int64_t deadline_ms,
-    const struct app_clicker_attempt_gate_config *config)
-{
-    uint32_t remaining_ms = sleep_ms;
-
-    while (remaining_ms > 0u && k_uptime_get() < deadline_ms) {
-        uint32_t step_ms = MIN(remaining_ms, config->ble_courtesy_poll_sleep_ms);
-        int64_t deadline_remaining_ms = deadline_ms - k_uptime_get();
-        uint32_t wait_ms = app_clicker_ble_courtesy_higher_wait_ms();
-
-        if (wait_ms > 0u) {
-            return wait_ms;
-        }
-        if (deadline_remaining_ms <= 0) {
-            break;
-        }
-        step_ms = MIN(step_ms, (uint32_t)deadline_remaining_ms);
-        if (step_ms == 0u) {
-            break;
-        }
-        k_msleep(step_ms);
-        remaining_ms -= step_ms;
-    }
-    return app_clicker_ble_courtesy_higher_wait_ms();
-}
-
 static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
                                    uint32_t listen_ms,
                                    uint32_t *uwb_restart_wait_ms,
@@ -197,15 +167,17 @@ static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
     size_t frame_len = 0u;
     uint16_t relevant_wait_ms = 0u;
     uint8_t frame_type = 0u;
-    bool relevant_activity_detected = false;
+    enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+    bool channel_activity_detected = false;
     int ret;
 
-    ret = dwm3000_driver_receive_frame(listen_ms,
-                                       frame,
-                                       sizeof(frame),
-                                       &frame_len,
-                                       NULL,
-                                       NULL);
+    ret = dwm3000_driver_receive_frame_detailed(listen_ms,
+                                                frame,
+                                                sizeof(frame),
+                                                &frame_len,
+                                                NULL,
+                                                NULL,
+                                                &rx_failure);
     if (ret == 0) {
         int decode_ret = uwb_clicker_decode_politeness_wait(
             session,
@@ -215,8 +187,8 @@ static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
             &relevant_wait_ms,
             &frame_type);
 
-        relevant_activity_detected = decode_ret == PROTO_OK && relevant_wait_ms > 0u;
-        if (relevant_activity_detected) {
+        channel_activity_detected = true;
+        if (decode_ret == PROTO_OK && relevant_wait_ms > 0u) {
             if (uwb_restart_wait_ms != NULL) {
                 *uwb_restart_wait_ms = relevant_wait_ms;
             }
@@ -231,24 +203,28 @@ static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
                     decode_ret,
                     (unsigned int)frame_len);
         } else {
-            LOG_DBG("clicker ignored irrelevant UWB gate packet: type=0x%02x frame_len=%u",
+            LOG_INF("clicker UWB gate observed channel activity: type=0x%02x frame_len=%u",
                     frame_type,
                     (unsigned int)frame_len);
         }
+    } else if (app_wake_train_politeness_rx_activity(ret, rx_failure)) {
+        channel_activity_detected = true;
+        LOG_INF("clicker UWB gate observed partial channel activity: ret=%d failure=%u",
+                ret,
+                (unsigned int)rx_failure);
+        ret = 0;
     } else if (ret != -ETIMEDOUT) {
         LOG_DBG("clicker UWB gate receive sample failed: ret=%d", ret);
         ret = 0;
     } else {
         ret = 0;
     }
-    (void)dwm3000_driver_standby();
-
     if (sample_count != NULL) {
         (*sample_count)++;
     }
-    uwb_clicker_note_politeness_sample(session, relevant_activity_detected);
+    uwb_clicker_note_politeness_sample(session, channel_activity_detected);
 
-    if (relevant_activity_detected) {
+    if (channel_activity_detected) {
         if (quiet_samples != NULL) {
             *quiet_samples = 0u;
         }
@@ -319,91 +295,52 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         return ret;
     }
 
-    if (ble_started) {
+    /* BLE courtesy remains active while the external DWM3000 rearms without gaps. */
+    while ((quiet_samples < config->polite_required_quiet_samples ||
+            (ble_started && k_uptime_get() < ble_courtesy_until_ms)) &&
+           k_uptime_get() < deadline_ms) {
         int64_t remaining_ms = deadline_ms - k_uptime_get();
-        uint32_t peer_wait_ms = 0u;
+        uint32_t listen_ms;
 
-        if (remaining_ms > 0) {
-            ret = clicker_sample_uwb_gate(session,
-                                         MIN(config->polite_sample_rx_ms,
-                                             (uint32_t)remaining_ms),
-                                         uwb_restart_wait_ms,
-                                         &sample_count,
-                                         &activity_count,
-                                         &quiet_samples,
-                                         config);
+        if (remaining_ms <= 0) {
+            break;
         }
-        if (ret == 0) {
-            peer_wait_ms = app_clicker_ble_courtesy_higher_wait_ms();
+        listen_ms = MIN(config->polite_sample_rx_ms, (uint32_t)remaining_ms);
+        if (listen_ms == 0u) {
+            break;
         }
+
+        ret = clicker_sample_uwb_gate(session,
+                                      listen_ms,
+                                      uwb_restart_wait_ms,
+                                      &sample_count,
+                                      &activity_count,
+                                      &quiet_samples,
+                                      config);
+        if (ret == CLICKER_POLITENESS_UWB_RESTART) {
+            break;
+        }
+        if (ble_started) {
+            uint32_t peer_wait_ms = app_clicker_ble_courtesy_higher_wait_ms();
+
+            if (peer_wait_ms > 0u) {
+                if (ble_defer_wait_ms != NULL) {
+                    *ble_defer_wait_ms = peer_wait_ms;
+                }
+                ret = -EAGAIN;
+                break;
+            }
+        }
+
+    }
+    if (ret == 0 && ble_started) {
+        uint32_t peer_wait_ms = app_clicker_ble_courtesy_higher_wait_ms();
+
         if (peer_wait_ms > 0u) {
             if (ble_defer_wait_ms != NULL) {
                 *ble_defer_wait_ms = peer_wait_ms;
             }
             ret = -EAGAIN;
-        }
-        if (ret == 0 && k_uptime_get() < ble_courtesy_until_ms) {
-            int64_t courtesy_remaining_ms = ble_courtesy_until_ms - k_uptime_get();
-            int64_t deadline_remaining_ms = deadline_ms - k_uptime_get();
-
-            if (courtesy_remaining_ms > 0 && deadline_remaining_ms > 0 &&
-                (peer_wait_ms = clicker_sleep_until_ble_or_timeout(
-                    (uint32_t)MIN(courtesy_remaining_ms, deadline_remaining_ms),
-                    deadline_ms,
-                    config)) > 0u) {
-                if (ble_defer_wait_ms != NULL) {
-                    *ble_defer_wait_ms = peer_wait_ms;
-                }
-                ret = -EAGAIN;
-            }
-        }
-        if (ret == 0 && k_uptime_get() < deadline_ms) {
-            remaining_ms = deadline_ms - k_uptime_get();
-            ret = clicker_sample_uwb_gate(session,
-                                         MIN(config->polite_sample_rx_ms,
-                                             (uint32_t)remaining_ms),
-                                         uwb_restart_wait_ms,
-                                         &sample_count,
-                                         &activity_count,
-                                         &quiet_samples,
-                                         config);
-        }
-    } else {
-        while (quiet_samples < config->polite_required_quiet_samples &&
-               k_uptime_get() < deadline_ms) {
-            int64_t sample_start_ms = k_uptime_get();
-            int64_t remaining_ms = deadline_ms - k_uptime_get();
-            uint32_t listen_ms;
-
-            if (remaining_ms <= 0) {
-                break;
-            }
-            listen_ms = MIN(config->polite_sample_rx_ms, (uint32_t)remaining_ms);
-            if (listen_ms == 0u) {
-                break;
-            }
-
-            ret = clicker_sample_uwb_gate(session,
-                                         listen_ms,
-                                         uwb_restart_wait_ms,
-                                         &sample_count,
-                                         &activity_count,
-                                         &quiet_samples,
-                                         config);
-            if (ret == CLICKER_POLITENESS_UWB_RESTART) {
-                break;
-            }
-
-            if (quiet_samples < config->polite_required_quiet_samples &&
-                k_uptime_get() < deadline_ms) {
-                int64_t elapsed_ms = k_uptime_get() - sample_start_ms;
-                int64_t sleep_ms = (int64_t)config->polite_sample_period_ms - elapsed_ms;
-                int64_t remaining_after_sample_ms = deadline_ms - k_uptime_get();
-
-                if (sleep_ms > 0 && remaining_after_sample_ms > 0) {
-                    k_msleep((uint32_t)MIN(sleep_ms, remaining_after_sample_ms));
-                }
-            }
         }
     }
 
@@ -427,6 +364,14 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                 sample_count,
                 activity_count);
         return ret;
+    }
+    if (quiet_samples < config->polite_required_quiet_samples) {
+        LOG_WRN("clicker UWB politeness exhausted without required quiet window: quiet_samples=%u/%u samples=%u activity=%u max_wait_ms=%u; proceeding with bounded click priority",
+                quiet_samples,
+                config->polite_required_quiet_samples,
+                sample_count,
+                activity_count,
+                config->max_politeness_wait_ms);
     }
     LOG_INF("clicker sampled politeness complete: quiet_samples=%u/%u samples=%u activity=%u max_wait_ms=%u",
             quiet_samples,
@@ -2256,28 +2201,36 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
 #endif
 
     clicker_ble_courtesy_clear_higher_peer();
-    ble_courtesy_scan_active = true;
-    ret = bt_le_scan_start(&scan_param, clicker_ble_courtesy_scan_cb);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=scan_start ret=%d", ret);
-#endif
-    if (ret != 0) {
-        LOG_WRN("BLE courtesy scan start failed: %d", ret);
-        ble_courtesy_scan_active = false;
-        return ret;
-    }
-
+    /* Legacy scan and advertising share the random-address state. Start the
+     * identity advertiser before identity scanning so Zephyr accepts both.
+     */
     ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
     high_debug_log_event("BLE_TEST", "phase=adv_start ret=%d", ret);
 #endif
     if (ret != 0) {
         LOG_WRN("BLE courtesy advertising start failed: %d", ret);
-        (void)bt_le_scan_stop();
-        ble_courtesy_scan_active = false;
         return ret;
     }
     ble_courtesy_adv_active = true;
+
+    ble_courtesy_scan_active = true;
+    ret = bt_le_scan_start(&scan_param, clicker_ble_courtesy_scan_cb);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    high_debug_log_event("BLE_TEST", "phase=scan_start ret=%d", ret);
+#endif
+    if (ret != 0) {
+        int stop_ret;
+
+        LOG_WRN("BLE courtesy scan start failed: %d", ret);
+        ble_courtesy_scan_active = false;
+        stop_ret = bt_le_adv_stop();
+        if (stop_ret != 0 && stop_ret != -EALREADY) {
+            LOG_WRN("BLE courtesy advertising rollback failed: %d", stop_ret);
+        }
+        ble_courtesy_adv_active = false;
+        return ret;
+    }
     return 0;
 }
 

@@ -132,11 +132,13 @@ static int append_diagnostics(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_u32(payload, payload_cap, offset,
-                         TLV_CLICK_LATENCY_MS,
-                         diagnostics->click_latency_ms);
-    if (ret != PROTO_OK) {
-        return ret;
+    if (diagnostics->click_latency_present) {
+        ret = tlv_append_u32(payload, payload_cap, offset,
+                             TLV_CLICK_LATENCY_MS,
+                             diagnostics->click_latency_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     ret = tlv_append_u32(payload, payload_cap, offset,
                          TLV_UWB_AWAKE_TIME_US,
@@ -174,17 +176,21 @@ static int append_diagnostics(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_u32(payload, payload_cap, offset,
-                         TLV_CHANNEL9_REPORT_LATENCY_MS,
-                         diagnostics->channel9_report_latency_ms);
-    if (ret != PROTO_OK) {
-        return ret;
+    if (diagnostics->channel9_report_latency_present) {
+        ret = tlv_append_u32(payload, payload_cap, offset,
+                             TLV_CHANNEL9_REPORT_LATENCY_MS,
+                             diagnostics->channel9_report_latency_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
-    ret = tlv_append_u32(payload, payload_cap, offset,
-                         TLV_GATEWAY_ACK_LATENCY_MS,
-                         diagnostics->gateway_ack_latency_ms);
-    if (ret != PROTO_OK) {
-        return ret;
+    if (diagnostics->gateway_ack_latency_present) {
+        ret = tlv_append_u32(payload, payload_cap, offset,
+                             TLV_GATEWAY_ACK_LATENCY_MS,
+                             diagnostics->gateway_ack_latency_ms);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     ret = tlv_append_u8(payload, payload_cap, offset,
                         TLV_PHY_CONFIG_ID,
@@ -196,6 +202,14 @@ static int append_diagnostics(uint8_t *payload,
         ret = tlv_append_u16(payload, payload_cap, offset,
                              TLV_UWB_CLOCK_OFFSET_RAW,
                              (uint16_t)diagnostics->clock_offset_raw);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    if (diagnostics->clicker_clock_offset_present) {
+        ret = tlv_append_u16(payload, payload_cap, offset,
+                             TLV_CLICKER_CLOCK_OFFSET_RAW,
+                             (uint16_t)diagnostics->clicker_clock_offset_raw);
         if (ret != PROTO_OK) {
             return ret;
         }
@@ -297,6 +311,93 @@ int report_append_range_tlvs(uint8_t *payload,
     return tlv_append_u8(payload, payload_cap, offset, TLV_RANGE_STATUS, (uint8_t)fields->range_status);
 }
 
+int report_append_cir_fragment_tlvs(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct range_report_cir_fragment *fragment)
+{
+    uint16_t chunk_offset = 0u;
+    int ret;
+
+    if (payload == NULL || offset == NULL || fragment == NULL ||
+        fragment->clicker_id == 0u || fragment->anchor_id == 0u ||
+        fragment->clicker_id == fragment->anchor_id ||
+        fragment->event_seq == 0u || fragment->fragment_count == 0u ||
+        fragment->fragment_index >= fragment->fragment_count ||
+        fragment->chunk == NULL || fragment->chunk_len == 0u ||
+        fragment->total_bytes == 0u ||
+        fragment->byte_offset >= fragment->total_bytes ||
+        fragment->chunk_len > fragment->total_bytes - fragment->byte_offset) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_append_u64(payload, payload_cap, offset,
+                         TLV_CLICKER_ID, fragment->clicker_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset,
+                         TLV_ANCHOR_ID, fragment->anchor_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u32(payload, payload_cap, offset,
+                         TLV_EVENT_SEQ, fragment->event_seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u64(payload, payload_cap, offset,
+                         TLV_TIMESTAMP_MS, fragment->timestamp_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_DIAG_FRAGMENT_INDEX, fragment->fragment_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_DIAG_FRAGMENT_COUNT, fragment->fragment_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_UWB_CIR_BYTE_OFFSET, fragment->byte_offset);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_UWB_CIR_TOTAL_BYTES, fragment->total_bytes);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_UWB_CIR_FIRST_PATH_INDEX, fragment->first_path_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_UWB_CIR_START_INDEX, fragment->start_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    while (chunk_offset < fragment->chunk_len) {
+        uint16_t remaining = fragment->chunk_len - chunk_offset;
+        uint8_t tlv_len = (uint8_t)(remaining > UINT8_MAX ? UINT8_MAX : remaining);
+
+        ret = tlv_append_bytes(payload, payload_cap, offset,
+                               TLV_UWB_CIR_FULL_CHUNK,
+                               &fragment->chunk[chunk_offset],
+                               tlv_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        chunk_offset += tlv_len;
+    }
+    return PROTO_OK;
+}
+
 int report_append_self_test_tlvs(uint8_t *payload,
                                       size_t payload_cap,
                                       size_t *offset,
@@ -367,7 +468,7 @@ int report_init_range_packet(struct proto_packet *packet,
                                   uint32_t session_id,
                                   uint16_t seq,
                                   uint8_t report_flags,
-                                  uint8_t payload_len)
+                                  uint16_t payload_len)
 {
     uint8_t mode_flags = report_flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC);
 

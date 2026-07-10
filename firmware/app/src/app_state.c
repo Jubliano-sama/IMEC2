@@ -25,6 +25,10 @@ uint32_t anchor_uwb_scan_interval_ms = ANCHOR_UWB_SCAN_INTERVAL_MS;
 uint16_t mesh_event_control_seq;
 static const char *uwb_rf_owner_reason;
 static uint32_t uwb_rf_owner_since_ms;
+static struct k_spinlock anchor_discovery_assignment_lock;
+static uint32_t anchor_discovery_assignment_epoch;
+static uint8_t anchor_discovery_assignment_slot;
+static uint8_t anchor_discovery_assignment_slot_count;
 
 const char *role_name(void)
 {
@@ -355,9 +359,70 @@ int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot)
     }
     *anchor_slot = (uint8_t)IMEC_HIGH_DEBUG_ANCHOR_SLOT;
     return PROTO_OK;
-#else
+#elif defined(CONFIG_IMEC_ML_ANCHOR)
     return uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, anchor_slot);
+#else
+    uint32_t epoch = 0u;
+    uint8_t assigned_slot = 0u;
+    uint8_t assigned_slot_count = 0u;
+
+    if (!local_anchor_discovery_assignment_get(&epoch,
+                                               &assigned_slot,
+                                               &assigned_slot_count) ||
+        epoch == 0u || assigned_slot_count != slot_count ||
+        assigned_slot >= assigned_slot_count) {
+        return PROTO_ERR_STALE;
+    }
+    *anchor_slot = assigned_slot;
+    return PROTO_OK;
 #endif
+}
+
+int local_anchor_set_discovery_assignment(uint32_t epoch,
+                                          uint8_t anchor_slot,
+                                          uint8_t slot_count)
+{
+    k_spinlock_key_t key;
+
+    if (epoch == 0u || slot_count == 0u ||
+        slot_count > UWB_DISCOVERY_SLOT_COUNT || anchor_slot >= slot_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    key = k_spin_lock(&anchor_discovery_assignment_lock);
+    anchor_discovery_assignment_epoch = epoch;
+    anchor_discovery_assignment_slot = anchor_slot;
+    anchor_discovery_assignment_slot_count = slot_count;
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return PROTO_OK;
+}
+
+void local_anchor_clear_discovery_assignment(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
+
+    anchor_discovery_assignment_epoch = 0u;
+    anchor_discovery_assignment_slot = 0u;
+    anchor_discovery_assignment_slot_count = 0u;
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+}
+
+bool local_anchor_discovery_assignment_get(uint32_t *epoch,
+                                           uint8_t *anchor_slot,
+                                           uint8_t *slot_count)
+{
+    k_spinlock_key_t key;
+    bool valid;
+
+    if (epoch == NULL || anchor_slot == NULL || slot_count == NULL) {
+        return false;
+    }
+    key = k_spin_lock(&anchor_discovery_assignment_lock);
+    *epoch = anchor_discovery_assignment_epoch;
+    *anchor_slot = anchor_discovery_assignment_slot;
+    *slot_count = anchor_discovery_assignment_slot_count;
+    valid = anchor_discovery_assignment_epoch != 0u;
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return valid;
 }
 
 uint8_t local_survey_discovery_slot(uint8_t slot_count)

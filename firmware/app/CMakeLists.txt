@@ -28,6 +28,7 @@ set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
     gateway_stage3_highdebug
     gateway_ble_connectivity_test
     ml_clicker
+    mesh_clicker
     ml_anchor_1
     ml_anchor_2
     ml_anchor_3
@@ -67,6 +68,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     gateway_stage3_highdebug
     gateway_ble_connectivity_test
     ml_clicker
+    mesh_clicker
     ml_anchor_1
     ml_anchor_2
     ml_anchor_3
@@ -155,6 +157,10 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_ML_BUILD ON CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
         set(IMEC_PRESET_EXTRA_CONF "ml-clicker.conf")
+    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_clicker")
+        set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_PRESET_EXTRA_CONF "mesh-clicker.conf")
     elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_([1-8])$")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
@@ -257,6 +263,8 @@ elseif(IMEC_GATEWAY_BLE_RANGE_SCANNER)
 endif()
 
 if(IMEC_ML_BUILD AND IMEC_PRESET_EXTRA_CONF)
+    list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/${IMEC_PRESET_EXTRA_CONF}")
+elseif(IMEC_PRESET_EXTRA_CONF AND NOT IMEC_HIGH_DEBUG)
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/${IMEC_PRESET_EXTRA_CONF}")
 endif()
 
@@ -393,6 +401,7 @@ else()
         ../src/debug_log.c
         ../src/protocol.c
         ../src/gateway_command.c
+        ../src/discovery_assignment.c
         ../src/gateway_membership.c
         ../src/uwb.c
         ../src/uwb_ble_courtesy.c

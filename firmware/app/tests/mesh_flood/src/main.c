@@ -69,6 +69,12 @@ static bool test_c5_quiet(uint32_t sniff_ms, void *ctx)
     return true;
 }
 
+static uint32_t test_random_u32(void *ctx)
+{
+    ARG_UNUSED(ctx);
+    return 0u;
+}
+
 static int test_send(const struct mesh_outbound *out, void *ctx)
 {
     struct test_ctx *test = ctx;
@@ -88,6 +94,7 @@ static struct app_mesh_flood_ops make_ops(struct test_ctx *ctx)
         .sleep_until_ms = test_sleep_until_ms,
         .defer_active = test_defer_active,
         .c5_quiet = test_c5_quiet,
+        .random_u32 = test_random_u32,
         .send = test_send,
         .ctx = ctx,
     };
@@ -128,10 +135,8 @@ ZTEST(mesh_flood, test_busy_c5_skips_repeats_without_extending_burst)
     zassert_ok(app_mesh_flood_send_bounded(&flood, &ops, &result));
     zassert_equal(result.sent_count, app_mesh_flood_repeat_limit() - 2u);
     zassert_equal(result.busy_skip_count, 2u);
-    zassert_equal(ctx.send_at[0], 2000u + (2u * FLOOD_RELAY_REPEAT_MS));
-    zassert_equal(result.last_due_ms,
-                  2000u + ((uint32_t)(app_mesh_flood_repeat_limit() - 1u) *
-                           FLOOD_RELAY_REPEAT_MS));
+    zassert_equal(ctx.send_at[0], 2060u);
+    zassert_equal(result.last_due_ms, 2100u);
 }
 
 ZTEST(mesh_flood, test_defers_before_click_service_without_sending)
@@ -160,6 +165,8 @@ ZTEST(mesh_flood, test_stops_after_bounded_repeat_count)
     struct app_mesh_flood_ops ops = make_ops(&ctx);
     struct app_mesh_flood_result result;
 
+    zassert_equal(C5_POLITE_SNIFF_MS, 20u);
+    zassert_equal(app_mesh_flood_repeat_limit(), 4u);
     zassert_ok(app_mesh_flood_send_bounded(&flood, &ops, &result));
     zassert_equal(ctx.send_count, app_mesh_flood_repeat_limit());
     zassert_equal(ctx.quiet_calls, app_mesh_flood_repeat_limit());

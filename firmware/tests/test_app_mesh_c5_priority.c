@@ -124,10 +124,20 @@ static void test_route_reply_and_event_control_capture_rules(void)
     assert(app_mesh_c5_route_capture_relevant(&event_control));
     assert(!app_mesh_c5_route_capture_completes_discovery(event_control.msg_type));
     assert(!app_mesh_c5_route_capture_requires_ack_hold(event_control.msg_type));
+    assert(app_mesh_c5_route_capture_requires_inline_timing_install(
+        MSG_MESH_EVENT_ACCEPT,
+        true));
+    assert(!app_mesh_c5_route_capture_requires_inline_timing_install(
+        MSG_MESH_EVENT_PROPOSE,
+        true));
+    assert(!app_mesh_c5_route_capture_requires_inline_timing_install(
+        MSG_MESH_EVENT_ACCEPT,
+        false));
 }
 
 static void test_channel5_control_phr_policy(void)
 {
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_COMMAND, 117u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 146u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 95u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY, 95u, 125u));
@@ -154,6 +164,32 @@ static void test_wake_claim_click_priority_policy(void)
     assert(app_mesh_c5_wake_claim_preempts_mesh(FLAG_COUNT_AS_CLICK));
     assert(app_mesh_c5_wake_claim_preempts_mesh(FLAG_DIAGNOSTIC |
                                                 FLAG_COUNT_AS_CLICK));
+
+    assert(app_mesh_c5_wake_claim_requires_anchor_handoff(0u, true));
+    assert(app_mesh_c5_wake_claim_requires_anchor_handoff(
+        FLAG_COUNT_AS_CLICK, true));
+    assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY, true));
+    assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(0u, false));
+    assert(!app_mesh_c5_wake_claim_requires_anchor_handoff(
+        FLAG_COUNT_AS_CLICK, false));
+
+    assert(!app_mesh_c5_wake_followup_uses_extended_phr(0u));
+    assert(!app_mesh_c5_wake_followup_uses_extended_phr(FLAG_COUNT_AS_CLICK));
+    assert(app_mesh_c5_wake_followup_uses_extended_phr(
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY));
+}
+
+static void test_connected_gap_stays_armed_until_deadline_or_click(void)
+{
+    assert(app_mesh_c5_connected_gap_rx_action(false, false) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE);
+    assert(app_mesh_c5_connected_gap_rx_action(false, true) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_COMPLETE);
+    assert(app_mesh_c5_connected_gap_rx_action(true, false) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK);
+    assert(app_mesh_c5_connected_gap_rx_action(true, true) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK);
 }
 
 static void test_route_adv_delay_targets_requester_reply_window(void)
@@ -247,6 +283,7 @@ int main(void)
     test_route_reply_and_event_control_capture_rules();
     test_channel5_control_phr_policy();
     test_wake_claim_click_priority_policy();
+    test_connected_gap_stays_armed_until_deadline_or_click();
     test_route_adv_delay_targets_requester_reply_window();
     test_route_reply_window_covers_direct_probe_and_reply_exchange();
     test_connected_gap_window_uses_channel5_until_retune_guard();

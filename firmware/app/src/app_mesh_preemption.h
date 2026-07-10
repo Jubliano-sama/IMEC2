@@ -8,7 +8,6 @@
 #include <zephyr/kernel.h>
 
 struct app_mesh_click_preempt_ops {
-    struct k_msgq *mesh_rx_msgq;
     struct k_msgq *report_tx_msgq;
     struct k_work_delayable *tx_timeout_work;
     int (*save_outbox)(void *ctx);
@@ -22,7 +21,6 @@ struct app_mesh_click_preempt_result {
     bool outbox_cleared;
     bool timeout_cancelled;
     bool timeout_scheduled;
-    bool rx_queue_purged;
     bool click_report_requeued;
     bool click_report_requeue_failed;
     int save_outbox_ret;

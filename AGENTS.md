@@ -28,6 +28,39 @@ cmake --build firmware/build
 ctest --test-dir firmware/build --output-on-failure
 ```
 
+### Firmware Lines and Role Meaning
+
+The connected-routing mesh line is the production successor and will become
+the main firmware after the migration is complete. Treat its role presets as
+the default target for new product behavior even while their names still carry
+the `mesh_` prefix:
+
+- `mesh_clicker`: normal battery clicker behavior. It sleeps normally, wakes
+  for a physical click/range sequence, and uses the connected-routing mesh path
+  for delivery. It is not a continuously active test transmitter.
+- `mesh_anchor_1` through `mesh_anchor_5`: anchor identities for the same
+  connected-routing firmware. An anchor ranges local clicks, relays mesh work,
+  and prioritizes its own click reports over transit traffic.
+- `mesh_gateway`: gateway role for the same connected-routing firmware,
+  including gateway BLE ingress/egress and highest-priority gateway commands.
+
+The remaining build lines are not alternative production architectures:
+
+- `mesh_transmitter` and `mesh_transmitter_forcedhop` are synthetic traffic
+  generators used to load and regression-test the production-successor mesh
+  path. They must not be treated as deployable anchor firmware.
+- `ml_clicker` and `ml_anchor_1` through `ml_anchor_8` are demo/data-collection
+  images for gathering training and validation data for a distance-offset
+  compensation model. They are not production clicker or anchor builds.
+- Direct `FIRMWARE_ROLE=clicker|anchor|gateway` builds and staged high-debug
+  presets are legacy or bring-up compatibility images. Maintain them for
+  bounded regression coverage, but do not add new mainline behavior there
+  unless the task explicitly targets a legacy build.
+
+Until the production-successor presets are renamed, always state and verify the
+exact preset and probe-to-board mapping before flashing; do not infer behavior
+from the generic role name alone.
+
 Zephyr role builds:
 
 ```sh
@@ -58,9 +91,27 @@ Flash the exact build directory for the image you intend to program; do not rely
 
 For deterministic ML anchors, replace `build/ml-anchor-1` with the anchor image being programmed, such as `build/ml-anchor-2` through `build/ml-anchor-8`.
 
+When more than one probe is connected, select the probe through west's pyOCD
+runner with `--dev-id`, for example:
+
+```sh
+.venv/bin/west flash --runner pyocd --build-dir build/mesh-anchor-1 -- --dev-id E46070D247233537 --frequency 4000000
+```
+
+Do not pass `-u <probe-id>` to `west flash`; `-u` is used by direct `pyocd rtt`
+commands and the west pyOCD runner rejects it. Keep the probe selector after
+west's `--` separator as `--dev-id <probe-id>`.
+
 Flashing at 4MHz has been proven to work, if a flash fails, assume the cabling is at fault and do not reduce flash speed.
 
 When capturing RTT logs for startup or boot behavior, use pyOCD's `pre-reset` connect mode so the capture includes reset-time output, for example `pyocd rtt -t nrf52833 -M pre-reset -u <probe-id>`. `pyocd rtt` needs a TTY; run it interactively or under `script`, and do not redirect its stdout directly to a file because that can fail with `Inappropriate ioctl for device`.
+
+Hardware RTT and flash commands must run with direct USB device access. A
+sandboxed command can misleadingly show both probes in `pyocd list` yet leave
+`pyocd rtt` waiting forever for the same probe ID because the RTT subprocess
+cannot access the USB device. If that exact mismatch occurs, rerun the hardware
+command with full host/USB permissions; do not treat it as a disconnected probe
+or as firmware evidence.
 
 ## Coding Style & Naming Conventions
 

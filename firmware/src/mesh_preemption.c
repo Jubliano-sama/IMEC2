@@ -26,23 +26,31 @@ int mesh_prepare_click_preemption(struct mesh_relay *relay,
                                   uint32_t now_ms,
                                   struct mesh_click_preempt_plan *plan)
 {
+    bool pending_local_click_report;
+    bool pending_transit_click_report;
+
     if (relay == NULL || plan == NULL) {
         return PROTO_ERR_ARG;
     }
 
     memset(plan, 0, sizeof(*plan));
-    plan->purge_rx_queue = true;
-
     if (!mesh_relay_tx_active(relay)) {
         return PROTO_OK;
     }
 
-    if (relay->pending.packet.msg_type == MSG_CLICK_REPORT &&
-        relay->pending.packet.src_id == local_id) {
+    pending_local_click_report =
+        relay->pending.packet.msg_type == MSG_CLICK_REPORT &&
+        relay->pending.packet.src_id == local_id;
+    pending_transit_click_report =
+        relay->pending.packet.msg_type == MSG_CLICK_REPORT &&
+        relay->pending.packet.src_id != local_id;
+
+    if (pending_local_click_report) {
         copy_pending_click_report(&relay->pending, plan);
     }
 
-    if (mesh_relay_defer_tx(relay, now_ms)) {
+    if (!pending_transit_click_report &&
+        mesh_relay_defer_tx(relay, now_ms)) {
         plan->save_outbox = true;
         plan->schedule_timeout = true;
         return PROTO_OK;

@@ -61,6 +61,13 @@ uint32_t nonzero_uptime_session_id(void);
 uint16_t local_uwb_short_addr(void);
 uint32_t discovery_window_ms_for_slots(uint8_t slot_count);
 int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot);
+int local_anchor_set_discovery_assignment(uint32_t epoch,
+                                          uint8_t anchor_slot,
+                                          uint8_t slot_count);
+void local_anchor_clear_discovery_assignment(void);
+bool local_anchor_discovery_assignment_get(uint32_t *epoch,
+                                           uint8_t *anchor_slot,
+                                           uint8_t *slot_count);
 uint8_t local_survey_discovery_slot(uint8_t slot_count);
 uint64_t clicker_priority_id(uint32_t event_seq, uint8_t attempt_index);
 uint64_t clicker_nonce(uint32_t event_seq);

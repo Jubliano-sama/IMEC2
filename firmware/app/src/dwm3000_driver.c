@@ -12,6 +12,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
@@ -30,6 +31,9 @@
 
 LOG_MODULE_REGISTER(dwm3000_driver, DWM3000_DRIVER_LOG_LEVEL);
 
+static atomic_t receive_abort_requested;
+static atomic_t receive_abort_enabled;
+
 #define ROLE_CLICKER 1
 #define ROLE_ANCHOR 2
 #define ROLE_GATEWAY 3
@@ -37,6 +41,10 @@ LOG_MODULE_REGISTER(dwm3000_driver, DWM3000_DRIVER_LOG_LEVEL);
 #ifndef DEVICE_ROLE
 #define DEVICE_ROLE ROLE_CLICKER
 #endif
+
+#define DWM3000_DS_TWR_RTT_DEBUG_ENABLED \
+    (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) || \
+     IS_ENABLED(CONFIG_IMEC_DS_TWR_RTT_DEBUG))
 
 static bool focused_anchor_rx_logs_enabled(void)
 {
@@ -1130,6 +1138,30 @@ static int wait_status_internal(uint32_t mask,
             return 0;
         }
 
+        if (atomic_get(&receive_abort_enabled) != 0 &&
+            atomic_cas(&receive_abort_requested, 1, 0)) {
+            uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
+                (uint32_t)(k_cycle_get_32() - start_cycles));
+
+            driver_stats.sys_status_poll_loops += poll_loops;
+            if (elapsed_us > driver_stats.sys_status_poll_max_duration_us) {
+                driver_stats.sys_status_poll_max_duration_us = elapsed_us;
+            }
+            if (status != NULL) {
+                *status = read_status;
+            }
+            if (log_events) {
+                dwm3000_debug_event(false,
+                                    "UWB_SYS_STATUS_POLL_ABORT",
+                                    "mask=0x%08x status=0x%08x loops=%u duration_us=%u",
+                                    mask,
+                                    read_status,
+                                    poll_loops,
+                                    elapsed_us);
+            }
+            return -ECANCELED;
+        }
+
         now_ms = k_uptime_get();
         if (now_ms >= deadline) {
             break;
@@ -1170,7 +1202,7 @@ static int wait_status(uint32_t mask, uint32_t timeout_ms, uint32_t *status)
 
 static int wait_tx_complete(uint32_t timeout_ms)
 {
-    uint32_t status;
+    uint32_t status = 0u;
     int ret;
 
     ret = wait_status(SYS_STATUS_TXFRS_BIT_MASK, timeout_ms, &status);
@@ -1951,11 +1983,13 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                                status,
                                log_events);
     if (ret < 0) {
-        driver_stats.rx_timeouts++;
+        if (ret != -ECANCELED) {
+            driver_stats.rx_timeouts++;
+        }
         dwt_forcetrxoff();
         if (log_events) {
-            dwm3000_debug_event(true,
-                                "UWB_RX_TIMEOUT",
+            dwm3000_debug_event(ret != -ECANCELED,
+                                ret == -ECANCELED ? "UWB_RX_ABORT" : "UWB_RX_TIMEOUT",
                                 "ret=%d timeout_ms=%u sys_status=0x%08x",
                                 ret,
                                 timeout_ms,
@@ -2997,7 +3031,8 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                                                int8_t *rsl_dbm,
                                                enum dwm3000_rx_failure *failure,
                                                struct dwm3000_rx_frame_timing *timing,
-                                               bool log_events)
+                                               bool log_events,
+                                               bool allow_receive_abort)
 {
     uint8_t rx_buffer[UWB_MESH_MAX_FRAME_LEN + FCS_LEN];
     uint64_t rx_timestamp = 0u;
@@ -3035,6 +3070,9 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
         rx_enable_time32 = dwt_readsystimestamphi32();
     }
 
+    if (allow_receive_abort) {
+        atomic_set(&receive_abort_enabled, 1);
+    }
     ret = receive_frame(timeout_ms,
                         &status,
                         rx_buffer,
@@ -3051,7 +3089,13 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                         NULL,
                         rsl_dbm != NULL,
                         log_events);
+    if (allow_receive_abort) {
+        atomic_set(&receive_abort_enabled, 0);
+    }
     if (ret < 0) {
+        if (ret == -ECANCELED) {
+            return -ECANCELED;
+        }
         if (failure != NULL) {
             *failure = status_to_rx_failure(status);
             if (*failure == DWM3000_RX_FAILURE_NONE) {
@@ -3364,7 +3408,8 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                                rsl_dbm,
                                                failure,
                                                NULL,
-                                               true);
+                                               true,
+                                               false);
 }
 
 int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
@@ -3384,6 +3429,7 @@ int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
                                                rsl_dbm,
                                                failure,
                                                NULL,
+                                               false,
                                                false);
 }
 
@@ -3507,7 +3553,23 @@ int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
                                                rsl_dbm,
                                                failure,
                                                timing,
-                                               log_events);
+                                               log_events,
+                                               true);
+}
+
+void dwm3000_driver_request_receive_abort(void)
+{
+    atomic_set(&receive_abort_requested, 1);
+}
+
+void dwm3000_driver_clear_receive_abort(void)
+{
+    atomic_set(&receive_abort_requested, 0);
+}
+
+bool dwm3000_driver_receive_abort_pending(void)
+{
+    return atomic_get(&receive_abort_requested) != 0;
 }
 
 int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
@@ -3536,15 +3598,33 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     ret = validate_range_request(request);
     if (ret < 0) {
         result->status = RANGE_INTERNAL_ERROR;
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=validate ret=%d\n", ret);
+        }
         return ret;
     }
 
     ret = ensure_phy_mode(DWM3000_PHY_RANGE);
     if (ret < 0) {
         result->status = RANGE_INTERNAL_ERROR;
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=phy ret=%d now=%u\n",
+                                ret,
+                                k_uptime_get_32());
+        }
         return ret;
     }
     reply_delay_uus = request_reply_delay_uus(request);
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_INIT stage=arm evt=%u seq=%u round=%u now=%u timeout=%u reply_uus=%u\n",
+                            request->session_id,
+                            request->seq,
+                            request->round_index,
+                            k_uptime_get_32(),
+                            request->timeout_ms == 0u ?
+                                RESP_RX_TIMEOUT_MS : request->timeout_ms,
+                            reply_delay_uus);
+    }
 
     dwm3000_debug_event(false,
                         "DS_TWR_TIMING",
@@ -3580,6 +3660,14 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
     if (ret < 0) {
         result->status = RANGE_INTERNAL_ERROR;
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=poll-tx ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
+                                ret,
+                                (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                k_uptime_get_32(),
+                                request->seq,
+                                request->round_index);
+        }
         return ret;
     }
     result_set_request_metadata(result, request);
@@ -3591,12 +3679,21 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                            result->clicker_rx_diag_raw,
                            &result->clicker_rx_diag_raw_len,
                            &result->clicker_rx_diag_sampled,
-                           &result->clock_offset_raw,
-                           &result->clock_offset_sampled,
+                           &result->clicker_clock_offset_raw,
+                           &result->clicker_clock_offset_sampled,
                            &result->carrier_integrator,
                            &result->carrier_integrator_sampled,
                            &range_status, request->capture_rsl);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=resp-rx ret=%d status=%u sys=0x%08x now=%u seq=%u round=%u\n",
+                                ret,
+                                range_status,
+                                (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                k_uptime_get_32(),
+                                request->seq,
+                                request->round_index);
+        }
 #if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
         LOG_WRN("UWB initiator RESP RX failed: ret=%d status=%u seq=%u round=%u timeout_ms=%u reply_delay_uus=%u",
                 ret,
@@ -3618,6 +3715,15 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         result->rsl_sampled = true;
     }
     poll_tx_ts = read_tx_timestamp_u64();
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_INIT stage=resp-ok now=%u seq=%u round=%u poll_tx=0x%08x resp_rx=0x%08x q=%u\n",
+                            k_uptime_get_32(),
+                            request->seq,
+                            request->round_index,
+                            (unsigned int)poll_tx_ts,
+                            (unsigned int)resp_rx_ts,
+                            quality);
+    }
 
     final_tx_time = delayed_tx_time_from_rx_reference(resp_rx_ts,
                                                       reply_delay_uus);
@@ -3637,6 +3743,10 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     final.poll_tx_ts_32 = (uint32_t)poll_tx_ts;
     final.resp_rx_ts_32 = (uint32_t)resp_rx_ts;
     final.final_tx_ts_32 = (uint32_t)final_tx_ts;
+    final.diagnostic_flags = result->clicker_clock_offset_sampled ?
+        UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT : 0u;
+    final.clicker_clock_offset_raw = result->clicker_clock_offset_sampled ?
+        result->clicker_clock_offset_raw : 0;
     result->poll_tx_ts_32 = final.poll_tx_ts_32;
     result->poll_rx_ts_32 = response.poll_rx_ts_32;
     result->resp_tx_ts_32 = response.resp_tx_ts_32;
@@ -3654,6 +3764,17 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         result->rsl_dbm = rsl_dbm;
         result->rsl_sampled = request->capture_rsl;
         result->status = RANGE_TIMING_INVALID;
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=timing ret=%d seq=%u round=%u poll_resp=%u resp_final=%u expected=%u\n",
+                                ret,
+                                request->seq,
+                                request->round_index,
+                                dwt_delta_to_uus(response.poll_rx_ts_32,
+                                                 response.resp_tx_ts_32),
+                                dwt_delta_to_uus(final.resp_rx_ts_32,
+                                                 final.final_tx_ts_32),
+                                reply_delay_uus);
+        }
         return -ETIME;
     }
 
@@ -3677,6 +3798,15 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
     }
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=final-tx ret=%d sys=0x%08x now=%u seq=%u round=%u tx_time=0x%08x\n",
+                                ret,
+                                (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                k_uptime_get_32(),
+                                request->seq,
+                                request->round_index,
+                                final_tx_time);
+        }
 #if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
             LOG_WRN("UWB initiator FINAL TX start failed: ret=%d anchor=0x%016llx seq=%u round=%u reply_delay_uus=%u",
                     ret,
@@ -3692,6 +3822,15 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             result->rsl_sampled = request->capture_rsl;
             result->status = RANGE_DELAYED_TX_MISSED;
             return -ETIME;
+    }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_INIT stage=final-armed now=%u seq=%u round=%u tx_time=0x%08x final_tx=0x%08x report=%u\n",
+                            k_uptime_get_32(),
+                            request->seq,
+                            request->round_index,
+                            final_tx_time,
+                            (unsigned int)final_tx_ts,
+                            request->skip_responder_report ? 0u : 1u);
     }
 
 #if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
@@ -3723,6 +3862,14 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     if (request->skip_responder_report) {
         ret = wait_tx_complete(ds_twr_rx_wait_timeout_ms(reply_delay_uus));
         if (ret < 0) {
+            if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+                status_debug_printf("DBG_DS_INIT stage=final-complete ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
+                                    ret,
+                                    (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                    k_uptime_get_32(),
+                                    request->seq,
+                                    request->round_index);
+            }
 #if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
             LOG_WRN("UWB initiator FINAL TX complete failed: ret=%d anchor=0x%016llx seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
                     ret,
@@ -3754,6 +3901,13 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         result->rsl_dbm = rsl_dbm;
         result->rsl_sampled = request->capture_rsl;
         result->status = RANGE_OK;
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_INIT stage=done ret=0 status=%u now=%u seq=%u round=%u\n",
+                                result->status,
+                                k_uptime_get_32(),
+                                request->seq,
+                                request->round_index);
+        }
 
         if (request_sends_clicker_diag(request)) {
             int diag_ret;
@@ -3817,6 +3971,15 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     }
 
     ret = receive_report(request, response.header.responder_id, result);
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_INIT stage=report-rx ret=%d status=%u sys=0x%08x now=%u seq=%u round=%u\n",
+                            ret,
+                            result->status,
+                            (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                            k_uptime_get_32(),
+                            request->seq,
+                            request->round_index);
+    }
     if (ret == 0 && result->status == RANGE_OK && request_sends_clicker_diag(request)) {
         int diag_ret = send_clicker_diag(request,
                                          &response,
@@ -3887,7 +4050,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     uint8_t tx_buffer[UWB_RESP_LEN];
     size_t frame_len;
     size_t tx_len;
-    uint32_t status;
+    uint32_t status = 0u;
     uint32_t resp_tx_time;
     uint64_t poll_rx_ts;
     uint64_t resp_tx_ts;
@@ -3913,7 +4076,22 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     ret = ensure_phy_mode(DWM3000_PHY_RANGE);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=phy ret=%d now=%u seq=%u round=%u\n",
+                                ret,
+                                k_uptime_get_32(),
+                                expected->seq,
+                                expected->round_index);
+        }
         return ret;
+    }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=arm evt=%u seq=%u round=%u now=%u timeout=%u\n",
+                            expected->session_id,
+                            expected->seq,
+                            expected->round_index,
+                            k_uptime_get_32(),
+                            timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms);
     }
 
     dwt_setpreambledetecttimeout(0u);
@@ -3928,6 +4106,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
                         NULL, NULL, NULL, NULL, false, true);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=poll-rx ret=%d sys=0x%08x fail=%u now=%u seq=%u round=%u\n",
+                                ret,
+                                status,
+                                (unsigned int)status_to_rx_failure(status),
+                                k_uptime_get_32(),
+                                expected->seq,
+                                expected->round_index);
+        }
         if (ret == -ETIMEDOUT) {
             return -ETIMEDOUT;
         }
@@ -3949,6 +4136,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
 
     ret = decode_poll_frame(rx_buffer, frame_len, &poll);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=poll-decode ret=%d len=%u type=0x%02x now=%u seq=%u round=%u\n",
+                                ret,
+                                (unsigned int)frame_len,
+                                frame_len >= UWB_SYNC_HEADER_LEN ? rx_buffer[2] : 0u,
+                                k_uptime_get_32(),
+                                expected->seq,
+                                expected->round_index);
+        }
         if (result != NULL) {
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
@@ -3957,6 +4153,13 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -EAGAIN;
     }
     if (!poll_targets_anchor(&poll, local_anchor_id)) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=poll-other reason=target observed=0x%llx expected=0x%llx seq=%u round=%u\n",
+                                (unsigned long long)poll.responder_id,
+                                (unsigned long long)local_anchor_id,
+                                poll.seq,
+                                poll.round_index);
+        }
         if (result != NULL) {
             result_set_poll_metadata(result, &poll, poll.responder_id);
             result->quality = quality;
@@ -3966,6 +4169,17 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -EAGAIN;
     }
     if (!poll_matches_expected(&poll, expected)) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=poll-other reason=identity evt=%u/%u seq=%u/%u round=%u/%u init=0x%llx/0x%llx\n",
+                                poll.session_id,
+                                expected->session_id,
+                                poll.seq,
+                                expected->seq,
+                                poll.round_index,
+                                expected->round_index,
+                                (unsigned long long)poll.initiator_id,
+                                (unsigned long long)expected->initiator_id);
+        }
         if (result != NULL) {
             result_set_poll_metadata(result, &poll, local_anchor_id);
             result->quality = quality;
@@ -3983,6 +4197,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
         result->status = RANGE_INTERNAL_ERROR;
     }
     reply_delay_uus = request_reply_delay_uus(expected);
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=poll-ok now=%u seq=%u round=%u poll_rx=0x%08x q=%u reply_uus=%u\n",
+                            k_uptime_get_32(),
+                            poll.seq,
+                            poll.round_index,
+                            (unsigned int)poll_rx_ts,
+                            quality,
+                            reply_delay_uus);
+    }
 
     resp_tx_time = delayed_tx_time_from_rx_reference(poll_rx_ts,
                                                      reply_delay_uus);
@@ -4021,7 +4244,24 @@ static int responder_poll_once(uint64_t local_anchor_id,
         if (result != NULL) {
             result->status = RANGE_DELAYED_TX_MISSED;
         }
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=resp-tx ret=%d sys=0x%08x now=%u seq=%u round=%u tx_time=0x%08x\n",
+                                ret,
+                                (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                k_uptime_get_32(),
+                                poll.seq,
+                                poll.round_index,
+                                resp_tx_time);
+        }
         return -ETIME;
+    }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=resp-armed now=%u seq=%u round=%u tx_time=0x%08x resp_tx=0x%08x\n",
+                            k_uptime_get_32(),
+                            poll.seq,
+                            poll.round_index,
+                            resp_tx_time,
+                            (unsigned int)resp_tx_ts);
     }
     dwm3000_debug_event(false,
                         "DS_TWR_TIMING",
@@ -4043,6 +4283,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         capture_final_rsl,
                         true);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=final-rx ret=%d sys=0x%08x fail=%u now=%u seq=%u round=%u\n",
+                                ret,
+                                status,
+                                (unsigned int)status_to_rx_failure(status),
+                                k_uptime_get_32(),
+                                poll.seq,
+                                poll.round_index);
+        }
 #if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
         LOG_WRN("UWB responder FINAL RX failed: ret=%d sys_status=0x%08x failure=%s seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
                 ret,
@@ -4108,6 +4357,10 @@ static int responder_poll_once(uint64_t local_anchor_id,
             result->poll_tx_ts_32 = final.poll_tx_ts_32;
             result->resp_rx_ts_32 = final.resp_rx_ts_32;
             result->final_tx_ts_32 = final.final_tx_ts_32;
+            result->clicker_clock_offset_raw = final.clicker_clock_offset_raw;
+            result->clicker_clock_offset_sampled =
+                (final.diagnostic_flags &
+                 UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT) != 0u;
         }
         ret = compute_distance_mm(&final, poll_rx_ts, resp_tx_ts, final_rx_ts, &distance_mm);
         if (ret < 0) {
@@ -4126,6 +4379,14 @@ static int responder_poll_once(uint64_t local_anchor_id,
         }
         result->cir_sampled = cir_sampled;
         result->status = report_status;
+    }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=final-decode status=%u now=%u seq=%u round=%u final_rx=0x%08x\n",
+                            report_status,
+                            k_uptime_get_32(),
+                            poll.seq,
+                            poll.round_index,
+                            (unsigned int)final_rx_ts);
     }
 
     if (expected->skip_responder_report &&
@@ -4205,12 +4466,36 @@ static int responder_poll_once(uint64_t local_anchor_id,
     clear_status(SYS_STATUS_TXFRS_BIT_MASK);
     ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=report-tx ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
+                                ret,
+                                (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                k_uptime_get_32(),
+                                poll.seq,
+                                poll.round_index);
+        }
         return ret;
     }
 
     ret = wait_tx_complete(REPORT_RX_TIMEOUT_MS);
     if (ret < 0) {
+        if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+            status_debug_printf("DBG_DS_RESP stage=report-complete ret=%d sys=0x%08x now=%u seq=%u round=%u\n",
+                                ret,
+                                (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
+                                k_uptime_get_32(),
+                                poll.seq,
+                                poll.round_index);
+        }
         return ret;
+    }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=done ret=%d status=%u now=%u seq=%u round=%u\n",
+                            report_status == RANGE_OK ? 0 : -EIO,
+                            report_status,
+                            k_uptime_get_32(),
+                            poll.seq,
+                            poll.round_index);
     }
 
     LOG_INF("UWB report sent to short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",

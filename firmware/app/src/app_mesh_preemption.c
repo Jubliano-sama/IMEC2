@@ -33,10 +33,6 @@ int app_mesh_apply_click_preempt_plan(
         local_result.schedule_timeout_ret = ops->schedule_timeout(ops->ctx);
         local_result.timeout_scheduled = local_result.schedule_timeout_ret >= 0;
     }
-    if (plan->purge_rx_queue && ops->mesh_rx_msgq != NULL) {
-        k_msgq_purge(ops->mesh_rx_msgq);
-        local_result.rx_queue_purged = true;
-    }
     if (plan->requeue_click_report && ops->report_tx_msgq != NULL) {
         if (k_msgq_put(ops->report_tx_msgq,
                        &plan->click_report,

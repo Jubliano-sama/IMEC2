@@ -102,7 +102,7 @@ static int ensure_tlv_u8(uint8_t *payload,
     return tlv_len == sizeof(uint8_t) ? PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
-static int append_default_flood_controls(struct mesh_outbound *out)
+int gateway_command_append_default_flood_controls(struct mesh_outbound *out)
 {
     size_t offset;
     size_t original_len;
@@ -910,7 +910,7 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
     if (options.flood_required) {
         out->next_hop_id = MESH_BROADCAST_ID;
         out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-        ret = append_default_flood_controls(out);
+        ret = gateway_command_append_default_flood_controls(out);
         if (ret != PROTO_OK) {
             return ret;
         }

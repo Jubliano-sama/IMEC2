@@ -81,11 +81,19 @@ bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type)
     return msg_type == MSG_ROUTE_REPLY;
 }
 
+bool app_mesh_c5_route_capture_requires_inline_timing_install(
+    uint8_t msg_type,
+    bool awaiting_event_accept)
+{
+    return awaiting_event_accept && msg_type == MSG_MESH_EVENT_ACCEPT;
+}
+
 bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
                                            size_t frame_len,
                                            size_t standard_frame_max_len)
 {
     return frame_len > standard_frame_max_len ||
+           msg_type == MSG_COMMAND ||
            msg_type == MSG_ROUTE_REQ ||
            msg_type == MSG_ROUTE_REPLY ||
            msg_type == MSG_GATEWAY_ROUTE_ADV ||
@@ -96,6 +104,18 @@ bool app_mesh_c5_wake_claim_preempts_mesh(uint8_t claim_flags)
 {
     return (claim_flags & FLAG_COUNT_AS_CLICK) != 0u ||
            (claim_flags & FLAG_RANGE_ONLY) == 0u;
+}
+
+bool app_mesh_c5_wake_claim_requires_anchor_handoff(uint8_t claim_flags,
+                                                    bool local_can_range_clicks)
+{
+    return local_can_range_clicks &&
+           app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
+}
+
+bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags)
+{
+    return !app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
 }
 
 uint32_t app_mesh_c5_route_reply_listen_window_ms(
@@ -177,4 +197,17 @@ uint32_t app_mesh_c5_connected_gap_reschedule_ms(
 
     available_ms = next_channel9_delay_ms - retune_margin_ms;
     return available_ms >= min_scan_ms ? 0u : available_ms;
+}
+
+enum app_mesh_c5_connected_gap_rx_action
+app_mesh_c5_connected_gap_rx_action(bool click_claim,
+                                    bool deadline_reached)
+{
+    if (click_claim) {
+        return APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK;
+    }
+    if (deadline_reached) {
+        return APP_MESH_C5_CONNECTED_GAP_RX_COMPLETE;
+    }
+    return APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE;
 }

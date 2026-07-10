@@ -114,6 +114,14 @@ static void test_click_report_packet_counts_as_click(void)
     assert(tlv_find(payload, payload_len, TLV_BURST_ID, &value, &value_len) == PROTO_OK);
     assert(value_len == 4u);
     assert(proto_get_u32_le(value) == diagnostics.burst_id);
+    assert(tlv_find(payload, payload_len, TLV_CLICK_LATENCY_MS, &value, &value_len) ==
+           PROTO_ERR_NOT_FOUND);
+    assert(tlv_find(payload, payload_len, TLV_CHANNEL9_REPORT_LATENCY_MS,
+                    &value, &value_len) == PROTO_ERR_NOT_FOUND);
+    assert(tlv_find(payload, payload_len, TLV_GATEWAY_ACK_LATENCY_MS,
+                    &value, &value_len) == PROTO_ERR_NOT_FOUND);
+    assert(tlv_find(payload, payload_len, TLV_ANCHOR_DIAG_BYTES, &value, &value_len) ==
+           PROTO_ERR_NOT_FOUND);
 }
 
 static void test_diagnostic_range_packet_is_not_click(void)
@@ -211,6 +219,9 @@ static void test_range_report_combines_clicker_and_anchor_diagnostics(void)
         .clicker_diag_len = sizeof(clicker_diag),
         .anchor_diag = anchor_diag,
         .anchor_diag_len = sizeof(anchor_diag),
+        .click_latency_present = true,
+        .channel9_report_latency_present = true,
+        .gateway_ack_latency_present = true,
     };
     const struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
@@ -314,10 +325,12 @@ static void test_ml_single_sample_diagnostics_fit_and_encode_offsets(void)
         .report_fragment_count = 1u,
         .phy_config_id = UWB_CHANNEL_WAKE_CONTACT,
         .clock_offset_raw = -321,
+        .clicker_clock_offset_raw = 456,
         .carrier_integrator = -12345678,
         .clicker_diag = cir_sample,
         .clicker_diag_len = sizeof(cir_sample),
         .clock_offset_present = true,
+        .clicker_clock_offset_present = true,
         .carrier_integrator_present = true,
     };
     const struct range_report_fields fields = {
@@ -380,6 +393,11 @@ static void test_ml_single_sample_diagnostics_fit_and_encode_offsets(void)
            PROTO_OK);
     assert(value_len == 2u);
     assert((int16_t)proto_get_u16_le(value) == diagnostics.clock_offset_raw);
+    assert(tlv_find(payload, payload_len, TLV_CLICKER_CLOCK_OFFSET_RAW,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == 2u);
+    assert((int16_t)proto_get_u16_le(value) ==
+           diagnostics.clicker_clock_offset_raw);
     assert(tlv_find(payload, payload_len, TLV_UWB_CARRIER_INTEGRATOR, &value, &value_len) ==
            PROTO_OK);
     assert(value_len == 4u);
@@ -418,9 +436,9 @@ static void test_rejects_unbounded_diagnostic_bytes(void)
 
 static void test_full_diagnostic_first_fragment_stays_inside_packet_payload(void)
 {
-    int32_t distance_samples[4u];
-    uint8_t round_indices[4u];
-    uint64_t sequence_start_timestamps_ms[4u];
+    int32_t distance_samples[5u];
+    uint8_t round_indices[5u];
+    uint64_t sequence_start_timestamps_ms[5u];
     uint8_t clicker_diag[RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET] = {0};
     const uint8_t anchor_diag[UWB_CIR_SAMPLE_LEN] = {
         0x80u, 0x81u, 0x82u, 0x83u, 0x84u, 0x85u,
@@ -440,6 +458,7 @@ static void test_full_diagnostic_first_fragment_stays_inside_packet_payload(void
         .clicker_diag_len = sizeof(clicker_diag),
         .anchor_diag = anchor_diag,
         .anchor_diag_len = sizeof(anchor_diag),
+        .click_latency_present = true,
     };
     struct range_report_fields fields = {
         .clicker_id = 0x1111222233334444ull,
@@ -455,23 +474,23 @@ static void test_full_diagnostic_first_fragment_stays_inside_packet_payload(void
         .range_round_indices = round_indices,
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = RANGE_REPORT_MAX_DISTANCE_SAMPLES,
-        .distance_sample_count = 3u,
+        .distance_sample_count = 4u,
         .diagnostics = &diagnostics,
     };
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     size_t payload_len = 0u;
 
-    for (uint16_t i = 0u; i < 4u; i++) {
+    for (uint16_t i = 0u; i < 5u; i++) {
         distance_samples[i] = 4500 + (int32_t)i;
         clicker_diag[i] = (uint8_t)i;
     }
-    fill_sample_metadata(round_indices, sequence_start_timestamps_ms, 4u, 0u);
+    fill_sample_metadata(round_indices, sequence_start_timestamps_ms, 5u, 0u);
 
     assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
            PROTO_OK);
     assert(payload_len <= PACKET_MAX_PAYLOAD_LEN);
 
-    fields.distance_sample_count = 4u;
+    fields.distance_sample_count = 5u;
     payload_len = 0u;
     assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len, &fields) ==
            PROTO_ERR_NO_SPACE);
@@ -834,6 +853,90 @@ static void test_later_fragmented_range_chunk_omits_single_diagnostics(void)
     assert(value_len == RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT * sizeof(uint64_t));
 }
 
+static void test_partial_cir_fragment_fits_and_encodes_reassembly_metadata(void)
+{
+    uint8_t chunk[RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES];
+    struct range_report_cir_fragment fragment = {
+        .clicker_id = UINT64_C(0x1111222233334444),
+        .anchor_id = UINT64_C(0x5555666677778888),
+        .event_seq = 123u,
+        .timestamp_ms = UINT64_C(987654),
+        .fragment_index = 0u,
+        .fragment_count = 2u,
+        .byte_offset = 0u,
+        .total_bytes = 1152u,
+        .first_path_index = 713u,
+        .start_index = 649u,
+        .chunk = chunk,
+        .chunk_len = sizeof(chunk),
+    };
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    size_t payload_len = 0u;
+    size_t copied = 0u;
+    size_t offset = 0u;
+    unsigned int chunk_tlv_count = 0u;
+
+    for (size_t i = 0u; i < sizeof(chunk); i++) {
+        chunk[i] = (uint8_t)i;
+    }
+
+    assert(report_append_cir_fragment_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           &fragment) == PROTO_OK);
+    assert(payload_len == PACKET_EXT_MAX_PAYLOAD_LEN);
+    assert(tlv_find(payload, payload_len, TLV_DIAG_FRAGMENT_INDEX,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint16_t));
+    assert(proto_get_u16_le(value) == fragment.fragment_index);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CIR_BYTE_OFFSET,
+                    &value, &value_len) == PROTO_OK);
+    assert(proto_get_u16_le(value) == fragment.byte_offset);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CIR_TOTAL_BYTES,
+                    &value, &value_len) == PROTO_OK);
+    assert(proto_get_u16_le(value) == fragment.total_bytes);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CIR_FIRST_PATH_INDEX,
+                    &value, &value_len) == PROTO_OK);
+    assert(proto_get_u16_le(value) == fragment.first_path_index);
+    assert(tlv_find(payload, payload_len, TLV_UWB_CIR_START_INDEX,
+                    &value, &value_len) == PROTO_OK);
+    assert(proto_get_u16_le(value) == fragment.start_index);
+    while (offset < payload_len) {
+        uint8_t type = payload[offset];
+        uint8_t len = payload[offset + 1u];
+
+        offset += 2u;
+        assert(payload_len - offset >= len);
+        if (type == TLV_UWB_CIR_FULL_CHUNK) {
+            assert(sizeof(chunk) - copied >= len);
+            assert(memcmp(&payload[offset], &chunk[copied], len) == 0);
+            copied += len;
+            chunk_tlv_count++;
+        }
+        offset += len;
+    }
+    assert(copied == sizeof(chunk));
+    assert(chunk_tlv_count == RANGE_REPORT_CIR_PACKET_CHUNK_TLV_COUNT);
+
+    fragment.fragment_index = 1u;
+    fragment.byte_offset = sizeof(chunk);
+    fragment.chunk_len = 1152u - sizeof(chunk);
+    payload_len = 0u;
+    assert(report_append_cir_fragment_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           &fragment) == PROTO_OK);
+    assert(payload_len < PACKET_EXT_MAX_PAYLOAD_LEN);
+
+    payload_len = 0u;
+    assert(report_append_cir_fragment_tlvs(payload,
+                                           64u,
+                                           &payload_len,
+                                           &fragment) == PROTO_ERR_NO_SPACE);
+}
+
 int main(void)
 {
     test_click_report_packet_counts_as_click();
@@ -850,5 +953,6 @@ int main(void)
     test_max_single_packet_range_samples_fit_one_uwb_mesh_frame();
     test_first_fragmented_range_chunk_has_single_diagnostics();
     test_later_fragmented_range_chunk_omits_single_diagnostics();
+    test_partial_cir_fragment_fits_and_encodes_reassembly_metadata();
     return 0;
 }

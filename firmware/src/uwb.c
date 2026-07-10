@@ -315,6 +315,13 @@ int uwb_encode_final(const struct uwb_final_frame *frame,
     if (out_cap < UWB_FINAL_LEN) {
         return PROTO_ERR_NO_SPACE;
     }
+    if ((frame->diagnostic_flags &
+         (uint8_t)~UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT) != 0u ||
+        ((frame->diagnostic_flags &
+          UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT) == 0u &&
+         frame->clicker_clock_offset_raw != 0)) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     ret = encode_header(&frame->header, MSG_UWB_FINAL, out);
     if (ret != PROTO_OK) {
@@ -324,6 +331,9 @@ int uwb_encode_final(const struct uwb_final_frame *frame,
     proto_put_u32_le(&out[UWB_HEADER_LEN], frame->poll_tx_ts_32);
     proto_put_u32_le(&out[UWB_HEADER_LEN + 4u], frame->resp_rx_ts_32);
     proto_put_u32_le(&out[UWB_HEADER_LEN + 8u], frame->final_tx_ts_32);
+    out[UWB_HEADER_LEN + 12u] = frame->diagnostic_flags;
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 13u],
+                     (uint16_t)frame->clicker_clock_offset_raw);
     *written = UWB_FINAL_LEN;
     return PROTO_OK;
 }
@@ -346,6 +356,16 @@ int uwb_decode_final(const uint8_t *data,
     frame->poll_tx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN]);
     frame->resp_rx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 4u]);
     frame->final_tx_ts_32 = proto_get_u32_le(&data[UWB_HEADER_LEN + 8u]);
+    frame->diagnostic_flags = data[UWB_HEADER_LEN + 12u];
+    frame->clicker_clock_offset_raw =
+        (int16_t)proto_get_u16_le(&data[UWB_HEADER_LEN + 13u]);
+    if ((frame->diagnostic_flags &
+         (uint8_t)~UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT) != 0u ||
+        ((frame->diagnostic_flags &
+          UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT) == 0u &&
+         frame->clicker_clock_offset_raw != 0)) {
+        return PROTO_ERR_MALFORMED;
+    }
     return PROTO_OK;
 }
 

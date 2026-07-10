@@ -14,10 +14,13 @@ extern "C" {
 #define GATEWAY_BLE_STREAM_MAGIC 0x5747u
 #define GATEWAY_BLE_STREAM_VERSION 1u
 #define GATEWAY_BLE_STREAM_RECORD_HEADER_LEN 40u
-#define GATEWAY_BLE_STREAM_RECORD_MAX_LEN 192u
+#define GATEWAY_BLE_STREAM_RECORD_MAX_LEN \
+    (GATEWAY_BLE_STREAM_RECORD_HEADER_LEN + PACKET_EXT_MAX_PAYLOAD_LEN)
 #define GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN \
     (GATEWAY_BLE_STREAM_RECORD_MAX_LEN - GATEWAY_BLE_STREAM_RECORD_HEADER_LEN)
-#define GATEWAY_BLE_STREAM_QUEUE_DEPTH 8u
+#define GATEWAY_BLE_STREAM_QUEUE_DEPTH 3u
+#define GATEWAY_BLE_STREAM_RECORD_POOL_BYTES 1800u
+#define GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES 1660u
 #define GATEWAY_BLE_STREAM_RAM_BUDGET_BYTES 2048u
 
 enum gateway_ble_stream_class {
@@ -56,7 +59,7 @@ struct gateway_ble_stream_diagnostics {
 };
 
 struct gateway_ble_stream_item {
-    uint8_t record[GATEWAY_BLE_STREAM_RECORD_MAX_LEN];
+    uint16_t offset;
     uint16_t len;
     uint8_t packet_type;
     uint8_t priority;
@@ -64,9 +67,11 @@ struct gateway_ble_stream_item {
 };
 
 struct gateway_ble_stream_state {
+    uint8_t record_pool[GATEWAY_BLE_STREAM_RECORD_POOL_BYTES];
     struct gateway_ble_stream_item items[GATEWAY_BLE_STREAM_QUEUE_DEPTH];
-    uint8_t head;
+    uint16_t pool_used;
     uint8_t count;
+    bool head_send_active;
     struct gateway_ble_stream_diagnostics diagnostics;
 };
 
@@ -96,6 +101,14 @@ unsigned int gateway_ble_stream_drain(struct gateway_ble_stream_state *state,
 int gateway_ble_stream_peek(const struct gateway_ble_stream_state *state,
                             const uint8_t **record,
                             size_t *record_len);
+int gateway_ble_stream_begin_send(struct gateway_ble_stream_state *state,
+                                  uint8_t *record,
+                                  size_t record_cap,
+                                  size_t *record_len);
+int gateway_ble_stream_begin_send_view(struct gateway_ble_stream_state *state,
+                                       const uint8_t **record,
+                                       size_t *record_len);
+void gateway_ble_stream_cancel_send(struct gateway_ble_stream_state *state);
 void gateway_ble_stream_mark_sent(struct gateway_ble_stream_state *state,
                                   uint32_t now_ms);
 void gateway_ble_stream_get_diagnostics(

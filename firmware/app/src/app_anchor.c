@@ -10,6 +10,7 @@
 #include "app_ml.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
+#include "discovery_assignment.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -36,6 +37,13 @@
 LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 
 #define ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS 1000u
+#define GATEWAY_HOST_COMMAND_QUEUE_DEPTH 2u
+#define DISCOVERY_ASSIGNMENT_COLLECTION_MS 8000u
+#define DISCOVERY_ASSIGNMENT_CLAIM_INITIAL_SPREAD_MS 1500u
+#define DISCOVERY_ASSIGNMENT_CLAIM_RETRY_BASE_MS 100u
+#define DISCOVERY_ASSIGNMENT_CLAIM_RETRY_MAX_MS 2000u
+#define DISCOVERY_ASSIGNMENT_CLAIM_MAX_ATTEMPTS 8u
+#define DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S 20u
 
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
@@ -44,6 +52,8 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 12288u,
              "mesh-route anchor scan needs the enlarged wake-frame stack");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_PRIORITY < ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
              "mesh route work must preempt low-duty anchor scan handoff");
+BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE,
+             "mesh click handoff must have the full anchor sequence stack");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_BUSY_RETRY_MS > 0u,
              "blocked mesh route-test anchor scans must not spin at zero delay");
 #endif
@@ -53,6 +63,37 @@ static struct k_work_delayable anchor_heartbeat_work;
 static struct k_work_delayable anchor_reboot_work;
 static struct k_work_delayable anchor_collection_result_work;
 static struct k_work_delayable anchor_command_execute_work;
+static struct k_work_delayable anchor_discovery_claim_work;
+#if DEVICE_ROLE == ROLE_GATEWAY
+static struct k_work_delayable gateway_discovery_assignment_finalize_work;
+static struct k_work_delayable gateway_discovery_assignment_publish_work;
+#endif
+
+struct anchor_discovery_claim_pending {
+    struct proto_packet command;
+    uint32_t epoch;
+    uint8_t attempt;
+    bool active;
+};
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+struct gateway_discovery_assignment_state {
+    struct proto_packet host_command;
+    uint64_t anchor_ids[UWB_DISCOVERY_SLOT_COUNT];
+    uint32_t epoch;
+    uint32_t claim_command_seq;
+    size_t claim_count;
+    uint8_t claim_round;
+    uint8_t publish_attempt;
+    bool active;
+};
+#endif
+
+static struct anchor_discovery_claim_pending anchor_discovery_claim_pending;
+#if DEVICE_ROLE == ROLE_GATEWAY
+static struct gateway_discovery_assignment_state gateway_discovery_assignment_state;
+#endif
+static uint32_t anchor_discovery_assignment_requested_epoch;
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_THREAD_STACK_DEFINE(anchor_uwb_scan_work_q_stack, ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE);
@@ -90,6 +131,18 @@ static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
+#if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
+struct gateway_host_command_item {
+    struct proto_packet packet;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len;
+};
+K_MSGQ_DEFINE(gateway_host_command_msgq,
+              sizeof(struct gateway_host_command_item),
+              GATEWAY_HOST_COMMAND_QUEUE_DEPTH,
+              4);
+static struct k_work_delayable gateway_host_command_work;
+#endif
 static uint32_t anchor_collection_node_boot_counter;
 static uint16_t anchor_collection_result_seq;
 struct anchor_collection_result_pending {
@@ -133,6 +186,10 @@ static void anchor_note_uwb_awake_since(int64_t start_ms, uint32_t already_count
 static int anchor_start_uwb_scan(void);
 static void anchor_survey_work_handler(struct k_work *work);
 static void anchor_uwb_scan_work_handler(struct k_work *work);
+static bool anchor_handle_mesh_click_wake_claim(
+    const struct uwb_wake_claim_frame *claim,
+    uint8_t link_quality,
+    int64_t received_at_ms);
 static void anchor_survey_schedule(k_timeout_t delay);
 static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms);
 static bool anchor_survey_pair_queueable(const struct survey_pair *pair);
@@ -257,6 +314,135 @@ static int anchor_send_command_result(const struct proto_packet *command,
                          reason,
                          ret);
     return ret;
+}
+
+static uint32_t anchor_discovery_claim_retry_delay_ms(uint8_t attempt)
+{
+    uint32_t ceiling = DISCOVERY_ASSIGNMENT_CLAIM_RETRY_BASE_MS;
+
+    for (uint8_t i = 0u; i < attempt; i++) {
+        if (ceiling >= DISCOVERY_ASSIGNMENT_CLAIM_RETRY_MAX_MS / 2u) {
+            ceiling = DISCOVERY_ASSIGNMENT_CLAIM_RETRY_MAX_MS;
+            break;
+        }
+        ceiling *= 2u;
+    }
+    return ceiling + (sys_rand32_get() % ceiling);
+}
+
+static int anchor_send_discovery_claim(
+    const struct anchor_discovery_claim_pending *pending)
+{
+    struct mesh_outbound outbound = {0};
+    uint64_t hash;
+    size_t payload_len = 0u;
+    int ret;
+
+    if (pending == NULL || pending->epoch == 0u) {
+        return -EINVAL;
+    }
+    hash = discovery_assignment_hash(DEVICE_ID);
+    ret = mesh_append_command_result(outbound.payload,
+                                     sizeof(outbound.payload),
+                                     &payload_len,
+                                     CMD_ASSIGN_DISCOVERY_SLOTS,
+                                     COMMAND_OK,
+                                     0u);
+    if (ret == PROTO_OK) {
+        ret = discovery_assignment_append_control_tlvs(
+            outbound.payload,
+            sizeof(outbound.payload),
+            &payload_len,
+            DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+            pending->epoch);
+    }
+    if (ret == PROTO_OK) {
+        ret = discovery_assignment_append_claim_hash(outbound.payload,
+                                                     sizeof(outbound.payload),
+                                                     &payload_len,
+                                                     hash);
+    }
+    if (ret == PROTO_OK) {
+        ret = mesh_init_command_result(&outbound.packet,
+                                       DEVICE_ID,
+                                       GATEWAY_ID,
+                                       pending->command.session_id,
+                                       pending->command.seq,
+                                       (uint8_t)payload_len,
+                                       true);
+    }
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    outbound.payload_len = (uint16_t)payload_len;
+    ret = mesh_start_tracked_tx(&outbound, "discovery-slot-claim");
+    status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM epoch=%u hash=0x%016llx attempt=%u ret=%d\n",
+                        pending->epoch,
+                        (unsigned long long)hash,
+                        pending->attempt + 1u,
+                        ret);
+    if (ret == 0) {
+        HIGH_DEBUG_COUNTER_INC(command_result_tx);
+    }
+    return ret;
+}
+
+static void anchor_discovery_claim_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_discovery_claim_pending.active) {
+        return;
+    }
+    ret = anchor_send_discovery_claim(&anchor_discovery_claim_pending);
+    if (ret == 0) {
+        anchor_discovery_claim_pending.active = false;
+        return;
+    }
+    anchor_discovery_claim_pending.attempt++;
+    if (anchor_discovery_claim_pending.attempt >=
+        DISCOVERY_ASSIGNMENT_CLAIM_MAX_ATTEMPTS) {
+        LOG_ERR("anchor discovery-slot claim exhausted: epoch=%u ret=%d",
+                anchor_discovery_claim_pending.epoch,
+                ret);
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_FAILED epoch=%u attempts=%u ret=%d\n",
+                            anchor_discovery_claim_pending.epoch,
+                            anchor_discovery_claim_pending.attempt,
+                            ret);
+        anchor_discovery_claim_pending.active = false;
+        return;
+    }
+    (void)k_work_reschedule(&anchor_discovery_claim_work,
+                            K_MSEC(anchor_discovery_claim_retry_delay_ms(
+                                anchor_discovery_claim_pending.attempt)));
+}
+
+static int anchor_schedule_discovery_claim(const struct proto_packet *command,
+                                           uint32_t epoch)
+{
+    uint64_t hash;
+    uint32_t delay_ms;
+
+    if (command == NULL || epoch == 0u) {
+        return -EINVAL;
+    }
+    hash = discovery_assignment_hash(DEVICE_ID);
+    delay_ms = DISCOVERY_ASSIGNMENT_CLAIM_RETRY_BASE_MS +
+        (uint32_t)(hash % DISCOVERY_ASSIGNMENT_CLAIM_INITIAL_SPREAD_MS);
+    local_anchor_clear_discovery_assignment();
+    anchor_discovery_assignment_requested_epoch = epoch;
+    anchor_discovery_claim_pending.command = *command;
+    anchor_discovery_claim_pending.epoch = epoch;
+    anchor_discovery_claim_pending.attempt = 0u;
+    anchor_discovery_claim_pending.active = true;
+    (void)k_work_reschedule(&anchor_discovery_claim_work, K_MSEC(delay_ms));
+    status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_SCHEDULED epoch=%u delay=%u hash=0x%016llx\n",
+                        epoch,
+                        delay_ms,
+                        (unsigned long long)hash);
+    return 0;
 }
 
 static void anchor_collection_result_clear(void)
@@ -1116,6 +1302,82 @@ static void anchor_pending_options_to_gateway(
     options->flood_required = true;
 }
 
+static int anchor_apply_discovery_assignment_command(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    struct discovery_assignment_entry entries[UWB_DISCOVERY_SLOT_COUNT];
+    enum discovery_assignment_phase phase = 0;
+    uint32_t epoch = 0u;
+    size_t entry_count = 0u;
+    uint8_t slot_count = 0u;
+    int ret;
+
+    ret = discovery_assignment_extract_control_tlvs(payload,
+                                                    payload_len,
+                                                    &phase,
+                                                    &epoch);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+        return anchor_schedule_discovery_claim(packet, epoch);
+    }
+    if (anchor_discovery_assignment_requested_epoch != 0u &&
+        anchor_discovery_assignment_requested_epoch != epoch) {
+        LOG_WRN("anchor ignored discovery-slot table for unexpected epoch: expected=%u received=%u",
+                anchor_discovery_assignment_requested_epoch,
+                epoch);
+        return -ESTALE;
+    }
+
+    ret = discovery_assignment_parse_table_tlvs(payload,
+                                                payload_len,
+                                                entries,
+                                                ARRAY_SIZE(entries),
+                                                &entry_count,
+                                                &slot_count);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    (void)k_work_cancel_delayable(&anchor_discovery_claim_work);
+    anchor_discovery_claim_pending.active = false;
+    anchor_discovery_assignment_requested_epoch = epoch;
+    local_anchor_clear_discovery_assignment();
+    for (size_t i = 0u; i < entry_count; i++) {
+        if (entries[i].anchor_id != DEVICE_ID) {
+            continue;
+        }
+        ret = local_anchor_set_discovery_assignment(epoch,
+                                                    entries[i].slot,
+                                                    slot_count);
+        if (ret != PROTO_OK) {
+            return mesh_errno_from_proto(ret);
+        }
+        status_debug_printf("DBG_DISCOVERY_SLOT_ASSIGNED epoch=%u slot=%u slot_count=%u anchors=%u hash=0x%016llx\n",
+                            epoch,
+                            entries[i].slot,
+                            slot_count,
+                            (unsigned int)entry_count,
+                            (unsigned long long)entries[i].hash);
+        LOG_INF("anchor discovery slot assigned: epoch=%u slot=%u slot_count=%u anchors=%u",
+                epoch,
+                entries[i].slot,
+                slot_count,
+                (unsigned int)entry_count);
+        return 0;
+    }
+
+    status_debug_printf("DBG_DISCOVERY_SLOT_UNASSIGNED epoch=%u count=%u reason=not-listed\n",
+                        epoch,
+                        (unsigned int)entry_count);
+    LOG_WRN("anchor not listed in discovery-slot assignment: epoch=%u count=%u",
+            epoch,
+            (unsigned int)entry_count);
+    return 0;
+}
+
 static void anchor_execute_command_side_effects(const struct proto_packet *packet,
                                                 const uint8_t *payload,
                                                 size_t payload_len,
@@ -1164,6 +1426,15 @@ static void anchor_execute_command_side_effects(const struct proto_packet *packe
         ret = anchor_set_scan_duty_from_command(payload, payload_len, reason);
         if (ret < 0) {
             *status = COMMAND_MALFORMED_PAYLOAD;
+        }
+    } else if (command_id == CMD_ASSIGN_DISCOVERY_SLOTS) {
+        ret = anchor_apply_discovery_assignment_command(packet,
+                                                        payload,
+                                                        payload_len);
+        if (ret < 0) {
+            *status = ret == -ESTALE ? COMMAND_INVALID_STATE :
+                      COMMAND_MALFORMED_PAYLOAD;
+            *reason = (uint8_t)(-ret);
         }
     } else if (command_id == CMD_SURVEY_START_PAIR) {
         ret = anchor_start_survey_pair_from_command(packet,
@@ -1644,10 +1915,9 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     gateway_survey_active = true;
 
-    ret = mesh_send_c5_control(&outbound,
-                               C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
-                               MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                               "survey-discovery-start");
+    ret = mesh_send_c5_flood(&outbound,
+                             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                             "survey-discovery-start");
     if (ret < 0) {
         gateway_survey_active = false;
         (void)survey_gateway_auto_begin(&gateway_survey_auto);
@@ -2010,6 +2280,389 @@ static void gateway_survey_auto_note_command_timeout(const struct proto_packet *
     }
 }
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+static uint32_t gateway_discovery_assignment_new_epoch(void)
+{
+    uint32_t epoch = sys_rand32_get() ^ k_uptime_get_32();
+
+    return epoch == 0u ? 1u : epoch;
+}
+
+static int gateway_build_discovery_assignment_command(
+    struct mesh_outbound *outbound,
+    enum discovery_assignment_phase phase,
+    uint32_t epoch,
+    uint32_t command_seq)
+{
+    size_t payload_len = 0u;
+    int ret;
+
+    if (outbound == NULL || epoch == 0u || command_seq == 0u) {
+        return -EINVAL;
+    }
+    memset(outbound, 0, sizeof(*outbound));
+    ret = tlv_append_u16(outbound->payload,
+                         sizeof(outbound->payload),
+                         &payload_len,
+                         TLV_COMMAND_ID,
+                         CMD_ASSIGN_DISCOVERY_SLOTS);
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u8(outbound->payload,
+                            sizeof(outbound->payload),
+                            &payload_len,
+                            TLV_COMMAND_SCOPE,
+                            CMD_SCOPE_ALL_HEARD);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u8(outbound->payload,
+                            sizeof(outbound->payload),
+                            &payload_len,
+                            TLV_COMMAND_RESPONSE_MODE,
+                            CMD_RESPONSE_NONE);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u32(outbound->payload,
+                             sizeof(outbound->payload),
+                             &payload_len,
+                             TLV_COMMAND_SEQ,
+                             command_seq);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u32(outbound->payload,
+                             sizeof(outbound->payload),
+                             &payload_len,
+                             TLV_FLOOD_EPOCH_ID,
+                             command_seq);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u32(outbound->payload,
+                             sizeof(outbound->payload),
+                             &payload_len,
+                             TLV_COMMAND_EXPIRY_S,
+                             DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S);
+    }
+    if (ret == PROTO_OK) {
+        ret = discovery_assignment_append_control_tlvs(outbound->payload,
+                                                       sizeof(outbound->payload),
+                                                       &payload_len,
+                                                       phase,
+                                                       epoch);
+    }
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    outbound->packet.msg_type = MSG_COMMAND;
+    outbound->packet.flags = FLAG_DIAGNOSTIC;
+    outbound->packet.src_id = DEVICE_ID;
+    outbound->packet.dst_id = MESH_BROADCAST_ID;
+    outbound->packet.session_id = command_seq;
+    outbound->packet.seq = gateway_next_command_seq();
+    outbound->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
+    outbound->packet.payload_len = (uint16_t)payload_len;
+    outbound->payload_len = (uint16_t)payload_len;
+    outbound->next_hop_id = MESH_BROADCAST_ID;
+    outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    ret = gateway_command_append_default_flood_controls(outbound);
+    return ret == PROTO_OK ? 0 : mesh_errno_from_proto(ret);
+}
+
+static int gateway_send_discovery_assignment_claim_request(void)
+{
+    struct mesh_outbound outbound;
+    int ret;
+
+    ret = gateway_build_discovery_assignment_command(
+        &outbound,
+        DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+        gateway_discovery_assignment_state.epoch,
+        gateway_discovery_assignment_state.claim_command_seq);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = mesh_send_c5_flood(&outbound,
+                             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                             "discovery-slot-claim-request");
+    if (ret == 0) {
+        mesh_relay_note_tx_sent(&mesh_runtime, &outbound, k_uptime_get_32());
+    }
+    status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_REQUEST epoch=%u round=%u command_seq=%u ret=%d\n",
+                        gateway_discovery_assignment_state.epoch,
+                        gateway_discovery_assignment_state.claim_round + 1u,
+                        gateway_discovery_assignment_state.claim_command_seq,
+                        ret);
+    return ret;
+}
+
+static void gateway_discovery_assignment_fail(enum command_status status,
+                                              uint8_t reason)
+{
+    if (!gateway_discovery_assignment_state.active) {
+        return;
+    }
+    gateway_emit_host_command_result(&gateway_discovery_assignment_state.host_command,
+                                     CMD_ASSIGN_DISCOVERY_SLOTS,
+                                     status,
+                                     reason);
+    gateway_discovery_assignment_state.active = false;
+}
+
+static int gateway_start_discovery_assignment(
+    const struct proto_packet *host_command)
+{
+    int ret;
+
+    if (host_command == NULL || DEVICE_ROLE != ROLE_GATEWAY) {
+        return -EINVAL;
+    }
+    if (gateway_discovery_assignment_state.active) {
+        gateway_emit_host_command_result(host_command,
+                                         CMD_ASSIGN_DISCOVERY_SLOTS,
+                                         COMMAND_BUSY,
+                                         1u);
+        return -EBUSY;
+    }
+    memset(&gateway_discovery_assignment_state,
+           0,
+           sizeof(gateway_discovery_assignment_state));
+    gateway_discovery_assignment_state.host_command = *host_command;
+    gateway_discovery_assignment_state.epoch =
+        gateway_discovery_assignment_new_epoch();
+    gateway_discovery_assignment_state.claim_command_seq =
+        gateway_discovery_assignment_state.epoch;
+    gateway_discovery_assignment_state.active = true;
+
+    ret = gateway_send_discovery_assignment_claim_request();
+    if (ret < 0) {
+        gateway_discovery_assignment_fail(COMMAND_RADIO_ERROR,
+                                          (uint8_t)(-ret));
+        return ret;
+    }
+    (void)k_work_reschedule(&gateway_discovery_assignment_finalize_work,
+                            K_MSEC(DISCOVERY_ASSIGNMENT_COLLECTION_MS));
+    LOG_INF("gateway discovery-slot collection started: epoch=%u window_ms=%u",
+            gateway_discovery_assignment_state.epoch,
+            DISCOVERY_ASSIGNMENT_COLLECTION_MS);
+    return 0;
+}
+
+bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len)
+{
+    enum discovery_assignment_phase phase = 0;
+    enum command_id command_id = CMD_VENDOR_BASE;
+    const uint8_t *status_raw = NULL;
+    uint8_t status_len = 0u;
+    uint64_t hash = 0u;
+    uint32_t epoch = 0u;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL || payload == NULL ||
+        packet->msg_type != MSG_COMMAND_RESULT ||
+        !gateway_discovery_assignment_state.active) {
+        return false;
+    }
+    ret = gateway_command_extract_id(payload, payload_len, &command_id);
+    if (ret != PROTO_OK || command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
+        return false;
+    }
+    ret = discovery_assignment_extract_control_tlvs(payload,
+                                                    payload_len,
+                                                    &phase,
+                                                    &epoch);
+    if (ret != PROTO_OK || phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
+        epoch != gateway_discovery_assignment_state.epoch) {
+        return false;
+    }
+    ret = tlv_find(payload,
+                   payload_len,
+                   TLV_COMMAND_STATUS,
+                   &status_raw,
+                   &status_len);
+    if (ret != PROTO_OK || status_len != sizeof(uint16_t) ||
+        proto_get_u16_le(status_raw) != COMMAND_OK ||
+        discovery_assignment_extract_claim_hash(payload,
+                                                payload_len,
+                                                &hash) != PROTO_OK ||
+        packet->src_id == 0u ||
+        hash != discovery_assignment_hash(packet->src_id)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_REJECT src=0x%016llx epoch=%u ret=%d\n",
+                            (unsigned long long)packet->src_id,
+                            epoch,
+                            ret);
+        return true;
+    }
+    for (size_t i = 0u;
+         i < gateway_discovery_assignment_state.claim_count;
+         i++) {
+        if (gateway_discovery_assignment_state.anchor_ids[i] == packet->src_id) {
+            return true;
+        }
+    }
+    if (gateway_discovery_assignment_state.claim_count >=
+        ARRAY_SIZE(gateway_discovery_assignment_state.anchor_ids)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_REJECT src=0x%016llx epoch=%u reason=capacity\n",
+                            (unsigned long long)packet->src_id,
+                            epoch);
+        return true;
+    }
+    gateway_discovery_assignment_state.anchor_ids[
+        gateway_discovery_assignment_state.claim_count] = packet->src_id;
+    gateway_discovery_assignment_state.claim_count++;
+    status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_RX epoch=%u anchor=0x%016llx hash=0x%016llx count=%u\n",
+                        epoch,
+                        (unsigned long long)packet->src_id,
+                        (unsigned long long)hash,
+                        (unsigned int)gateway_discovery_assignment_state.claim_count);
+    return true;
+}
+
+static void gateway_discovery_assignment_publish_work_handler(struct k_work *work)
+{
+    struct mesh_outbound outbound;
+    struct discovery_assignment_claim claims[UWB_DISCOVERY_SLOT_COUNT];
+    struct discovery_assignment_entry entries[UWB_DISCOVERY_SLOT_COUNT];
+    uint32_t command_seq;
+    size_t payload_len;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (DEVICE_ROLE != ROLE_GATEWAY ||
+        !gateway_discovery_assignment_state.active) {
+        return;
+    }
+    if (gateway_discovery_assignment_state.claim_count == 0u) {
+        if (gateway_discovery_assignment_state.claim_round == 0u) {
+            gateway_discovery_assignment_state.claim_round++;
+            gateway_discovery_assignment_state.claim_command_seq++;
+            if (gateway_discovery_assignment_state.claim_command_seq == 0u) {
+                gateway_discovery_assignment_state.claim_command_seq = 1u;
+            }
+            ret = gateway_send_discovery_assignment_claim_request();
+            if (ret == 0) {
+                (void)k_work_reschedule(
+                    &gateway_discovery_assignment_finalize_work,
+                    K_MSEC(DISCOVERY_ASSIGNMENT_COLLECTION_MS));
+                return;
+            }
+        }
+        gateway_discovery_assignment_fail(COMMAND_TIMEOUT, 0u);
+        return;
+    }
+
+    for (size_t i = 0u;
+         i < gateway_discovery_assignment_state.claim_count;
+         i++) {
+        claims[i].anchor_id = gateway_discovery_assignment_state.anchor_ids[i];
+        claims[i].hash = discovery_assignment_hash(claims[i].anchor_id);
+    }
+    ret = discovery_assignment_sort_claims(
+        claims,
+        gateway_discovery_assignment_state.claim_count);
+    if (ret == PROTO_OK) {
+        ret = discovery_assignment_entries_from_claims(
+            claims,
+            gateway_discovery_assignment_state.claim_count,
+            entries,
+            ARRAY_SIZE(entries));
+    }
+    command_seq = gateway_discovery_assignment_state.epoch ^ UINT32_C(0x80000000);
+    if (command_seq == 0u) {
+        command_seq = 1u;
+    }
+    if (ret == PROTO_OK) {
+        ret = gateway_build_discovery_assignment_command(
+            &outbound,
+            DISCOVERY_ASSIGNMENT_PHASE_TABLE,
+            gateway_discovery_assignment_state.epoch,
+            command_seq);
+    }
+    payload_len = ret == 0 ? outbound.payload_len : 0u;
+    if (ret == 0) {
+        ret = discovery_assignment_append_table_tlvs(
+            outbound.payload,
+            sizeof(outbound.payload),
+            &payload_len,
+            entries,
+            gateway_discovery_assignment_state.claim_count);
+    }
+    if (ret == PROTO_OK || ret == 0) {
+        outbound.payload_len = (uint16_t)payload_len;
+        outbound.packet.payload_len = (uint16_t)payload_len;
+        ret = mesh_send_c5_flood(&outbound,
+                                 C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                                 "discovery-slot-assignment-table");
+        if (ret == 0) {
+            mesh_relay_note_tx_sent(&mesh_runtime,
+                                    &outbound,
+                                    k_uptime_get_32());
+        }
+    } else {
+        ret = mesh_errno_from_proto(ret);
+    }
+    status_debug_printf("DBG_DISCOVERY_SLOT_TABLE_TX epoch=%u count=%u bytes=%u attempt=%u ret=%d\n",
+                        gateway_discovery_assignment_state.epoch,
+                        (unsigned int)gateway_discovery_assignment_state.claim_count,
+                        (unsigned int)payload_len,
+                        gateway_discovery_assignment_state.publish_attempt + 1u,
+                        ret);
+    if (ret < 0) {
+        gateway_discovery_assignment_state.publish_attempt++;
+        if (gateway_discovery_assignment_state.publish_attempt < 3u) {
+            (void)k_work_reschedule(&gateway_discovery_assignment_finalize_work,
+                                    K_MSEC(500u <<
+                                        gateway_discovery_assignment_state.publish_attempt));
+            return;
+        }
+        gateway_discovery_assignment_fail(COMMAND_RADIO_ERROR,
+                                          (uint8_t)(-ret));
+        return;
+    }
+    gateway_emit_host_command_result(
+        &gateway_discovery_assignment_state.host_command,
+        CMD_ASSIGN_DISCOVERY_SLOTS,
+        COMMAND_OK,
+        (uint8_t)gateway_discovery_assignment_state.claim_count);
+    gateway_discovery_assignment_state.active = false;
+}
+
+static void gateway_discovery_assignment_finalize_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (!gateway_discovery_assignment_state.active) {
+        return;
+    }
+    ret = mesh_gateway_command_priority_submit(
+        &gateway_discovery_assignment_publish_work);
+    if (ret < 0) {
+        (void)k_work_reschedule(&gateway_discovery_assignment_finalize_work,
+                                K_MSEC(100u));
+    }
+}
+#else
+static int gateway_start_discovery_assignment(
+    const struct proto_packet *host_command)
+{
+    ARG_UNUSED(host_command);
+    return -ENOTSUP;
+}
+
+bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
+                                             const uint8_t *payload,
+                                             size_t payload_len)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return false;
+}
+#endif
+
 void gateway_command_timeout_side_effects(const struct proto_packet *command,
                                           enum command_id command_id)
 {
@@ -2222,9 +2875,10 @@ static int gateway_route_survey_command(const struct proto_packet *host_packet,
     }
 }
 
-static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct proto_packet *packet,
-                                                                    uint8_t *payload,
-                                                                    size_t payload_len)
+static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
+    struct proto_packet *packet,
+    uint8_t *payload,
+    size_t payload_len)
 {
     struct mesh_outbound outbound = {0};
     struct gateway_command_options command_options = {0};
@@ -2234,23 +2888,6 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -EINVAL;
-    }
-
-    if (packet != NULL && packet->msg_type == MSG_COMMAND) {
-        ret = gateway_command_extract_id(payload, payload_len, &command_id);
-        if (ret == PROTO_OK &&
-            command_id == CMD_FORCE_REDISCOVERY &&
-            packet->dst_id == DEVICE_ID) {
-            mesh_gateway_route_adv_request(0u, "force-rediscovery-ble");
-            gateway_emit_host_command_result(packet,
-                                             command_id,
-                                             COMMAND_OK,
-                                             0u);
-            return 0;
-        }
-        if (ret == PROTO_OK && gateway_command_uses_survey_mesh(command_id)) {
-            return gateway_route_survey_command(packet, payload, payload_len, command_id);
-        }
     }
 
     ret = gateway_command_prepare_outbound(packet,
@@ -2353,6 +2990,67 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(struct prot
     return 0;
 }
 
+static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
+    struct proto_packet *packet,
+    uint8_t *payload,
+    size_t payload_len)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -EINVAL;
+    }
+
+    if (packet != NULL && packet->msg_type == MSG_COMMAND) {
+        ret = gateway_command_extract_id(payload, payload_len, &command_id);
+        if (ret == PROTO_OK &&
+            command_id == CMD_FORCE_REDISCOVERY &&
+            packet->dst_id == DEVICE_ID) {
+            ret = mesh_gateway_route_adv_force_request(0u, "force-rediscovery-ble");
+            gateway_emit_host_command_result(packet,
+                                             command_id,
+                                             ret == 0 ? COMMAND_OK :
+                                             ret == -EBUSY ? COMMAND_BUSY :
+                                             COMMAND_INTERNAL_ERROR,
+                                             ret == 0 ? 0u : (uint8_t)(-ret));
+            return ret;
+        }
+        if (ret == PROTO_OK &&
+            command_id == CMD_ASSIGN_DISCOVERY_SLOTS &&
+            packet->dst_id == DEVICE_ID) {
+            return gateway_start_discovery_assignment(packet);
+        }
+        if (ret == PROTO_OK && gateway_command_uses_survey_mesh(command_id)) {
+            return gateway_route_survey_command(packet, payload, payload_len, command_id);
+        }
+    }
+
+    return gateway_route_mesh_host_packet(packet, payload, payload_len);
+}
+
+#if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
+static void gateway_host_command_work_handler(struct k_work *work)
+{
+    struct gateway_host_command_item item;
+
+    ARG_UNUSED(work);
+
+    while (k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT) == 0) {
+        int ret;
+
+        dwm3000_driver_clear_receive_abort();
+        ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
+        if (ret < 0) {
+            LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
+                    item.packet.msg_type,
+                    (unsigned long long)item.packet.dst_id,
+                    ret);
+        }
+    }
+}
+#endif
+
 #if defined(CONFIG_IMEC_GATEWAY_BLE)
 void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
 {
@@ -2374,6 +3072,67 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
 #elif defined(CONFIG_IMEC_ML_ANCHOR)
     LOG_WRN("ML anchor BLE packet RX ignored: frame_len=%u",
             (unsigned int)frame_len);
+#else
+#if DEVICE_ROLE == ROLE_GATEWAY
+    struct gateway_host_command_item item = {0};
+    int ret;
+
+    ret = serial_frame_decode_packet(frame,
+                                     frame_len,
+                                     &item.packet,
+                                     item.payload,
+                                     sizeof(item.payload),
+                                     &item.payload_len);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway BLE COBS frame decode failed: %d", ret);
+        return;
+    }
+    HIGH_DEBUG_COUNTER_INC(command_rx);
+    high_debug_log_event("COMMAND_RX",
+                         "transport=gateway_ble msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
+                         item.packet.msg_type,
+                         (unsigned long long)item.packet.src_id,
+                         (unsigned long long)item.packet.dst_id,
+                         item.packet.seq,
+                         (unsigned int)item.payload_len);
+
+    if (item.packet.msg_type == MSG_COMMAND) {
+        enum command_id command_id = CMD_VENDOR_BASE;
+
+        (void)gateway_command_extract_id(item.payload,
+                                         item.payload_len,
+                                         &command_id);
+        ret = k_msgq_put(&gateway_host_command_msgq, &item, K_NO_WAIT);
+        if (ret < 0) {
+            gateway_emit_host_command_result(&item.packet,
+                                             command_id,
+                                             COMMAND_BUSY,
+                                             (uint8_t)(-ret));
+            LOG_WRN("gateway command priority queue full: seq=%u ret=%d",
+                    item.packet.seq,
+                    ret);
+            return;
+        }
+        ret = mesh_gateway_command_priority_submit(&gateway_host_command_work);
+        if (ret < 0) {
+            gateway_emit_host_command_result(&item.packet,
+                                             command_id,
+                                             COMMAND_INTERNAL_ERROR,
+                                             (uint8_t)(-ret));
+            LOG_ERR("gateway command priority submit failed: seq=%u ret=%d",
+                    item.packet.seq,
+                    ret);
+        }
+        return;
+    }
+
+    ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
+    if (ret < 0) {
+        LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
+                item.packet.msg_type,
+                (unsigned long long)item.packet.dst_id,
+                ret);
+    }
 #else
     struct proto_packet packet = {0};
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
@@ -2406,6 +3165,7 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
                 (unsigned long long)packet.dst_id,
                 ret);
     }
+#endif
 #endif
 }
 #endif
@@ -3177,6 +3937,11 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
 {
     int8_t sampled_rsl = 0;
     uint8_t sampled_cir[UWB_CIR_SAMPLE_LEN] = {0};
+    uint16_t sampled_full_cir_len = 0u;
+    uint16_t sampled_full_cir_total_len = 0u;
+    uint16_t sampled_full_cir_first_path_index = 0u;
+    uint16_t sampled_full_cir_start_index = 0u;
+    bool sampled_full_cir_truncated = false;
 
     if (report == NULL || result == NULL) {
         return;
@@ -3187,6 +3952,14 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
     }
     if (report->cir_sampled) {
         memcpy(sampled_cir, report->result.cir_sample, UWB_CIR_SAMPLE_LEN);
+    }
+    if (report->anchor_full_cir_sampled) {
+        sampled_full_cir_len = report->result.anchor_full_cir_len;
+        sampled_full_cir_total_len = report->result.anchor_full_cir_total_len;
+        sampled_full_cir_first_path_index =
+            report->result.anchor_full_cir_first_path_index;
+        sampled_full_cir_start_index = report->result.anchor_full_cir_start_index;
+        sampled_full_cir_truncated = report->result.anchor_full_cir_truncated;
     }
     if (!report->have_exchange_start_ms && result->exchange_started) {
         report->first_exchange_start_ms = result->exchange_start_ms;
@@ -3216,6 +3989,23 @@ static void anchor_range_window_record(struct anchor_range_window_report *report
     if (report->cir_sampled) {
         memcpy(report->result.cir_sample, sampled_cir, UWB_CIR_SAMPLE_LEN);
         report->result.cir_sampled = true;
+    }
+    if (result->anchor_full_cir_sampled && !report->anchor_full_cir_sampled) {
+        sampled_full_cir_len = result->anchor_full_cir_len;
+        sampled_full_cir_total_len = result->anchor_full_cir_total_len;
+        sampled_full_cir_first_path_index = result->anchor_full_cir_first_path_index;
+        sampled_full_cir_start_index = result->anchor_full_cir_start_index;
+        sampled_full_cir_truncated = result->anchor_full_cir_truncated;
+        report->anchor_full_cir_sampled = true;
+    }
+    if (report->anchor_full_cir_sampled) {
+        report->result.anchor_full_cir_len = sampled_full_cir_len;
+        report->result.anchor_full_cir_total_len = sampled_full_cir_total_len;
+        report->result.anchor_full_cir_first_path_index =
+            sampled_full_cir_first_path_index;
+        report->result.anchor_full_cir_start_index = sampled_full_cir_start_index;
+        report->result.anchor_full_cir_truncated = sampled_full_cir_truncated;
+        report->result.anchor_full_cir_sampled = true;
     }
 
     if (result->status != RANGE_OK ||
@@ -3300,10 +4090,75 @@ static void log_uwb_range_schedule_entries(const char *role,
     }
 }
 
+static void anchor_hold_channel5_rx_until_ms(int64_t deadline_ms,
+                                             bool *deferred_mesh_rx_queued)
+{
+    uint32_t frame_count = 0u;
+    uint32_t error_count = 0u;
+
+    while (k_uptime_get() < deadline_ms) {
+        struct uwb_wake_claim_frame repeated_claim;
+        size_t frame_len = 0u;
+        uint8_t quality = 0u;
+        int64_t remaining_ms = deadline_ms - k_uptime_get();
+        int ret;
+
+        ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
+                                                      anchor_uwb_scan_frame,
+                                                      sizeof(anchor_uwb_scan_frame),
+                                                      &frame_len,
+                                                      &quality,
+                                                      NULL,
+                                                      NULL);
+        if (ret == -ETIMEDOUT) {
+            break;
+        }
+        if (ret < 0) {
+            error_count++;
+            continue;
+        }
+        frame_count++;
+
+        if (uwb_decode_wake_claim(anchor_uwb_scan_frame,
+                                  frame_len,
+                                  &repeated_claim) == PROTO_OK) {
+            continue;
+        }
+
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            bool valid_mesh_frame = false;
+            bool queued;
+
+            queued = mesh_queue_from_frame_deferred(anchor_uwb_scan_frame,
+                                                    frame_len,
+                                                    quality,
+                                                    UWB_CHANNEL_WAKE_CONTACT,
+                                                    &valid_mesh_frame,
+                                                    NULL);
+            if (queued && deferred_mesh_rx_queued != NULL) {
+                *deferred_mesh_rx_queued = true;
+            }
+        }
+    }
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ANCHOR_CH5_HOLD_DONE deadline=%lld now=%u frames=%u errors=%u deferred=%u\n",
+                            (long long)deadline_ms,
+                            k_uptime_get_32(),
+                            frame_count,
+                            error_count,
+                            (deferred_mesh_rx_queued != NULL &&
+                             *deferred_mesh_rx_queued) ? 1u : 0u);
+    }
+}
+
 static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_frame *schedule,
-                                                int64_t schedule_rx_ms)
+                                                int64_t schedule_rx_ms,
+                                                bool *deferred_mesh_rx_queued)
 {
     struct anchor_range_window_report window_report = {0};
+    uint8_t *anchor_full_cir = NULL;
+    size_t anchor_full_cir_cap = 0u;
     uint32_t retained_sleep_us = 0u;
     size_t total_samples;
     int64_t no_poll_deadline_ms;
@@ -3312,6 +4167,10 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
 
     if (schedule == NULL) {
         return 0u;
+    }
+
+    if ((schedule->flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) != 0u) {
+        anchor_full_cir = mesh_anchor_click_cir_capture_begin(&anchor_full_cir_cap);
     }
 
     total_samples = uwb_range_schedule_total_samples(schedule);
@@ -3377,15 +4236,13 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             scheduled_range_sample_target_us(schedule_rx_ms, schedule, sample_index) / 1000;
         listen_start_ms -= UWB_SCHEDULE_GUARD_MS;
         if (!poll_received && listen_start_ms > no_poll_deadline_ms) {
-            retained_sleep_us = u32_saturating_add(
-                retained_sleep_us,
-                sleep_with_uwb_idle_until_ms(no_poll_deadline_ms));
+            anchor_hold_channel5_rx_until_ms(no_poll_deadline_ms,
+                                             deferred_mesh_rx_queued);
             poll_guard_expired = true;
             break;
         }
-        retained_sleep_us = u32_saturating_add(
-            retained_sleep_us,
-            sleep_with_uwb_idle_until_ms(listen_start_ms));
+        anchor_hold_channel5_rx_until_ms(listen_start_ms,
+                                         deferred_mesh_rx_queued);
 
         listen_deadline_ms = ceil_us_to_ms(
             scheduled_range_sample_target_us(schedule_rx_ms, schedule, sample_index + 1u));
@@ -3407,6 +4264,8 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         expected.skip_responder_report = false;
         expected.expect_clicker_diag = false;
         expected.send_anchor_diag = false;
+        expected.anchor_full_cir = anchor_full_cir;
+        expected.anchor_full_cir_cap = (uint16_t)anchor_full_cir_cap;
 
         LOG_INF("anchor scheduled UWB sample listen: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u",
                 (unsigned long long)schedule->clicker_id,
@@ -3437,6 +4296,20 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                              (long long)listen_deadline_ms,
                              schedule->first_poll_delay_ms,
                              schedule->exchange_stride_us);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DS_SAMPLE_ARM evt=%u attempt=%u sample=%u/%u round=%u seq=%u target_us=%lld start=%lld now=%u deadline=%lld\n",
+                                schedule->click_event_id,
+                                schedule->attempt_index,
+                                (unsigned int)(sample_index + 1u),
+                                (unsigned int)total_samples,
+                                round_index,
+                                seq,
+                                (long long)scheduled_range_sample_target_us(
+                                    schedule_rx_ms, schedule, sample_index),
+                                (long long)listen_start_ms,
+                                k_uptime_get_32(),
+                                (long long)listen_deadline_ms);
+        }
         while (k_uptime_get() < listen_deadline_ms) {
             int64_t bounded_deadline_ms = listen_deadline_ms;
             int64_t remaining_ms;
@@ -3844,6 +4717,9 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     bool schedule_frame_ready = false;
     int64_t schedule_rx_ms = -1;
     struct uwb_discover_frame discover = {0};
+    bool discovery_uses_extended_phr;
+    bool click_priority = false;
+    uint32_t discovery_late_guard_ms;
 
     if (first_claim == NULL) {
         return false;
@@ -3990,35 +4866,33 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             anchor_uwb_session.epoch.attempt_index,
             (unsigned long long)anchor_uwb_session.epoch.priority_id,
             selected_decision);
-    {
-        bool click_priority =
-            app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
-
-        if (click_priority) {
-            mesh_preempt_for_click_event();
-        }
-        anchor_click_window_set_active(click_priority);
+    click_priority = app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
+    if (click_priority) {
+        mesh_preempt_for_click_event();
     }
+    anchor_click_window_set_active(click_priority);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_CLICK_WINDOW active=%u flags=0x%02x\n",
                             anchor_click_window_active() ? 1u : 0u,
                             selected_claim.flags);
     }
 
+    discovery_uses_extended_phr =
+        app_mesh_c5_wake_followup_uses_extended_phr(selected_claim.flags);
+    discovery_late_guard_ms = discovery_uses_extended_phr ?
+                              MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS :
+                              UWB_DISCOVERY_RX_LATE_GUARD_MS;
     discovery_start_ms =
         (int64_t)selected_rx_ms + selected_claim.discovery_starts_in_ms;
-    discovery_deadline_ms = discovery_start_ms +
-                            (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ?
-                             MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS :
-                             UWB_DISCOVERY_RX_LATE_GUARD_MS);
+    discovery_deadline_ms = discovery_start_ms + discovery_late_guard_ms;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_ANCHOR_DISC_WAIT now=%u start=%lld deadline=%lld guard=%u listen=%u route_win=%u\n",
+        status_debug_printf("DBG_ANCHOR_DISC_WAIT now=%u start=%lld deadline=%lld guard=%u listen=%u phr=%s\n",
                             k_uptime_get_32(),
                             (long long)discovery_start_ms,
                             (long long)discovery_deadline_ms,
                             UWB_DISCOVERY_RX_GUARD_MS,
-                            UWB_DISCOVERY_LISTEN_MS,
-                            MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS);
+                            discovery_late_guard_ms + UWB_DISCOVERY_RX_GUARD_MS,
+                            discovery_uses_extended_phr ? "ext" : "std");
     }
     high_debug_log_event("DISCOVER_WAIT",
                          "clicker=0x%016llx event_seq=%u attempt=%u selected_rx_ms=%lld discovery_starts_in_ms=%u wait_start_ms=%lld deadline_ms=%lld listen_ms=%u",
@@ -4031,36 +4905,28 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                          (long long)discovery_deadline_ms,
                          UWB_DISCOVERY_LISTEN_MS);
 
-    {
-        int64_t discover_listen_start_ms =
-            discovery_start_ms - UWB_DISCOVERY_RX_GUARD_MS;
-
-        if (retained_sleep_us != NULL) {
-            *retained_sleep_us = u32_saturating_add(
-                *retained_sleep_us,
-                sleep_with_uwb_idle_until_ms(discover_listen_start_ms));
-        } else {
-            (void)sleep_with_uwb_idle_until_ms(discover_listen_start_ms);
-        }
-    }
-
     stage1_led_phase(STAGE1_LED_PHASE_DISCOVERY);
     stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
+    ret = discovery_uses_extended_phr ?
+          dwm3000_driver_configure_wake_mesh_control_mode() :
+          dwm3000_driver_configure_wake_mode();
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        ret = dwm3000_driver_configure_wake_mesh_control_mode();
-        status_debug_printf("DBG_ANCHOR_DISC_EXT_CONFIG ret=%d\n", ret);
-        if (ret < 0) {
-            last_discovery_ret = ret;
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            high_debug_log_event("DISCOVER_RX",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u result=config-fail ret=%d",
-                                 (unsigned long long)selected_claim.clicker_id,
-                                 selected_claim.click_event_id,
-                                 selected_claim.attempt_index,
-                                 ret);
-            goto discovery_miss;
-        }
+        status_debug_printf("DBG_ANCHOR_DISC_CONFIG phr=%s ret=%d\n",
+                            discovery_uses_extended_phr ? "ext" : "std",
+                            ret);
+    }
+    if (ret < 0) {
+        last_discovery_ret = ret;
+        stage1_led_result(STAGE1_LED_RESULT_ERROR);
+        high_debug_log_event("DISCOVER_RX",
+                             "clicker=0x%016llx event_seq=%u attempt=%u result=config-fail phr=%s ret=%d",
+                             (unsigned long long)selected_claim.clicker_id,
+                             selected_claim.click_event_id,
+                             selected_claim.attempt_index,
+                             discovery_uses_extended_phr ? "ext" : "std",
+                             ret);
+        goto discovery_miss;
     }
 
     while (k_uptime_get() < discovery_deadline_ms) {
@@ -4160,6 +5026,9 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                         (unsigned int)frame_len,
                         quality,
                         valid_mesh_frame ? 1u : 0u);
+                if (click_priority) {
+                    continue;
+                }
                 return true;
             }
             status_debug_printf("DBG_ANCHOR_MESH_AFTER_WAKE_REJECT len=%u type=0x%02x q=%u discover_ret=%d valid=%u queued=%u\n",
@@ -4216,6 +5085,11 @@ discovery_miss:
                                           &reply.anchor_slot);
         if (ret != PROTO_OK) {
             stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_MISSING event=%u attempt=%u slot_count=%u ret=%d\n",
+                                discover.click_event_id,
+                                discover.attempt_index,
+                                discover.discovery_slot_count,
+                                ret);
             LOG_WRN("anchor UWB DISCOVERY_REPLY slot rejected: slot_count=%u ret=%d",
                     discover.discovery_slot_count,
                     ret);
@@ -4450,9 +5324,13 @@ discovery_miss:
         if (retained_sleep_us != NULL) {
             *retained_sleep_us = u32_saturating_add(
                 *retained_sleep_us,
-                anchor_run_scheduled_uwb_ranges(&schedule, schedule_rx_ms));
+                anchor_run_scheduled_uwb_ranges(&schedule,
+                                                schedule_rx_ms,
+                                                deferred_mesh_rx_queued));
         } else {
-            (void)anchor_run_scheduled_uwb_ranges(&schedule, schedule_rx_ms);
+            (void)anchor_run_scheduled_uwb_ranges(&schedule,
+                                                  schedule_rx_ms,
+                                                  deferred_mesh_rx_queued);
         }
     } else {
         stage1_led_result(ret == -ETIMEDOUT ?
@@ -4461,6 +5339,98 @@ discovery_miss:
         LOG_WRN("anchor UWB RANGE_SCHEDULE not received: ret=%d", ret);
     }
     return true;
+}
+
+static bool anchor_handle_mesh_click_wake_claim(
+    const struct uwb_wake_claim_frame *claim,
+    uint8_t link_quality,
+    int64_t received_at_ms)
+{
+    uint32_t retained_sleep_us = 0u;
+    uint32_t next_scan_delay_ms = anchor_uwb_scan_interval_ms;
+    bool deferred_mesh_rx_queued = false;
+    bool handled = false;
+    int64_t uwb_window_start_ms = -1;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || claim == NULL ||
+        !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
+        LOG_ERR("invalid anchor click handoff request");
+        return false;
+    }
+
+    (void)k_work_cancel_delayable(&anchor_uwb_scan_work);
+    anchor_click_window_set_active(true);
+    mesh_preempt_for_click_event();
+    ret = radio_guard_uwb_start("anchor mesh click handoff");
+    if (ret < 0) {
+        LOG_ERR("anchor click handoff could not acquire UWB radio: ret=%d", ret);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_GUARD_FAIL ret=%d\n", ret);
+        }
+        goto complete;
+    }
+
+    anchor_set_uwb_busy(true);
+    uwb_window_start_ms = k_uptime_get();
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        LOG_ERR("anchor click handoff wake PHY configuration failed: ret=%d", ret);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_CONFIG_FAIL ret=%d\n", ret);
+        }
+        goto release_radio;
+    }
+
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_START evt=%u attempt=%u rx=%lld q=%u\n",
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            (long long)received_at_ms,
+                            link_quality);
+    }
+    handled = anchor_handle_uwb_claim(claim,
+                                      link_quality,
+                                      received_at_ms,
+                                      &retained_sleep_us,
+                                      &deferred_mesh_rx_queued);
+    if (handled) {
+        uwb_anchor_abort_epoch(&anchor_uwb_session);
+    }
+
+release_radio:
+    if (mesh_anchor_connected_radio_active()) {
+        (void)dwm3000_driver_idle();
+    } else {
+        (void)dwm3000_driver_standby();
+    }
+    anchor_note_uwb_awake_since(uwb_window_start_ms, retained_sleep_us);
+    radio_guard_uwb_stop();
+    anchor_set_uwb_busy(false);
+
+complete:
+    anchor_click_window_set_active(false);
+    if (deferred_mesh_rx_queued) {
+        mesh_stop_role_scan();
+        mesh_submit_queued_rx();
+    }
+#if !defined(CONFIG_IMEC_ML_ANCHOR)
+    report_tx_schedule(0u);
+#endif
+    if (handled && anchor_scan_recovery_gap_requested &&
+        next_scan_delay_ms < ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS) {
+        next_scan_delay_ms = ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS;
+    }
+    anchor_scan_recovery_gap_requested = false;
+    anchor_uwb_scan_schedule_ms(next_scan_delay_ms);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_DONE evt=%u attempt=%u handled=%u deferred=%u\n",
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            handled ? 1u : 0u,
+                            deferred_mesh_rx_queued ? 1u : 0u);
+    }
+    return handled;
 }
 
 static void anchor_uwb_scan_work_handler(struct k_work *work)
@@ -4886,6 +5856,7 @@ static int anchor_start_uwb_scan(void)
 static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
     .anchor_survey_discovery_is_pending = anchor_survey_discovery_is_pending,
     .anchor_note_uwb_awake_since = anchor_note_uwb_awake_since,
+    .anchor_handle_click_wake_claim = anchor_handle_mesh_click_wake_claim,
     .anchor_handle_local_command = anchor_handle_local_command,
     .anchor_handle_survey_discovery_start = anchor_handle_survey_discovery_start,
     .anchor_handle_survey_pair_prepare = anchor_handle_survey_pair_prepare,
@@ -4900,10 +5871,22 @@ const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void)
 int app_anchor_init(void)
 {
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
+#if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
+    k_work_init_delayable(&gateway_host_command_work,
+                          gateway_host_command_work_handler);
+#endif
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);
     k_work_init_delayable(&anchor_command_execute_work,
                           anchor_command_execute_work_handler);
+    k_work_init_delayable(&anchor_discovery_claim_work,
+                          anchor_discovery_claim_work_handler);
+#if DEVICE_ROLE == ROLE_GATEWAY
+    k_work_init_delayable(&gateway_discovery_assignment_finalize_work,
+                          gateway_discovery_assignment_finalize_work_handler);
+    k_work_init_delayable(&gateway_discovery_assignment_publish_work,
+                          gateway_discovery_assignment_publish_work_handler);
+#endif
     return 0;
 }
 
@@ -4945,6 +5928,8 @@ int app_anchor_start_anchor_role(void)
                           anchor_collection_result_work_handler);
     k_work_init_delayable(&anchor_command_execute_work,
                           anchor_command_execute_work_handler);
+    k_work_init_delayable(&anchor_discovery_claim_work,
+                          anchor_discovery_claim_work_handler);
     if (mesh_relay_tx_active(&mesh_runtime)) {
         app_mesh_persistence_clear_collection_result();
     } else {

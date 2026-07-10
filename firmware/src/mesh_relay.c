@@ -2945,7 +2945,8 @@ static bool packet_needs_forward(const struct mesh_relay *relay, const struct pr
     return packet->dst_id != relay->local_id && packet->dst_id != MESH_BROADCAST_ID;
 }
 
-static bool packet_requires_channel9_payload_event(const struct proto_packet *packet)
+bool mesh_relay_packet_requires_channel9_payload_event(
+    const struct proto_packet *packet)
 {
     if (packet == NULL) {
         return false;
@@ -2958,11 +2959,9 @@ static bool packet_requires_channel9_payload_event(const struct proto_packet *pa
     case MSG_MESH_DATA:
     case MSG_GATEWAY_ACK:
     case MSG_GATEWAY_COLLECTION_EACK:
-    case MSG_COMMAND:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
     case MSG_SURVEY_REACH_REPORT:
-    case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_PAIR_RESULT:
     case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
@@ -5909,7 +5908,7 @@ int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
     if (relay == NULL || packet == NULL || plan == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!packet_requires_channel9_payload_event(packet)) {
+    if (!mesh_relay_packet_requires_channel9_payload_event(packet)) {
         return PROTO_ERR_MALFORMED;
     }
 

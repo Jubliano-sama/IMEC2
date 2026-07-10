@@ -581,7 +581,7 @@ int uwb_clicker_build_discover(struct uwb_clicker_session *session,
     discover->click_event_id = session->config.click_event_id;
     discover->attempt_index = session->attempt_index;
     discover->nonce = session->config.nonce;
-    discover->discovery_slot_count = session->config.max_anchor_count;
+    discover->discovery_slot_count = UWB_DISCOVERY_SLOT_COUNT;
     discover->flags = session->config.flags;
     session->state = UWB_CLICKER_DISCOVERY;
     return PROTO_OK;

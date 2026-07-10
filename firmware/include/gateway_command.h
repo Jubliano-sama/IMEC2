@@ -170,6 +170,7 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      uint16_t fallback_seq,
                                      struct mesh_outbound *out,
                                      enum command_id *command_id);
+int gateway_command_append_default_flood_controls(struct mesh_outbound *out);
 int gateway_command_build_failure_result(const struct proto_packet *command,
                                          uint64_t gateway_id,
                                          enum command_id command_id,

@@ -28,6 +28,34 @@ will prove the new behavior.
   channel 9 work, then channel 5 receive.
 - Channel 9 work must be clipped, deferred, or retried around required channel
   5 windows. Channel 5 must not be starved by channel 9 relay or ACK work.
+- A connected anchor's allocated channel 5 window is a 100 percent receive-duty
+  window. The receiver stays armed for the full allocated duration and is
+  immediately rearmed after unrelated, malformed, or route-class frames. Those
+  frames do not end the window. A valid click/ranging claim is the only normal
+  early exit because it transfers ownership to the click sequence.
+- Every channel 5 receive owner on an anchor, including the connected-mesh gap
+  receiver and the low-duty click scanner, must hand a valid click/ranging wake
+  claim directly to the same click sequence. Once decoded as click/ranging
+  traffic, the claim must not be reclassified as route contact, left for another
+  receiver to catch from a later wake packet, or deferred to a later attempt.
+- Click/ranging discovery uses the standard wake PHY used by the clicker. The
+  extended-PHR mesh-control PHY is reserved for route and mesh-control follow-up
+  traffic and must not be selected merely because the anchor is a mesh build.
+- The configured click wake train must exceed the worst-case anchor channel 5
+  RX-off gap, including startup and retune time. Builds must reject a scan
+  interval that cannot guarantee overlap with the first wake train.
+- Before starting a click wake train, the clicker requires at least 100 ms of
+  back-to-back quiet channel-5 receive time. Any valid frame or partial PHY
+  activity resets the quiet streak; undecodable traffic must not count as
+  quiet. The politeness phase remains bounded, and exhaustion is reported
+  explicitly before click priority proceeds.
+- After accepting a valid click/ranging claim, the anchor keeps the DWM3000 on
+  channel 5 at 100 percent receive duty through the remaining wake train,
+  discovery, discovery reply, schedule reception, inter-sample gaps, and all
+  DS-TWR exchanges. Only protocol-required channel 5 transmissions and the
+  immediate PHY changes around them may interrupt RX. Low-duty scanning,
+  standby, channel 9 work, and mesh handback resume only after the click/ranging
+  sequence has completed or failed explicitly.
 - A connected anchor should not enter retained or deep DWM3000 sleep between
   back-to-back channel 9 and channel 5 windows. It may keep the radio idle or
   ready for retune.
@@ -38,8 +66,16 @@ will prove the new behavior.
 - Blind channel 5 flooding is reserved for broad discovery, gateway command
   delivery, and "Here I Am" style reachability, not routine route requests.
 - Gateway-originated commands and user-requested "Here I Am" route refresh are
-  control-plane traffic. They take priority over normal payload relay, ACK
-  retries, and background maintenance.
+  control-plane traffic. They take priority over queued local-origin click
+  report delivery, transit payload relay, ACK retries, route maintenance, and
+  background maintenance at the first safe radio boundary.
+- When a connected anchor has gateway-bound packets produced locally by its own
+  click/ranging or command-result work, that local-origin work outranks transit
+  packets it is relaying for another producer. The anchor may defer, drop, or
+  abandon the lower-priority transit route to reclaim queue, channel 9 schedule,
+  or route-slot capacity for the local-origin work. Recovery for the displaced
+  transit work belongs to the downstream or originating node through retry,
+  timeout, and route rediscovery.
 - Any request likely to arrive at multiple nodes at nearly the same time must
   include enough random jitter before consequent replies, probes, or
   rebroadcasts that collisions are unlikely for the expected fanout. The jitter
@@ -63,12 +99,19 @@ will prove the new behavior.
   wake trains.
 - Every wake train must be channel-5 activity polite. Before transmitting the
   train, and again immediately after the train, the transmitter must sample
-  channel 5 for a fixed 5 ms slice. Any valid frame or RF progress that reaches
+  channel 5 for a fixed 20 ms slice. Any valid frame or RF progress that reaches
   SFD/frame/CRC/bad-frame failure status counts as activity, even when the
   packet cannot be decoded. Activity in either slice defers the entire wake
   train and retries it after randomized exponential backoff in the 200-2000 ms
   range. The wake-train politeness slices are probes only; unlike anchor
   low-duty scanning, they do not extend into a longer receive window.
+- A bounded channel-5 flood burst has exactly four transmission opportunities.
+  Every opportunity is preceded by its own 20 ms channel-5 quiet check. Channel
+  activity consumes that opportunity and schedules the next remaining
+  opportunity after randomized exponential backoff; it does not silently drop
+  the rest of the burst. Successful repeated sends use the normal 40 ms repeat
+  spacing. Gateway-command priority schedules this work before lower-priority
+  mesh work, but does not bypass the per-opportunity activity check.
 - An anchor has at most one upstream channel 9 connection and one downstream
   channel 9 connection. A connected anchor must not answer new route requests
   because no extra channel 9 rhythm is available for a second route.
@@ -79,6 +122,10 @@ will prove the new behavior.
 - Click/ranging wake trains do preempt connected relay mode. After click
   handling, the anchor should return to the existing channel 9 rhythm when the
   connection is still valid.
+- A synthetic `mesh_transmitter*` load generator is not a ranging anchor. It
+  must never answer click discovery or DS-TWR, and receiving a click-class wake
+  claim must not preempt or reclassify its active mesh route. This keeps the
+  load source transmitting while the real anchor exercises click priority.
 - Hop-level ACK and gateway-level ACK are separate. Hop ACK proves next-hop
   reception. Gateway ACK proves final gateway acceptance.
 - For relay paths, ACKs are sent in the sender's next channel 9 transmit
@@ -147,6 +194,16 @@ active, the anchor cannot reserve an additional channel 9 rhythm for an
 unrelated route. In that state, answering a new unrelated route request is
 incorrect: it would advertise a path that the anchor has no reserved channel 9
 window to service.
+
+When an anchor must choose between servicing a lower-priority transit route and
+sending gateway-bound packets produced by that anchor, it should abandon the
+lower-priority transit reservation and reclaim the needed upstream/downstream
+capacity for its own local-origin work. When timing allows, the anchor should
+send a busy or end indication on the affected channel 9 connection before
+abandoning it, so the peer can drop the reservation promptly. If that notice
+would delay the local-origin work, the anchor may abandon the route without
+notice; the displaced route is repaired by the downstream or originating node's
+retry, timeout, and rediscovery path.
 
 An anchor should not react to route-request wake trains as if they were clicks.
 If the anchor already has an active channel 9 connection, a route-request wake
@@ -405,11 +462,16 @@ If a route-request wake train is heard during a connected channel 5 window:
 ## Gateway-Originated Commands And Route Refresh
 
 Gateway-originated commands and user-requested "Here I Am" route refresh are
-the highest-priority mesh control traffic. They must move before normal
-gateway-bound payloads, packet retries, and background maintenance.
-Click/ranging preemption remains the interactive channel 5 path, but once the
-radio can safely resume mesh work, queued gateway-originated control is the
-first mesh work to service.
+the highest-priority mesh control traffic. They must move before local-origin
+click report delivery, transit payload relay, packet retries, route
+maintenance, and background maintenance. Click/ranging preemption remains the
+interactive channel 5 path, but queued gateway-originated control is the first
+mesh work to service at the earliest safe radio boundary. This broad priority
+rule does not require corrupting an already-started timing-critical ranging
+exchange; if such an exchange has a defined safe abort point, the gateway
+control may be serviced there, otherwise it is serviced immediately afterward.
+This priority is assigned by gateway origin, not by a command-ID allowlist, and
+therefore includes anchor discovery and future gateway commands.
 
 Gateway commands propagate away from the gateway until every reachable anchor
 has received them:
@@ -443,9 +505,10 @@ has received them:
     for those responses.
 
 Gateway commands must not be blocked behind ordinary packet retries. If a
-normal payload, a retry, and a gateway command all need radio time, the gateway
-command's channel 5 propagation is serviced first. The delayed payload or retry
-remains queued and is attempted later as long as the connection remains valid.
+local-origin payload, a transit payload, a retry, and a gateway command all need
+radio time, the gateway command's channel 5 propagation is serviced first. The
+delayed local-origin payload, transit payload, or retry remains queued and is
+attempted later as long as the relevant connection remains valid.
 
 The gateway may send a "Here I Am" packet when requested by the host over BLE.
 This is priority gateway-originated control traffic. The purpose of this packet
@@ -692,9 +755,37 @@ Useful tests or guards include:
   reply budget.
 - Connected anchors schedule recurring channel 5 windows.
 - Channel 9 is deferred or clipped when it would starve channel 5.
+- Each connected channel 5 window remains continuously armed until its deadline;
+  receiving an unrelated frame does not shorten the window.
 - Click/ranging wake trains preempt channel 9, but route-request wake trains do
   not.
-- Gateway-originated commands outrank normal payload relay and packet retries.
+- A click/ranging claim caught by any anchor channel 5 listener enters the
+  normal click sequence immediately and is never consumed as route contact.
+- Normal click discovery stays on the standard wake PHY and uses the normal
+  bounded discovery window; it does not inherit the longer mesh-route listener
+  or extended-PHR configuration.
+- The first wake train is longer than the worst-case configured channel 5
+  RX-off gap, and a build-time guard rejects configurations that violate this.
+- After a valid click/ranging claim, the anchor remains continuously on channel
+  5 through discovery, schedule reception, and every DS-TWR exchange before any
+  channel 9 or low-duty work resumes.
+- Local-origin click/ranging or command-result packets outrank transit packets
+  originated by another node.
+- A connected anchor may abandon a lower-priority transit route, including its
+  upstream channel 9 reservation, when it needs that capacity for its own
+  local-origin gateway-bound packets.
+- Gateway-originated commands outrank local-origin click report delivery,
+  normal payload relay, packet retries, route maintenance, and background mesh
+  work at the first safe radio boundary.
+- The gateway BLE packet stream accepts a complete maximum-size click report;
+  it must not reject a protocol-valid click payload as oversize. Under queue
+  pressure, click records may displace lower-priority diagnostic or status
+  records.
+- Click-report diagnostics are bounded and may be fragmented independently of
+  the core click result; their wire representation belongs in the protocol
+  document. Click, channel-9 delivery, and gateway-ACK latency TLVs are included
+  only when that latency was actually measured. Unknown latency is represented
+  by an absent TLV, never a zero-valued placeholder.
 - Gateway "Here I Am" route refresh can be triggered by BLE and propagates
   outward without creating extra anchor route slots.
 - Hop ACK extends or resets the gateway ACK timeout.

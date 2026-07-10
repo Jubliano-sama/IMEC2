@@ -32,11 +32,12 @@ extern "C" {
 #define FLOOD_WAVE_MS 1400u
 #define FLOOD_RELAY_BURST_MS 600u
 #define FLOOD_RELAY_REPEAT_MS 40u
+#define FLOOD_RELAY_REPEAT_COUNT 4u
 #define FLOOD_POST_ROOT_GUARD_MS 150u
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 2500u
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
-#define C5_POLITE_SNIFF_MS 6u
+#define C5_POLITE_SNIFF_MS 20u
 #define C5_POLITE_BACKOFF_MIN_MS 20u
 #define C5_POLITE_BACKOFF_MAX_MS 1600u
 #define C5_POLITE_DEFERRAL_MAX 8u
@@ -507,6 +508,8 @@ int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   size_t payload_cap,
                                   size_t *offset);
 bool mesh_relay_tx_active(const struct mesh_relay *relay);
+bool mesh_relay_packet_requires_channel9_payload_event(
+    const struct proto_packet *packet);
 bool mesh_relay_tx_active_local_collection_result(const struct mesh_relay *relay);
 bool mesh_relay_result_bundle_pending(const struct mesh_relay *relay);
 uint32_t mesh_relay_result_bundle_due_ms(const struct mesh_relay *relay);

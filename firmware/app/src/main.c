@@ -96,17 +96,24 @@ BUILD_ASSERT(UWB_CLICKER_CLAIMED_DURATION_MS <=
 BUILD_ASSERT(UWB_POLITE_RELEVANT_FRAME_WAIT_MS <=
              UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
              "decoded UWB politeness wait fallback must stay bounded");
-BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_SNIFF_MS == 5u,
-             "wake trains must sniff channel 5 for 5 ms before and after TX");
+BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_SNIFF_MS == 20u,
+             "wake trains must sniff channel 5 for 20 ms before and after TX");
 BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_BACKOFF_MIN_MS == 200u &&
              APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS == 2000u,
              "wake train C5 activity backoff must stay within 200-2000 ms");
 BUILD_ASSERT(APP_WAKE_TRAIN_POLITE_MAX_RETRIES > 0u,
              "wake train C5 activity guard must have at least one retry");
 BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES == 2u,
-             "BLE courtesy edge sampling expects one quiet UWB sample at each window edge");
-BUILD_ASSERT((2u * UWB_POLITE_SAMPLE_RX_MS) <= BLE_COURTESY_MIN_WINDOW_MS,
-             "BLE courtesy window must fit begin and end UWB politeness samples");
+             "clicker politeness requires two consecutive quiet UWB samples");
+BUILD_ASSERT(UWB_POLITE_REQUIRED_QUIET_SAMPLES * UWB_POLITE_SAMPLE_RX_MS >= 100u,
+             "clicker politeness must require at least 100 ms of quiet channel 5");
+BUILD_ASSERT((UWB_POLITE_REQUIRED_QUIET_SAMPLES * UWB_POLITE_SAMPLE_RX_MS) <=
+             BLE_COURTESY_MIN_WINDOW_MS,
+             "BLE courtesy must remain active through the required UWB quiet window");
+BUILD_ASSERT(FLOOD_RELAY_REPEAT_COUNT == 4u,
+             "channel-5 floods must use exactly four transmission opportunities");
+BUILD_ASSERT(C5_POLITE_SNIFF_MS == 20u,
+             "each channel-5 flood opportunity must use a 20 ms quiet check");
 BUILD_ASSERT(UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN + 2u <= 31u,
              "BLE courtesy must fit in one legacy advertising data structure");
 BUILD_ASSERT(BLE_COURTESY_PEER_FINISH_MS <= UWB_BLE_COURTESY_MAX_DURATION_MS,

@@ -110,13 +110,11 @@ static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config 
     .wake_adv_ms = WAKE_ADV_MS,
     .max_politeness_wait_ms = MAX_POLITENESS_WAIT_MS,
     .polite_sample_rx_ms = UWB_POLITE_SAMPLE_RX_MS,
-    .polite_sample_period_ms = UWB_POLITE_SAMPLE_PERIOD_MS,
     .polite_required_quiet_samples = UWB_POLITE_REQUIRED_QUIET_SAMPLES,
     .polite_relevant_frame_wait_ms = UWB_POLITE_RELEVANT_FRAME_WAIT_MS,
     .ble_courtesy_min_window_ms = BLE_COURTESY_MIN_WINDOW_MS,
     .ble_courtesy_peer_finish_ms = BLE_COURTESY_PEER_FINISH_MS,
     .ble_courtesy_max_defers_per_attempt = BLE_COURTESY_MAX_DEFERS_PER_ATTEMPT,
-    .ble_courtesy_poll_sleep_ms = BLE_COURTESY_POLL_SLEEP_MS,
 };
 static const struct app_clicker_wake_train_config clicker_wake_train_config = {
     .wake_adv_ms = WAKE_ADV_MS,
@@ -1846,9 +1844,8 @@ static int ml_clicker_emit_post_burst_diagnostic_if_active(
                                    range_result->clicker_diag : NULL;
         diagnostics.clicker_diag_len = range_result->clicker_diag_received ?
                                        range_result->clicker_diag_len : 0u;
-        diagnostics.anchor_diag = range_result->cir_sampled ? anchor_cir : NULL;
-        diagnostics.anchor_diag_len = range_result->cir_sampled ?
-                                      UWB_CIR_SAMPLE_LEN : 0u;
+        diagnostics.anchor_diag = NULL;
+        diagnostics.anchor_diag_len = 0u;
     }
     diagnostics.burst_id = ml_clicker_runtime.burst_id;
     diagnostics.exchange_stride_us = schedule->exchange_stride_us;

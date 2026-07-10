@@ -33,11 +33,15 @@ event negotiation, hop ACKs, and busy responses are not streamed by default.
 
 ## Queue Policy
 
-The stream uses a fixed ring in RAM:
+The stream uses fixed descriptor slots plus a compact record pool in RAM:
 
 - Queue depth: `GATEWAY_BLE_STREAM_QUEUE_DEPTH` records.
-- Record size: `GATEWAY_BLE_STREAM_RECORD_MAX_LEN` bytes.
+- Maximum record size: `GATEWAY_BLE_STREAM_RECORD_MAX_LEN` bytes, sized for the
+  40-byte stream header plus the full 958-byte extended shared-packet payload.
 - Payload bytes per record: `GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN`.
+- Record-pool size: `GATEWAY_BLE_STREAM_RECORD_POOL_BYTES`. A build-time guard
+  requires enough space for the core click record plus its 890-byte and
+  262-byte CIR records at the same time.
 - RAM budget guard: `GATEWAY_BLE_STREAM_RAM_BUDGET_BYTES`.
 
 There is no dynamic allocation. Enqueue is non-blocking and records are drained
@@ -52,9 +56,15 @@ Priority order under pressure:
 
 A higher-priority incoming record may evict one lower-priority queued record.
 If no lower-priority record is available, the incoming record is dropped and the
-appropriate diagnostic counter is updated. Oversize click/result/survey records
-are rejected. Oversize diagnostic and status records are truncated to the record
-payload budget and marked with the truncated flag.
+appropriate diagnostic counter is updated. Every protocol-valid click,
+result, and survey payload fits without truncation. Inputs larger than the
+shared-packet payload limit are rejected; oversize diagnostic and status records
+are truncated to the record payload budget and marked with the truncated flag.
+Normal mesh partial-CIR data arrives as two independently valid extended
+click-report packets. A packet may contain repeated byte-length CIR TLVs. The
+gateway forwards each packet intact; host software concatenates repeated CIR
+values in wire order, then validates and reassembles the declared offsets
+rather than relying on BLE-record truncation.
 
 ## Record Format
 

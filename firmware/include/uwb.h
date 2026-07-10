@@ -20,7 +20,8 @@ extern "C" {
 #define UWB_HEADER_LEN 42u
 #define UWB_POLL_LEN UWB_HEADER_LEN
 #define UWB_RESP_LEN (UWB_HEADER_LEN + 8u)
-#define UWB_FINAL_LEN (UWB_HEADER_LEN + 12u)
+#define UWB_FINAL_LEN (UWB_HEADER_LEN + 15u)
+#define UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT (1u << 0)
 #define UWB_REPORT_LEN (UWB_HEADER_LEN + 8u)
 #define UWB_CLICKER_DIAG_FIXED_LEN (UWB_HEADER_LEN + 15u)
 #define UWB_CLICKER_DIAG_MAX_BYTES 48u
@@ -157,6 +158,8 @@ struct uwb_final_frame {
     uint32_t poll_tx_ts_32;
     uint32_t resp_rx_ts_32;
     uint32_t final_tx_ts_32;
+    uint8_t diagnostic_flags;
+    int16_t clicker_clock_offset_raw;
 };
 
 struct uwb_report_frame {

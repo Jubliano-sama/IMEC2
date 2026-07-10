@@ -414,7 +414,8 @@ void status_debug_printf(const char *fmt, ...)
     int ret;
     size_t len;
 
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) || fmt == NULL) {
+    if ((!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+         !IS_ENABLED(CONFIG_IMEC_DS_TWR_RTT_DEBUG)) || fmt == NULL) {
         return;
     }
 

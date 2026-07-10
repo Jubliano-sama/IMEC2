@@ -8,6 +8,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
     src/debug_log.c
+    src/discovery_assignment.c
     src/protocol.c
     src/gateway_membership.c
     src/gateway_command.c
@@ -35,6 +36,10 @@ enable_testing()
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
 add_test(NAME protocol COMMAND test_protocol)
+
+add_executable(test_discovery_assignment tests/test_discovery_assignment.c)
+target_link_libraries(test_discovery_assignment PRIVATE core)
+add_test(NAME discovery_assignment COMMAND test_discovery_assignment)
 
 add_executable(test_status tests/test_status.c)
 target_link_libraries(test_status PRIVATE core)

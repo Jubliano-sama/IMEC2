@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define ANCHOR_A 0xA001u
+#define TRANSMITTER 0xB001u
 #define GATEWAY 0x9000u
 
 static struct route_candidate direct_gateway_route(uint32_t route_epoch)
@@ -79,7 +80,6 @@ static void test_click_preemption_defers_collection_result(void)
                                &tx) == PROTO_OK);
 
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) == PROTO_OK);
-    assert(plan.purge_rx_queue);
     assert(plan.save_outbox);
     assert(plan.schedule_timeout);
     assert(!plan.clear_outbox);
@@ -115,7 +115,6 @@ static void test_click_preemption_cancels_non_collection_tx(void)
     assert(mesh_relay_start_tx(&relay, &packet, NULL, 0u, 5000u, &tx) == PROTO_OK);
 
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) == PROTO_OK);
-    assert(plan.purge_rx_queue);
     assert(!plan.save_outbox);
     assert(!plan.schedule_timeout);
     assert(plan.clear_outbox);
@@ -161,10 +160,49 @@ static void test_click_preemption_requeues_local_click_report(void)
     assert(!mesh_relay_tx_active(&relay));
 }
 
+static void test_click_preemption_cancels_transit_click_report(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(7u);
+    struct proto_packet packet = {
+        .msg_type = MSG_CLICK_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = TRANSMITTER,
+        .dst_id = GATEWAY,
+        .session_id = 31u,
+        .seq = 32u,
+        .ttl = MESH_GATEWAY_ACK_TTL,
+        .payload_len = 4u,
+    };
+    struct mesh_outbound tx;
+    struct mesh_click_preempt_plan plan;
+    uint8_t payload[] = {0xc0u, 0xffu, 0xeeu, 0x00u};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 7u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &packet,
+                               payload,
+                               sizeof(payload),
+                               5000u,
+                               &tx) == PROTO_OK);
+    relay.pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
+    assert(mesh_relay_tx_active(&relay));
+
+    assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) == PROTO_OK);
+    assert(!plan.save_outbox);
+    assert(!plan.schedule_timeout);
+    assert(!plan.requeue_click_report);
+    assert(plan.clear_outbox);
+    assert(plan.cancel_timeout);
+    assert(!mesh_relay_tx_active(&relay));
+}
+
 int main(void)
 {
     test_click_preemption_defers_collection_result();
     test_click_preemption_cancels_non_collection_tx();
     test_click_preemption_requeues_local_click_report();
+    test_click_preemption_cancels_transit_click_report();
     return 0;
 }

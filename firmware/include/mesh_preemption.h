@@ -8,7 +8,6 @@
 #include <stdint.h>
 
 struct mesh_click_preempt_plan {
-    bool purge_rx_queue;
     bool requeue_click_report;
     bool save_outbox;
     bool clear_outbox;

@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct k_work_delayable;
+
 struct uwb_range_schedule_frame;
 
 struct anchor_range_window_report {
@@ -27,12 +29,17 @@ struct anchor_range_window_report {
     bool have_exchange_start_ms;
     bool rsl_sampled;
     bool cir_sampled;
+    bool anchor_full_cir_sampled;
 };
 
 struct app_mesh_report_callbacks {
     bool (*anchor_survey_discovery_is_pending)(void);
     void (*anchor_note_uwb_awake_since)(int64_t start_ms,
                                         uint32_t already_counted_us);
+    bool (*anchor_handle_click_wake_claim)(
+        const struct uwb_wake_claim_frame *claim,
+        uint8_t link_quality,
+        int64_t received_at_ms);
     void (*anchor_handle_local_command)(const struct proto_packet *packet,
                                         const uint8_t *payload,
                                         size_t payload_len);
@@ -68,6 +75,7 @@ void build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
     uint8_t schedule_flags,
     const struct anchor_range_window_report *report);
+uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity);
 void mesh_stop_role_scan(void);
 void mesh_restart_role_scan(void);
 int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
@@ -115,5 +123,8 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
 bool mesh_anchor_connected_radio_active(void);
 void mesh_gateway_route_adv_start(void);
 void mesh_gateway_route_adv_request(uint32_t delay_ms, const char *reason);
+/* Returns zero when the forced advertisement is queued or rescheduled. */
+int mesh_gateway_route_adv_force_request(uint32_t delay_ms, const char *reason);
+int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
 
 #endif

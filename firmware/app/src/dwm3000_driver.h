@@ -55,6 +55,7 @@ struct dwm3000_range_result {
     uint8_t quality;
     int8_t rsl_dbm;
     int16_t clock_offset_raw;
+    int16_t clicker_clock_offset_raw;
     int32_t carrier_integrator;
     uint32_t poll_tx_ts_32;
     uint32_t poll_rx_ts_32;
@@ -83,6 +84,7 @@ struct dwm3000_range_result {
     bool anchor_full_cir_sampled;
     bool anchor_full_cir_truncated;
     bool clock_offset_sampled;
+    bool clicker_clock_offset_sampled;
     bool carrier_integrator_sampled;
     bool clicker_diag_received;
     bool clicker_diag_dropped;
@@ -183,6 +185,9 @@ int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
                                                   int8_t *rsl_dbm,
                                                   enum dwm3000_rx_failure *failure,
                                                   struct dwm3000_rx_frame_timing *timing);
+void dwm3000_driver_request_receive_abort(void);
+void dwm3000_driver_clear_receive_abort(void);
+bool dwm3000_driver_receive_abort_pending(void);
 int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                    struct dwm3000_range_result *result);
 int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,

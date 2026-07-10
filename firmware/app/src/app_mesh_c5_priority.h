@@ -49,6 +49,12 @@ struct app_mesh_c5_connected_gap_timing {
     uint32_t retune_margin_ms;
 };
 
+enum app_mesh_c5_connected_gap_rx_action {
+    APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE = 0,
+    APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK,
+    APP_MESH_C5_CONNECTED_GAP_RX_COMPLETE,
+};
+
 bool app_mesh_c5_flood_should_defer(
     const struct app_mesh_c5_flood_priority_state *state);
 bool app_mesh_c5_gateway_rx_should_yield_to_response(
@@ -58,10 +64,16 @@ bool app_mesh_c5_route_capture_relevant(
     const struct app_mesh_c5_route_capture_state *state);
 bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type);
 bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type);
+bool app_mesh_c5_route_capture_requires_inline_timing_install(
+    uint8_t msg_type,
+    bool awaiting_event_accept);
 bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
                                            size_t frame_len,
                                            size_t standard_frame_max_len);
 bool app_mesh_c5_wake_claim_preempts_mesh(uint8_t claim_flags);
+bool app_mesh_c5_wake_claim_requires_anchor_handoff(uint8_t claim_flags,
+                                                    bool local_can_range_clicks);
+bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags);
 uint32_t app_mesh_c5_route_reply_listen_window_ms(
     uint8_t route_ttl,
     const struct app_mesh_c5_route_reply_window_timing *timing);
@@ -75,5 +87,8 @@ uint32_t app_mesh_c5_connected_gap_reschedule_ms(
     uint32_t next_channel9_delay_ms,
     uint32_t min_scan_ms,
     uint32_t retune_margin_ms);
+enum app_mesh_c5_connected_gap_rx_action
+app_mesh_c5_connected_gap_rx_action(bool click_claim,
+                                    bool deadline_reached);
 
 #endif
