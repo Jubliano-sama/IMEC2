@@ -2083,12 +2083,12 @@ static uint8_t gateway_ble_log_output_buf[128];
 
 static int gateway_ble_log_backend_out(uint8_t *buf, size_t len, void *ctx)
 {
-    int ret;
-
     ARG_UNUSED(ctx);
 
-    ret = gateway_ble_send_log_bytes(buf, len);
-    return ret < 0 ? ret : (int)len;
+    (void)gateway_ble_send_log_bytes(buf, len);
+
+    /* log_output callbacks report bytes consumed or discarded, never errno. */
+    return (int)len;
 }
 
 LOG_OUTPUT_DEFINE(gateway_ble_log_output,
