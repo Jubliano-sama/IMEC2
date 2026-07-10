@@ -45,9 +45,11 @@ EVENT_SEQ = 73
 TIMESTAMP_MS = 1_234_567
 START_INDEX = 700
 FIRST_PATH_INDEX = 764
-FIRST_PACKET_CIR_BYTES = 890
+FIRST_PACKET_CIR_BYTES = 881
 TLV_MAX_BYTES = 255
 FRAGMENT_COUNT = CIR_FRAGMENT_COUNT
+TLV_MESH_CH9_BATCH_ID = 0xA2
+TLV_MESH_CH9_BATCH_FLAGS = 0xA3
 
 
 def signed24(value: int) -> bytes:
@@ -105,6 +107,12 @@ def fragment_packet(
         append_tlv(payload, type_id, value)
     for chunk_value in chunks:
         append_tlv(payload, TLV_UWB_CIR_FULL_CHUNK, chunk_value)
+    append_tlv(payload, TLV_MESH_CH9_BATCH_ID, event_seq.to_bytes(4, "little"))
+    append_tlv(
+        payload,
+        TLV_MESH_CH9_BATCH_FLAGS,
+        bytes((1 if fragment_index == fragment_count - 1 else 0,)),
+    )
     frame = encode_cobs_packet(
         msg_type=MSG_CLICK_REPORT,
         flags=FLAG_DIAGNOSTIC,
@@ -142,7 +150,9 @@ def non_cir_diagnostic_fragment_packet() -> Packet:
 
 def truncated_first_fragment_packet() -> Packet:
     payload = bytearray(fragment_packet(0).payload)
-    final_tlv_offset = len(payload) - (2 + 125)
+    batch_metadata_bytes = 9
+    final_chunk_bytes = FIRST_PACKET_CIR_BYTES % TLV_MAX_BYTES
+    final_tlv_offset = len(payload) - batch_metadata_bytes - (2 + final_chunk_bytes)
     assert payload[final_tlv_offset] == TLV_UWB_CIR_FULL_CHUNK
     payload[final_tlv_offset + 1] = 255
     record = bytearray(GATEWAY_STREAM_RECORD_HEADER_LEN)
@@ -197,7 +207,7 @@ class CirReassemblyTests(unittest.TestCase):
                 for tlv in packets[1].tlvs
                 if tlv.type_id == TLV_UWB_CIR_FULL_CHUNK
             ],
-            [255, 255, 255, 125],
+            [255, 255, 255, 116],
         )
         self.assertEqual(
             [
@@ -205,7 +215,7 @@ class CirReassemblyTests(unittest.TestCase):
                 for tlv in packets[0].tlvs
                 if tlv.type_id == TLV_UWB_CIR_FULL_CHUNK
             ],
-            [255, 7],
+            [255, 16],
         )
         for packet in packets:
             result = reassembler.ingest(packet)
@@ -310,14 +320,21 @@ class CirReassemblyTests(unittest.TestCase):
         reassembler.ingest(fragment_packet(0))
 
         result = reassembler.ingest(
-            fragment_packet(1, byte_offset=891, chunk=CIR_BYTES[891:])
+            fragment_packet(
+                1,
+                byte_offset=FIRST_PACKET_CIR_BYTES + 1,
+                chunk=CIR_BYTES[FIRST_PACKET_CIR_BYTES + 1:],
+            )
         )
 
         self.assertIsNotNone(result)
         assert result is not None and result.view is not None
         self.assertTrue(result.accepted)
         self.assertEqual(result.view.missing_fragment_indices, ())
-        self.assertEqual(result.view.gaps, ((890, 891),))
+        self.assertEqual(
+            result.view.gaps,
+            ((FIRST_PACKET_CIR_BYTES, FIRST_PACKET_CIR_BYTES + 1),),
+        )
         self.assertEqual(result.view.state, "malformed")
         self.assertTrue(any("byte coverage has gaps" in error for error in result.view.errors))
         self.assertIsNone(result.view.raw)
@@ -339,7 +356,11 @@ class CirReassemblyTests(unittest.TestCase):
         reassembler = CirReassembler()
         packet = fragment_packet(
             1,
-            chunk_tlvs=(CIR_BYTES[890:1145], b"", CIR_BYTES[1145:]),
+            chunk_tlvs=(
+                CIR_BYTES[FIRST_PACKET_CIR_BYTES:FIRST_PACKET_CIR_BYTES + TLV_MAX_BYTES],
+                b"",
+                CIR_BYTES[FIRST_PACKET_CIR_BYTES + TLV_MAX_BYTES:],
+            ),
         )
 
         result = reassembler.ingest(packet)

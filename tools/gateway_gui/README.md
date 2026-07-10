@@ -125,7 +125,9 @@ CIR waveform, so the GUI deliberately does not draw a trace from it.
 
 Normal mesh click CIR diagnostics arrive as `MSG_CLICK_REPORT` packets carrying
 repeated `UWB_CIR_FULL_CHUNK` values. The transport uses two extended packets:
-the first targets 890 CIR bytes and the second carries the remainder. Each
+the first carries 881 CIR bytes and the second carries the remaining 271 bytes.
+The first routed payload also carries the mandatory 9 encoded bytes for the
+mesh channel-9 batch ID and flags, keeping it at the 958-byte maximum. Each
 individual chunk TLV remains limited to 255 bytes. The GUI concatenates repeated
 chunk values in packet wire order, groups packets by clicker ID, anchor ID, and
 event sequence, then validates fragment metadata, byte bounds, ordering,
