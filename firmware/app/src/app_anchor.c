@@ -1,5 +1,6 @@
 #include "app_anchor.h"
 
+#include "app_anchor_low_power_policy.h"
 #include "app_board.h"
 #include "app_config.h"
 #include "app_gateway_ble.h"
@@ -113,7 +114,6 @@ static struct anchor_discovery_claim_pending anchor_discovery_claim_pending;
 #if DEVICE_ROLE == ROLE_GATEWAY
 static struct gateway_discovery_assignment_state gateway_discovery_assignment_state;
 #endif
-static uint32_t anchor_discovery_assignment_requested_epoch;
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_THREAD_STACK_DEFINE(anchor_uwb_scan_work_q_stack, ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE);
@@ -131,6 +131,7 @@ static const struct k_work_queue_config anchor_survey_work_q_config = {
 static uint16_t anchor_heartbeat_seq;
 static uint16_t anchor_survey_seq;
 static uint32_t anchor_ch5_scan_debug_next_ms;
+static uint32_t anchor_low_power_transition_failures;
 static uint8_t anchor_uwb_scan_frame[UWB_MESH_MAX_FRAME_LEN];
 static uint32_t anchor_heartbeat_interval_ms = ANCHOR_HEARTBEAT_DEFAULT_INTERVAL_MS;
 static bool anchor_reboot_pending;
@@ -246,6 +247,99 @@ static void gateway_survey_auto_note_command_timeout(const struct proto_packet *
                                                      enum command_id command_id);
 static void anchor_heartbeat_work_handler(struct k_work *work);
 
+static bool anchor_discovery_assignment_required(void)
+{
+    return DEVICE_ROLE == ROLE_ANCHOR &&
+           !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) &&
+           !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) &&
+           IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED == 0;
+}
+
+static int anchor_append_discovery_assignment_status(uint8_t *payload,
+                                                     size_t payload_cap,
+                                                     size_t *payload_len)
+{
+    static const uint8_t unprovisioned[] = "UNPROVISIONED";
+    uint32_t epoch = 0u;
+    uint8_t slot = 0u;
+    uint8_t slot_count = 0u;
+
+    if (!anchor_discovery_assignment_required()) {
+        return PROTO_OK;
+    }
+    if (local_anchor_discovery_assignment_get(&epoch, &slot, &slot_count)) {
+        return tlv_append_u32(payload,
+                              payload_cap,
+                              payload_len,
+                              TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                              epoch);
+    }
+    return tlv_append_bytes(payload,
+                            payload_cap,
+                            payload_len,
+                            TLV_ERROR_DETAIL,
+                            unprovisioned,
+                            (uint8_t)(sizeof(unprovisioned) - 1u));
+}
+
+static int anchor_enter_low_power(enum app_anchor_low_power_mode mode,
+                                  const char *reason)
+{
+    struct app_anchor_low_power_policy policy;
+    enum app_anchor_low_power_action action;
+    const char *mode_name = app_anchor_low_power_mode_name(mode);
+    int first_ret;
+    int recovery_ret;
+    int retry_ret = 0;
+    int final_ret;
+    bool retry_attempted = false;
+
+    app_anchor_low_power_policy_init(&policy, mode);
+    first_ret = mode == APP_ANCHOR_LOW_POWER_IDLE ?
+                dwm3000_driver_idle() : dwm3000_driver_standby();
+    action = app_anchor_low_power_policy_note_transition(&policy, first_ret);
+    if (action == APP_ANCHOR_LOW_POWER_COMPLETE) {
+        return 0;
+    }
+
+    recovery_ret = dwm3000_driver_force_recovery();
+    action = app_anchor_low_power_policy_note_recovery(&policy, recovery_ret);
+    if (action == APP_ANCHOR_LOW_POWER_RETRY) {
+        retry_attempted = true;
+        retry_ret = mode == APP_ANCHOR_LOW_POWER_IDLE ?
+                    dwm3000_driver_idle() : dwm3000_driver_standby();
+        action = app_anchor_low_power_policy_note_transition(&policy, retry_ret);
+        if (action == APP_ANCHOR_LOW_POWER_COMPLETE) {
+            LOG_WRN("anchor DWM3000 %s recovered after transition failure: reason=%s first_ret=%d",
+                    mode_name,
+                    reason,
+                    first_ret);
+            status_debug_printf("DBG_ANCHOR_LOW_POWER_RECOVERED mode=%s first=%d\n",
+                                mode_name,
+                                first_ret);
+            return 0;
+        }
+    }
+
+    final_ret = recovery_ret < 0 ? recovery_ret : retry_ret;
+    if (anchor_low_power_transition_failures != UINT32_MAX) {
+        anchor_low_power_transition_failures++;
+    }
+    LOG_ERR("anchor DWM3000 %s failed after bounded recovery: reason=%s first_ret=%d recovery_ret=%d retry_attempted=%u retry_ret=%d failures=%u",
+            mode_name,
+            reason,
+            first_ret,
+            recovery_ret,
+            retry_attempted ? 1u : 0u,
+            retry_ret,
+            anchor_low_power_transition_failures);
+    status_debug_printf("DBG_ANCHOR_LOW_POWER_FAILED mode=%s ret=%d count=%u\n",
+                        mode_name,
+                        final_ret,
+                        anchor_low_power_transition_failures);
+    return final_ret;
+}
+
 static uint32_t anchor_collection_node_boot_id(void)
 {
     if (anchor_collection_node_boot_counter == 0u) {
@@ -298,6 +392,11 @@ static int anchor_send_command_result(const struct proto_packet *command,
     }
     if (status == COMMAND_OK && command_id == CMD_GET_STATUS) {
         ret = append_anchor_status_tlvs(outbound.payload, sizeof(outbound.payload), &payload_len);
+        if (ret == PROTO_OK) {
+            ret = anchor_append_discovery_assignment_status(outbound.payload,
+                                                            sizeof(outbound.payload),
+                                                            &payload_len);
+        }
         if (ret != PROTO_OK) {
             return -EINVAL;
         }
@@ -491,7 +590,6 @@ static int anchor_schedule_discovery_response(
         return -EINVAL;
     }
     hash = discovery_assignment_hash(DEVICE_ID);
-    anchor_discovery_assignment_requested_epoch = epoch;
     anchor_discovery_claim_pending.command = *command;
     anchor_discovery_claim_pending.epoch = epoch;
     anchor_discovery_claim_pending.phase = phase;
@@ -838,6 +936,11 @@ static int anchor_send_heartbeat(void)
     }
 
     ret = append_anchor_status_tlvs(outbound.payload, sizeof(outbound.payload), &payload_len);
+    if (ret == PROTO_OK) {
+        ret = anchor_append_discovery_assignment_status(outbound.payload,
+                                                        sizeof(outbound.payload),
+                                                        &payload_len);
+    }
     if (ret != PROTO_OK) {
         return -EINVAL;
     }
@@ -1421,6 +1524,7 @@ static int anchor_apply_discovery_assignment_command(
 {
     struct discovery_assignment_entry entries[UWB_DISCOVERY_SLOT_COUNT];
     enum discovery_assignment_phase phase = 0;
+    enum app_discovery_assignment_table_decision table_decision;
     uint32_t epoch = 0u;
     size_t entry_count = 0u;
     uint8_t slot_count = 0u;
@@ -1434,7 +1538,25 @@ static int anchor_apply_discovery_assignment_command(
         return mesh_errno_from_proto(ret);
     }
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+        enum app_discovery_assignment_claim_decision claim_decision =
+            local_anchor_discovery_assignment_note_claim(epoch);
+
+        if (claim_decision == APP_DISCOVERY_ASSIGNMENT_CLAIM_INVALID) {
+            return -EINVAL;
+        }
+        if (claim_decision == APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE) {
+            status_debug_printf("DBG_DISCOVERY_SLOT_STALE phase=claim epoch=%u state=%s\n",
+                                epoch,
+                                app_discovery_assignment_provisioning_state_name(
+                                    local_anchor_discovery_assignment_provisioning_state()));
+            LOG_WRN("anchor ignored stale discovery assignment claim: epoch=%u",
+                    epoch);
+            return 0;
+        }
         return anchor_schedule_discovery_claim(packet, epoch);
+    }
+    if (phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE) {
+        return -EINVAL;
     }
     ret = discovery_assignment_parse_table_tlvs(payload,
                                                 payload_len,
@@ -1445,19 +1567,36 @@ static int anchor_apply_discovery_assignment_command(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
+    table_decision = local_anchor_discovery_assignment_note_table(epoch);
+    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID) {
+        return -EINVAL;
+    }
+    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_STALE phase=table epoch=%u state=%s\n",
+                            epoch,
+                            app_discovery_assignment_provisioning_state_name(
+                                local_anchor_discovery_assignment_provisioning_state()));
+        LOG_WRN("anchor ignored stale discovery assignment table: epoch=%u",
+                epoch);
+        return 0;
+    }
+    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_LATE_CLAIM epoch=%u state=%s count=%u\n",
+                            epoch,
+                            app_discovery_assignment_provisioning_state_name(
+                                local_anchor_discovery_assignment_provisioning_state()),
+                            (unsigned int)entry_count);
+        LOG_WRN("anchor received discovery table before claim epoch: epoch=%u count=%u; retaining committed assignment and late-claiming",
+                epoch,
+                (unsigned int)entry_count);
+        return anchor_schedule_discovery_claim(packet, epoch);
+    }
+
     (void)k_work_cancel_delayable(&anchor_discovery_claim_work);
     anchor_discovery_claim_pending.active = false;
-    anchor_discovery_assignment_requested_epoch = epoch;
-    local_anchor_clear_discovery_assignment();
     for (size_t i = 0u; i < entry_count; i++) {
         if (entries[i].anchor_id != DEVICE_ID) {
             continue;
-        }
-        ret = local_anchor_set_discovery_assignment(epoch,
-                                                    entries[i].slot,
-                                                    slot_count);
-        if (ret != PROTO_OK) {
-            return mesh_errno_from_proto(ret);
         }
         {
             const struct app_mesh_discovery_assignment_snapshot snapshot = {
@@ -1472,13 +1611,22 @@ static int anchor_apply_discovery_assignment_command(
 
             ret = app_mesh_persistence_save_discovery_assignment(&snapshot);
             if (ret < 0) {
-                local_anchor_clear_discovery_assignment();
                 LOG_WRN("anchor discovery assignment persistence failed: epoch=%u slot=%u ret=%d",
                         epoch,
                         entries[i].slot,
                         ret);
                 return ret;
             }
+        }
+        ret = local_anchor_commit_discovery_assignment(epoch,
+                                                       entries[i].slot,
+                                                       slot_count);
+        if (ret != PROTO_OK) {
+            LOG_ERR("anchor discovery assignment commit rejected after persistence: epoch=%u slot=%u ret=%d",
+                    epoch,
+                    entries[i].slot,
+                    ret);
+            return -ESTALE;
         }
         ret = anchor_schedule_discovery_response(
             packet,
@@ -1487,10 +1635,9 @@ static int anchor_apply_discovery_assignment_command(
             entries[i].slot,
             slot_count);
         if (ret < 0) {
-            local_anchor_clear_discovery_assignment();
             return ret;
         }
-        status_debug_printf("DBG_DISCOVERY_SLOT_ASSIGNED epoch=%u slot=%u slot_count=%u anchors=%u hash=0x%016llx\n",
+        status_debug_printf("DBG_DISCOVERY_SLOT_ASSIGNED state=PROVISIONED epoch=%u slot=%u slot_count=%u anchors=%u hash=0x%016llx\n",
                             epoch,
                             entries[i].slot,
                             slot_count,
@@ -1504,13 +1651,14 @@ static int anchor_apply_discovery_assignment_command(
         return 0;
     }
 
-    status_debug_printf("DBG_DISCOVERY_SLOT_UNASSIGNED epoch=%u count=%u reason=not-listed\n",
+    app_mesh_persistence_clear_discovery_assignment();
+    local_anchor_mark_discovery_assignment_unprovisioned(epoch);
+    status_debug_printf("DBG_DISCOVERY_SLOT_UNASSIGNED state=UNPROVISIONED epoch=%u count=%u reason=not-listed\n",
                         epoch,
                         (unsigned int)entry_count);
     LOG_WRN("anchor not listed in discovery-slot assignment: epoch=%u count=%u",
             epoch,
             (unsigned int)entry_count);
-    app_mesh_persistence_clear_discovery_assignment();
     return anchor_schedule_discovery_claim(packet, epoch);
 }
 
@@ -3965,6 +4113,7 @@ static void anchor_survey_work_handler(struct k_work *work)
     bool run_discovery = false;
     int64_t uwb_window_start_ms;
     k_spinlock_key_t key;
+    int low_power_ret;
     int ret;
 
     ARG_UNUSED(work);
@@ -3997,7 +4146,13 @@ static void anchor_survey_work_handler(struct k_work *work)
         anchor_set_uwb_busy(true);
         uwb_window_start_ms = k_uptime_get();
         ret = anchor_run_survey_discovery(&discovery_config, discovery_start_ms);
-        (void)dwm3000_driver_standby();
+        low_power_ret = anchor_enter_low_power(
+            app_anchor_low_power_mode_for_connection(
+                mesh_anchor_connected_radio_active()),
+            "survey-discovery-exit");
+        if (ret >= 0 && low_power_ret < 0) {
+            ret = low_power_ret;
+        }
         anchor_note_uwb_awake_since(uwb_window_start_ms, 0u);
         anchor_set_uwb_busy(false);
         radio_guard_uwb_stop();
@@ -4075,7 +4230,13 @@ static void anchor_survey_work_handler(struct k_work *work)
     } else {
         ret = anchor_run_survey_pair_initiator(&pair);
     }
-    (void)dwm3000_driver_standby();
+    low_power_ret = anchor_enter_low_power(
+        app_anchor_low_power_mode_for_connection(
+            mesh_anchor_connected_radio_active()),
+        "survey-pair-exit");
+    if (ret >= 0 && low_power_ret < 0) {
+        ret = low_power_ret;
+    }
     anchor_note_uwb_awake_since(uwb_window_start_ms, 0u);
     anchor_set_uwb_busy(false);
     radio_guard_uwb_stop();
@@ -5141,6 +5302,7 @@ static uint32_t anchor_run_clicker_pair_survey(
         uint64_t initiator_id = 0u;
         uint64_t responder_id = 0u;
         int64_t target_ms;
+        int low_power_ret = 0;
         int ret;
 
         ret = uwb_anchor_pair_at(schedule, pair_index, &initiator_id, &responder_id);
@@ -5174,7 +5336,8 @@ static uint32_t anchor_run_clicker_pair_survey(
             memset(&range_result, 0, sizeof(range_result));
             range_result.status = RANGE_RX_TIMEOUT;
             ret = dwm3000_driver_range_initiator(&request, &range_result);
-            (void)dwm3000_driver_idle();
+            low_power_ret = anchor_enter_low_power(APP_ANCHOR_LOW_POWER_IDLE,
+                                                   "pair-survey-initiator");
             if (ret < 0 && !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_INTERNAL_ERROR;
             }
@@ -5206,7 +5369,11 @@ static uint32_t anchor_run_clicker_pair_survey(
                 }
                 break;
             }
-            (void)dwm3000_driver_idle();
+            low_power_ret = anchor_enter_low_power(APP_ANCHOR_LOW_POWER_IDLE,
+                                                   "pair-survey-responder");
+        }
+        if (low_power_ret < 0) {
+            break;
         }
     }
 
@@ -5626,15 +5793,27 @@ discovery_miss:
         ret = local_anchor_discovery_slot(discover.discovery_slot_count,
                                           &reply.anchor_slot);
         if (ret != PROTO_OK) {
+            enum app_discovery_assignment_provisioning_state provisioning_state =
+                local_anchor_discovery_assignment_provisioning_state();
+
             stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_MISSING event=%u attempt=%u slot_count=%u ret=%d\n",
-                                discover.click_event_id,
-                                discover.attempt_index,
-                                discover.discovery_slot_count,
-                                ret);
-            LOG_WRN("anchor UWB DISCOVERY_REPLY slot rejected: slot_count=%u ret=%d",
-                    discover.discovery_slot_count,
-                    ret);
+            if (provisioning_state == APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
+                status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED event=%u attempt=%u reply=disabled\n",
+                                    discover.click_event_id,
+                                    discover.attempt_index);
+                LOG_WRN("anchor UWB DISCOVERY_REPLY suppressed: assignment UNPROVISIONED event=%u attempt=%u",
+                        discover.click_event_id,
+                        discover.attempt_index);
+            } else {
+                status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_INVALID event=%u attempt=%u slot_count=%u ret=%d\n",
+                                    discover.click_event_id,
+                                    discover.attempt_index,
+                                    discover.discovery_slot_count,
+                                    ret);
+                LOG_WRN("anchor UWB DISCOVERY_REPLY slot rejected: slot_count=%u ret=%d",
+                        discover.discovery_slot_count,
+                        ret);
+            }
             return true;
         }
 #endif
@@ -5893,6 +6072,7 @@ static bool anchor_handle_mesh_click_wake_claim(
     bool deferred_mesh_rx_queued = false;
     bool handled = false;
     int64_t uwb_window_start_ms = -1;
+    int low_power_ret;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || claim == NULL ||
@@ -5941,10 +6121,12 @@ static bool anchor_handle_mesh_click_wake_claim(
     }
 
 release_radio:
-    if (mesh_anchor_connected_radio_active()) {
-        (void)dwm3000_driver_idle();
-    } else {
-        (void)dwm3000_driver_standby();
+    low_power_ret = anchor_enter_low_power(
+        app_anchor_low_power_mode_for_connection(
+            mesh_anchor_connected_radio_active()),
+        "click-release");
+    if (low_power_ret < 0) {
+        anchor_scan_recovery_gap_requested = true;
     }
     anchor_note_uwb_awake_since(uwb_window_start_ms, retained_sleep_us);
     radio_guard_uwb_stop();
@@ -6006,6 +6188,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint32_t scan_rx_start_cycles = 0u;
     uint32_t scan_rx_elapsed_us = ANCHOR_UWB_SCAN_RX_US;
     uint32_t scan_extra_awake_us = 0u;
+    int low_power_ret;
     int ret;
 
     ARG_UNUSED(work);
@@ -6308,11 +6491,12 @@ scan_complete:
     if (scan_rx_elapsed_us > ANCHOR_UWB_SCAN_RX_US) {
         scan_extra_awake_us = scan_rx_elapsed_us - ANCHOR_UWB_SCAN_RX_US;
     }
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-        mesh_anchor_connected_radio_active()) {
-        (void)dwm3000_driver_idle();
-    } else {
-        (void)dwm3000_driver_standby();
+    low_power_ret = anchor_enter_low_power(
+        app_anchor_low_power_mode_for_connection(
+            mesh_anchor_connected_radio_active()),
+        "low-duty-scan-release");
+    if (low_power_ret < 0 && next_scan_delay_ms < REPORT_TX_RETRY_DELAY_MS) {
+        next_scan_delay_ms = REPORT_TX_RETRY_DELAY_MS;
     }
     anchor_note_uwb_awake_since(
         uwb_window_start_ms,
@@ -6493,18 +6677,20 @@ int app_anchor_start_anchor_role(void)
     if (ret < 0) {
         LOG_WRN("anchor mesh child custody restore unavailable: %d", ret);
     }
-    if (DEVICE_ROLE == ROLE_ANCHOR) {
-        struct app_mesh_discovery_assignment_snapshot snapshot;
+    if (anchor_discovery_assignment_required()) {
+        struct app_mesh_discovery_assignment_snapshot snapshot = {0};
+        const char *unprovisioned_source = "erased-nvs";
+        int restore_ret;
 
-        ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
-        if (ret == 0 && snapshot.valid && snapshot.local_id == DEVICE_ID &&
-            snapshot.gateway_id == GATEWAY_ID) {
-            ret = local_anchor_set_discovery_assignment(snapshot.epoch,
-                                                        snapshot.slot,
-                                                        snapshot.slot_count);
+        local_anchor_reset_discovery_assignment();
+        restore_ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+        if (restore_ret == 0 && snapshot.valid &&
+            snapshot.local_id == DEVICE_ID && snapshot.gateway_id == GATEWAY_ID) {
+            ret = local_anchor_restore_discovery_assignment(snapshot.epoch,
+                                                            snapshot.slot,
+                                                            snapshot.slot_count);
             if (ret == PROTO_OK) {
-                anchor_discovery_assignment_requested_epoch = snapshot.epoch;
-                status_debug_printf("DBG_DISCOVERY_SLOT_RESTORED epoch=%u slot=%u slot_count=%u\n",
+                status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=PROVISIONED source=nvs epoch=%u slot=%u slots=%u\n",
                                     snapshot.epoch,
                                     snapshot.slot,
                                     snapshot.slot_count);
@@ -6513,16 +6699,28 @@ int app_anchor_start_anchor_role(void)
                         snapshot.slot,
                         snapshot.slot_count);
             } else {
+                unprovisioned_source = "invalid-nvs";
                 app_mesh_persistence_clear_discovery_assignment();
+                local_anchor_reset_discovery_assignment();
             }
-        } else if (ret < 0 && ret != -ENOENT && ret != -ENOTSUP) {
-            LOG_WRN("anchor discovery assignment restore unavailable: %d", ret);
+        } else if (restore_ret == 0) {
+            unprovisioned_source = "invalid-nvs";
+            app_mesh_persistence_clear_discovery_assignment();
+        } else if (restore_ret == -ENOTSUP) {
+            unprovisioned_source = "nvs-disabled";
+        } else if (restore_ret != -ENOENT) {
+            unprovisioned_source = "nvs-error";
+            LOG_WRN("anchor discovery assignment restore unavailable: %d",
+                    restore_ret);
         }
-        if (!local_anchor_discovery_assignment_get(&snapshot.epoch,
-                                                   &snapshot.slot,
-                                                   &snapshot.slot_count)) {
-            status_debug_note("DBG_DISCOVERY_SLOT_UNPROVISIONED\n");
-            LOG_WRN("anchor has no discovery-slot assignment; waiting for gateway assignment command");
+        if (local_anchor_discovery_assignment_provisioning_state() ==
+            APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
+            status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED source=%s restore=%d reply=disabled\n",
+                                unprovisioned_source,
+                                restore_ret);
+            LOG_WRN("anchor discovery assignment UNPROVISIONED: source=%s restore=%d; normal click replies disabled until gateway assignment",
+                    unprovisioned_source,
+                    restore_ret);
         }
     }
     ret = uwb_anchor_session_init(&anchor_uwb_session, &anchor_config);

@@ -1,4 +1,5 @@
 #include "app_config.h"
+#include "app_discovery_assignment_policy.h"
 #include "app_gateway_ble.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
@@ -26,7 +27,7 @@ uint16_t mesh_event_control_seq;
 static const char *uwb_rf_owner_reason;
 static uint32_t uwb_rf_owner_since_ms;
 static struct k_spinlock anchor_discovery_assignment_lock;
-static uint32_t anchor_discovery_assignment_epoch;
+static struct app_discovery_assignment_policy anchor_discovery_assignment_policy;
 static uint8_t anchor_discovery_assignment_slot;
 static uint8_t anchor_discovery_assignment_slot_count;
 
@@ -378,32 +379,119 @@ int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot)
 #endif
 }
 
-int local_anchor_set_discovery_assignment(uint32_t epoch,
-                                          uint8_t anchor_slot,
-                                          uint8_t slot_count)
+static bool local_anchor_discovery_assignment_values_valid(uint32_t epoch,
+                                                           uint8_t anchor_slot,
+                                                           uint8_t slot_count)
+{
+    return epoch != 0u && slot_count != 0u &&
+           slot_count <= UWB_DISCOVERY_SLOT_COUNT && anchor_slot < slot_count;
+}
+
+int local_anchor_restore_discovery_assignment(uint32_t epoch,
+                                              uint8_t anchor_slot,
+                                              uint8_t slot_count)
 {
     k_spinlock_key_t key;
 
-    if (epoch == 0u || slot_count == 0u ||
-        slot_count > UWB_DISCOVERY_SLOT_COUNT || anchor_slot >= slot_count) {
+    if (!local_anchor_discovery_assignment_values_valid(epoch,
+                                                        anchor_slot,
+                                                        slot_count)) {
         return PROTO_ERR_MALFORMED;
     }
     key = k_spin_lock(&anchor_discovery_assignment_lock);
-    anchor_discovery_assignment_epoch = epoch;
+    app_discovery_assignment_policy_init(&anchor_discovery_assignment_policy,
+                                         true,
+                                         epoch);
     anchor_discovery_assignment_slot = anchor_slot;
     anchor_discovery_assignment_slot_count = slot_count;
     k_spin_unlock(&anchor_discovery_assignment_lock, key);
     return PROTO_OK;
 }
 
-void local_anchor_clear_discovery_assignment(void)
+int local_anchor_commit_discovery_assignment(uint32_t epoch,
+                                             uint8_t anchor_slot,
+                                             uint8_t slot_count)
+{
+    k_spinlock_key_t key;
+    bool committed;
+
+    if (!local_anchor_discovery_assignment_values_valid(epoch,
+                                                        anchor_slot,
+                                                        slot_count)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    key = k_spin_lock(&anchor_discovery_assignment_lock);
+    committed = app_discovery_assignment_policy_commit(
+        &anchor_discovery_assignment_policy,
+        epoch);
+    if (committed) {
+        anchor_discovery_assignment_slot = anchor_slot;
+        anchor_discovery_assignment_slot_count = slot_count;
+    }
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return committed ? PROTO_OK : PROTO_ERR_STALE;
+}
+
+void local_anchor_reset_discovery_assignment(void)
 {
     k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
 
-    anchor_discovery_assignment_epoch = 0u;
+    app_discovery_assignment_policy_init(&anchor_discovery_assignment_policy,
+                                         false,
+                                         0u);
     anchor_discovery_assignment_slot = 0u;
     anchor_discovery_assignment_slot_count = 0u;
     k_spin_unlock(&anchor_discovery_assignment_lock, key);
+}
+
+void local_anchor_mark_discovery_assignment_unprovisioned(uint32_t epoch)
+{
+    k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
+
+    app_discovery_assignment_policy_note_unassigned(
+        &anchor_discovery_assignment_policy,
+        epoch);
+    anchor_discovery_assignment_slot = 0u;
+    anchor_discovery_assignment_slot_count = 0u;
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+}
+
+enum app_discovery_assignment_claim_decision
+local_anchor_discovery_assignment_note_claim(uint32_t epoch)
+{
+    enum app_discovery_assignment_claim_decision decision;
+    k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
+
+    decision = app_discovery_assignment_policy_note_claim(
+        &anchor_discovery_assignment_policy,
+        epoch);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return decision;
+}
+
+enum app_discovery_assignment_table_decision
+local_anchor_discovery_assignment_note_table(uint32_t epoch)
+{
+    enum app_discovery_assignment_table_decision decision;
+    k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
+
+    decision = app_discovery_assignment_policy_note_table(
+        &anchor_discovery_assignment_policy,
+        epoch);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return decision;
+}
+
+enum app_discovery_assignment_provisioning_state
+local_anchor_discovery_assignment_provisioning_state(void)
+{
+    enum app_discovery_assignment_provisioning_state state;
+    k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
+
+    state = app_discovery_assignment_policy_provisioning_state(
+        &anchor_discovery_assignment_policy);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return state;
 }
 
 bool local_anchor_discovery_assignment_get(uint32_t *epoch,
@@ -417,10 +505,11 @@ bool local_anchor_discovery_assignment_get(uint32_t *epoch,
         return false;
     }
     key = k_spin_lock(&anchor_discovery_assignment_lock);
-    *epoch = anchor_discovery_assignment_epoch;
+    *epoch = anchor_discovery_assignment_policy.committed_epoch;
     *anchor_slot = anchor_discovery_assignment_slot;
     *slot_count = anchor_discovery_assignment_slot_count;
-    valid = anchor_discovery_assignment_epoch != 0u;
+    valid = app_discovery_assignment_policy_normal_click_reply_allowed(
+        &anchor_discovery_assignment_policy);
     k_spin_unlock(&anchor_discovery_assignment_lock, key);
     return valid;
 }
