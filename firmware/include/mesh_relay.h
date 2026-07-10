@@ -30,7 +30,7 @@ extern "C" {
      MESH_RELAY_RETRY_BACKOFF_MAX_MS)
 #define FLOOD_EPOCH_LOCAL_TTL 2u
 #define FLOOD_EPOCH_REGIONAL_TTL 4u
-#define FLOOD_EPOCH_GLOBAL_TTL 8u
+#define FLOOD_EPOCH_GLOBAL_TTL MESH_NETWORK_MAX_HOPS
 #define FLOOD_EPOCH_CRITICAL_TTL 12u
 #define FLOOD_FORWARD_MAX_NORMAL 1u
 #define FLOOD_FORWARD_MAX_CRITICAL 2u
@@ -152,6 +152,7 @@ struct flood_seen_entry {
     uint16_t best_metric;
     uint64_t best_previous_hop;
     uint64_t backup_previous_hop;
+    uint32_t forward_due_ms;
     uint8_t forward_count;
     uint8_t heard_count;
     uint32_t expires_at_ms;
@@ -219,6 +220,7 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_CUSTODY_ACCEPTED = 1u << 23,
     MESH_RELAY_ACTION_TX_COLLECTION_RETRY = 1u << 24,
     MESH_RELAY_ACTION_TX_COLLECTION_CLOSED = 1u << 25,
+    MESH_RELAY_ACTION_UPDATE_ROUTE_REQ = 1u << 26,
 };
 
 enum mesh_relay_tx_state {
@@ -244,7 +246,11 @@ struct mesh_downlink_entry {
     uint64_t next_hop_id;
     uint64_t gateway_id;
     uint32_t route_epoch;
-    uint32_t last_seen_ms;
+    union {
+        uint32_t last_seen_ms;
+        uint32_t discovery_session_id;
+    };
+    uint32_t discovery_flood_epoch_id;
     uint8_t hop_count;
     uint8_t quality;
     bool valid;
@@ -263,6 +269,7 @@ struct mesh_duplicate_entry {
 struct mesh_relay_event_timing_entry {
     uint64_t next_hop_id;
     struct mesh_event_timing timing;
+    uint8_t direction;
     bool valid;
 };
 
@@ -419,6 +426,10 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
+uint16_t mesh_route_reply_nonce(uint64_t origin_id,
+                                uint64_t target_id,
+                                uint32_t session_id,
+                                uint32_t flood_epoch_id);
 int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
                                    uint64_t next_hop_id,
                                    const struct mesh_event_timing *timing);
@@ -427,8 +438,16 @@ int mesh_relay_set_channel9_timing_guarded(struct mesh_relay *relay,
                                            const struct mesh_event_timing *timing,
                                            uint8_t max_active_peers,
                                            struct mesh_relay_channel9_guard_status *status);
+int mesh_relay_set_channel9_timing_guarded_direction(
+    struct mesh_relay *relay,
+    uint64_t next_hop_id,
+    const struct mesh_event_timing *timing,
+    enum mesh_relay_channel9_direction direction,
+    uint8_t max_active_peers,
+    struct mesh_relay_channel9_guard_status *status);
 void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
                                       uint64_t next_hop_id);
+void mesh_relay_abandon_transit_reservations(struct mesh_relay *relay);
 void mesh_relay_invalidate_upstream_route(struct mesh_relay *relay);
 void mesh_relay_invalidate_active_route_path(struct mesh_relay *relay);
 void mesh_relay_clear_routes_preserve_epoch(struct mesh_relay *relay);
@@ -545,6 +564,15 @@ int mesh_relay_restore_child_custody_snapshot(
     uint32_t now_ms);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
 bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms);
+int mesh_relay_defer_pending_retry(struct mesh_relay *relay,
+                                   uint32_t retry_at_ms);
+int mesh_relay_note_retransmit_deferred(struct mesh_relay *relay,
+                                        const struct mesh_outbound *out,
+                                        uint32_t retry_at_ms);
+int mesh_relay_note_pending_parent_failure(struct mesh_relay *relay,
+                                           uint32_t now_ms,
+                                           uint32_t random_value,
+                                           struct mesh_relay_result *result);
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,
                         const uint8_t *payload,
