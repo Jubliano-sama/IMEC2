@@ -533,6 +533,32 @@ static void test_clicker_runs_round_robin_until_400_ms_burst_is_full(void)
     }
 }
 
+static void test_clicker_separates_single_anchor_exchanges(void)
+{
+    struct uwb_clicker_session session;
+    struct uwb_range_schedule_frame schedule;
+    struct uwb_clicker_config config = clicker_config();
+
+    config.max_anchor_count = 1u;
+    config.samples_per_anchor = UWB_RANGING_REQUESTS_MAX_PER_ANCHOR;
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    add_reply(&session, UINT64_C(0xDD00000000000001), 0u, 100u);
+
+    assert(uwb_clicker_build_range_schedule(&session,
+                                            UWB_DS_TWR_REPLY_DELAY_US,
+                                            5u,
+                                            UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS,
+                                            &schedule) == PROTO_OK);
+    assert(schedule.selected_count == 1u);
+    assert(schedule.exchange_stride_us ==
+           UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US);
+    assert(schedule.exchange_stride_us > UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US);
+    assert(schedule.max_exchanges == 8u);
+    assert(uwb_range_schedule_total_samples(&schedule) == schedule.max_exchanges);
+    assert((uint64_t)schedule.max_exchanges * schedule.exchange_stride_us <=
+           (uint64_t)schedule.burst_window_ms * 1000u);
+}
+
 static void test_clicker_releases_replied_anchors_when_too_few_for_normal_click(void)
 {
     struct uwb_clicker_session session;
@@ -2833,6 +2859,7 @@ int main(void)
     test_clicker_discovers_50_and_schedules_best_8_only();
     test_clicker_discovers_sparse_50_slots_with_6_present_and_schedules_all_6();
     test_clicker_runs_round_robin_until_400_ms_burst_is_full();
+    test_clicker_separates_single_anchor_exchanges();
     test_clicker_releases_replied_anchors_when_too_few_for_normal_click();
     test_clicker_rejects_success_history_overflow_config();
     test_clicker_seeds_cached_range_only_anchors_without_discovery();

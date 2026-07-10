@@ -197,6 +197,10 @@ int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,
                                            const struct dwm3000_range_request *expected,
                                            uint32_t timeout_ms,
                                            struct dwm3000_range_result *result);
+/* Call only at a burst boundary, before any later RX overwrites the accumulator. */
+int dwm3000_driver_capture_last_rx_cir(uint8_t *buffer,
+                                       uint16_t buffer_cap,
+                                       struct dwm3000_range_result *result);
 void dwm3000_driver_stats_get(struct dwm3000_driver_stats *stats);
 
 #endif

@@ -166,6 +166,8 @@ Use clear imperative commit subjects, for example `Add BLE-gated anchor ranging 
 
 Do not edit imported dependency trees unless the task explicitly targets them. Prefer documenting protocol changes in `Documentation/` alongside code changes.
 
+The user grants standing permission to refactor when needed to prevent recurring bugs. Prefer explicit state ownership and timing-phase boundaries over accumulating local patches, while preserving contract behavior, role behavior, LEDs, tests, and required hardware checks.
+
 For timing, radio state, routing, queues, packet capacity, or success/failure accounting, add a worst-case test or build-time guard before relying on the path. Keep hardware assumptions aligned across code, docs, and this file.
 
 Before changing mesh routing, channel 5/channel 9 scheduling, DWM3000 sleep/idle behavior in mesh roles, ACK retry, route discovery, wake-train semantics, blind flooding, or click preemption, read `Documentation/Mesh Connected Routing Contract.md`. Treat it as the high-level design contract, state which invariants the change preserves, and update it alongside any intentional design change. Do not push through a change that contradicts the contract without explicit user permission; first generate a clear list of the new behavior, affected roles, changed or removed invariants, and required tests or hardware checks.

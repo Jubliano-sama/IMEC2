@@ -1976,6 +1976,63 @@ static bool request_captures_anchor_full_cir(const struct dwm3000_range_request 
            request->round_index == 0u;
 }
 
+int dwm3000_driver_capture_last_rx_cir(uint8_t *buffer,
+                                      uint16_t buffer_cap,
+                                      struct dwm3000_range_result *result)
+{
+    uint32_t started_ms;
+    uint32_t completed_ms;
+
+    if (buffer == NULL || buffer_cap == 0u || result == NULL) {
+        return -EINVAL;
+    }
+
+    started_ms = k_uptime_get_32();
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=cir-capture-start now=%u seq=%u round=%u cap=%u\n",
+                            started_ms,
+                            result->seq,
+                            result->round_index,
+                            buffer_cap);
+    }
+    result->anchor_rx_diag_sampled =
+        capture_rx_diag_raw(result->anchor_rx_diag_raw,
+                            &result->anchor_rx_diag_raw_len,
+                            &result->anchor_full_cir_first_path_index);
+    result->anchor_full_cir_total_len = DWM3000_FULL_CIR_BYTES;
+    result->anchor_full_cir_len = read_cir_window(
+        buffer,
+        buffer_cap,
+        DWM3000_FULL_CIR_BYTES,
+        result->anchor_full_cir_first_path_index,
+        &result->anchor_full_cir_start_index);
+    result->anchor_full_cir_sampled = result->anchor_full_cir_len > 0u;
+    result->anchor_full_cir_truncated =
+        result->anchor_full_cir_len < DWM3000_FULL_CIR_BYTES;
+    completed_ms = k_uptime_get_32();
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=cir-capture-done now=%u dur=%u seq=%u round=%u bytes=%u\n",
+                            completed_ms,
+                            completed_ms - started_ms,
+                            result->seq,
+                            result->round_index,
+                            result->anchor_full_cir_len);
+    }
+    return result->anchor_full_cir_sampled ? 0 : -EIO;
+}
+
+static void capture_anchor_full_cir(const struct dwm3000_range_request *request,
+                                    struct dwm3000_range_result *result)
+{
+    if (!request_captures_anchor_full_cir(request) || result == NULL) {
+        return;
+    }
+
+    (void)dwm3000_driver_capture_last_rx_cir(request->anchor_full_cir,
+                                             request->anchor_full_cir_cap,
+                                             result);
+}
+
 static void result_set_request_metadata(struct dwm3000_range_result *result,
                                         const struct dwm3000_range_request *request)
 {
@@ -2024,6 +2081,13 @@ static int validate_range_request(const struct dwm3000_range_request *request)
         return -EINVAL;
     }
     if (!range_flags_valid(request->flags)) {
+        return -EINVAL;
+    }
+    if ((request->anchor_full_cir == NULL) !=
+        (request->anchor_full_cir_cap == 0u)) {
+        return -EINVAL;
+    }
+    if (!request->skip_responder_report && request->anchor_full_cir != NULL) {
         return -EINVAL;
     }
     return 0;
@@ -4460,25 +4524,6 @@ static int responder_poll_once(uint64_t local_anchor_id,
         result->resp_tx_ts_32 = (uint32_t)resp_tx_ts;
         result->final_rx_ts_32 = (uint32_t)final_rx_ts;
     }
-    if (request_captures_anchor_full_cir(expected) && result != NULL) {
-        result->anchor_rx_diag_sampled =
-            capture_rx_diag_raw(result->anchor_rx_diag_raw,
-                                &result->anchor_rx_diag_raw_len,
-                                &result->anchor_full_cir_first_path_index);
-        result->anchor_full_cir_total_len = DWM3000_FULL_CIR_BYTES;
-        if (expected->anchor_full_cir != NULL && expected->anchor_full_cir_cap > 0u) {
-            result->anchor_full_cir_len = read_cir_window(
-                expected->anchor_full_cir,
-                expected->anchor_full_cir_cap,
-                DWM3000_FULL_CIR_BYTES,
-                result->anchor_full_cir_first_path_index,
-                &result->anchor_full_cir_start_index);
-            result->anchor_full_cir_sampled = result->anchor_full_cir_len > 0u;
-            result->anchor_full_cir_truncated =
-                result->anchor_full_cir_len < DWM3000_FULL_CIR_BYTES;
-        }
-    }
-
     ret = decode_final_frame(rx_buffer, frame_len, &final);
     if (ret < 0) {
         report_status = RANGE_BAD_FRAME;
@@ -4554,6 +4599,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     }
 
     if (expected->skip_responder_report) {
+        capture_anchor_full_cir(expected, result);
         LOG_INF("UWB responder report skipped for short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",
                 poll.initiator_short_addr,
                 report_status,
@@ -4622,6 +4668,12 @@ static int responder_poll_once(uint64_t local_anchor_id,
         }
         return ret;
     }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=report-armed now=%u seq=%u round=%u\n",
+                            k_uptime_get_32(),
+                            poll.seq,
+                            poll.round_index);
+    }
 
     ret = wait_tx_complete(REPORT_RX_TIMEOUT_MS);
     if (ret < 0) {
@@ -4634,6 +4686,12 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 poll.round_index);
         }
         return ret;
+    }
+    if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
+        status_debug_printf("DBG_DS_RESP stage=report-sent now=%u seq=%u round=%u\n",
+                            k_uptime_get_32(),
+                            poll.seq,
+                            poll.round_index);
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=done ret=%d status=%u now=%u seq=%u round=%u\n",

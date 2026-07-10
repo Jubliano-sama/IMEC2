@@ -4664,6 +4664,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     int64_t no_poll_deadline_ms;
     bool poll_received = false;
     bool poll_guard_expired = false;
+    bool last_local_exchange_ok = false;
 
     if (schedule == NULL) {
         return 0u;
@@ -4764,8 +4765,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         expected.skip_responder_report = false;
         expected.expect_clicker_diag = false;
         expected.send_anchor_diag = false;
-        expected.anchor_full_cir = anchor_full_cir;
-        expected.anchor_full_cir_cap = (uint16_t)anchor_full_cir_cap;
 
         LOG_INF("anchor scheduled UWB sample listen: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u",
                 (unsigned long long)schedule->clicker_id,
@@ -4868,6 +4867,9 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
         if (range_result.exchange_started) {
             poll_received = true;
         }
+        last_local_exchange_ok = ret == 0 &&
+                                 range_result.exchange_started &&
+                                 range_result.status == RANGE_OK;
         if (!poll_received && k_uptime_get() >= no_poll_deadline_ms) {
             poll_guard_expired = true;
             break;
@@ -4970,6 +4972,25 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                                  ret,
                                  range_status_name(range_result.status),
                                  range_result.status);
+        }
+    }
+
+    if (last_local_exchange_ok && window_report.have_result &&
+        anchor_full_cir != NULL && anchor_full_cir_cap > 0u) {
+        int cir_ret = dwm3000_driver_capture_last_rx_cir(
+            anchor_full_cir,
+            (uint16_t)anchor_full_cir_cap,
+            &window_report.result);
+
+        window_report.anchor_full_cir_sampled =
+            window_report.result.anchor_full_cir_sampled;
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_DS_BURST stage=cir-after-ranges ret=%d evt=%u seq=%u round=%u bytes=%u\n",
+                                cir_ret,
+                                schedule->click_event_id,
+                                window_report.result.seq,
+                                window_report.result.round_index,
+                                window_report.result.anchor_full_cir_len);
         }
     }
 

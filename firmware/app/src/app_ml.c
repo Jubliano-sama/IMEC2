@@ -460,7 +460,8 @@ int ml_clicker_relax_range_schedule(struct uwb_range_schedule_frame *schedule,
         return -EINVAL;
     }
 
-    schedule->exchange_stride_us = UWB_ML_EXCHANGE_STRIDE_US;
+    schedule->exchange_stride_us = MAX(schedule->exchange_stride_us,
+                                       UWB_ML_EXCHANGE_STRIDE_US);
     schedule->max_exchanges = (uint16_t)total_samples;
     schedule->diagnostics_required = post_burst_diagnostics ?
                                      UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED :

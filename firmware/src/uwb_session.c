@@ -453,12 +453,22 @@ static bool range_status_valid(enum range_status status)
            status != RANGE_STS_QUALITY_FAIL;
 }
 
-static uint16_t exchange_capacity_for_burst_window(uint16_t burst_window_ms)
+static uint32_t exchange_stride_for_selected_count(uint8_t selected_count)
+{
+    return selected_count == 1u ?
+           UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US :
+           UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+}
+
+static uint16_t exchange_capacity_for_burst_window(uint16_t burst_window_ms,
+                                                   uint32_t exchange_stride_us)
 {
     uint32_t capacity;
 
-    capacity = ((uint32_t)burst_window_ms * 1000u) /
-               UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    if (exchange_stride_us == 0u) {
+        return 0u;
+    }
+    capacity = ((uint32_t)burst_window_ms * 1000u) / exchange_stride_us;
     if (capacity > UINT16_MAX) {
         capacity = UINT16_MAX;
     }
@@ -722,6 +732,7 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
 {
     bool used[UWB_SESSION_DISCOVERY_CAPACITY] = {0};
     uint8_t selected_count;
+    uint32_t exchange_stride_us;
     uint16_t max_exchanges;
 
     if (session == NULL || schedule == NULL) {
@@ -745,7 +756,10 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
         selected_count < session->config.min_anchor_count) {
         return PROTO_ERR_NOT_FOUND;
     }
-    max_exchanges = exchange_capacity_for_burst_window(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS);
+    exchange_stride_us = exchange_stride_for_selected_count(selected_count);
+    max_exchanges = exchange_capacity_for_burst_window(
+        UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS,
+        exchange_stride_us);
     if (max_exchanges < selected_count) {
         return PROTO_ERR_MALFORMED;
     }
@@ -761,7 +775,7 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
     schedule->reply_delay_us = reply_delay_us;
     schedule->first_poll_delay_ms = first_poll_delay_ms;
     schedule->poll_spacing_ms = poll_spacing_ms;
-    schedule->exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
+    schedule->exchange_stride_us = exchange_stride_us;
     schedule->max_exchanges = max_exchanges;
     schedule->burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
     schedule->min_successful_unique_anchors = session->config.min_anchor_count;
