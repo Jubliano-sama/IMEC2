@@ -26,6 +26,8 @@ extern "C" {
     ((3u * GATEWAY_BLE_STREAM_RECORD_HEADER_LEN) + PACKET_MAX_PAYLOAD_LEN + \
      PACKET_EXT_MAX_PAYLOAD_LEN + GATEWAY_BLE_STREAM_CLICK_CIR_TAIL_PAYLOAD_BYTES)
 #define GATEWAY_BLE_STREAM_RAM_BUDGET_BYTES 2048u
+#define GATEWAY_BLE_RECOVERY_BACKOFF_BASE_MS 250u
+#define GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS 30000u
 
 enum gateway_ble_stream_class {
     GATEWAY_BLE_STREAM_CLASS_UNKNOWN = 0,
@@ -120,6 +122,8 @@ void gateway_ble_stream_get_diagnostics(
     uint32_t now_ms,
     struct gateway_ble_stream_diagnostics *diagnostics);
 uint8_t gateway_ble_stream_depth(const struct gateway_ble_stream_state *state);
+uint32_t gateway_ble_recovery_backoff_ms(uint8_t retry_round,
+                                         uint32_t random_value);
 
 #ifdef __cplusplus
 }

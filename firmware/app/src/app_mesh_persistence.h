@@ -11,6 +11,24 @@
 
 #define APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION 1u
 
+struct app_mesh_persistence_health {
+    uint32_t total_failures;
+    uint16_t consecutive_failures;
+    int last_error;
+    bool ready;
+};
+
+#define APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION 1u
+struct app_mesh_discovery_assignment_snapshot {
+    uint32_t epoch;
+    uint64_t local_id;
+    uint64_t gateway_id;
+    uint8_t version;
+    uint8_t slot;
+    uint8_t slot_count;
+    bool valid;
+};
+
 struct app_mesh_collection_result_snapshot {
     uint16_t version;
     uint64_t local_id;
@@ -51,5 +69,11 @@ int app_mesh_persistence_save_gateway_membership(
 int app_mesh_persistence_restore_gateway_membership(
     struct gateway_membership_roster *roster);
 void app_mesh_persistence_clear_gateway_membership(void);
+int app_mesh_persistence_save_discovery_assignment(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot);
+int app_mesh_persistence_restore_discovery_assignment(
+    struct app_mesh_discovery_assignment_snapshot *snapshot);
+void app_mesh_persistence_clear_discovery_assignment(void);
+void app_mesh_persistence_get_health(struct app_mesh_persistence_health *health);
 
 #endif

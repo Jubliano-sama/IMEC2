@@ -1,6 +1,8 @@
 #include "app_mesh_ch9_ack.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <string.h>
 
 #define RELAY_ID UINT64_C(0x1111222233334444)
 #define TRANSMITTER_ID UINT64_C(0x2222333344445555)
@@ -39,6 +41,90 @@ static struct proto_packet gateway_ack(uint64_t dst_id, uint16_t payload_len)
         .ttl = 1u,
         .payload_len = payload_len,
     };
+}
+
+struct retry_queue_fixture {
+    struct mesh_outbound item;
+    uint8_t used;
+};
+
+static int retry_queue_put(const struct mesh_outbound *outbound, void *ctx)
+{
+    struct retry_queue_fixture *queue = ctx;
+
+    if (queue->used != 0u) {
+        return -ENOSPC;
+    }
+    queue->item = *outbound;
+    queue->used = 1u;
+    return 0;
+}
+
+static int retry_queue_get(struct mesh_outbound *outbound, void *ctx)
+{
+    struct retry_queue_fixture *queue = ctx;
+
+    if (queue->used == 0u) {
+        return -ENOENT;
+    }
+    *outbound = queue->item;
+    queue->used = 0u;
+    return 0;
+}
+
+static uint8_t retry_queue_used(void *ctx)
+{
+    return ((struct retry_queue_fixture *)ctx)->used;
+}
+
+static void test_unacked_retry_retains_ownership_until_queue_admits(void)
+{
+    struct retry_queue_fixture queue = {.used = 1u};
+    struct app_mesh_ch9_tx_retry_entry entries[2] = {
+        {.outbound = gateway_bound_outbound(TRANSMITTER_ID)},
+        {.outbound = gateway_bound_outbound(TRANSMITTER_ID)},
+    };
+    const struct app_mesh_ch9_tx_retry_ops ops = {
+        .put = retry_queue_put,
+        .get = retry_queue_get,
+        .queue_used = retry_queue_used,
+        .ctx = &queue,
+    };
+    struct app_mesh_ch9_tx_retry_result result;
+
+    entries[1].outbound.packet.seq++;
+    assert(app_mesh_ch9_tx_requeue_unacked(entries,
+                                           2u,
+                                           100u,
+                                           &ops,
+                                           &result) == PROTO_OK);
+    assert(result.requeued == 0u);
+    assert(result.retained == 2u);
+    assert(result.dropped == 0u);
+    assert(!entries[0].acked && !entries[1].acked);
+
+    queue.used = 0u;
+    assert(app_mesh_ch9_tx_requeue_unacked(entries,
+                                           2u,
+                                           200u,
+                                           &ops,
+                                           &result) == PROTO_OK);
+    assert(result.requeued == 1u);
+    assert(result.retained == 1u);
+    assert(entries[0].acked && !entries[1].acked);
+    assert(queue.item.packet.seq == SENT_SEQ_TEST);
+
+    queue.used = 0u;
+    memset(&result, 0, sizeof(result));
+    assert(app_mesh_ch9_tx_requeue_unacked(entries,
+                                           2u,
+                                           300u,
+                                           &ops,
+                                           &result) == PROTO_OK);
+    assert(result.requeued == 1u);
+    assert(result.retained == 0u);
+    assert(entries[0].acked && entries[1].acked);
+    assert(queue.item.packet.seq == SENT_SEQ_TEST + 1u);
 }
 
 static size_t requested_seq_payload(uint8_t *payload, size_t payload_cap)
@@ -325,5 +411,6 @@ int main(void)
     test_direct_gateway_timeout_counts_gateway_failure();
     test_relay_hop_timeout_does_not_count_gateway_failure();
     test_non_gateway_ack_timeout_does_not_count_gateway_failure();
+    test_unacked_retry_retains_ownership_until_queue_admits();
     return 0;
 }

@@ -18,6 +18,7 @@ extern "C" {
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 8u
 #define SURVEY_GATEWAY_MAX_PAIRS 128u
+#define SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR 4u
 #define SURVEY_DISCOVERY_MAX_SLOT_COUNT 50u
 #define SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT 2u
 #define SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT 8u
@@ -148,6 +149,10 @@ bool survey_gateway_auto_command_matches(const struct survey_gateway_auto_contex
                                          enum command_id command_id,
                                          uint64_t target_id,
                                          uint32_t survey_id);
+int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *context,
+                                      enum command_id command_id,
+                                      uint64_t target_id,
+                                      uint32_t survey_id);
 int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
                                     enum command_id command_id,
                                     uint64_t target_id,

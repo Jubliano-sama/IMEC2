@@ -402,7 +402,7 @@ ZTEST(mesh_ch9_ack_handoff, test_malformed_session_list_is_rejected)
     zassert_false(entry.acked);
 }
 
-ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeues_only_unacked_before_existing_queue)
+ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeues_only_unacked_without_displacing_queue)
 {
     struct fake_retry_queue queue = {
         .entries = {
@@ -440,13 +440,13 @@ ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeues_only_unacked_before_existi
     zassert_equal(result.queued_after, 2u);
     zassert_equal(queue.count, 2u);
     zassert_equal(queue.drop_notes, 0u);
-    zassert_equal(queue.entries[0].packet.seq, 12u);
-    zassert_equal(queue.entries[0].queued_at_ms, 1234u);
-    zassert_equal(queue.entries[1].packet.seq, 80u);
-    zassert_equal(queue.entries[1].queued_at_ms, 10u);
+    zassert_equal(queue.entries[0].packet.seq, 80u);
+    zassert_equal(queue.entries[0].queued_at_ms, 10u);
+    zassert_equal(queue.entries[1].packet.seq, 12u);
+    zassert_equal(queue.entries[1].queued_at_ms, 1234u);
 }
 
-ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeue_reports_drop_when_queue_full)
+ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeue_retains_when_queue_full)
 {
     struct fake_retry_queue queue = {
         .entries = {
@@ -476,14 +476,16 @@ ZTEST(mesh_ch9_ack_handoff, test_partial_ack_requeue_reports_drop_when_queue_ful
                                                &result));
 
     zassert_equal(result.requeued, 0u);
-    zassert_equal(result.dropped, 1u);
+    zassert_equal(result.retained, 1u);
+    zassert_equal(result.dropped, 0u);
     zassert_equal(result.queued_before, 4u);
     zassert_equal(result.queued_after, 4u);
-    zassert_equal(queue.drop_notes, 1u);
+    zassert_equal(queue.drop_notes, 0u);
+    zassert_false(entry.acked);
 }
 
 ZTEST(mesh_ch9_ack_handoff,
-      test_route_test_partial_ack_requeues_unacked_ahead_of_later_work)
+      test_route_test_partial_ack_requeues_unacked_without_displacing_later_work)
 {
     const uint32_t ack_sessions[] = { 2101u, 2103u };
     const uint16_t ack_seqs[] = { 41u, 43u };
@@ -578,23 +580,23 @@ ZTEST(mesh_ch9_ack_handoff,
     zassert_equal(queue.drop_notes, 0u);
     zassert_equal(queue.count, 2u);
 
-    zassert_equal(queue.entries[0].packet.msg_type, MSG_MESH_DATA);
-    zassert_equal(queue.entries[0].packet.flags,
+    zassert_equal(queue.entries[1].packet.msg_type, MSG_MESH_DATA);
+    zassert_equal(queue.entries[1].packet.flags,
                   FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC);
-    zassert_equal(queue.entries[0].packet.seq, 42u);
-    zassert_equal(queue.entries[0].packet.session_id, 2102u);
-    zassert_equal(queue.entries[0].queued_at_ms, 6000u);
-    zassert_equal(queue.entries[0].radio_channel, UWB_CHANNEL_MESH_PAYLOAD);
-    zassert_true(payload_find_u32(queue.entries[0].payload,
-                                  queue.entries[0].payload_len,
+    zassert_equal(queue.entries[1].packet.seq, 42u);
+    zassert_equal(queue.entries[1].packet.session_id, 2102u);
+    zassert_equal(queue.entries[1].queued_at_ms, 6000u);
+    zassert_equal(queue.entries[1].radio_channel, UWB_CHANNEL_MESH_PAYLOAD);
+    zassert_true(payload_find_u32(queue.entries[1].payload,
+                                  queue.entries[1].payload_len,
                                   TLV_MESH_TEST_PACKET_ID,
                                   &packet_id));
     zassert_equal(packet_id, 502u);
 
-    zassert_equal(queue.entries[1].packet.seq, 99u);
-    zassert_equal(queue.entries[1].queued_at_ms, 10u);
-    zassert_true(payload_find_u32(queue.entries[1].payload,
-                                  queue.entries[1].payload_len,
+    zassert_equal(queue.entries[0].packet.seq, 99u);
+    zassert_equal(queue.entries[0].queued_at_ms, 10u);
+    zassert_true(payload_find_u32(queue.entries[0].payload,
+                                  queue.entries[0].payload_len,
                                   TLV_MESH_TEST_PACKET_ID,
                                   &packet_id));
     zassert_equal(packet_id, 599u);
@@ -715,42 +717,42 @@ ZTEST(mesh_ch9_ack_handoff,
     zassert_equal(queue.drop_notes, 0u);
     zassert_equal(queue.count, 2u);
 
-    zassert_equal(queue.entries[0].packet.msg_type, MSG_COMMAND_RESULT);
-    zassert_equal(queue.entries[0].packet.seq, 51u);
-    zassert_equal(queue.entries[0].packet.session_id, 3201u);
-    zassert_equal(queue.entries[0].packet.src_id, source_node_id);
-    zassert_equal(queue.entries[0].queued_at_ms, 7000u);
-    zassert_equal(queue.entries[0].radio_channel, UWB_CHANNEL_MESH_PAYLOAD);
-    zassert_equal(queue.entries[0].next_hop_id, 0x9999888877776666ull);
-    zassert_ok(command_result_id_from_tlvs(queue.entries[0].payload,
-                                           queue.entries[0].payload_len,
+    zassert_equal(queue.entries[1].packet.msg_type, MSG_COMMAND_RESULT);
+    zassert_equal(queue.entries[1].packet.seq, 51u);
+    zassert_equal(queue.entries[1].packet.session_id, 3201u);
+    zassert_equal(queue.entries[1].packet.src_id, source_node_id);
+    zassert_equal(queue.entries[1].queued_at_ms, 7000u);
+    zassert_equal(queue.entries[1].radio_channel, UWB_CHANNEL_MESH_PAYLOAD);
+    zassert_equal(queue.entries[1].next_hop_id, 0x9999888877776666ull);
+    zassert_ok(command_result_id_from_tlvs(queue.entries[1].payload,
+                                           queue.entries[1].payload_len,
                                            &decoded_id));
     zassert_equal(decoded_id.gateway_id, 0x9999888877776666ull);
     zassert_equal(decoded_id.command_seq, 0x51000000u + 3201u);
     zassert_equal(decoded_id.node_id, source_node_id);
     zassert_equal(decoded_id.node_boot_counter, source_boot_counter);
     zassert_equal(decoded_id.result_seq, 51u);
-    zassert_true(payload_find_u32(queue.entries[0].payload,
-                                  queue.entries[0].payload_len,
+    zassert_true(payload_find_u32(queue.entries[1].payload,
+                                  queue.entries[1].payload_len,
                                   TLV_COLLECTION_EPOCH_ID,
                                   &value));
     zassert_equal(value, 0x00C011ECu);
-    zassert_equal(tlv_find(queue.entries[0].payload,
-                           queue.entries[0].payload_len,
+    zassert_equal(tlv_find(queue.entries[1].payload,
+                           queue.entries[1].payload_len,
                            TLV_RETRY_ROUND,
                            &encoded,
                            &encoded_len),
                   PROTO_OK);
     zassert_equal(encoded_len, sizeof(uint8_t));
     zassert_equal(encoded[0], retry_round);
-    zassert_true(payload_find_u32(queue.entries[0].payload,
-                                  queue.entries[0].payload_len,
+    zassert_true(payload_find_u32(queue.entries[1].payload,
+                                  queue.entries[1].payload_len,
                                   TLV_NEXT_RETRY_SPREAD_MS,
                                   &value));
     zassert_equal(value, retry_spread_ms);
 
-    zassert_equal(queue.entries[1].packet.seq, 90u);
-    zassert_equal(queue.entries[1].queued_at_ms, 10u);
+    zassert_equal(queue.entries[0].packet.seq, 90u);
+    zassert_equal(queue.entries[0].queued_at_ms, 10u);
 }
 
 ZTEST(mesh_ch9_ack_handoff,

@@ -4658,6 +4658,27 @@ static void test_forced_route_invalidation_clears_routes_and_discovery_state(voi
     assert(!relay.route_discovery.active);
 }
 
+static void test_local_route_clear_preserves_gateway_epoch(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 14u, 70u);
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(5000u);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 14u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&relay, ANCHOR_B, ANCHOR_B, 14u, 1u, 80u, 1000u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing(&relay, GATEWAY, &timing) == PROTO_OK);
+
+    mesh_relay_clear_routes_preserve_epoch(&relay);
+
+    assert(relay.upstream.current_epoch == 14u);
+    assert(route_selected(&relay.upstream) == NULL);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_B) == NULL);
+    assert(!relay.event_timings[0].valid);
+}
+
 static void test_forwarded_gateway_bound_packet_sends_hop_ack(void)
 {
     struct mesh_relay relay;
@@ -7401,6 +7422,7 @@ int main(void)
     test_collection_retry_delay_uses_symmetric_jitter();
     test_held_down_candidate_can_return_after_hold_down();
     test_forced_route_invalidation_clears_routes_and_discovery_state();
+    test_local_route_clear_preserves_gateway_epoch();
     test_forwarded_gateway_bound_packet_sends_hop_ack();
     test_hop_ack_extends_gateway_ack_timeout();
     test_hop_ack_waits_for_later_gateway_ack();

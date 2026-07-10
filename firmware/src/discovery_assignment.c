@@ -6,7 +6,22 @@
 static bool phase_valid(enum discovery_assignment_phase phase)
 {
     return phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
-           phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE;
+           phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE ||
+           phase == DISCOVERY_ASSIGNMENT_PHASE_ACK;
+}
+
+static uint32_t retry_base_ms(uint8_t retry_round)
+{
+    uint32_t base_ms = DISCOVERY_ASSIGNMENT_RETRY_BASE_MS;
+
+    for (uint8_t i = 0u; i < retry_round; i++) {
+        if (base_ms >= DISCOVERY_ASSIGNMENT_RETRY_MAX_MS / 2u) {
+            return DISCOVERY_ASSIGNMENT_RETRY_MAX_MS;
+        }
+        base_ms *= 2u;
+    }
+    return base_ms > DISCOVERY_ASSIGNMENT_RETRY_MAX_MS ?
+           DISCOVERY_ASSIGNMENT_RETRY_MAX_MS : base_ms;
 }
 
 static int find_u8(const uint8_t *payload,
@@ -377,4 +392,67 @@ int discovery_assignment_parse_table_tlvs(
     *entry_count = count;
     *slot_count = configured_slot_count;
     return PROTO_OK;
+}
+
+int discovery_assignment_response_delay_ms(uint8_t slot,
+                                           uint8_t slot_count,
+                                           uint8_t hop_count,
+                                           uint8_t retry_round,
+                                           uint32_t random_value,
+                                           uint32_t *delay_ms)
+{
+    uint32_t effective_hop_count;
+    uint32_t farthest_first_hop_slots;
+    uint32_t retry_base;
+    uint32_t jitter_window;
+    uint64_t delay;
+
+    if (delay_ms == NULL || slot_count == 0u ||
+        slot_count > UWB_DISCOVERY_SLOT_COUNT || slot >= slot_count) {
+        return PROTO_ERR_ARG;
+    }
+
+    effective_hop_count = hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
+                          hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+                          DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
+    farthest_first_hop_slots = DISCOVERY_ASSIGNMENT_MAX_HOPS - effective_hop_count;
+    retry_base = retry_base_ms(retry_round);
+    jitter_window = retry_round == 0u ? DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS :
+                    retry_base;
+    delay = DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+            ((uint64_t)slot * DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) +
+            ((uint64_t)farthest_first_hop_slots *
+             DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS) +
+            (retry_round == 0u ? 0u : retry_base) +
+            (random_value % jitter_window);
+    if (delay > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    *delay_ms = (uint32_t)delay;
+    return PROTO_OK;
+}
+
+uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
+                                               uint32_t random_value)
+{
+    uint32_t base_ms = retry_base_ms(retry_round);
+
+    return base_ms + (random_value % base_ms);
+}
+
+uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
+                                                   uint8_t max_hop_count)
+{
+    uint32_t effective_hop_count;
+
+    if (slot_count == 0u || slot_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return 0u;
+    }
+    effective_hop_count = max_hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
+                          max_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+                          DISCOVERY_ASSIGNMENT_MAX_HOPS : max_hop_count;
+    return DISCOVERY_ASSIGNMENT_COLLECTION_BASE_MS +
+           ((uint32_t)slot_count * DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) +
+           (effective_hop_count * DISCOVERY_ASSIGNMENT_COLLECTION_PER_HOP_MS);
 }

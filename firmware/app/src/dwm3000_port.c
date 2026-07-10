@@ -11,8 +11,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+#include <zephyr/sys/atomic.h>
 
 #include <errno.h>
+#include <string.h>
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 #define DWM3000_PORT_LOG_LEVEL LOG_LEVEL_DBG
@@ -70,6 +72,25 @@ static const struct gpio_dt_spec dwm_wakeup =
 static struct spi_config dwm_spi_cfg;
 static uint32_t current_spi_hz;
 static bool port_ready;
+static atomic_t first_port_error;
+
+static int latch_port_error(int ret)
+{
+    if (ret < 0) {
+        (void)atomic_cas(&first_port_error, 0, (atomic_val_t)ret);
+    }
+    return ret;
+}
+
+void dwm3000_port_clear_error(void)
+{
+    atomic_clear(&first_port_error);
+}
+
+int dwm3000_port_take_error(void)
+{
+    return (int)atomic_set(&first_port_error, 0);
+}
 
 static uint32_t u32_from_le(const uint8_t data[4])
 {
@@ -361,18 +382,22 @@ int dwm3000_port_transceive(const uint8_t *tx, uint8_t *rx, size_t len)
     };
     int ret;
 
+    if (rx != NULL && len > 0u) {
+        memset(rx, 0, len);
+    }
     if (len > 0u && tx == NULL && rx == NULL) {
-        return -EINVAL;
+        return latch_port_error(-EINVAL);
     }
 
     ret = ensure_ready();
     if (ret < 0) {
-        return ret;
+        return latch_port_error(ret);
     }
 
-    return spi_transceive(dwm_spi.bus, &dwm_spi_cfg,
-                          tx != NULL ? &tx_set : NULL,
-                          rx != NULL ? &rx_set : NULL);
+    ret = spi_transceive(dwm_spi.bus, &dwm_spi_cfg,
+                         tx != NULL ? &tx_set : NULL,
+                         rx != NULL ? &rx_set : NULL);
+    return latch_port_error(ret);
 }
 
 int dwm3000_port_write(const uint8_t *header, size_t header_len,
@@ -395,15 +420,16 @@ int dwm3000_port_write(const uint8_t *header, size_t header_len,
     int ret;
 
     if ((header_len > 0u && header == NULL) || (body_len > 0u && body == NULL)) {
-        return -EINVAL;
+        return latch_port_error(-EINVAL);
     }
 
     ret = ensure_ready();
     if (ret < 0) {
-        return ret;
+        return latch_port_error(ret);
     }
 
-    return spi_write(dwm_spi.bus, &dwm_spi_cfg, &tx_set);
+    ret = spi_write(dwm_spi.bus, &dwm_spi_cfg, &tx_set);
+    return latch_port_error(ret);
 }
 
 int dwm3000_port_write_with_crc(const uint8_t *header, size_t header_len,
@@ -431,15 +457,16 @@ int dwm3000_port_write_with_crc(const uint8_t *header, size_t header_len,
     int ret;
 
     if ((header_len > 0u && header == NULL) || (body_len > 0u && body == NULL)) {
-        return -EINVAL;
+        return latch_port_error(-EINVAL);
     }
 
     ret = ensure_ready();
     if (ret < 0) {
-        return ret;
+        return latch_port_error(ret);
     }
 
-    return spi_write(dwm_spi.bus, &dwm_spi_cfg, &tx_set);
+    ret = spi_write(dwm_spi.bus, &dwm_spi_cfg, &tx_set);
+    return latch_port_error(ret);
 }
 
 int dwm3000_port_read(const uint8_t *header, size_t header_len,
@@ -475,14 +502,18 @@ int dwm3000_port_read(const uint8_t *header, size_t header_len,
     };
     int ret;
 
+    if (body != NULL && body_len > 0u) {
+        memset(body, 0, body_len);
+    }
     if ((header_len > 0u && header == NULL) || (body_len > 0u && body == NULL)) {
-        return -EINVAL;
+        return latch_port_error(-EINVAL);
     }
 
     ret = ensure_ready();
     if (ret < 0) {
-        return ret;
+        return latch_port_error(ret);
     }
 
-    return spi_transceive(dwm_spi.bus, &dwm_spi_cfg, &tx_set, &rx_set);
+    ret = spi_transceive(dwm_spi.bus, &dwm_spi_cfg, &tx_set, &rx_set);
+    return latch_port_error(ret);
 }

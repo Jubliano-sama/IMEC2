@@ -1,4 +1,5 @@
 #include "app_mesh_persistence.h"
+#include "discovery_assignment.h"
 
 #include "app_config.h"
 #include "protocol.h"
@@ -12,6 +13,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/fs/nvs.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/random/random.h>
 #include <zephyr/storage/flash_map.h>
 #include <errno.h>
 #include <string.h>
@@ -23,6 +25,7 @@ LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 #define APP_MESH_NVS_CHILD_CUSTODY_ID 0x0103u
 #define APP_MESH_NVS_GATEWAY_COLLECTION_ID 0x0104u
 #define APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID 0x0105u
+#define APP_MESH_NVS_DISCOVERY_ASSIGNMENT_ID 0x0106u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
@@ -48,7 +51,54 @@ BUILD_ASSERT(sizeof(struct gateway_membership_snapshot) <
 
 static struct nvs_fs mesh_nvs;
 static bool mesh_nvs_ready;
-static bool mesh_nvs_init_attempted;
+static uint8_t mesh_nvs_init_retry_round;
+static uint32_t mesh_nvs_init_retry_at_ms;
+static struct app_mesh_persistence_health mesh_persistence_health;
+
+static void mesh_persistence_note_failure(int ret)
+{
+    if (mesh_persistence_health.total_failures < UINT32_MAX) {
+        mesh_persistence_health.total_failures++;
+    }
+    if (mesh_persistence_health.consecutive_failures < UINT16_MAX) {
+        mesh_persistence_health.consecutive_failures++;
+    }
+    mesh_persistence_health.last_error = ret;
+    mesh_persistence_health.ready = mesh_nvs_ready;
+}
+
+static void mesh_persistence_note_success(void)
+{
+    mesh_persistence_health.consecutive_failures = 0u;
+    mesh_persistence_health.last_error = 0;
+    mesh_persistence_health.ready = mesh_nvs_ready;
+}
+
+static int mesh_persistence_init_failed(int ret)
+{
+    uint32_t delay_ms = discovery_assignment_retry_backoff_ms(
+        mesh_nvs_init_retry_round,
+        sys_rand32_get());
+
+    mesh_nvs_ready = false;
+    if (mesh_nvs_init_retry_round < UINT8_MAX) {
+        mesh_nvs_init_retry_round++;
+    }
+    mesh_nvs_init_retry_at_ms = k_uptime_get_32() + delay_ms;
+    mesh_persistence_note_failure(ret);
+    LOG_WRN("mesh persistence recovery scheduled: ret=%d round=%u delay_ms=%u",
+            ret,
+            mesh_nvs_init_retry_round,
+            delay_ms);
+    return ret;
+}
+
+void app_mesh_persistence_get_health(struct app_mesh_persistence_health *health)
+{
+    if (health != NULL) {
+        *health = mesh_persistence_health;
+    }
+}
 
 int app_mesh_persistence_init(void)
 {
@@ -58,15 +108,16 @@ int app_mesh_persistence_init(void)
     if (mesh_nvs_ready) {
         return 0;
     }
-    if (mesh_nvs_init_attempted) {
-        return -ENODEV;
+    if (mesh_nvs_init_retry_at_ms != 0u &&
+        (int32_t)(k_uptime_get_32() - mesh_nvs_init_retry_at_ms) < 0) {
+        return mesh_persistence_health.last_error == 0 ?
+               -EAGAIN : mesh_persistence_health.last_error;
     }
-    mesh_nvs_init_attempted = true;
 
     ret = flash_area_open(FIXED_PARTITION_ID(storage_partition), &area);
     if (ret < 0 || area == NULL) {
         LOG_WRN("mesh persistence storage open failed: %d", ret);
-        return ret < 0 ? ret : -ENODEV;
+        return mesh_persistence_init_failed(ret < 0 ? ret : -ENODEV);
     }
 
     mesh_nvs.flash_device = area->fa_dev;
@@ -77,16 +128,19 @@ int app_mesh_persistence_init(void)
 
     if (!device_is_ready(mesh_nvs.flash_device) || mesh_nvs.sector_count < 2u) {
         LOG_WRN("mesh persistence flash not ready or too small");
-        return -ENODEV;
+        return mesh_persistence_init_failed(-ENODEV);
     }
 
     ret = nvs_mount(&mesh_nvs);
     if (ret < 0) {
         LOG_WRN("mesh persistence NVS mount failed: %d", ret);
-        return ret;
+        return mesh_persistence_init_failed(ret);
     }
 
     mesh_nvs_ready = true;
+    mesh_nvs_init_retry_round = 0u;
+    mesh_nvs_init_retry_at_ms = 0u;
+    mesh_persistence_note_success();
     LOG_INF("mesh persistence mounted: offset=0x%08x sectors=%u sector_size=%u",
             (unsigned int)mesh_nvs.offset,
             (unsigned int)mesh_nvs.sector_count,
@@ -97,6 +151,31 @@ int app_mesh_persistence_init(void)
 static bool mesh_persistence_ready(void)
 {
     return app_mesh_persistence_init() == 0;
+}
+
+static int mesh_persistence_write(uint16_t id,
+                                  const void *data,
+                                  size_t len,
+                                  const char *label)
+{
+    ssize_t written = nvs_write(&mesh_nvs, id, data, len);
+    int ret;
+
+    if (written < 0) {
+        ret = (int)written;
+    } else if ((size_t)written != len) {
+        ret = -EIO;
+    } else {
+        mesh_persistence_note_success();
+        return 0;
+    }
+    mesh_persistence_note_failure(ret);
+    LOG_WRN("%s write failed: ret=%d written=%d expected=%u",
+            label == NULL ? "mesh persistence" : label,
+            ret,
+            (int)written,
+            (unsigned int)len);
+    return ret;
 }
 
 void app_mesh_persistence_clear_outbox(void)
@@ -175,11 +254,11 @@ void app_mesh_persistence_clear_gateway_membership(void)
 int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
 {
     struct mesh_relay_outbox_snapshot snapshot;
-    ssize_t written;
     int ret;
 
-    if (!mesh_persistence_ready()) {
-        return -ENODEV;
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = mesh_relay_export_outbox_snapshot(relay, now_ms, &snapshot);
@@ -192,33 +271,21 @@ int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
         return -EINVAL;
     }
 
-    written = nvs_write(&mesh_nvs,
-                        APP_MESH_NVS_OUTBOX_ID,
-                        &snapshot,
-                        sizeof(snapshot));
-    if (written < 0) {
-        LOG_WRN("mesh outbox snapshot write failed: %d", (int)written);
-        return (int)written;
-    }
-    if ((size_t)written != sizeof(snapshot)) {
-        LOG_WRN("mesh outbox snapshot short write: %d/%u",
-                (int)written,
-                (unsigned int)sizeof(snapshot));
-        return -EIO;
-    }
-
-    return 0;
+    return mesh_persistence_write(APP_MESH_NVS_OUTBOX_ID,
+                                  &snapshot,
+                                  sizeof(snapshot),
+                                  "mesh outbox snapshot");
 }
 
 int app_mesh_persistence_save_child_custody(struct mesh_relay *relay,
                                             uint32_t now_ms)
 {
     struct mesh_relay_child_custody_snapshot snapshot;
-    ssize_t written;
     int ret;
 
-    if (!mesh_persistence_ready()) {
-        return -ENODEV;
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = mesh_relay_export_child_custody_snapshot(relay, now_ms, &snapshot);
@@ -231,22 +298,10 @@ int app_mesh_persistence_save_child_custody(struct mesh_relay *relay,
         return -EINVAL;
     }
 
-    written = nvs_write(&mesh_nvs,
-                        APP_MESH_NVS_CHILD_CUSTODY_ID,
-                        &snapshot,
-                        sizeof(snapshot));
-    if (written < 0) {
-        LOG_WRN("mesh child custody snapshot write failed: %d", (int)written);
-        return (int)written;
-    }
-    if ((size_t)written != sizeof(snapshot)) {
-        LOG_WRN("mesh child custody snapshot short write: %d/%u",
-                (int)written,
-                (unsigned int)sizeof(snapshot));
-        return -EIO;
-    }
-
-    return 0;
+    return mesh_persistence_write(APP_MESH_NVS_CHILD_CUSTODY_ID,
+                                  &snapshot,
+                                  sizeof(snapshot),
+                                  "mesh child custody snapshot");
 }
 
 int app_mesh_persistence_restore_outbox(struct mesh_relay *relay, uint32_t now_ms)
@@ -336,44 +391,33 @@ int app_mesh_persistence_save_collection_result(
     const struct app_mesh_collection_result_snapshot *snapshot)
 {
     struct app_mesh_collection_result_snapshot stored;
-    ssize_t written;
+    int ret;
 
     if (snapshot == NULL || !snapshot->valid ||
         snapshot->version != APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION) {
         return -EINVAL;
     }
-    if (!mesh_persistence_ready()) {
-        return -ENODEV;
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
     }
 
     stored = *snapshot;
-    written = nvs_write(&mesh_nvs,
-                        APP_MESH_NVS_COLLECTION_RESULT_ID,
-                        &stored,
-                        sizeof(stored));
-    if (written < 0) {
-        LOG_WRN("mesh collection result snapshot write failed: %d", (int)written);
-        return (int)written;
-    }
-    if ((size_t)written != sizeof(stored)) {
-        LOG_WRN("mesh collection result snapshot short write: %d/%u",
-                (int)written,
-                (unsigned int)sizeof(stored));
-        return -EIO;
-    }
-
-    return 0;
+    return mesh_persistence_write(APP_MESH_NVS_COLLECTION_RESULT_ID,
+                                  &stored,
+                                  sizeof(stored),
+                                  "mesh collection result snapshot");
 }
 
 int app_mesh_persistence_save_gateway_collection(
     const struct gateway_collection_state *collection)
 {
     struct gateway_collection_state_snapshot snapshot;
-    ssize_t written;
     int ret;
 
-    if (!mesh_persistence_ready()) {
-        return -ENODEV;
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = gateway_collection_export_snapshot(collection, &snapshot);
@@ -382,36 +426,24 @@ int app_mesh_persistence_save_gateway_collection(
         return -EINVAL;
     }
 
-    written = nvs_write(&mesh_nvs,
-                        APP_MESH_NVS_GATEWAY_COLLECTION_ID,
-                        &snapshot,
-                        sizeof(snapshot));
-    if (written < 0) {
-        LOG_WRN("gateway collection snapshot write failed: %d", (int)written);
-        return (int)written;
-    }
-    if ((size_t)written != sizeof(snapshot)) {
-        LOG_WRN("gateway collection snapshot short write: %d/%u",
-                (int)written,
-                (unsigned int)sizeof(snapshot));
-        return -EIO;
-    }
-
-    return 0;
+    return mesh_persistence_write(APP_MESH_NVS_GATEWAY_COLLECTION_ID,
+                                  &snapshot,
+                                  sizeof(snapshot),
+                                  "gateway collection snapshot");
 }
 
 int app_mesh_persistence_save_gateway_membership(
     const struct gateway_membership_roster *roster)
 {
     struct gateway_membership_snapshot snapshot;
-    ssize_t written;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -ENOTSUP;
     }
-    if (!mesh_persistence_ready()) {
-        return -ENODEV;
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = gateway_membership_export_snapshot(roster, &snapshot);
@@ -420,22 +452,10 @@ int app_mesh_persistence_save_gateway_membership(
         return -EINVAL;
     }
 
-    written = nvs_write(&mesh_nvs,
-                        APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID,
-                        &snapshot,
-                        sizeof(snapshot));
-    if (written < 0) {
-        LOG_WRN("gateway membership snapshot write failed: %d", (int)written);
-        return (int)written;
-    }
-    if ((size_t)written != sizeof(snapshot)) {
-        LOG_WRN("gateway membership snapshot short write: %d/%u",
-                (int)written,
-                (unsigned int)sizeof(snapshot));
-        return -EIO;
-    }
-
-    return 0;
+    return mesh_persistence_write(APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID,
+                                  &snapshot,
+                                  sizeof(snapshot),
+                                  "gateway membership snapshot");
 }
 
 int app_mesh_persistence_restore_collection_result(
@@ -579,6 +599,72 @@ int app_mesh_persistence_restore_gateway_membership(
     return 0;
 }
 
+int app_mesh_persistence_save_discovery_assignment(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    int ret;
+
+    if (snapshot == NULL || !snapshot->valid ||
+        snapshot->version != APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION ||
+        snapshot->epoch == 0u || snapshot->local_id == 0u ||
+        snapshot->gateway_id == 0u || snapshot->slot_count == 0u ||
+        snapshot->slot >= snapshot->slot_count) {
+        return -EINVAL;
+    }
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
+    }
+    return mesh_persistence_write(APP_MESH_NVS_DISCOVERY_ASSIGNMENT_ID,
+                                  snapshot,
+                                  sizeof(*snapshot),
+                                  "discovery assignment snapshot");
+}
+
+int app_mesh_persistence_restore_discovery_assignment(
+    struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    ssize_t read_len;
+    int ret;
+
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
+    memset(snapshot, 0, sizeof(*snapshot));
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
+    }
+    read_len = nvs_read(&mesh_nvs,
+                        APP_MESH_NVS_DISCOVERY_ASSIGNMENT_ID,
+                        snapshot,
+                        sizeof(*snapshot));
+    if (read_len == -ENOENT) {
+        return 0;
+    }
+    if (read_len < 0 || (size_t)read_len != sizeof(*snapshot) ||
+        !snapshot->valid ||
+        snapshot->version != APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION ||
+        snapshot->epoch == 0u || snapshot->slot_count == 0u ||
+        snapshot->slot >= snapshot->slot_count) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return read_len < 0 ? (int)read_len : -EINVAL;
+    }
+    return 0;
+}
+
+void app_mesh_persistence_clear_discovery_assignment(void)
+{
+    if (mesh_persistence_ready()) {
+        int ret = nvs_delete(&mesh_nvs,
+                             APP_MESH_NVS_DISCOVERY_ASSIGNMENT_ID);
+
+        if (ret < 0 && ret != -ENOENT) {
+            mesh_persistence_note_failure(ret);
+        }
+    }
+}
+
 #if defined(CONFIG_ZTEST)
 int app_mesh_persistence_test_write_gateway_membership_snapshot(
     const void *snapshot,
@@ -610,6 +696,7 @@ int app_mesh_persistence_test_write_gateway_membership_snapshot(
 #else
 
 #include <errno.h>
+#include <string.h>
 
 int app_mesh_persistence_init(void)
 {
@@ -706,6 +793,33 @@ int app_mesh_persistence_restore_gateway_membership(
 
 void app_mesh_persistence_clear_gateway_membership(void)
 {
+}
+
+int app_mesh_persistence_save_discovery_assignment(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    ARG_UNUSED(snapshot);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_restore_discovery_assignment(
+    struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    if (snapshot != NULL) {
+        memset(snapshot, 0, sizeof(*snapshot));
+    }
+    return -ENOTSUP;
+}
+
+void app_mesh_persistence_clear_discovery_assignment(void)
+{
+}
+
+void app_mesh_persistence_get_health(struct app_mesh_persistence_health *health)
+{
+    if (health != NULL) {
+        memset(health, 0, sizeof(*health));
+    }
 }
 
 #endif

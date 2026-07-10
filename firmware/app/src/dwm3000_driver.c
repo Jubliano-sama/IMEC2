@@ -481,6 +481,47 @@ static struct dwm3000_driver_stats driver_stats;
 
 static void clear_all_events(void);
 
+static int take_port_error(const char *operation)
+{
+    int ret = dwm3000_port_take_error();
+
+    if (ret >= 0) {
+        return 0;
+    }
+    driver_stats.spi_failures++;
+    radio_configured = false;
+    radio_awake = false;
+    radio_restored_from_sleep = false;
+    active_phy_mode = DWM3000_PHY_NONE;
+    LOG_ERR("DWM3000 port error: operation=%s ret=%d",
+            operation == NULL ? "unknown" : operation,
+            ret);
+    return ret;
+}
+
+static int validate_device_identity(const char *operation)
+{
+    uint32_t dev_id;
+    int ret = take_port_error(operation);
+
+    if (ret < 0) {
+        return ret;
+    }
+    dwm3000_port_clear_error();
+    dev_id = dwt_readdevid();
+    ret = take_port_error(operation);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!dwm3000_port_dev_id_supported(dev_id)) {
+        LOG_ERR("DWM3000 identity validation failed: operation=%s dev_id=0x%08x",
+                operation == NULL ? "unknown" : operation,
+                dev_id);
+        return -ENODEV;
+    }
+    return 0;
+}
+
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 static const char *dwm3000_debug_role_name(void)
 {
@@ -712,9 +753,18 @@ static int initialise_radio(bool idle_after_init)
         return ret;
     }
 
+    dwm3000_port_clear_error();
     (void)dwm3000_port_set_slow_spi();
     if (dwt_initialise(mode) != DWT_SUCCESS) {
         return -EIO;
+    }
+    ret = take_port_error("initialise");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = validate_device_identity("initialise");
+    if (ret < 0) {
+        return ret;
     }
     radio_awake = true;
 
@@ -734,6 +784,8 @@ static int apply_radio_config(const dwt_config_t *config,
     if (config == NULL) {
         return -EINVAL;
     }
+
+    dwm3000_port_clear_error();
 
     /* Qorvo requires the IC to be returned to idle before dwt_configure(). */
     if (radio_configured && radio_awake) {
@@ -760,6 +812,14 @@ static int apply_radio_config(const dwt_config_t *config,
     dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
 
+    {
+        int ret = take_port_error("apply-config");
+
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
     radio_configured = true;
     radio_awake = true;
     radio_restored_from_sleep = false;
@@ -771,6 +831,7 @@ static int restore_txrx_after_sleep(enum dwm3000_phy_mode phy_mode)
 {
     int ret;
 
+    dwm3000_port_clear_error();
     ret = dwt_restore_txrx(DWT_RESTORE_TXRX_MODE);
     if (ret != DWT_SUCCESS) {
         return -EIO;
@@ -784,6 +845,11 @@ static int restore_txrx_after_sleep(enum dwm3000_phy_mode phy_mode)
     dwt_setpreambledetecttimeout(IMMEDIATE_RX_PREAMBLE_TIMEOUT_PAC);
     dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
+
+    ret = take_port_error("restore-txrx");
+    if (ret < 0) {
+        return ret;
+    }
 
     return ensure_local_data();
 }
@@ -921,10 +987,15 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
         return ret;
     }
 
+    dwm3000_port_clear_error();
     for (uint32_t waited_us = 0u; waited_us <= DWM3000_WAKE_IDLE_RC_TIMEOUT_US;
          waited_us += DWM3000_STATUS_POLL_INTERVAL_US) {
         if (dwt_checkidlerc()) {
             ret = 0;
+            break;
+        }
+        ret = take_port_error("wake-idle-check");
+        if (ret < 0) {
             break;
         }
         k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US);
@@ -942,6 +1013,11 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     }
 
     dwt_restore_common();
+    ret = take_port_error("restore-common");
+    if (ret < 0) {
+        driver_stats.sleep_wake_failures++;
+        return ret;
+    }
     if (restore_txrx) {
         ret = restore_txrx_after_sleep(requested_phy);
         if (ret < 0) {
@@ -966,6 +1042,11 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
             status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
         }
+        return ret;
+    }
+    ret = validate_device_identity("wake-restore");
+    if (ret < 0) {
+        driver_stats.sleep_wake_failures++;
         return ret;
     }
     wake_elapsed_us = k_cyc_to_us_floor32(k_cycle_get_32()) - wake_start_us;
@@ -1105,6 +1186,17 @@ static int wait_status_internal(uint32_t mask,
     uint32_t poll_loops = 0u;
     int64_t now_ms;
 
+    {
+        int ret = take_port_error("status-entry");
+
+        if (ret < 0) {
+            if (status != NULL) {
+                *status = 0u;
+            }
+            return ret;
+        }
+    }
+    dwm3000_port_clear_error();
     if (log_events) {
         dwm3000_debug_event(false,
                             "UWB_SYS_STATUS_POLL_START",
@@ -1115,6 +1207,16 @@ static int wait_status_internal(uint32_t mask,
     do {
         read_status = dwt_read32bitreg(SYS_STATUS_ID);
         poll_loops++;
+        {
+            int ret = take_port_error("status-read");
+
+            if (ret < 0) {
+                if (status != NULL) {
+                    *status = 0u;
+                }
+                return ret;
+            }
+        }
         if ((read_status & mask) != 0u) {
             uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
                 (uint32_t)(k_cycle_get_32() - start_cycles));
@@ -1171,6 +1273,11 @@ static int wait_status_internal(uint32_t mask,
 
     if (status != NULL) {
         *status = dwt_read32bitreg(SYS_STATUS_ID);
+        if (take_port_error("status-timeout-read") < 0) {
+            *status = 0u;
+        }
+    } else {
+        (void)take_port_error("status-timeout-read");
     }
     driver_stats.sys_status_poll_loops += poll_loops;
     driver_stats.sys_status_poll_timeouts++;
@@ -1610,11 +1717,17 @@ static uint16_t read_rx_frame(uint8_t *buffer, size_t buffer_len)
 {
     uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_BIT_MASK;
 
+    if (take_port_error("read-rx-frame-length") < 0) {
+        return 0u;
+    }
     if (frame_len > buffer_len) {
         return 0u;
     }
 
     dwt_readrxdata(buffer, (uint16_t)frame_len, 0);
+    if (take_port_error("read-rx-frame-data") < 0) {
+        return 0u;
+    }
     return (uint16_t)frame_len;
 }
 
@@ -2825,7 +2938,12 @@ int dwm3000_driver_probe(uint32_t *dev_id)
     }
 
     (void)dwm3000_port_set_slow_spi();
+    dwm3000_port_clear_error();
     read_id = dwt_readdevid();
+    ret = take_port_error("probe");
+    if (ret < 0) {
+        return ret;
+    }
     if (!dwm3000_port_dev_id_supported(read_id)) {
         return -ENODEV;
     }
@@ -2945,7 +3063,7 @@ int dwm3000_driver_idle(void)
     dwt_forcetrxoff();
     dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
-    return 0;
+    return take_port_error("idle");
 }
 
 int dwm3000_driver_standby(void)
@@ -2966,11 +3084,39 @@ int dwm3000_driver_standby(void)
     }
     dwt_configuresleep(DWM3000_SLEEP_MODE, DWM3000_SLEEP_WAKE_FLAGS);
     dwt_entersleep(DWT_DW_IDLE_RC);
+    ret = take_port_error("standby");
+    if (ret < 0) {
+        return ret;
+    }
     radio_awake = false;
     if (!focused_anchor_rx_logs_enabled()) {
         LOG_INF("DWM3000 entered sleep with retained config; wakeup pin required before next UWB window");
     }
     return 0;
+}
+
+int dwm3000_driver_force_recovery(void)
+{
+    enum dwm3000_phy_mode recover_phy =
+        active_phy_mode == DWM3000_PHY_NONE ?
+        DWM3000_PHY_RANGE : active_phy_mode;
+    int ret;
+
+    radio_configured = false;
+    radio_awake = false;
+    radio_restored_from_sleep = false;
+    active_phy_mode = DWM3000_PHY_NONE;
+    dwm3000_port_clear_error();
+    driver_stats.radio_recoveries++;
+    ret = configure_radio_from_reset(recover_phy);
+    if (ret < 0) {
+        LOG_ERR("DWM3000 forced recovery failed: phy=%d ret=%d",
+                recover_phy,
+                ret);
+    } else {
+        LOG_WRN("DWM3000 forced recovery completed: phy=%d", recover_phy);
+    }
+    return ret;
 }
 
 int dwm3000_driver_send_frame(const uint8_t *frame,

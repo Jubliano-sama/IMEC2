@@ -15,6 +15,25 @@ _Static_assert(GATEWAY_BLE_STREAM_RECORD_POOL_BYTES >=
 
 #define STREAM_FLAG_TRUNCATED 0x01u
 
+uint32_t gateway_ble_recovery_backoff_ms(uint8_t retry_round,
+                                         uint32_t random_value)
+{
+    uint32_t base_ms = GATEWAY_BLE_RECOVERY_BACKOFF_BASE_MS;
+
+    while (retry_round > 0u && base_ms < GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS) {
+        if (base_ms > GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS / 2u) {
+            base_ms = GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS;
+            break;
+        }
+        base_ms *= 2u;
+        retry_round--;
+    }
+    if (base_ms >= GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS) {
+        return GATEWAY_BLE_RECOVERY_BACKOFF_MAX_MS;
+    }
+    return base_ms + (random_value % base_ms);
+}
+
 static void put_u8(uint8_t *record, size_t *offset, uint8_t value)
 {
     record[*offset] = value;

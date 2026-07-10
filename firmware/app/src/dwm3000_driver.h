@@ -126,6 +126,8 @@ struct dwm3000_driver_stats {
     uint32_t tx_starts;
     uint32_t tx_dones;
     uint32_t tx_failures;
+    uint32_t spi_failures;
+    uint32_t radio_recoveries;
 };
 
 int dwm3000_driver_probe(uint32_t *dev_id);
@@ -136,6 +138,7 @@ int dwm3000_driver_configure_wake_mesh_control_mode(void);
 int dwm3000_driver_configure_wake_mode(void);
 int dwm3000_driver_idle(void);
 int dwm3000_driver_standby(void);
+int dwm3000_driver_force_recovery(void);
 int dwm3000_driver_send_frame(const uint8_t *frame,
                               size_t frame_len,
                               uint32_t timeout_ms);

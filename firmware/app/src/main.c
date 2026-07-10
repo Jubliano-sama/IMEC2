@@ -10,6 +10,7 @@
 #include "app_state.h"
 #include "app_stack_diag.h"
 #include "app_wake_train_politeness.h"
+#include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "gateway_command.h"
@@ -22,22 +23,34 @@
 #include <zephyr/fatal.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
 LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-volatile uint32_t mesh_route_test_fatal_reason;
-volatile uint32_t mesh_route_test_fatal_pc;
-volatile uint32_t mesh_route_test_fatal_lr;
-volatile uint32_t mesh_route_test_fatal_thread;
-volatile uint32_t mesh_route_test_fatal_stack_start;
-volatile uint32_t mesh_route_test_fatal_stack_size;
+#define MESH_FATAL_BREADCRUMB_MAGIC UINT32_C(0x4641544c)
+volatile uint32_t mesh_route_test_fatal_magic __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_count __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_reason __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_pc __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_lr __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_thread __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_stack_start __attribute__((section(".noinit")));
+volatile uint32_t mesh_route_test_fatal_stack_size __attribute__((section(".noinit")));
 
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
     k_tid_t thread = k_current_get();
 
+    app_watchdog_stop_feeding();
+    if (mesh_route_test_fatal_magic != MESH_FATAL_BREADCRUMB_MAGIC) {
+        mesh_route_test_fatal_count = 0u;
+    }
+    mesh_route_test_fatal_magic = MESH_FATAL_BREADCRUMB_MAGIC;
+    if (mesh_route_test_fatal_count < UINT32_MAX) {
+        mesh_route_test_fatal_count++;
+    }
     mesh_route_test_fatal_reason = reason;
     mesh_route_test_fatal_thread = (uint32_t)thread;
     mesh_route_test_fatal_stack_start = (uint32_t)thread->stack_info.start;
@@ -50,7 +63,10 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
         mesh_route_test_fatal_lr = 0u;
     }
 
-    k_fatal_halt(reason);
+    sys_reboot(SYS_REBOOT_COLD);
+    for (;;) {
+        k_cpu_idle();
+    }
 }
 #endif
 
@@ -234,6 +250,30 @@ int main(void)
     enum button_action boot_button_action STAGE1_WAKE_SPAM_UNUSED = BUTTON_ACTION_NONE;
     int ret;
     int battery_adc_ret;
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    bool fatal_recovery_boot = false;
+#endif
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    if (mesh_route_test_fatal_magic == MESH_FATAL_BREADCRUMB_MAGIC) {
+        uint32_t recovery_delay_ms = mesh_route_test_fatal_count >= 6u ?
+                                     30000u :
+                                     mesh_route_test_fatal_count * 5000u;
+
+        fatal_recovery_boot = true;
+        printk("retained fatal: count=%u reason=%u pc=0x%08x lr=0x%08x recovery_delay_ms=%u\n",
+               mesh_route_test_fatal_count,
+               mesh_route_test_fatal_reason,
+               mesh_route_test_fatal_pc,
+               mesh_route_test_fatal_lr,
+               recovery_delay_ms);
+        k_msleep(recovery_delay_ms);
+    }
+#endif
+    ret = app_watchdog_init();
+    if (ret < 0) {
+        printk("hardware watchdog unavailable: %d\n", ret);
+    }
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
     gateway_ble_connectivity_test_run();
@@ -442,6 +482,14 @@ int main(void)
         LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",
                 gateway_ble_transport_enabled() ? "advertising" : "disabled");
     }
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    if (fatal_recovery_boot) {
+        mesh_route_test_fatal_magic = 0u;
+        mesh_route_test_fatal_count = 0u;
+        LOG_INF("fatal recovery boot reached normal role startup");
+    }
+#endif
 
     return 0;
 }

@@ -11,6 +11,7 @@
 #include "app_mesh_persistence.h"
 #include "app_state.h"
 #include "gateway_membership.h"
+#include "discovery_assignment.h"
 #include "mesh.h"
 #include "mesh_relay.h"
 #include "serial_frame.h"
@@ -26,6 +27,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/random/random.h>
 #if defined(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND)
 #include <zephyr/logging/log_backend.h>
 #include <zephyr/logging/log_backend_std.h>
@@ -357,6 +359,10 @@ static uint64_t gateway_collection_expected_node_ids[GATEWAY_COMMAND_EXPECTED_NO
 static uint16_t gateway_collection_expected_node_id_count;
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_work_delayable gateway_collection_eack_work;
+static struct k_work_delayable gateway_persistence_retry_work;
+static bool gateway_collection_persistence_dirty;
+static bool gateway_membership_persistence_dirty;
+static uint8_t gateway_persistence_retry_round;
 
 void gateway_command_timeout_side_effects(const struct proto_packet *command,
                                           enum command_id command_id);
@@ -366,6 +372,54 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason);
 
 static bool gateway_collection_tracking_active(void);
+
+static void gateway_schedule_persistence_retry(const char *reason)
+{
+    uint32_t delay_ms = discovery_assignment_retry_backoff_ms(
+        gateway_persistence_retry_round,
+        sys_rand32_get());
+
+    if (gateway_persistence_retry_round < UINT8_MAX) {
+        gateway_persistence_retry_round++;
+    }
+    (void)k_work_reschedule(&gateway_persistence_retry_work,
+                            K_MSEC(delay_ms));
+    LOG_WRN("gateway persistence retry scheduled: reason=%s round=%u delay_ms=%u",
+            reason == NULL ? "unknown" : reason,
+            gateway_persistence_retry_round,
+            delay_ms);
+}
+
+static void gateway_persistence_retry_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (gateway_collection_persistence_dirty) {
+        if (!gateway_collection_tracking_active()) {
+            gateway_collection_persistence_dirty = false;
+        } else {
+            ret = app_mesh_persistence_save_gateway_collection(
+                &gateway_collection_state);
+            if (ret < 0) {
+                gateway_schedule_persistence_retry("collection");
+                return;
+            }
+            gateway_collection_persistence_dirty = false;
+        }
+    }
+    if (gateway_membership_persistence_dirty) {
+        ret = app_mesh_persistence_save_gateway_membership(
+            &gateway_membership_roster_state);
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("membership");
+            return;
+        }
+        gateway_membership_persistence_dirty = false;
+    }
+    gateway_persistence_retry_round = 0u;
+}
 
 int gateway_ble_stream_packet(const struct proto_packet *packet,
                               const uint8_t *payload,
@@ -422,9 +476,14 @@ static void gateway_persist_collection_state(const char *reason)
 
     ret = app_mesh_persistence_save_gateway_collection(&gateway_collection_state);
     if (ret < 0) {
+        gateway_collection_persistence_dirty = true;
+        gateway_schedule_persistence_retry(reason);
         LOG_WRN("gateway collection snapshot save failed: ret=%d reason=%s",
                 ret,
                 reason == NULL ? "" : reason);
+    } else {
+        gateway_collection_persistence_dirty = false;
+        gateway_persistence_retry_round = 0u;
     }
 }
 
@@ -491,18 +550,33 @@ static int gateway_eack_prepare_channel9(struct mesh_outbound *out,
     return ret;
 }
 
+struct gateway_eack_send_context {
+    bool c5_sent_now;
+};
+
 static int gateway_eack_send_c5_flood(const struct mesh_outbound *out, void *ctx)
 {
-    ARG_UNUSED(ctx);
+    struct gateway_eack_send_context *send_context = ctx;
+
+    if (send_context == NULL) {
+        return -EINVAL;
+    }
+    send_context->c5_sent_now = false;
 
     return mesh_send_c5_flood(out,
                               C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
-                              "collection-eack-c5");
+                              "collection-eack-c5",
+                              &send_context->c5_sent_now);
 }
 
 static void gateway_eack_note_tx_sent(const struct mesh_outbound *out, void *ctx)
 {
-    ARG_UNUSED(ctx);
+    const struct gateway_eack_send_context *send_context = ctx;
+
+    if (out != NULL && out->radio_channel == UWB_CHANNEL_WAKE_CONTACT &&
+        (send_context == NULL || !send_context->c5_sent_now)) {
+        return;
+    }
 
     mesh_relay_note_tx_sent(&mesh_runtime, out, k_uptime_get_32());
 }
@@ -537,6 +611,9 @@ static int gateway_send_collection_eack(const char *reason,
                                         const struct mesh_event_plan *current_channel9_plan)
 {
     struct mesh_outbound eack = {0};
+    struct gateway_eack_send_context send_context = {
+        .c5_sent_now = true,
+    };
     struct app_gateway_collection_eack_input input = {
         .collection = &gateway_collection_state,
         .expected_node_ids = gateway_collection_expected_node_ids,
@@ -554,6 +631,7 @@ static int gateway_send_collection_eack(const char *reason,
         .note_tx_sent = gateway_eack_note_tx_sent,
         .note_channel9_tx = gateway_eack_note_channel9_tx,
         .now_ms = gateway_eack_now_ms,
+        .ctx = &send_context,
     };
     struct app_gateway_collection_eack_result result;
     int ret;
@@ -1024,8 +1102,12 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
 
     ret = app_mesh_persistence_save_gateway_membership(&gateway_membership_roster_state);
     if (ret < 0) {
+        gateway_membership_persistence_dirty = true;
+        gateway_schedule_persistence_retry("membership-set");
         LOG_WRN("gateway membership snapshot save failed: ret=%d", ret);
+        return ret;
     }
+    gateway_membership_persistence_dirty = false;
     return 0;
 }
 
@@ -1036,6 +1118,7 @@ void gateway_clear_registered_membership_roster(void)
     }
 
     gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_persistence_dirty = false;
     app_mesh_persistence_clear_gateway_membership();
 }
 
@@ -1195,6 +1278,11 @@ void gateway_command_result_tracking_init(void)
                           gateway_command_result_timeout_handler);
     k_work_init_delayable(&gateway_collection_eack_work,
                           gateway_collection_eack_work_handler);
+    k_work_init_delayable(&gateway_persistence_retry_work,
+                          gateway_persistence_retry_work_handler);
+    gateway_collection_persistence_dirty = false;
+    gateway_membership_persistence_dirty = false;
+    gateway_persistence_retry_round = 0u;
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
     }
@@ -1275,8 +1363,12 @@ K_MSGQ_DEFINE(gateway_ble_rx_msgq,
 static struct k_work gateway_ble_rx_work;
 static struct k_work_delayable gateway_ble_stream_work;
 static struct k_work_delayable gateway_ble_quiet_flush_work;
+static struct k_work_delayable gateway_ble_recovery_work;
 static struct bt_conn *gateway_ble_conn;
 static bool gateway_ble_advertising_active;
+static bool gateway_ble_stack_ready;
+static uint8_t gateway_ble_recovery_round;
+static uint8_t gateway_ble_notify_failure_count;
 static bool gateway_ble_packet_notify_enabled;
 static bool gateway_ble_log_notify_enabled;
 static uint8_t gateway_ble_uwb_quiet_depth;
@@ -1324,8 +1416,28 @@ static void gateway_ble_flush_quiet_logs(void);
 static void gateway_ble_quiet_flush_work_handler(struct k_work *work);
 static void gateway_ble_rx_work_handler(struct k_work *work);
 static void gateway_ble_stream_work_handler(struct k_work *work);
+static void gateway_ble_recovery_work_handler(struct k_work *work);
 static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data);
 static int gateway_ble_send_log_bytes(const uint8_t *data, size_t len);
+
+static void gateway_ble_schedule_recovery(const char *reason)
+{
+    uint32_t delay_ms;
+
+    if (!gateway_ble_transport_enabled() || gateway_ble_conn != NULL) {
+        return;
+    }
+    delay_ms = gateway_ble_recovery_backoff_ms(gateway_ble_recovery_round,
+                                               sys_rand32_get());
+    if (gateway_ble_recovery_round < UINT8_MAX) {
+        gateway_ble_recovery_round++;
+    }
+    (void)k_work_reschedule(&gateway_ble_recovery_work, K_MSEC(delay_ms));
+    LOG_WRN("gateway BLE recovery scheduled: reason=%s round=%u delay_ms=%u",
+            reason == NULL ? "unknown" : reason,
+            gateway_ble_recovery_round,
+            delay_ms);
+}
 
 static bool gateway_ble_stream_ready(void)
 {
@@ -1426,7 +1538,14 @@ void gateway_ble_exit_uwb_quiet(const char *reason)
     }
 
     if (gateway_ble_quiet_stopped_advertising && gateway_ble_conn == NULL) {
-        (void)gateway_ble_start_advertising();
+        int ret = gateway_ble_start_advertising();
+
+        if (ret >= 0) {
+            gateway_ble_recovery_round = 0u;
+        }
+    }
+    if (gateway_ble_conn == NULL && !gateway_ble_advertising_active) {
+        gateway_ble_schedule_recovery("uwb-quiet-exit");
     }
     gateway_ble_quiet_stopped_advertising = false;
     (void)k_work_reschedule(&gateway_ble_quiet_flush_work,
@@ -1585,6 +1704,7 @@ static void gateway_ble_tx_reset_locked(void)
     gateway_ble_tx_frame_offset = 0u;
     gateway_ble_tx_chunk_len = 0u;
     gateway_ble_tx_in_flight = false;
+    gateway_ble_notify_failure_count = 0u;
     gateway_ble_direct_tx_head = 0u;
     gateway_ble_direct_tx_count = 0u;
     gateway_ble_log_tx_read = 0u;
@@ -1789,6 +1909,7 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
     }
 
     gateway_ble_tx_in_flight = false;
+    gateway_ble_notify_failure_count = 0u;
     gateway_ble_tx_frame_offset += gateway_ble_tx_chunk_len;
     gateway_ble_tx_chunk_len = 0u;
     frame_complete = gateway_ble_tx_frame_offset >= gateway_ble_tx_frame_len;
@@ -1849,6 +1970,7 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
     if (chunk_cap == 0u) {
         bt_conn_unref(conn);
         k_spin_unlock(&gateway_ble_tx_lock, key);
+        gateway_ble_schedule_stream_retry();
         return;
     }
     gateway_ble_tx_chunk_len = MIN(gateway_ble_tx_frame_len - gateway_ble_tx_frame_offset,
@@ -1878,6 +2000,7 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
             bt_conn_unref(conn);
             k_spin_unlock(&gateway_ble_tx_lock, key);
             gateway_ble_stream_cancel_active();
+            gateway_ble_schedule_stream_drain();
             return;
         }
     } else {
@@ -1898,16 +2021,29 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
     params.func = gateway_ble_tx_complete;
     params.user_data = (void *)(uintptr_t)generation;
     ret = bt_gatt_notify_cb(conn, &params);
-    bt_conn_unref(conn);
     if (ret < 0) {
+        bool disconnect = false;
+
         key = k_spin_lock(&gateway_ble_tx_lock);
         if (gateway_ble_tx_in_flight && generation == gateway_ble_tx_generation) {
             gateway_ble_tx_in_flight = false;
             gateway_ble_tx_chunk_len = 0u;
         }
+        if (gateway_ble_notify_failure_count < UINT8_MAX) {
+            gateway_ble_notify_failure_count++;
+        }
+        disconnect = gateway_ble_notify_failure_count >= 8u;
         k_spin_unlock(&gateway_ble_tx_lock, key);
-        gateway_ble_schedule_stream_retry();
+        if (disconnect) {
+            LOG_WRN("gateway BLE notifications repeatedly failed; resetting connection: ret=%d failures=%u",
+                    ret,
+                    gateway_ble_notify_failure_count);
+            (void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        } else {
+            gateway_ble_schedule_stream_retry();
+        }
     }
+    bt_conn_unref(conn);
 }
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND)
@@ -1915,10 +2051,12 @@ static uint8_t gateway_ble_log_output_buf[128];
 
 static int gateway_ble_log_backend_out(uint8_t *buf, size_t len, void *ctx)
 {
+    int ret;
+
     ARG_UNUSED(ctx);
 
-    (void)gateway_ble_send_log_bytes(buf, len);
-    return (int)len;
+    ret = gateway_ble_send_log_bytes(buf, len);
+    return ret < 0 ? ret : (int)len;
 }
 
 LOG_OUTPUT_DEFINE(gateway_ble_log_output,
@@ -1970,7 +2108,7 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     }
     if (err != 0u) {
         LOG_WRN("gateway BLE connection failed: err=0x%02x", err);
-        (void)gateway_ble_start_advertising();
+        gateway_ble_schedule_recovery("connection-failed");
         return;
     }
     key = k_spin_lock(&gateway_ble_tx_lock);
@@ -1991,6 +2129,9 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     gateway_ble_stream_cancel_active();
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;
+    gateway_ble_recovery_round = 0u;
+    gateway_ble_notify_failure_count = 0u;
+    (void)k_work_cancel_delayable(&gateway_ble_recovery_work);
     HIGH_DEBUG_COUNTER_INC(gateway_ble_connects);
     LOG_INF("gateway BLE PC link connected");
 }
@@ -2028,7 +2169,7 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
         LOG_WRN("gateway BLE live log bytes dropped before disconnect: %u",
                 dropped_log_bytes);
     }
-    (void)gateway_ble_start_advertising();
+    gateway_ble_schedule_recovery("disconnected");
 }
 
 BT_CONN_CB_DEFINE(gateway_ble_conn_callbacks) = {
@@ -2056,6 +2197,57 @@ static int gateway_ble_start_advertising(void)
         gateway_ble_advertising_active = true;
     }
     return ret;
+}
+
+static void gateway_ble_log_identities(void)
+{
+    bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
+    size_t addr_count = ARRAY_SIZE(addrs);
+
+    bt_id_get(addrs, &addr_count);
+    for (size_t i = 0u; i < addr_count; i++) {
+        char addr[BT_ADDR_LE_STR_LEN];
+
+        bt_addr_le_to_str(&addrs[i], addr, sizeof(addr));
+        LOG_INF("gateway BLE identity: index=%u addr=%s",
+                (unsigned int)i,
+                addr);
+    }
+}
+
+static void gateway_ble_recovery_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (!gateway_ble_transport_enabled() || gateway_ble_conn != NULL) {
+        return;
+    }
+    if (!gateway_ble_stack_ready) {
+        ret = bt_enable(NULL);
+        LOG_INF("gateway BLE recovery bt_enable completed: ret=%d", ret);
+        if (ret != 0 && ret != -EALREADY) {
+            gateway_ble_schedule_recovery("bt-enable");
+            return;
+        }
+        gateway_ble_stack_ready = true;
+        gateway_ble_log_identities();
+    }
+    if (gateway_ble_uwb_quiet_active()) {
+        return;
+    }
+
+    ret = gateway_ble_start_advertising();
+    if (ret < 0) {
+        gateway_ble_schedule_recovery("advertising");
+        return;
+    }
+    gateway_ble_recovery_round = 0u;
+    LOG_INF("gateway BLE PC link advertising as %s", GATEWAY_BLE_DEVICE_NAME);
+    high_debug_log_event("BLE_GATEWAY_READY",
+                         "device_name=%s packet_notify=0 log_notify=0",
+                         GATEWAY_BLE_DEVICE_NAME);
 }
 
 static int gateway_ble_stop_advertising(const char *reason)
@@ -2086,8 +2278,6 @@ static int gateway_ble_stop_advertising(const char *reason)
 int gateway_ble_init(void)
 {
     int ret;
-    bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
-    size_t addr_count = ARRAY_SIZE(addrs);
 
     if (!gateway_ble_transport_enabled()) {
         return 0;
@@ -2098,31 +2288,31 @@ int gateway_ble_init(void)
                           gateway_ble_stream_work_handler);
     k_work_init_delayable(&gateway_ble_quiet_flush_work,
                           gateway_ble_quiet_flush_work_handler);
+    k_work_init_delayable(&gateway_ble_recovery_work,
+                          gateway_ble_recovery_work_handler);
     gateway_ble_stream_init(&gateway_ble_stream_state);
     gateway_ble_tx_reset_locked();
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;
+    gateway_ble_stack_ready = false;
+    gateway_ble_recovery_round = 0u;
+    gateway_ble_notify_failure_count = 0u;
 
     ret = bt_enable(NULL);
     LOG_INF("gateway BLE bt_enable completed: ret=%d", ret);
     if (ret != 0 && ret != -EALREADY) {
-        LOG_ERR("gateway BLE init failed: %d", ret);
-        return ret;
+        LOG_ERR("gateway BLE init failed; recovery remains active: %d", ret);
+        gateway_ble_schedule_recovery("initial-bt-enable");
+        return 0;
     }
-    bt_id_get(addrs, &addr_count);
-    for (size_t i = 0u; i < addr_count; i++) {
-        char addr[BT_ADDR_LE_STR_LEN];
-
-        bt_addr_le_to_str(&addrs[i], addr, sizeof(addr));
-        LOG_INF("gateway BLE identity: index=%u addr=%s",
-                (unsigned int)i,
-                addr);
-    }
+    gateway_ble_stack_ready = true;
+    gateway_ble_log_identities();
 
     ret = gateway_ble_start_advertising();
     if (ret < 0) {
-        LOG_ERR("gateway BLE advertising failed: %d", ret);
-        return ret;
+        LOG_ERR("gateway BLE advertising failed; recovery remains active: %d", ret);
+        gateway_ble_schedule_recovery("initial-advertising");
+        return 0;
     }
 
     LOG_INF("gateway BLE PC link advertising as %s", GATEWAY_BLE_DEVICE_NAME);

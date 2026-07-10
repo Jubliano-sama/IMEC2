@@ -36,6 +36,7 @@ struct app_mesh_ch9_tx_retry_ops {
 
 struct app_mesh_ch9_tx_retry_result {
     uint8_t requeued;
+    uint8_t retained;
     uint8_t dropped;
     uint8_t queued_before;
     uint8_t queued_after;

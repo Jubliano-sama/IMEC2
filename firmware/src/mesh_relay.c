@@ -4696,6 +4696,24 @@ void mesh_relay_note_route_discovery_ready(struct mesh_relay *relay,
     }
 }
 
+static void mesh_relay_clear_routes_at_epoch(struct mesh_relay *relay,
+                                             uint32_t epoch)
+{
+    route_table_init(&relay->upstream, epoch);
+    memset(relay->downlinks, 0, sizeof(relay->downlinks));
+    memset(relay->event_timings, 0, sizeof(relay->event_timings));
+    mesh_relay_reset_route_discovery(relay);
+}
+
+void mesh_relay_clear_routes_preserve_epoch(struct mesh_relay *relay)
+{
+    if (relay == NULL) {
+        return;
+    }
+
+    mesh_relay_clear_routes_at_epoch(relay, relay->upstream.current_epoch);
+}
+
 void mesh_relay_invalidate_routes(struct mesh_relay *relay)
 {
     uint32_t next_epoch;
@@ -4708,10 +4726,7 @@ void mesh_relay_invalidate_routes(struct mesh_relay *relay)
     if (next_epoch == 0u) {
         next_epoch = 1u;
     }
-    route_table_init(&relay->upstream, next_epoch);
-    memset(relay->downlinks, 0, sizeof(relay->downlinks));
-    memset(relay->event_timings, 0, sizeof(relay->event_timings));
-    mesh_relay_reset_route_discovery(relay);
+    mesh_relay_clear_routes_at_epoch(relay, next_epoch);
 }
 
 static int mesh_relay_require_channel9_event_for_slot(const struct mesh_relay *relay,

@@ -222,7 +222,7 @@ static void test_current_channel9_success_preempts_later_candidates(void)
     assert(eack.earliest_tx_ms == current_plan.start_ms + 3u);
 }
 
-static void test_current_channel9_failure_restores_before_candidate_c5_fallback(void)
+static void test_current_channel9_failure_stays_on_negotiated_lane(void)
 {
     struct policy_test_ctx ctx = {
         .send_channel9_returns = {-EIO},
@@ -258,29 +258,16 @@ static void test_current_channel9_failure_restores_before_candidate_c5_fallback(
                candidates,
                sizeof(candidates) / sizeof(candidates[0]),
                &ops,
-               &result) == 0);
-    assert(ctx.plan_count == 1);
-    assert(ctx.prepare_count == 2);
+               &result) == -EIO);
+    assert(ctx.plan_count == 0);
+    assert(ctx.prepare_count == 1);
     assert(ctx.send_channel9_count == 1);
-    assert(ctx.send_c5_count == 1);
-    assert(ctx.note_tx_count == 1);
+    assert(ctx.send_c5_count == 0);
+    assert(ctx.note_tx_count == 0);
     assert(ctx.note_channel9_count == 0);
     assert(ctx.now_count == 0);
     assert(ctx.sent_channel9.next_hop_id == HOP_A);
     assert(ctx.sent_channel9.radio_channel == MESH_EVENT_CHANNEL);
-    assert(ctx.planned_hops[0] == HOP_B);
-    assert(ctx.sent_c5.next_hop_id == MESH_BROADCAST_ID);
-    assert(ctx.sent_c5.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
-    assert(ctx.sent_c5.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
-    assert(ctx.sent_c5.packet.session_id == 0x01020304u);
-    assert(ctx.sent_c5.packet.seq == 0x1122u);
-    assert(ctx.sent_c5.packet.ttl == 3u);
-    assert(ctx.sent_c5.payload_len == 4u);
-    assert(ctx.sent_c5.payload[0] == 0xa1u);
-    assert(ctx.sent_c5.payload[1] == 0xb2u);
-    assert(ctx.sent_c5.payload[2] == 0xc3u);
-    assert(ctx.sent_c5.payload[3] == 0xd4u);
-    assert(ctx.sent_c5.queued_at_ms == 0x55667788u);
     assert(eack.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
     assert(eack.packet.session_id == 0x01020304u);
     assert(eack.packet.seq == 0x1122u);
@@ -291,14 +278,14 @@ static void test_current_channel9_failure_restores_before_candidate_c5_fallback(
     assert(eack.payload[2] == 0xc3u);
     assert(eack.payload[3] == 0xd4u);
     assert(eack.queued_at_ms == 0x55667788u);
-    assert(eack.next_hop_id == MESH_BROADCAST_ID);
-    assert(eack.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+    assert(eack.next_hop_id == 0u);
+    assert(eack.radio_channel == 0u);
     assert(eack.earliest_tx_ms == 0u);
-    assert(result.mode == APP_GATEWAY_EACK_SEND_C5_FLOOD);
-    assert(result.channel9_candidate_count == 1u);
-    assert(result.channel9_attempt_count == 2u);
+    assert(result.mode == APP_GATEWAY_EACK_SEND_NONE);
+    assert(result.channel9_candidate_count == 0u);
+    assert(result.channel9_attempt_count == 1u);
     assert(result.channel9_send_ret == -EIO);
-    assert(result.channel9_prepare_ret == -EBUSY);
+    assert(result.channel9_prepare_ret == 0);
     assert(result.c5_send_ret == 0);
 }
 
@@ -430,7 +417,7 @@ static void test_no_return_candidates_uses_bounded_c5_recovery(void)
 int main(void)
 {
     test_current_channel9_success_preempts_later_candidates();
-    test_current_channel9_failure_restores_before_candidate_c5_fallback();
+    test_current_channel9_failure_stays_on_negotiated_lane();
     test_channel9_uses_second_candidate_without_c5_flood();
     test_duplicate_and_invalid_candidates_are_not_planned();
     test_falls_back_to_c5_only_after_all_channel9_sends_fail();

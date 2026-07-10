@@ -16,6 +16,16 @@ struct k_work_delayable;
 
 struct uwb_range_schedule_frame;
 
+struct mesh_delivery_health {
+    uint32_t ack_retry_admission_failures;
+    uint32_t oldest_ack_pending_age_ms;
+    uint32_t permanent_report_failures;
+    uint32_t last_permanent_error;
+    uint32_t last_permanent_session_id;
+    uint16_t last_permanent_seq;
+    uint8_t last_permanent_msg_type;
+};
+
 struct anchor_range_window_report {
     struct dwm3000_range_result result;
     int32_t distance_samples_mm[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
@@ -85,7 +95,8 @@ int mesh_send_c5_control(const struct mesh_outbound *out,
                          const char *reason);
 int mesh_send_c5_flood(const struct mesh_outbound *out,
                        uint8_t purpose,
-                       const char *reason);
+                       const char *reason,
+                       bool *sent_now);
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
                                    const struct mesh_event_plan *plan,
@@ -116,6 +127,7 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
 void mesh_submit_queued_rx(void);
 bool mesh_process_queued_rx_now(const char *reason);
 int mesh_start_uwb_rx(const char *reason);
+void mesh_delivery_health_get(struct mesh_delivery_health *health);
 bool mesh_route_waiting_tx_active(void);
 uint32_t mesh_rx_pending_count(void);
 bool mesh_rx_response_active(void);
@@ -126,5 +138,6 @@ void mesh_gateway_route_adv_request(uint32_t delay_ms, const char *reason);
 /* Returns zero when the forced advertisement is queued or rescheduled. */
 int mesh_gateway_route_adv_force_request(uint32_t delay_ms, const char *reason);
 int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
+int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms);
 
 #endif

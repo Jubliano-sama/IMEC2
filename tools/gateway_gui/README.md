@@ -98,7 +98,9 @@ This GUI is therefore a host-delivery view, not a complete RF trace.
 - **Assign discovery slots** sends local `CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104`
   to the gateway's own `DEVICE_ID` with no host-supplied assignment TLVs. The
   gateway collects anchor claims and floods the resulting table. A successful
-  `COMMAND_RESULT` reports the assigned-anchor count in `REASON`.
+  terminal `COMMAND_RESULT` reports the assigned-anchor count in `REASON`.
+  Intermediate anchor CLAIM and ACK records are labeled by assignment phase and
+  are not presented as assigned-anchor totals.
 
 There is no arbitrary command composer. Although the envelope is extensible,
 firmware applies command-specific destinations, scopes, TLV validation, and

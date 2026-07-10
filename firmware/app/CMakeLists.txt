@@ -381,6 +381,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_stack_diag.c
     src/app_anchor.c
     src/app_high_debug.c
+    src/app_watchdog.c
 )
 
 if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)

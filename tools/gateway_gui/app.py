@@ -918,6 +918,13 @@ class GatewayGui:
             status = packet.first_tlv(TLV_COMMAND_STATUS)
             command_name = COMMAND_NAMES.get(command_id, "UNKNOWN") if isinstance(command_id, int) else "UNKNOWN"
             reason = packet.value(TLV_REASON)
+            assignment_phase = packet.first_tlv(TLV_DISCOVERY_ASSIGNMENT_PHASE)
+            if command_id == CMD_ASSIGN_DISCOVERY_SLOTS and assignment_phase is not None:
+                epoch = packet.value(TLV_DISCOVERY_ASSIGNMENT_EPOCH, "-")
+                return (
+                    f"command={command_name} phase={assignment_phase.display} "
+                    f"epoch={epoch} status={status.display if status else '-'}"
+                )
             if (
                 command_id == CMD_ASSIGN_DISCOVERY_SLOTS
                 and status is not None
@@ -1024,7 +1031,10 @@ class GatewayGui:
             if command_id == CMD_ASSIGN_DISCOVERY_SLOTS:
                 assigned_count = (
                     str(reason)
-                    if status is not None and status.decoded == 0 and isinstance(reason, int)
+                    if packet.first_tlv(TLV_DISCOVERY_ASSIGNMENT_PHASE) is None
+                    and status is not None
+                    and status.decoded == 0
+                    and isinstance(reason, int)
                     else "not available unless command status is OK"
                 )
                 rows.append(("Assigned anchor count", assigned_count))

@@ -147,12 +147,10 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
                                     struct app_mesh_ch9_tx_retry_result *result)
 {
     struct app_mesh_ch9_tx_retry_result local_result;
-    struct mesh_outbound rotate;
 
     if ((entry_count > 0u && entries == NULL) ||
         ops == NULL ||
         ops->put == NULL ||
-        ops->get == NULL ||
         ops->queue_used == NULL) {
         return PROTO_ERR_ARG;
     }
@@ -167,27 +165,10 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
 
         entries[i].outbound.queued_at_ms = now_ms;
         if (ops->put(&entries[i].outbound, ops->ctx) == 0) {
+            entries[i].acked = true;
             local_result.requeued++;
         } else {
-            local_result.dropped++;
-            if (ops->note_drop != NULL) {
-                ops->note_drop(ops->ctx);
-            }
-        }
-    }
-
-    for (uint8_t i = 0u;
-         i < local_result.queued_before && local_result.requeued > 0u;
-         i++) {
-        if (ops->get(&rotate, ops->ctx) != 0) {
-            break;
-        }
-        if (ops->put(&rotate, ops->ctx) != 0) {
-            local_result.dropped++;
-            if (ops->note_drop != NULL) {
-                ops->note_drop(ops->ctx);
-            }
-            break;
+            local_result.retained++;
         }
     }
 

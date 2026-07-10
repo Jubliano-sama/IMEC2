@@ -77,6 +77,61 @@ static void test_control_and_claim_hash_round_trip(void)
                                                    payload_len,
                                                    &decoded_hash) == PROTO_OK);
     assert(decoded_hash == hash);
+
+    payload_len = 0u;
+    assert(discovery_assignment_append_control_tlvs(
+               payload,
+               sizeof(payload),
+               &payload_len,
+               DISCOVERY_ASSIGNMENT_PHASE_ACK,
+               78u) == PROTO_OK);
+    assert(discovery_assignment_extract_control_tlvs(payload,
+                                                     payload_len,
+                                                     &phase,
+                                                     &epoch) == PROTO_OK);
+    assert(phase == DISCOVERY_ASSIGNMENT_PHASE_ACK);
+    assert(epoch == 78u);
+}
+
+static void test_response_delay_uses_slot_hops_and_bounded_backoff(void)
+{
+    uint32_t far_delay = 0u;
+    uint32_t near_delay = 0u;
+    uint32_t later_slot_delay = 0u;
+    uint32_t retry_delay = 0u;
+
+    assert(discovery_assignment_response_delay_ms(3u, 50u, 8u, 0u, 0u,
+                                                  &far_delay) == PROTO_OK);
+    assert(discovery_assignment_response_delay_ms(3u, 50u, 1u, 0u, 0u,
+                                                  &near_delay) == PROTO_OK);
+    assert(discovery_assignment_response_delay_ms(4u, 50u, 8u, 0u, 0u,
+                                                  &later_slot_delay) == PROTO_OK);
+    assert(discovery_assignment_response_delay_ms(3u, 50u, 8u, 2u, UINT32_MAX,
+                                                  &retry_delay) == PROTO_OK);
+    assert(far_delay < near_delay);
+    assert(later_slot_delay - far_delay == DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS);
+    assert(retry_delay > far_delay);
+    assert(discovery_assignment_response_delay_ms(50u, 50u, 1u, 0u, 0u,
+                                                  &far_delay) == PROTO_ERR_ARG);
+
+    assert(discovery_assignment_retry_backoff_ms(0u, 0u) ==
+           DISCOVERY_ASSIGNMENT_RETRY_BASE_MS);
+    assert(discovery_assignment_retry_backoff_ms(UINT8_MAX, UINT32_MAX) >=
+           DISCOVERY_ASSIGNMENT_RETRY_MAX_MS);
+    assert(discovery_assignment_retry_backoff_ms(UINT8_MAX, UINT32_MAX) <
+           2u * DISCOVERY_ASSIGNMENT_RETRY_MAX_MS);
+}
+
+static void test_collection_window_covers_slots_and_hops(void)
+{
+    uint32_t direct = discovery_assignment_collection_window_ms(50u, 1u);
+    uint32_t forced_hop = discovery_assignment_collection_window_ms(50u, 4u);
+    uint32_t unknown = discovery_assignment_collection_window_ms(50u, 0u);
+
+    assert(direct > DISCOVERY_ASSIGNMENT_COLLECTION_BASE_MS);
+    assert(forced_hop > direct);
+    assert(unknown > forced_hop);
+    assert(discovery_assignment_collection_window_ms(0u, 1u) == 0u);
 }
 
 static void test_full_table_fits_one_extended_packet_and_round_trips(void)
@@ -161,6 +216,8 @@ int main(void)
 {
     test_hash_order_is_deterministic_and_tied_by_id();
     test_control_and_claim_hash_round_trip();
+    test_response_delay_uses_slot_hops_and_bounded_backoff();
+    test_collection_window_covers_slots_and_hops();
     test_full_table_fits_one_extended_packet_and_round_trips();
     test_table_rejects_missing_and_corrupt_entries();
     return 0;

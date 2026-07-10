@@ -14,10 +14,19 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN 17u
 #define DISCOVERY_ASSIGNMENT_ENTRIES_PER_TLV \
     (UINT8_MAX / DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN)
+#define DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS 100u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS 20u
+#define DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS 100u
+#define DISCOVERY_ASSIGNMENT_MAX_HOPS 8u
+#define DISCOVERY_ASSIGNMENT_RETRY_BASE_MS 100u
+#define DISCOVERY_ASSIGNMENT_RETRY_MAX_MS 4000u
+#define DISCOVERY_ASSIGNMENT_COLLECTION_BASE_MS 3000u
+#define DISCOVERY_ASSIGNMENT_COLLECTION_PER_HOP_MS 750u
 
 enum discovery_assignment_phase {
     DISCOVERY_ASSIGNMENT_PHASE_CLAIM = 1,
     DISCOVERY_ASSIGNMENT_PHASE_TABLE = 2,
+    DISCOVERY_ASSIGNMENT_PHASE_ACK = 3,
 };
 
 struct discovery_assignment_claim {
@@ -70,6 +79,16 @@ int discovery_assignment_parse_table_tlvs(
     size_t entry_cap,
     size_t *entry_count,
     uint8_t *slot_count);
+int discovery_assignment_response_delay_ms(uint8_t slot,
+                                           uint8_t slot_count,
+                                           uint8_t hop_count,
+                                           uint8_t retry_round,
+                                           uint32_t random_value,
+                                           uint32_t *delay_ms);
+uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
+                                               uint32_t random_value);
+uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
+                                                   uint8_t max_hop_count);
 
 #ifdef __cplusplus
 }

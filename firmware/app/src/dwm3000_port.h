@@ -30,5 +30,7 @@ int dwm3000_port_write_with_crc(const uint8_t *header, size_t header_len,
                                 uint8_t crc8);
 int dwm3000_port_read(const uint8_t *header, size_t header_len,
                       uint8_t *body, size_t body_len);
+void dwm3000_port_clear_error(void);
+int dwm3000_port_take_error(void);
 
 #endif

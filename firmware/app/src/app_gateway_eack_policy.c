@@ -100,6 +100,7 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
     struct app_gateway_eack_policy_result *result)
 {
     struct mesh_outbound original_eack;
+    bool current_channel9_bound;
     int ret;
 
     result_init(result);
@@ -112,10 +113,12 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
     }
 
     original_eack = *eack;
-    if (return_target_valid(current_channel9_next_hop_id) &&
+    current_channel9_bound =
+        return_target_valid(current_channel9_next_hop_id) &&
         current_channel9_plan != NULL &&
         ops->prepare_channel9 != NULL &&
-        ops->send_channel9 != NULL) {
+        ops->send_channel9 != NULL;
+    if (current_channel9_bound) {
         *eack = original_eack;
         eack->next_hop_id = current_channel9_next_hop_id;
         eack->radio_channel = MESH_EVENT_CHANNEL;
@@ -143,6 +146,10 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
         }
     }
 current_channel9_done:
+    if (current_channel9_bound) {
+        *eack = original_eack;
+        return ret;
+    }
 
     if (ops->plan_channel9 != NULL &&
         ops->prepare_channel9 != NULL &&

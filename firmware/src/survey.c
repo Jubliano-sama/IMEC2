@@ -565,6 +565,26 @@ bool survey_gateway_auto_command_matches(const struct survey_gateway_auto_contex
            survey_id == context->pair.survey_id;
 }
 
+int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *context,
+                                      enum command_id command_id,
+                                      uint64_t target_id,
+                                      uint32_t survey_id)
+{
+    if (context == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!context->waiting ||
+        !survey_gateway_auto_command_matches(context,
+                                             command_id,
+                                             target_id,
+                                             survey_id)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    context->waiting = false;
+    return PROTO_OK;
+}
+
 int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
                                     enum command_id command_id,
                                     uint64_t target_id,
@@ -883,30 +903,44 @@ int survey_extract_pair_tlvs(const uint8_t *payload,
     return survey_pair_validate(pair);
 }
 
-static bool survey_report_anchor_known(const struct survey_reachability_report *reports,
-                                       size_t report_count,
-                                       uint64_t anchor_id)
+struct survey_pair_candidate {
+    size_t peer_index;
+    int8_t rssi_dbm;
+    uint8_t quality;
+    bool mutual;
+};
+
+_Static_assert(SURVEY_GATEWAY_MAX_PAIRS >=
+               (SURVEY_GATEWAY_MAX_REPORTS * SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) / 2u,
+               "survey pair storage must hold the bounded topology");
+
+static const struct survey_reachability_entry *survey_report_find_peer(
+    const struct survey_reachability_report *report,
+    uint64_t peer_id)
 {
-    for (size_t i = 0u; i < report_count; i++) {
-        if (reports[i].anchor_id == anchor_id) {
-            return true;
+    for (size_t i = 0u; i < report->entry_count; i++) {
+        if (report->entries[i].peer_id == peer_id) {
+            return &report->entries[i];
         }
     }
-    return false;
+    return NULL;
 }
 
-static bool survey_pair_seen(const struct survey_pair *pairs,
-                             size_t pair_count,
-                             uint64_t initiator_id,
-                             uint64_t responder_id)
+static bool survey_candidate_precedes(const struct survey_pair_candidate *left,
+                                      const struct survey_pair_candidate *right,
+                                      const struct survey_reachability_report *const *ordered)
 {
-    for (size_t i = 0u; i < pair_count; i++) {
-        if (pairs[i].initiator_id == initiator_id &&
-            pairs[i].responder_id == responder_id) {
-            return true;
-        }
+    if (left->mutual != right->mutual) {
+        return left->mutual;
     }
-    return false;
+    if (left->quality != right->quality) {
+        return left->quality > right->quality;
+    }
+    if (left->rssi_dbm != right->rssi_dbm) {
+        return left->rssi_dbm > right->rssi_dbm;
+    }
+    return ordered[left->peer_index]->anchor_id <
+           ordered[right->peer_index]->anchor_id;
 }
 
 int survey_plan_pairs_from_reachability(uint32_t survey_id,
@@ -917,6 +951,8 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
                                         size_t pair_cap,
                                         size_t *pair_count)
 {
+    const struct survey_reachability_report *ordered[SURVEY_GATEWAY_MAX_REPORTS];
+    uint8_t degree[SURVEY_GATEWAY_MAX_REPORTS] = {0};
     size_t count = 0u;
 
     if (reports == NULL || pairs == NULL || pair_count == NULL) {
@@ -924,6 +960,9 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
     }
     if (survey_id == 0u || !survey_sample_count_valid(sample_count)) {
         return PROTO_ERR_MALFORMED;
+    }
+    if (report_count > SURVEY_GATEWAY_MAX_REPORTS) {
+        return PROTO_ERR_NO_SPACE;
     }
 
     for (size_t i = 0u; i < report_count; i++) {
@@ -935,8 +974,6 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
         }
         for (size_t j = 0u; j < report->entry_count; j++) {
             const struct survey_reachability_entry *entry = &report->entries[j];
-            uint64_t initiator_id;
-            uint64_t responder_id;
             int ret;
 
             ret = survey_reachability_entry_validate(entry);
@@ -946,28 +983,78 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
             if (entry->peer_id == report->anchor_id) {
                 return PROTO_ERR_MALFORMED;
             }
-            if (!survey_report_anchor_known(reports, report_count, entry->peer_id)) {
+        }
+        ordered[i] = report;
+    }
+
+    for (size_t i = 1u; i < report_count; i++) {
+        const struct survey_reachability_report *value = ordered[i];
+        size_t j = i;
+
+        while (j > 0u && ordered[j - 1u]->anchor_id > value->anchor_id) {
+            ordered[j] = ordered[j - 1u];
+            j--;
+        }
+        ordered[j] = value;
+    }
+
+    for (size_t i = 0u; i < report_count; i++) {
+        struct survey_pair_candidate candidates[SURVEY_GATEWAY_MAX_REPORTS];
+        size_t candidate_count = 0u;
+
+        for (size_t j = i + 1u; j < report_count; j++) {
+            const struct survey_reachability_entry *forward =
+                survey_report_find_peer(ordered[i], ordered[j]->anchor_id);
+            const struct survey_reachability_entry *reverse =
+                survey_report_find_peer(ordered[j], ordered[i]->anchor_id);
+            struct survey_pair_candidate candidate;
+
+            if (forward == NULL && reverse == NULL) {
                 continue;
             }
-
-            if (report->anchor_id < entry->peer_id) {
-                initiator_id = report->anchor_id;
-                responder_id = entry->peer_id;
+            candidate.peer_index = j;
+            candidate.mutual = forward != NULL && reverse != NULL;
+            if (candidate.mutual) {
+                candidate.quality = forward->quality < reverse->quality ?
+                                    forward->quality : reverse->quality;
+                candidate.rssi_dbm = forward->rssi_dbm < reverse->rssi_dbm ?
+                                     forward->rssi_dbm : reverse->rssi_dbm;
+            } else if (forward != NULL) {
+                candidate.quality = forward->quality;
+                candidate.rssi_dbm = forward->rssi_dbm;
             } else {
-                initiator_id = entry->peer_id;
-                responder_id = report->anchor_id;
+                candidate.quality = reverse->quality;
+                candidate.rssi_dbm = reverse->rssi_dbm;
             }
-            if (survey_pair_seen(pairs, count, initiator_id, responder_id)) {
+
+            size_t insert = candidate_count;
+            while (insert > 0u &&
+                   survey_candidate_precedes(&candidate,
+                                             &candidates[insert - 1u],
+                                             ordered)) {
+                candidates[insert] = candidates[insert - 1u];
+                insert--;
+            }
+            candidates[insert] = candidate;
+            candidate_count++;
+        }
+
+        for (size_t j = 0u; j < candidate_count &&
+             degree[i] < SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR; j++) {
+            const size_t peer_index = candidates[j].peer_index;
+
+            if (degree[peer_index] >= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) {
                 continue;
             }
             if (count >= pair_cap) {
                 return PROTO_ERR_NO_SPACE;
             }
-
             pairs[count].survey_id = survey_id;
-            pairs[count].initiator_id = initiator_id;
-            pairs[count].responder_id = responder_id;
+            pairs[count].initiator_id = ordered[i]->anchor_id;
+            pairs[count].responder_id = ordered[peer_index]->anchor_id;
             pairs[count].sample_count = sample_count;
+            degree[i]++;
+            degree[peer_index]++;
             count++;
         }
     }

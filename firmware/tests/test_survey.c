@@ -1012,6 +1012,72 @@ static void test_gateway_context_rejects_stale_or_oversized_reports(void)
                                             1u) == PROTO_ERR_MALFORMED);
 }
 
+static void test_pair_planner_caps_degree_and_is_report_order_independent(void)
+{
+    enum { ANCHOR_COUNT = 10 };
+    struct survey_reachability_entry entries[ANCHOR_COUNT][SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    struct survey_reachability_report forward[ANCHOR_COUNT];
+    struct survey_reachability_report reverse[ANCHOR_COUNT];
+    struct survey_pair pairs_forward[SURVEY_GATEWAY_MAX_PAIRS] = {0};
+    struct survey_pair pairs_reverse[SURVEY_GATEWAY_MAX_PAIRS] = {0};
+    uint8_t degree[ANCHOR_COUNT] = {0};
+    size_t forward_count = 0u;
+    size_t reverse_count = 0u;
+
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        size_t entry_count = 0u;
+
+        for (size_t j = 0u; j < ANCHOR_COUNT &&
+             entry_count < SURVEY_GATEWAY_MAX_PEERS_PER_REPORT; j++) {
+            if (i == j) {
+                continue;
+            }
+            entries[i][entry_count].peer_id = 0x1000u + j;
+            entries[i][entry_count].rssi_dbm = -60;
+            entries[i][entry_count].quality = 80u;
+            entry_count++;
+        }
+        forward[i].anchor_id = 0x1000u + i;
+        forward[i].entries = entries[i];
+        forward[i].entry_count = entry_count;
+        reverse[ANCHOR_COUNT - i - 1u] = forward[i];
+    }
+
+    assert(survey_plan_pairs_from_reachability(0x1234u,
+                                               forward,
+                                               ANCHOR_COUNT,
+                                               1u,
+                                               pairs_forward,
+                                               SURVEY_GATEWAY_MAX_PAIRS,
+                                               &forward_count) == PROTO_OK);
+    assert(survey_plan_pairs_from_reachability(0x1234u,
+                                               reverse,
+                                               ANCHOR_COUNT,
+                                               1u,
+                                               pairs_reverse,
+                                               SURVEY_GATEWAY_MAX_PAIRS,
+                                               &reverse_count) == PROTO_OK);
+    assert(forward_count == reverse_count);
+    assert(forward_count <=
+           (ANCHOR_COUNT * SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) / 2u);
+    assert(memcmp(pairs_forward,
+                  pairs_reverse,
+                  forward_count * sizeof(pairs_forward[0])) == 0);
+
+    for (size_t i = 0u; i < forward_count; i++) {
+        size_t initiator = (size_t)(pairs_forward[i].initiator_id - 0x1000u);
+        size_t responder = (size_t)(pairs_forward[i].responder_id - 0x1000u);
+
+        assert(initiator < ANCHOR_COUNT);
+        assert(responder < ANCHOR_COUNT);
+        degree[initiator]++;
+        degree[responder]++;
+    }
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        assert(degree[i] <= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR);
+    }
+}
+
 static void test_gateway_auto_sequences_prepare_and_start_actions(void)
 {
     struct survey_gateway_context context;
@@ -1134,6 +1200,22 @@ static void test_gateway_auto_skips_pair_on_failed_command_result(void)
     assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
     assert(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
     assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+
+    assert(survey_gateway_auto_retry_pending(&auto_context,
+                                             CMD_SURVEY_PREPARE_PAIR,
+                                             0x2222000000000002ull,
+                                             0xAABBCCDDu) == PROTO_ERR_NOT_FOUND);
+    assert(survey_gateway_auto_retry_pending(&auto_context,
+                                             CMD_SURVEY_PREPARE_PAIR,
+                                             0x1111000000000001ull,
+                                             0xAABBCCDDu) == PROTO_OK);
+    assert(!auto_context.waiting);
+    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
+    memset(&action, 0, sizeof(action));
+    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
+    assert(action.command_id == CMD_SURVEY_PREPARE_PAIR);
+    assert(action.target_id == 0x1111000000000001ull);
     assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
 
     assert(survey_gateway_auto_note_result(&auto_context,
@@ -1287,6 +1369,7 @@ int main(void)
     test_gateway_context_collects_reports_and_sequences_pairs();
     test_gateway_context_updates_duplicate_report();
     test_gateway_context_rejects_stale_or_oversized_reports();
+    test_pair_planner_caps_degree_and_is_report_order_independent();
     test_gateway_auto_sequences_prepare_and_start_actions();
     test_gateway_auto_skips_pair_on_failed_command_result();
     test_reachability_plan_rejects_invalid_graph_or_capacity();

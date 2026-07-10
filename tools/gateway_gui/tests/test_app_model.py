@@ -11,6 +11,8 @@ from tools.gateway_gui.protocol import (
     MSG_COMMAND_RESULT,
     TLV_COMMAND_ID,
     TLV_COMMAND_STATUS,
+    TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+    TLV_DISCOVERY_ASSIGNMENT_PHASE,
     TLV_REASON,
     append_tlv,
     encode_cobs_packet,
@@ -49,6 +51,26 @@ def assignment_result_packet(status: int, reason: int):
         dst_id=0xA1C1BEEFC0DE0001,
         session_id=0x11223344,
         seq=7,
+        ttl=1,
+        payload=bytes(payload),
+    )
+    return parse_cobs_packet(frame)
+
+
+def assignment_phase_packet(phase: int, epoch: int):
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little"))
+    append_tlv(payload, TLV_COMMAND_STATUS, (0).to_bytes(2, "little"))
+    append_tlv(payload, TLV_REASON, b"\x00")
+    append_tlv(payload, TLV_DISCOVERY_ASSIGNMENT_PHASE, bytes((phase,)))
+    append_tlv(payload, TLV_DISCOVERY_ASSIGNMENT_EPOCH, epoch.to_bytes(4, "little"))
+    frame = encode_cobs_packet(
+        msg_type=MSG_COMMAND_RESULT,
+        flags=0,
+        src_id=0x2222222222222301,
+        dst_id=0x9999888877776666,
+        session_id=epoch,
+        seq=8,
         ttl=1,
         payload=bytes(payload),
     )
@@ -95,6 +117,15 @@ class AppModelTests(unittest.TestCase):
 
         self.assertIn("status=6 (BUSY)", summary)
         self.assertIn("reason=1", summary)
+        self.assertNotIn("assigned_anchors=", summary)
+
+    def test_assignment_phase_is_not_labeled_as_terminal_anchor_count(self) -> None:
+        summary = self.gui_model()._packet_summary(
+            assignment_phase_packet(phase=3, epoch=0x11223344)
+        )
+
+        self.assertIn("phase=3 (ACK)", summary)
+        self.assertIn("epoch=287454020", summary)
         self.assertNotIn("assigned_anchors=", summary)
 
     def test_commands_require_current_connection_identity_and_clear_on_disconnect(self) -> None:

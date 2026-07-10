@@ -363,6 +363,16 @@ static void test_pool_holds_core_click_and_two_cir_records(void)
     assert(state.pool_used <= GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
 }
 
+static void test_ble_recovery_backoff_is_random_exponential_and_capped(void)
+{
+    assert(gateway_ble_recovery_backoff_ms(0u, 0u) == 250u);
+    assert(gateway_ble_recovery_backoff_ms(0u, 249u) == 499u);
+    assert(gateway_ble_recovery_backoff_ms(1u, 0u) == 500u);
+    assert(gateway_ble_recovery_backoff_ms(2u, 799u) == 1799u);
+    assert(gateway_ble_recovery_backoff_ms(UINT8_MAX, 0u) == 30000u);
+    assert(gateway_ble_recovery_backoff_ms(UINT8_MAX, UINT32_MAX) == 30000u);
+}
+
 int main(void)
 {
     test_allowlist_excludes_mesh_control();
@@ -373,5 +383,6 @@ int main(void)
     test_fast_drain_and_counters();
     test_active_head_cannot_be_evicted();
     test_pool_holds_core_click_and_two_cir_records();
+    test_ble_recovery_backoff_is_random_exponential_and_capped();
     return 0;
 }
