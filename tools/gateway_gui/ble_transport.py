@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import codecs
 from dataclasses import dataclass
 import threading
 from typing import Any, Callable, Coroutine
@@ -11,7 +10,6 @@ from typing import Any, Callable, Coroutine
 from .protocol import (
     GATEWAY_IDENTITY_UUID,
     GatewayReceiveBuffer,
-    LOG_TX_UUID,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     SERVICE_UUID,
@@ -55,8 +53,6 @@ class BleTransport:
         self._thread.start()
         self._client: Any = None
         self._decoder = GatewayReceiveBuffer()
-        self._log_decoder = codecs.getincrementaldecoder("utf-8")("replace")
-        self._log_buffer = ""
         self._intentional_disconnect = False
 
     def _run_loop(self) -> None:
@@ -160,7 +156,7 @@ class BleTransport:
         try:
             await client.connect()
             services = client.services
-            required = (SERVICE_UUID, PACKET_TX_UUID, PACKET_RX_UUID, LOG_TX_UUID, GATEWAY_IDENTITY_UUID)
+            required = (SERVICE_UUID, PACKET_TX_UUID, PACKET_RX_UUID, GATEWAY_IDENTITY_UUID)
             missing = [uuid for uuid in required if services.get_characteristic(uuid) is None and uuid != SERVICE_UUID]
             if services.get_service(SERVICE_UUID) is None:
                 missing.insert(0, SERVICE_UUID)
@@ -171,10 +167,7 @@ class BleTransport:
             self._emit("gateway_identity", target=target, gateway_id=gateway_id)
 
             self._decoder.reset()
-            self._log_decoder = codecs.getincrementaldecoder("utf-8")("replace")
-            self._log_buffer = ""
             await client.start_notify(PACKET_TX_UUID, self._on_packet_notification)
-            await client.start_notify(LOG_TX_UUID, self._on_log_notification)
             self._client = client
             self._emit("connection_state", state="connected", target=target, gateway_id=gateway_id)
         except Exception:
@@ -191,22 +184,9 @@ class BleTransport:
         for packet in result.packets:
             self._emit("packet", packet=packet)
 
-    def _on_log_notification(self, _sender: Any, data: bytearray) -> None:
-        text = self._log_decoder.decode(bytes(data))
-        self._log_buffer += text
-        while "\n" in self._log_buffer:
-            line, self._log_buffer = self._log_buffer.split("\n", 1)
-            self._emit("gateway_log", text=line.rstrip("\r"))
-        if len(self._log_buffer) > 8192:
-            self._emit("gateway_log", text=self._log_buffer)
-            self._log_buffer = ""
-
     def _on_disconnected(self, _client: Any) -> None:
         if self._client is not None and self._client is not _client:
             return
-        if self._log_buffer:
-            self._emit("gateway_log", text=self._log_buffer)
-            self._log_buffer = ""
         self._client = None
         reason = "Disconnected" if self._intentional_disconnect else "Gateway disconnected unexpectedly"
         self._emit("connection_state", state="disconnected", target="")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import codecs
 import unittest
 from typing import Any
 from unittest.mock import patch
@@ -10,7 +9,6 @@ from tools.gateway_gui import ble_transport
 from tools.gateway_gui.ble_transport import BleTransport
 from tools.gateway_gui.protocol import (
     GATEWAY_IDENTITY_UUID,
-    LOG_TX_UUID,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     SERVICE_UUID,
@@ -23,7 +21,6 @@ class FakeServices:
         self.characteristics = {
             PACKET_TX_UUID,
             PACKET_RX_UUID,
-            LOG_TX_UUID,
             GATEWAY_IDENTITY_UUID,
         }
 
@@ -73,8 +70,6 @@ def transport_model(events: list[dict[str, Any]]) -> BleTransport:
     transport._event_sink = events.append
     transport._client = None
     transport._decoder = GatewayReceiveBuffer()
-    transport._log_decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    transport._log_buffer = ""
     transport._intentional_disconnect = False
     return transport
 
@@ -96,7 +91,7 @@ class BleTransportIdentityTests(unittest.TestCase):
 
         client = FakeBleakClient.instances[-1]
         self.assertEqual(client.read_uuids, [GATEWAY_IDENTITY_UUID])
-        self.assertEqual(client.notify_uuids, [PACKET_TX_UUID, LOG_TX_UUID])
+        self.assertEqual(client.notify_uuids, [PACKET_TX_UUID])
         self.assertEqual([event["kind"] for event in events], ["connection_state", "gateway_identity", "connection_state"])
         self.assertEqual(events[1]["gateway_id"], 0xAABBCCDDEEFF0011)
         self.assertEqual(events[2]["gateway_id"], 0xAABBCCDDEEFF0011)

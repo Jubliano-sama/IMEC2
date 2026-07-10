@@ -10,7 +10,6 @@ from bleak.backends.device import BLEDevice
 
 from .protocol import (
     GATEWAY_IDENTITY_UUID,
-    LOG_TX_UUID,
     PACKET_TX_UUID,
     SERVICE_UUID,
     decode_gateway_identity,
@@ -39,15 +38,10 @@ async def find_gateway() -> BLEDevice:
 async def run(address: str | None, settle_s: float) -> None:
     target = address or await find_gateway()
     packet_notifications = 0
-    log_notifications = 0
 
     def on_packet(_sender: object, _data: bytearray) -> None:
         nonlocal packet_notifications
         packet_notifications += 1
-
-    def on_log(_sender: object, _data: bytearray) -> None:
-        nonlocal log_notifications
-        log_notifications += 1
 
     async with BleakClient(target, timeout=12.0) as client:
         service = client.services.get_service(SERVICE_UUID)
@@ -57,15 +51,13 @@ async def run(address: str | None, settle_s: float) -> None:
             bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
         )
         await client.start_notify(PACKET_TX_UUID, on_packet)
-        await client.start_notify(LOG_TX_UUID, on_log)
         await asyncio.sleep(settle_s)
         if not client.is_connected:
             raise RuntimeError("gateway disconnected during BLE settle interval")
 
     print(
         f"BLE acceptance passed: gateway=0x{identity:016x} "
-        f"packet_notifications={packet_notifications} "
-        f"log_notifications={log_notifications}"
+        f"packet_notifications={packet_notifications}"
     )
 
 

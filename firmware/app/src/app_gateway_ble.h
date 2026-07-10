@@ -13,7 +13,6 @@
 struct gateway_ble_status {
     bool connected;
     bool packet_notify_enabled;
-    bool log_notify_enabled;
 };
 
 int gateway_ble_init(void);

@@ -756,8 +756,7 @@ void high_debug_boot_banner(void)
     high_debug_log_event("BOOT_CONFIG",
                          "device_id=0x%016llx gateway_id=0x%016llx network_id=0x%08x "
                          "uwb_channel=%u mesh_payload_channel=%u spi_hz=%u sys_status_polling=1 "
-                         "rtt_logs=%u gateway_ble=%u "
-                         "ble_log_backend=%u anchor_slot_source=%s highdebug_anchor_slot=%u",
+                         "rtt_logs=%u gateway_ble=%u anchor_slot_source=%s highdebug_anchor_slot=%u",
                          (unsigned long long)DEVICE_ID,
                          (unsigned long long)GATEWAY_ID,
                          NETWORK_ID,
@@ -766,7 +765,6 @@ void high_debug_boot_banner(void)
                          (unsigned int)dwm3000_port_current_spi_hz(),
                          IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
                          gateway_ble_transport_enabled() ? 1u : 0u,
-                         IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND) ? 1u : 0u,
                          ANCHOR_DISCOVERY_SLOT_SOURCE,
                          (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
 }

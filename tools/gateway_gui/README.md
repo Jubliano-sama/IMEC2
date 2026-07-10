@@ -1,9 +1,9 @@
 # IMEC2 Gateway BLE Console
 
 Isolated desktop test GUI for the connected IMEC gateway BLE edge. It scans,
-connects, reads the gateway identity, subscribes to the binary packet and
-debug-log characteristics, sends the three proven gateway workflows, and inspects live packets without substituting
-synthetic results when BLE or protocol operations fail.
+connects, reads the gateway identity, subscribes to binary packet reports,
+sends the three proven gateway workflows, and inspects live packets without
+substituting synthetic results when BLE or protocol operations fail.
 
 ## Setup
 
@@ -26,10 +26,9 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
 1. Scan and select an IMEC device. The normal names are `IMEC Gateway` and,
    for the current production-successor preset, `IMEC Mesh Test Gateway`.
 2. Connect. The GUI verifies the service, reads the explicit gateway identity,
-   and subscribes to packet and log notifications before reporting a connected
-   state.
+   and subscribes to packet notifications before reporting a connected state.
 3. Send `Anchor Survey Discovery`, `Here I Am`, or `Assign discovery slots`,
-   then inspect the received `COMMAND_RESULT`, reports, and gateway log. A
+   then inspect the received `COMMAND_RESULT`, reports, and activity log. A
    completed BLE write is shown as transport completion only, not command
    success.
 
@@ -62,11 +61,10 @@ The UUIDs are copied from `firmware/app/src/app_gateway_ble.c`:
 | Service | `494d4543-0001-4757-8000-000000000001` |
 | Packet notify | `494d4543-0001-4757-8000-000000000002` |
 | Packet write | `494d4543-0001-4757-8000-000000000003` |
-| Debug-log notify | `494d4543-0001-4757-8000-000000000004` |
 | Gateway identity read | `494d4543-0001-4757-8000-000000000005` |
 
 Run the strict live transport check after flashing a gateway. It fails unless
-the identity read and both packet and debug-log notification subscriptions work:
+the identity read and packet notification subscription work:
 
 ```sh
 .venv/bin/python -m tools.gateway_gui.ble_smoke [BLE_ADDRESS]

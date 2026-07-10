@@ -231,7 +231,7 @@ class GatewayGui:
         )
         dismiss = ttk.Button(self.error_frame, text="×", width=3, command=self.error_frame.grid_remove)
         dismiss.grid(row=0, column=1, sticky="e")
-        Tooltip(dismiss, "Dismiss this error. The event remains in the gateway log.")
+        Tooltip(dismiss, "Dismiss this error. The event remains in the activity log.")
         self.error_frame.grid_remove()
 
         connection = ttk.Frame(self.root, padding=(12, 9))
@@ -246,7 +246,7 @@ class GatewayGui:
         Tooltip(self.device_combo, "Select a scan result or enter a BLE address manually.")
         self.connect_button = ttk.Button(connection, text="⛓ Connect", style="Primary.TButton", command=self._connect)
         self.connect_button.grid(row=0, column=3, padx=(0, 6))
-        Tooltip(self.connect_button, "Connect and subscribe to packet and debug-log notifications.")
+        Tooltip(self.connect_button, "Connect and subscribe to gateway packet notifications.")
         self.disconnect_button = ttk.Button(connection, text="⏻ Disconnect", style="Danger.TButton", command=self.transport.disconnect)
         self.disconnect_button.grid(row=0, column=4)
         Tooltip(self.disconnect_button, "Disconnect the current BLE gateway link.")
@@ -379,7 +379,7 @@ class GatewayGui:
         packet_tab = ttk.Frame(activity, style="Panel.TFrame", padding=8)
         log_tab = ttk.Frame(activity, style="Panel.TFrame", padding=8)
         activity.add(packet_tab, text="Packets")
-        activity.add(log_tab, text="Gateway Log")
+        activity.add(log_tab, text="Activity")
         self._build_packet_table(packet_tab)
         self._build_log(log_tab)
 
@@ -439,7 +439,7 @@ class GatewayGui:
         bar = ttk.Frame(parent, style="Panel.TFrame")
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         bar.grid_columnconfigure(0, weight=1)
-        ttk.Label(bar, text="Gateway debug and transport events", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(bar, text="GUI transport events", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         clear = ttk.Button(bar, text="⌫ Clear", style="Tool.TButton", command=lambda: self._set_text(self.log_text, ""))
         clear.grid(row=0, column=1)
         self.log_text = tk.Text(
@@ -745,8 +745,6 @@ class GatewayGui:
         elif kind == "transport_error":
             message = str(event.get("message", "Unknown transport error"))
             self._show_error(message)
-        elif kind == "gateway_log":
-            self._append_log("log", str(event.get("text", "")))
         elif kind == "packet":
             packet = event.get("packet")
             if isinstance(packet, Packet):
@@ -784,7 +782,7 @@ class GatewayGui:
         self._update_command_state()
         if self.connected and self.gateway_id is not None:
             self.status_text.set(
-                f"Connected to gateway {format_device_id(self.gateway_id)}; packet and log notifications active"
+                f"Connected to gateway {format_device_id(self.gateway_id)}; packet notifications active"
             )
         elif self.connected:
             self.status_text.set("Connected, but gateway identity is unavailable; commands are disabled")

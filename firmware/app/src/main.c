@@ -311,10 +311,9 @@ int main(void)
     HIGH_DEBUG_COUNTER_INC(boot_count);
     high_debug_boot_banner();
     high_debug_log_event("DEBUG_TRANSPORT_READY",
-                         "rtt_logs=%u gateway_ble=%u ble_log_backend=%u command_parser=%u",
+                         "rtt_logs=%u gateway_ble=%u command_parser=%u",
                          IS_ENABLED(CONFIG_IMEC_RTT_LOGS) ? 1u : 0u,
                          gateway_ble_transport_enabled() ? 1u : 0u,
-                         IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_LOG_BACKEND) ? 1u : 0u,
                          app_high_debug_command_poll_enabled() ? 1u : 0u);
     high_debug_log_event("BOOTLOADER_READY",
                          "configured=0 entry_command=0 recovery=disabled");

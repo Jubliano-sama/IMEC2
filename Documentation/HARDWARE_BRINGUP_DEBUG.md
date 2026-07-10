@@ -214,9 +214,9 @@ reboot
 bootloader
 ```
 
-`gateway_stage3_highdebug` uses the connected BLE gateway service for both COBS-framed packet traffic and debug-log notifications. Subscribe to the packet notify characteristic for binary gateway packets and the log notify characteristic for human-readable log text. RTT remains available as a bench-side backup in high-debug builds.
+`gateway_stage3_highdebug` uses the connected BLE gateway service for COBS-framed packet traffic. Subscribe to the packet notify characteristic for binary gateway packets and use RTT for human-readable firmware logs.
 
-`gateway_ble_connectivity_test` advertises as `IMEC BLE Gateway Test`, stops primary-channel advertising on channels 37-39 once the PC connects, sends periodic `BLE_GATEWAY_TEST heartbeat=...` log lines through the BLE log characteristic, and echoes complete COBS packet frames written to the packet RX characteristic back on the packet notify characteristic. It does not initialize UWB, DWM3000, mesh routing, buttons, LEDs, ADC, USB CDC, or the staged high-debug runtime.
+`gateway_ble_connectivity_test` advertises as `IMEC BLE Gateway Test` for isolated BLE range checks. It does not initialize UWB, DWM3000, mesh routing, buttons, LEDs, ADC, USB CDC, or the staged high-debug runtime.
 
 Open RTT logs with your local J-Link RTT tool, for example:
 
@@ -443,7 +443,7 @@ Hardware validation is pending. Run the bench in this order:
 1. J-Link flash `tag_stage0_highdebug` to one tag. Verify USB enumeration, boot banner, DWM3000 DEV_ID, button simulated click, self-test sleep/wake, `dump_counters`, and `bootloader`.
 2. J-Link flash `tag_stage1_highdebug` and `anchor_stage1_highdebug`. Verify anchor low-duty scan, valid `WAKE_CLAIM_ACCEPT`, discovery reply, one-anchor `BENCH_ONLY` schedule, DS-TWR, and one `RANGE_OK`.
 3. Build and flash at least three `anchor_stage2_highdebug` images with distinct `IMEC_DEVICE_ID` values and unique flashed `IMEC_HIGH_DEBUG_ANCHOR_SLOT` values. Flash `tag_stage2_highdebug`. Verify three discovery replies in their flashed slots, schedule table, same continuous responder burst, three unique `RANGE_OK`, and correct release/retry behavior with fewer than three anchors.
-4. Flash `gateway_ble_connectivity_test`, connect from the PC, subscribe to packet and log notifications, verify heartbeat log notifications, write a COBS packet frame, and confirm the frame is echoed back on the packet notify characteristic.
-5. Flash `gateway_stage3_highdebug`, keep gateway human logs on BLE log notifications with RTT backup, and use the BLE packet characteristic for COBS binary packets. Verify anchor report queueing, mesh route, gateway ACK, BLE packet output, and a gateway command returning `COMMAND_RESULT`.
+4. Flash `gateway_ble_connectivity_test` and verify its BLE advertisements or scans with the paired range-test role.
+5. Flash `gateway_stage3_highdebug`, capture human logs over RTT, and use the BLE packet characteristic for COBS binary packets. Verify anchor report queueing, mesh route, gateway ACK, BLE packet output, and a gateway command returning `COMMAND_RESULT`.
 6. Run a Stage 3 survey reachability command. Verify `SURVEY_DISCOVERY_START` age propagation, hash-derived probe slots, hash-derived discovery-report mesh slots, gateway discovery-report recording, reachability graph planning, and the first pair prepare/start sequence.
 7. Capture logs from all boards and only then mark hardware validation complete for the stage that passed.

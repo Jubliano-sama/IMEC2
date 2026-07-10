@@ -240,18 +240,9 @@ config IMEC_GATEWAY_BLE
     help
       The gateway exposes a connectable BLE GATT service to the PC. One
       characteristic accepts COBS-delimited binary gateway packets, one
-      notifies COBS-delimited gateway packets back to the PC, and a separate
-      notify characteristic carries debug log text. This replaces the old
-      app-side serial gateway transport.
-
-config IMEC_GATEWAY_BLE_LOG_BACKEND
-    bool "Mirror Zephyr logs over the gateway Bluetooth link"
-    depends on IMEC_GATEWAY_BLE && LOG
-    default y
-    help
-      Adds a lightweight Zephyr log backend that forwards formatted log output
-      to the gateway BLE log notify characteristic whenever a connected PC has
-      enabled log notifications.
+      notifies COBS-delimited gateway packets back to the PC. This replaces the
+      old app-side serial gateway transport. Firmware logs remain available
+      through RTT and are not carried over BLE.
 
 config IMEC_GATEWAY_BLE_CONNECTIVITY_TEST
     bool "Build only the gateway Bluetooth connectivity test"
