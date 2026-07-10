@@ -34,10 +34,10 @@ implemented path is not mistaken for a hardware-proven one.
 | 2. Force-rediscovery result stall | Gateway host commands remain ordered and retry transient admission failures with bounded randomized exponential backoff. Route rediscovery also has a bounded terminal result. | Multi-hop command interruption soak. |
 | 3. Fatal halt | Hardware watchdog, independent system/radio progress leases, retained fatal breadcrumb, reset-cause diagnostics, and bounded fatal-loop delay are enabled for mesh roles. | Inject thread, SPI, and fatal stalls on hardware and verify reset evidence. |
 | 4. Believable SPI failure | The port latches the first SPI error, poisons failed read buffers, and the driver rejects status/config success, invalidates cached radio state, validates device identity after init/wake, and exposes forced recovery counters. | Synchronous controller hangs are recovered by watchdog reset; per-transfer asynchronous timeout and injectable SPIM faults remain future platform work. |
-| 5. ACK retry loss | Unacknowledged packets retain ownership until requeue admission succeeds; a full queue cannot displace existing work or create a duplicate owner. Admission failures and oldest pending age are always counted. | Concurrent RF queue-pressure hardware stress. |
-| 6. BLE permanent stall | Stack enable, advertising, disconnect, notification admission, and stream successor failures enter bounded recovery with capped exponential backoff; repeated notify failure resets the link. | Prolonged host reconnect and RF coexistence soak; repeated BLE-only controller failure remains visible and watchdog-independent. |
+| 5. ACK retry loss | Unacknowledged packets retain ownership until requeue admission succeeds; a full queue cannot displace existing work or create a duplicate owner. Under a live downstream reservation, failed transit custody is visibly dropped instead of starting a blocking route search, and the originator remains responsible for end-to-end retry. | Concurrent RF queue-pressure hardware stress. |
+| 6. BLE permanent stall | Stack enable, advertising, disconnect, notification admission, and stream successor failures enter bounded recovery with capped exponential backoff; repeated notify failure resets the link. Continuous gateway RX now refreshes the radio watchdog lease after every bounded driver iteration, so valid long-running mesh work cannot reset an otherwise healthy BLE connection. | Prolonged host reconnect and RF coexistence soak; repeated BLE-only controller failure remains visible and watchdog-independent. |
 | 7. Unbounded route reply listener | Wake claims and route replies are clamped to the original cumulative deadline and cannot restart the receive budget. | Inject sustained valid and invalid claim traffic. |
-| 8. Gateway receive monopolization | Long gateway channel-9 and disconnected channel-5 receives are split into at most 25 ms slices under immutable cumulative deadlines. | Measure workqueue latency during sustained gateway traffic. |
+| 8. Gateway receive monopolization | Long gateway channel-9 and disconnected channel-5 receives are split into at most 25 ms slices under immutable cumulative deadlines. Ordinary SFD/CRC errors clear and re-arm RX without a full radio reset, and every completed slice refreshes the radio progress lease. | Measure workqueue latency during sustained gateway traffic. |
 | 9. False retained-wake success | Retained wake validates SPI state and device identity; repeated recoverable radio errors force a full reset/configuration scrub. | Repeated sleep/wake deaf-radio fault injection. |
 | 10. Stranded report successor | Permanent head failure records packet identity and error, retires only that record, and schedules the next queued report immediately. | Two-record app-level hardware failure injection. |
 | 11. Persistence false success | Mount/open and write failures retain dirty in-RAM state, retry with capped backoff, distinguish durable success, and expose total/consecutive failure health. Discovery assignment is persisted before acknowledgement. | Power-cut atomicity tests and a documented flash-endurance budget. |
@@ -49,7 +49,7 @@ implemented path is not mistaken for a hardware-proven one.
 
 Additional robustness added in the same pass includes acknowledged and persisted
 normal-click slot assignment, bounded gateway-command retry queues, slot- and
-hop-aware reply timing, deterministic survey planning capped at four peers per
+hop-aware reply timing, deterministic survey planning capped at six peers per
 anchor, and strict prepare-before-start survey state.
 
 ## Outcome
@@ -451,14 +451,14 @@ After the 2026-07-10 hardening implementation, exact role builds used:
 
 | Build | Flash | RAM | Static RAM reserve |
 |---|---:|---:|---:|
-| `mesh_clicker` | 248,216 B (47.34%) | 97,304 B (74.24%) | 33,768 B |
-| `mesh_gateway` | 332,540 B (63.43%) | 129,588 B (98.87%) | 1,484 B |
-| `mesh_anchor_1` | 262,388 B (50.05%) | 127,584 B (97.34%) | 3,488 B |
-| `mesh_transmitter` | 212,104 B (40.46%) | 119,008 B (90.80%) | 12,064 B |
-| `mesh_transmitter_forcedhop` | 212,284 B (40.49%) | 119,008 B (90.80%) | 12,064 B |
+| `mesh_clicker` | 248,872 B (47.47%) | 98,456 B (75.12%) | 32,616 B |
+| `mesh_gateway` | 333,664 B (63.64%) | 129,140 B (98.53%) | 1,932 B |
+| `mesh_anchor_1` | 263,600 B (50.28%) | 127,584 B (97.34%) | 3,488 B |
+| `mesh_transmitter` | 213,100 B (40.65%) | 119,008 B (90.80%) | 12,064 B |
+| `mesh_transmitter_forcedhop` | 213,276 B (40.68%) | 119,008 B (90.80%) | 12,064 B |
 
 Gateway and anchor RAM are therefore deployment constraints, especially the
-gateway's 1,484-byte static reserve. The hardening pass kept all functional
+gateway's 1,932-byte static reserve. The hardening pass kept all functional
 capacity intact; no queue, protocol packet, CIR, stack, or diagnostic buffer was
 reduced to improve the percentage. Runtime stack low-water measurement remains
 an acceptance gate.
@@ -566,6 +566,8 @@ The 2026-07-10 implementation pass completed the following checks:
 - Exact Zephyr builds passed for `mesh_clicker`, `mesh_gateway`,
   `mesh_anchor_1`, `mesh_transmitter`, and `mesh_transmitter_forcedhop`; exact
   resource use is recorded above.
+- Normal `clicker`, `anchor`, and `gateway` role builds also passed after the
+  final runtime fixes.
 - The focused channel-9 ACK handoff Zephyr suite passed 9 of 9 after the
   ownership fix. A later pristine rebuild was blocked before compilation by the
   host's missing 32-bit libc development files; native ownership tests and all
@@ -585,14 +587,23 @@ The 2026-07-10 implementation pass completed the following checks:
   `3655541411`, slot `0`, and slot count `50` from NVS.
 - A final BLE `Here I Am` command returned `COMMAND_OK`; the anchor received the
   priority channel-5 route advertisement and entered bounded flood forwarding.
-- One initial BLE notification subscription returned GATT error `0x0e`; the
-  subsequent reconnect and subscription succeeded without resetting the
-  gateway, exercising the new BLE recovery path.
+- A sustained transmitter-to-anchor-to-gateway run delivered 298 decoded
+  channel-9 frames in 95 seconds, including 187 965-byte and 54 974-byte frames.
+  The anchor dropped 47 unacknowledged transit custody entries for origin retry
+  without opening a route-reply listener; the previous multi-second route-search
+  storm did not recur.
+- An initial BLE notification attempt exposed a gateway watchdog reset while
+  continuous RX remained inside one long-running work item. After crediting each
+  bounded RX iteration, a 40-second concurrent BLE/mesh run completed with one
+  gateway boot, 180 packet notifications, 30,989 log notifications, and 146
+  received mesh frames, including 59 965-byte and 24 974-byte frames.
+- Ordinary channel-9 SFD/CRC activity no longer triggers periodic full radio
+  scrubs; the driver clears terminal status and the gateway immediately re-arms.
 
-The transmitter was not connected to either of the two final probes, so its
-final image was build-verified rather than reflashed in this pass. Long-duration
-RF loss, BLE reconnect, power-cut persistence, stack low-water, and multi-hop
-fault-injection gates remain open.
+The transmitter remained powered but was not connected to either final probe,
+so its final image was build-verified rather than reflashed in this pass.
+Long-duration RF loss, BLE reconnect, power-cut persistence, stack low-water,
+and multi-hop fault-injection gates remain open.
 
 ## Deployment acceptance gates
 

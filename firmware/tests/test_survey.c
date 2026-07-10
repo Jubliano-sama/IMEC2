@@ -1,6 +1,7 @@
 #include "survey.h"
 
 #include <assert.h>
+#include <string.h>
 
 static struct survey_sample sample(void)
 {
@@ -1078,6 +1079,64 @@ static void test_pair_planner_caps_degree_and_is_report_order_independent(void)
     }
 }
 
+static void test_pair_planner_reaches_six_degree_ceiling_for_50_anchors(void)
+{
+    enum { ANCHOR_COUNT = SURVEY_GATEWAY_MAX_REPORTS };
+    struct survey_reachability_entry
+        entries[ANCHOR_COUNT][SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR];
+    struct survey_reachability_report reports[ANCHOR_COUNT];
+    struct survey_pair pairs[SURVEY_GATEWAY_MAX_PAIRS] = {0};
+    uint8_t degree[ANCHOR_COUNT] = {0};
+    size_t pair_count = 0u;
+
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        size_t entry_index = 0u;
+
+        for (size_t distance = 1u;
+             distance <= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR / 2u;
+             distance++) {
+            const size_t forward = (i + distance) % ANCHOR_COUNT;
+            const size_t reverse = (i + ANCHOR_COUNT - distance) % ANCHOR_COUNT;
+
+            entries[i][entry_index++] = (struct survey_reachability_entry) {
+                .peer_id = 0x1000u + forward,
+                .rssi_dbm = -60,
+                .quality = 80u,
+            };
+            entries[i][entry_index++] = (struct survey_reachability_entry) {
+                .peer_id = 0x1000u + reverse,
+                .rssi_dbm = -60,
+                .quality = 80u,
+            };
+        }
+        reports[i].anchor_id = 0x1000u + i;
+        reports[i].entries = entries[i];
+        reports[i].entry_count = entry_index;
+    }
+
+    assert(survey_plan_pairs_from_reachability(0x1234u,
+                                               reports,
+                                               ANCHOR_COUNT,
+                                               1u,
+                                               pairs,
+                                               SURVEY_GATEWAY_MAX_PAIRS,
+                                               &pair_count) == PROTO_OK);
+    assert(pair_count == SURVEY_GATEWAY_MAX_PAIRS);
+
+    for (size_t i = 0u; i < pair_count; i++) {
+        const size_t initiator = (size_t)(pairs[i].initiator_id - 0x1000u);
+        const size_t responder = (size_t)(pairs[i].responder_id - 0x1000u);
+
+        assert(initiator < ANCHOR_COUNT);
+        assert(responder < ANCHOR_COUNT);
+        degree[initiator]++;
+        degree[responder]++;
+    }
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        assert(degree[i] == SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR);
+    }
+}
+
 static void test_gateway_auto_sequences_prepare_and_start_actions(void)
 {
     struct survey_gateway_context context;
@@ -1370,6 +1429,7 @@ int main(void)
     test_gateway_context_updates_duplicate_report();
     test_gateway_context_rejects_stale_or_oversized_reports();
     test_pair_planner_caps_degree_and_is_report_order_independent();
+    test_pair_planner_reaches_six_degree_ceiling_for_50_anchors();
     test_gateway_auto_sequences_prepare_and_start_actions();
     test_gateway_auto_skips_pair_on_failed_command_result();
     test_reachability_plan_rejects_invalid_graph_or_capacity();

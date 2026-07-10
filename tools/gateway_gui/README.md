@@ -65,6 +65,13 @@ The UUIDs are copied from `firmware/app/src/app_gateway_ble.c`:
 | Debug-log notify | `494d4543-0001-4757-8000-000000000004` |
 | Gateway identity read | `494d4543-0001-4757-8000-000000000005` |
 
+Run the strict live transport check after flashing a gateway. It fails unless
+the identity read and both packet and debug-log notification subscriptions work:
+
+```sh
+.venv/bin/python -m tools.gateway_gui.ble_smoke [BLE_ADDRESS]
+```
+
 Host commands are shared IMEC packets with CRC-16/CCITT-FALSE, COBS encoding,
 and a trailing zero delimiter. The GUI chunks a complete frame into ordered
 write-without-response ATT writes because firmware reassembles the byte stream.

@@ -50,6 +50,13 @@ struct app_mesh_ch9_ack_complete_state {
     bool ack_batch_valid;
 };
 
+enum app_mesh_ch9_timeout_pressure_action {
+    APP_MESH_CH9_TIMEOUT_RETRY = 0,
+    APP_MESH_CH9_TIMEOUT_DROP_TRANSIT,
+    APP_MESH_CH9_TIMEOUT_DEFER_LOCAL,
+    APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL,
+};
+
 int app_mesh_ch9_tx_ack_apply(const struct proto_packet *ack_packet,
                               const uint8_t *payload,
                               size_t payload_len,
@@ -77,6 +84,12 @@ bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
     const struct mesh_outbound *outbound,
     uint64_t next_hop_id,
     uint64_t gateway_id);
+
+enum app_mesh_ch9_timeout_pressure_action
+app_mesh_ch9_timeout_pressure_decide(const struct mesh_outbound *outbound,
+                                     bool anchor_role,
+                                     bool downstream_reserved,
+                                     uint64_t local_id);
 
 bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
                                          const struct proto_packet *ack_packet,

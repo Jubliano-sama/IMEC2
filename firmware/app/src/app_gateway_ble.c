@@ -1364,6 +1364,7 @@ static struct k_work gateway_ble_rx_work;
 static struct k_work_delayable gateway_ble_stream_work;
 static struct k_work_delayable gateway_ble_quiet_flush_work;
 static struct k_work_delayable gateway_ble_recovery_work;
+static struct k_work_delayable gateway_ble_log_subscribe_work;
 static struct bt_conn *gateway_ble_conn;
 static bool gateway_ble_advertising_active;
 static bool gateway_ble_stack_ready;
@@ -1371,6 +1372,7 @@ static uint8_t gateway_ble_recovery_round;
 static uint8_t gateway_ble_notify_failure_count;
 static bool gateway_ble_packet_notify_enabled;
 static bool gateway_ble_log_notify_enabled;
+static bool gateway_ble_log_notify_requested;
 static uint8_t gateway_ble_uwb_quiet_depth;
 static bool gateway_ble_quiet_stopped_advertising;
 #if GATEWAY_BLE_QUIET_LOG_BUFFER_SIZE > 0u
@@ -1417,6 +1419,7 @@ static void gateway_ble_quiet_flush_work_handler(struct k_work *work);
 static void gateway_ble_rx_work_handler(struct k_work *work);
 static void gateway_ble_stream_work_handler(struct k_work *work);
 static void gateway_ble_recovery_work_handler(struct k_work *work);
+static void gateway_ble_log_subscribe_work_handler(struct k_work *work);
 static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data);
 static int gateway_ble_send_log_bytes(const uint8_t *data, size_t len);
 
@@ -1569,10 +1572,39 @@ static void gateway_ble_packet_ccc_changed(const struct bt_gatt_attr *attr,
 static void gateway_ble_log_ccc_changed(const struct bt_gatt_attr *attr,
                                         uint16_t value)
 {
+    bool enable = value == BT_GATT_CCC_NOTIFY;
+    k_spinlock_key_t key;
+
     ARG_UNUSED(attr);
 
-    gateway_ble_log_notify_enabled = value == BT_GATT_CCC_NOTIFY;
-    if (gateway_ble_log_notify_enabled) {
+    key = k_spin_lock(&gateway_ble_tx_lock);
+    gateway_ble_log_notify_requested = enable;
+    if (!enable) {
+        gateway_ble_log_notify_enabled = false;
+    }
+    k_spin_unlock(&gateway_ble_tx_lock, key);
+
+    if (enable) {
+        /* Do not activate the BLE log backend from inside its own CCC write. */
+        (void)k_work_reschedule(&gateway_ble_log_subscribe_work, K_MSEC(10));
+    } else {
+        (void)k_work_cancel_delayable(&gateway_ble_log_subscribe_work);
+    }
+}
+
+static void gateway_ble_log_subscribe_work_handler(struct k_work *work)
+{
+    bool enable;
+    k_spinlock_key_t key;
+
+    ARG_UNUSED(work);
+
+    key = k_spin_lock(&gateway_ble_tx_lock);
+    enable = gateway_ble_conn != NULL && gateway_ble_log_notify_requested;
+    gateway_ble_log_notify_enabled = enable;
+    k_spin_unlock(&gateway_ble_tx_lock, key);
+
+    if (enable) {
         gateway_ble_schedule_stream_drain();
     }
 }
@@ -2125,6 +2157,7 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     gateway_ble_conn = bt_conn_ref(conn);
     gateway_ble_packet_notify_enabled = false;
     gateway_ble_log_notify_enabled = false;
+    gateway_ble_log_notify_requested = false;
     k_spin_unlock(&gateway_ble_tx_lock, key);
     gateway_ble_stream_cancel_active();
     gateway_ble_rx_len = 0u;
@@ -2156,10 +2189,12 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
     gateway_ble_conn = NULL;
     gateway_ble_packet_notify_enabled = false;
     gateway_ble_log_notify_enabled = false;
+    gateway_ble_log_notify_requested = false;
     gateway_ble_tx_reset_locked();
     k_spin_unlock(&gateway_ble_tx_lock, key);
     gateway_ble_stream_cancel_active();
     (void)k_work_cancel_delayable(&gateway_ble_stream_work);
+    (void)k_work_cancel_delayable(&gateway_ble_log_subscribe_work);
     bt_conn_unref(disconnected_conn);
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;
@@ -2290,6 +2325,8 @@ int gateway_ble_init(void)
                           gateway_ble_quiet_flush_work_handler);
     k_work_init_delayable(&gateway_ble_recovery_work,
                           gateway_ble_recovery_work_handler);
+    k_work_init_delayable(&gateway_ble_log_subscribe_work,
+                          gateway_ble_log_subscribe_work_handler);
     gateway_ble_stream_init(&gateway_ble_stream_state);
     gateway_ble_tx_reset_locked();
     gateway_ble_rx_len = 0u;
@@ -2297,6 +2334,7 @@ int gateway_ble_init(void)
     gateway_ble_stack_ready = false;
     gateway_ble_recovery_round = 0u;
     gateway_ble_notify_failure_count = 0u;
+    gateway_ble_log_notify_requested = false;
 
     ret = bt_enable(NULL);
     LOG_INF("gateway BLE bt_enable completed: ret=%d", ret);

@@ -309,6 +309,52 @@ static void test_anchor_tracks_transit_direct_gateway_send(void)
     assert(app_mesh_ch9_tx_should_track_sent(&sent, RELAY_ID));
 }
 
+static void test_downstream_pressure_drops_transit_timeout(void)
+{
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_DROP_TRANSIT);
+}
+
+static void test_downstream_pressure_defers_nonpriority_local_timeout(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(RELAY_ID);
+
+    sent.packet.msg_type = MSG_ANCHOR_HEARTBEAT;
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_DEFER_LOCAL);
+}
+
+static void test_downstream_pressure_allows_local_click_preemption(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(RELAY_ID);
+
+    sent.packet.msg_type = MSG_CLICK_REPORT;
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL);
+
+    sent.packet.msg_type = MSG_COMMAND_RESULT;
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL);
+}
+
+static void test_timeout_pressure_is_inactive_without_downstream(void)
+{
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, false, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_RETRY);
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, false, true, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_RETRY);
+}
+
 static void test_local_direct_gateway_send_tracks_ack(void)
 {
     const struct mesh_outbound sent = gateway_bound_outbound(RELAY_ID);
@@ -403,6 +449,10 @@ int main(void)
     test_direct_gateway_legacy_ack_rejects_wrong_session();
     test_gateway_ack_relay_path_keeps_configured_in_flight_limit();
     test_anchor_tracks_transit_direct_gateway_send();
+    test_downstream_pressure_drops_transit_timeout();
+    test_downstream_pressure_defers_nonpriority_local_timeout();
+    test_downstream_pressure_allows_local_click_preemption();
+    test_timeout_pressure_is_inactive_without_downstream();
     test_local_direct_gateway_send_tracks_ack();
     test_local_destination_does_not_track_ack();
     test_non_ch9_send_does_not_track_ack();

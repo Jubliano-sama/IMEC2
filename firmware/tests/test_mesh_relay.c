@@ -124,6 +124,17 @@ static uint8_t channel9_timing_count(const struct mesh_relay *relay)
     return count;
 }
 
+static bool channel9_timing_present(const struct mesh_relay *relay, uint64_t peer_id)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        if (relay->event_timings[i].valid &&
+            relay->event_timings[i].next_hop_id == peer_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static uint32_t require_tlv_u32(const uint8_t *payload, size_t payload_len, uint8_t type)
 {
     const uint8_t *value = NULL;
@@ -3891,9 +3902,9 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(relay.upstream.candidates[0].valid);
     assert(relay.upstream.candidates[0].hold_down_until_ms != 0u);
     assert(!relay.upstream.candidates[0].channel9_timing_valid);
-    assert(mesh_relay_find_downlink(&relay, ANCHOR_B) == NULL);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_B) != NULL);
     assert(find_event_timing(&relay, GATEWAY) == NULL);
-    assert(find_event_timing(&relay, ANCHOR_B) == NULL);
+    assert(find_event_timing(&relay, ANCHOR_B) != NULL);
 }
 
 static void test_gateway_ack_timeout_handles_ms_wrap(void)
@@ -5321,6 +5332,7 @@ static void test_reactive_gateway_route_request_and_reply(void)
     assert(timing_entry != NULL);
     assert(mesh_event_timing_local_rx_slot(&timing_entry->timing));
     assert(relay_result.route_reply.next_hop_id == ANCHOR_A);
+    assert(relay_result.route_reply.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
     assert(relay_result.route_reply_backup_valid);
     assert(relay_result.route_reply_backup_next_hop_id == ANCHOR_C);
     assert(tlv_present(relay_result.route_reply.payload,
@@ -5866,6 +5878,41 @@ static void test_channel9_guard_allows_one_upstream_and_one_downstream(void)
     assert(guard.reason == MESH_RELAY_CHANNEL9_GUARD_REPLACED_PEER);
     assert(guard.direction == MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM);
     assert(channel9_timing_count(&relay) == 2u);
+}
+
+static void test_upstream_route_invalidation_preserves_downstream_connection(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 90u, 90u);
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = channel9_params(2000u);
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 90u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    seed_downlink(&relay, ANCHOR_A, ANCHOR_A, 90u, 1u, 90u, 1000u);
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  GATEWAY,
+                                                  &timing,
+                                                  2u,
+                                                  NULL) == PROTO_OK);
+    params = channel9_params(2200u);
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_relay_set_channel9_timing_guarded(&relay,
+                                                  ANCHOR_A,
+                                                  &timing,
+                                                  2u,
+                                                  NULL) == PROTO_OK);
+
+    mesh_relay_invalidate_upstream_route(&relay);
+
+    assert(relay.upstream.selected_index == ROUTE_NO_SELECTION);
+    assert(!relay.upstream.candidates[0].channel9_timing_valid);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_A) != NULL);
+    assert(!channel9_timing_present(&relay, GATEWAY));
+    assert(channel9_timing_present(&relay, ANCHOR_A));
+    assert(channel9_timing_count(&relay) == 1u);
 }
 
 static void test_channel9_guard_rejects_second_peer_in_same_direction(void)
@@ -7322,6 +7369,7 @@ static void test_direct_gateway_probe_route_answers_pending_request(void)
     assert(route_reply.packet.src_id == GATEWAY);
     assert(route_reply.packet.dst_id == ANCHOR_A);
     assert(route_reply.next_hop_id == ANCHOR_A);
+    assert(route_reply.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
     assert(route_reply.earliest_tx_ms == 1075u);
     assert(require_tlv_u8(route_reply.payload,
                           route_reply.payload_len,
@@ -7439,6 +7487,7 @@ int main(void)
     test_route_request_carries_reply_rx_eta();
     test_route_reply_waits_for_request_reply_eta();
     test_channel9_guard_allows_one_upstream_and_one_downstream();
+    test_upstream_route_invalidation_preserves_downstream_connection();
     test_channel9_guard_rejects_second_peer_in_same_direction();
     test_channel9_guard_rejects_third_peer();
     test_channel9_guard_rejects_ambiguous_or_unknown_direction();

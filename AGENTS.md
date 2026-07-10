@@ -69,6 +69,21 @@ Zephyr role builds:
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/firmware-gateway -- -DFIRMWARE_ROLE=gateway
 ```
 
+### Firmware role meaning
+
+- `mesh_clicker`, `mesh_anchor_<slot>`, and `mesh_gateway` are the active
+  production-candidate firmware line and the source of truth for behavior that
+  will become the main firmware.
+- Plain `clicker`, `anchor`, and `gateway` role builds are legacy compatibility
+  and regression images. Keep them building, but do not use them to infer the
+  current mesh runtime contract.
+- `mesh_transmitter` and `mesh_transmitter_forcedhop` are powered bench traffic
+  sources for route, retry, and preemption regression tests; they are not a
+  deployed product role.
+- `ml_clicker` and `ml_anchor_<slot>` are demo/data-collection images for a
+  distance-offset compensation model. ML-specific behavior is not the main
+  product contract.
+
 ML collection builds:
 
 ```sh
@@ -88,6 +103,11 @@ Flash the exact build directory for the image you intend to program; do not rely
 .venv/bin/west flash --runner pyocd --build-dir build/ml-clicker -- --frequency 4000000
 .venv/bin/west flash --runner pyocd --build-dir build/ml-anchor-1 -- --frequency 4000000
 ```
+
+With more than one probe attached, pass the probe ID to west after the runner
+separator: `-- --dev-id <probe-id> --frequency 4000000`. The shorter
+`-u <probe-id>` form belongs to direct `pyocd` commands such as RTT and must not
+be used as a west-flash argument.
 
 For deterministic ML anchors, replace `build/ml-anchor-1` with the anchor image being programmed, such as `build/ml-anchor-2` through `build/ml-anchor-8`.
 

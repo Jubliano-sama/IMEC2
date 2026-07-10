@@ -4051,6 +4051,7 @@ static int build_route_reply(struct mesh_relay *relay,
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = next_hop_id;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     return PROTO_OK;
 }
 
@@ -4662,6 +4663,45 @@ void mesh_relay_reset_route_discovery(struct mesh_relay *relay)
     if (relay != NULL) {
         memset(&relay->route_discovery, 0, sizeof(relay->route_discovery));
     }
+}
+
+void mesh_relay_invalidate_upstream_route(struct mesh_relay *relay)
+{
+    if (relay == NULL) {
+        return;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        struct mesh_relay_event_timing_entry *entry = &relay->event_timings[i];
+        bool upstream_peer = false;
+
+        if (!entry->valid) {
+            continue;
+        }
+        for (uint8_t j = 0u; j < ROUTE_MAX_CANDIDATES; j++) {
+            const struct route_candidate *candidate = &relay->upstream.candidates[j];
+
+            if (candidate->valid &&
+                candidate->route_epoch == relay->upstream.current_epoch &&
+                candidate->next_hop_id == entry->next_hop_id) {
+                upstream_peer = true;
+                break;
+            }
+        }
+        if (upstream_peer) {
+            memset(entry, 0, sizeof(*entry));
+        }
+    }
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct route_candidate *candidate = &relay->upstream.candidates[i];
+
+        if (candidate->valid &&
+            candidate->route_epoch == relay->upstream.current_epoch) {
+            candidate->channel9_timing_valid = false;
+        }
+    }
+    relay->upstream.selected_index = ROUTE_NO_SELECTION;
+    mesh_relay_reset_route_discovery(relay);
 }
 
 void mesh_relay_invalidate_active_route_path(struct mesh_relay *relay)
@@ -6171,7 +6211,7 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
                                          now_ms);
         if (action == ROUTE_DELIVERY_DISCOVER ||
             mesh_relay_select_next_hop(relay, relay->pending.packet.dst_id, &next_hop_id) != PROTO_OK) {
-            mesh_relay_invalidate_active_route_path(relay);
+            mesh_relay_invalidate_upstream_route(relay);
             if (preserve_pending_gateway_result(relay, now_ms)) {
                 result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
                 result->status = PROTO_ERR_NOT_FOUND;

@@ -2,6 +2,9 @@
 
 #include <string.h>
 
+_Static_assert(sizeof(struct survey_pair) == 24u,
+               "survey pair layout must retain compact gateway storage");
+
 bool survey_sample_count_valid(uint16_t sample_count)
 {
     return sample_count >= SURVEY_MIN_SAMPLE_COUNT &&

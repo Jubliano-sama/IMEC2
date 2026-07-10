@@ -233,6 +233,26 @@ bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
            (outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
 }
 
+enum app_mesh_ch9_timeout_pressure_action
+app_mesh_ch9_timeout_pressure_decide(const struct mesh_outbound *outbound,
+                                     bool anchor_role,
+                                     bool downstream_reserved,
+                                     uint64_t local_id)
+{
+    if (outbound == NULL || !anchor_role || !downstream_reserved ||
+        local_id == 0u) {
+        return APP_MESH_CH9_TIMEOUT_RETRY;
+    }
+    if (outbound->packet.src_id != local_id) {
+        return APP_MESH_CH9_TIMEOUT_DROP_TRANSIT;
+    }
+    if (outbound->packet.msg_type == MSG_CLICK_REPORT ||
+        outbound->packet.msg_type == MSG_COMMAND_RESULT) {
+        return APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL;
+    }
+    return APP_MESH_CH9_TIMEOUT_DEFER_LOCAL;
+}
+
 bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
                                          const struct proto_packet *ack_packet,
                                          const uint8_t *payload,
