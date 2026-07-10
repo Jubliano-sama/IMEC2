@@ -2388,16 +2388,16 @@ static void test_build_failure_result_is_host_visible(void)
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
 
-    assert(gateway_command_build_failure_result(&command,
-                                                GATEWAY_ID_TEST,
-                                                CMD_GET_STATUS,
-                                                COMMAND_INVALID_STATE,
-                                                7u,
-                                                999u,
-                                                &result,
-                                                payload,
-                                                sizeof(payload),
-                                                &payload_len) == PROTO_OK);
+    assert(gateway_command_build_result(&command,
+                                        GATEWAY_ID_TEST,
+                                        CMD_GET_STATUS,
+                                        COMMAND_INVALID_STATE,
+                                        7u,
+                                        999u,
+                                        &result,
+                                        payload,
+                                        sizeof(payload),
+                                        &payload_len) == PROTO_OK);
     assert(result.msg_type == MSG_COMMAND_RESULT);
     assert(result.flags == (FLAG_ERROR | FLAG_DIAGNOSTIC));
     assert(result.src_id == GATEWAY_ID_TEST);
@@ -2416,6 +2416,38 @@ static void test_build_failure_result_is_host_visible(void)
     assert(tlv_find(payload, payload_len, TLV_REASON, &value, &value_len) == PROTO_OK);
     assert(value_len == 1u);
     assert(value[0] == 7u);
+}
+
+static void test_build_success_result_is_not_flagged_as_error(void)
+{
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_DIAGNOSTIC,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 456u,
+        .seq = 45u,
+    };
+    struct proto_packet result = {0};
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+
+    assert(gateway_command_build_result(&command,
+                                        GATEWAY_ID_TEST,
+                                        CMD_FORCE_REDISCOVERY,
+                                        COMMAND_OK,
+                                        0u,
+                                        1000u,
+                                        &result,
+                                        payload,
+                                        sizeof(payload),
+                                        &payload_len) == PROTO_OK);
+    assert(result.msg_type == MSG_COMMAND_RESULT);
+    assert(result.flags == FLAG_DIAGNOSTIC);
+    assert(result.src_id == GATEWAY_ID_TEST);
+    assert(result.dst_id == GATEWAY_ID_TEST);
+    assert(result.session_id == command.session_id);
+    assert(result.seq == command.seq);
+    assert(result.payload_len == payload_len);
 }
 
 static void test_pending_command_completes_on_matching_result(void)
@@ -2633,6 +2665,7 @@ int main(void)
     test_extract_duration_uses_optional_tlv();
     test_extract_role_requires_valid_device_role_tlv();
     test_build_failure_result_is_host_visible();
+    test_build_success_result_is_not_flagged_as_error();
     test_pending_command_completes_on_matching_result();
     test_pending_command_expires_with_original_context();
     test_pending_command_expiry_handles_ms_wrap();

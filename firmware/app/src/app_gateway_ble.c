@@ -900,16 +900,16 @@ void gateway_emit_host_command_result(const struct proto_packet *command,
         return;
     }
 
-    ret = gateway_command_build_failure_result(command,
-                                               DEVICE_ID,
-                                               command_id,
-                                               status,
-                                               reason,
-                                               k_uptime_get_32(),
-                                               &result,
-                                               payload,
-                                               sizeof(payload),
-                                               &payload_len);
+    ret = gateway_command_build_result(command,
+                                       DEVICE_ID,
+                                       command_id,
+                                       status,
+                                       reason,
+                                       k_uptime_get_32(),
+                                       &result,
+                                       payload,
+                                       sizeof(payload),
+                                       &payload_len);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway command failure result build failed: %d", ret);
         return;

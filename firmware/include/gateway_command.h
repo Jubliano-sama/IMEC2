@@ -171,16 +171,16 @@ int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      struct mesh_outbound *out,
                                      enum command_id *command_id);
 int gateway_command_append_default_flood_controls(struct mesh_outbound *out);
-int gateway_command_build_failure_result(const struct proto_packet *command,
-                                         uint64_t gateway_id,
-                                         enum command_id command_id,
-                                         enum command_status status,
-                                         uint8_t reason,
-                                         uint32_t now_ms,
-                                         struct proto_packet *result,
-                                         uint8_t *payload,
-                                         size_t payload_cap,
-                                         size_t *payload_len);
+int gateway_command_build_result(const struct proto_packet *command,
+                                 uint64_t gateway_id,
+                                 enum command_id command_id,
+                                 enum command_status status,
+                                 uint8_t reason,
+                                 uint32_t now_ms,
+                                 struct proto_packet *result,
+                                 uint8_t *payload,
+                                 size_t payload_cap,
+                                 size_t *payload_len);
 void gateway_command_pending_clear(struct gateway_command_pending *pending);
 int gateway_command_pending_start(struct gateway_command_pending *pending,
                                   const struct proto_packet *command,
