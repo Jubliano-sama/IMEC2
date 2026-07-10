@@ -49,6 +49,7 @@ from tools.gateway_gui.protocol import (
     click_samples,
     crc16_ccitt_false,
     decode_cir_sample,
+    decode_gateway_identity,
     encode_cobs_packet,
     parse_cobs_packet,
     parse_stream_record,
@@ -326,8 +327,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([packet.transport for packet in result.packets], ["gateway-stream-v1", "cobs-shared-packet"])
 
     def test_anchor_discovery_command_uses_real_gateway_contract(self) -> None:
+        gateway_id = 0xAABBCCDDEEFF0011
         command = build_anchor_discovery_command(
             host_id=DEFAULT_HOST_ID,
+            gateway_id=gateway_id,
             session_id=0x10203040,
             seq=9,
             survey_id=0xA0B0C0D0,
@@ -337,7 +340,7 @@ class ProtocolTests(unittest.TestCase):
         )
         packet = command.packet
         self.assertEqual(command.command_id, CMD_SURVEY_REACHABILITY)
-        self.assertEqual(packet.dst_id, 0)
+        self.assertEqual(packet.dst_id, gateway_id)
         self.assertEqual(packet.src_id, DEFAULT_HOST_ID)
         self.assertEqual(packet.session_id, 0x10203040)
         self.assertEqual(packet.seq, 9)
@@ -350,6 +353,16 @@ class ProtocolTests(unittest.TestCase):
             [value.type_id for value in packet.tlvs],
             [TLV_COMMAND_ID, TLV_SURVEY_ID, TLV_DURATION_MS, TLV_SAMPLE_COUNT, TLV_DISCOVERY_SLOT_COUNT],
         )
+
+    def test_gateway_identity_decodes_exact_little_endian_device_id(self) -> None:
+        gateway_id = 0xAABBCCDDEEFF0011
+
+        self.assertEqual(decode_gateway_identity(gateway_id.to_bytes(8, "little")), gateway_id)
+
+        with self.assertRaisesRegex(DecodeError, "exactly 8 bytes"):
+            decode_gateway_identity(b"\x01" * 7)
+        with self.assertRaisesRegex(DecodeError, "non-zero"):
+            decode_gateway_identity(b"\x00" * 8)
 
     def test_here_i_am_command_targets_local_gateway_with_only_command_id(self) -> None:
         gateway_id = 0xAABBCCDDEEFF0011

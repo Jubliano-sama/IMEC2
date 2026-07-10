@@ -1,8 +1,8 @@
 # IMEC2 Gateway BLE Console
 
 Isolated desktop test GUI for the connected IMEC gateway BLE edge. It scans,
-connects, subscribes to the binary packet and debug-log characteristics, sends
-the two proven gateway workflows, and inspects live packets without substituting
+connects, reads the gateway identity, subscribes to the binary packet and
+debug-log characteristics, sends the three proven gateway workflows, and inspects live packets without substituting
 synthetic results when BLE or protocol operations fail.
 
 ## Setup
@@ -25,16 +25,18 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
 
 1. Scan and select an IMEC device. The normal names are `IMEC Gateway` and,
    for the current production-successor preset, `IMEC Mesh Test Gateway`.
-2. Connect. The GUI verifies the service and all three characteristics before
-   reporting a connected state.
+2. Connect. The GUI verifies the service, reads the explicit gateway identity,
+   and subscribes to packet and log notifications before reporting a connected
+   state.
 3. Send `Anchor Survey Discovery`, `Here I Am`, or `Assign discovery slots`,
    then inspect the received `COMMAND_RESULT`, reports, and gateway log. A
    completed BLE write is shown as transport completion only, not command
    success.
 
-The two gateway-local requests must target the gateway firmware `DEVICE_ID`.
-Enter it manually, or let the GUI infer it from the destination of an incoming
-report.
+All command controls remain disabled until the read-only identity characteristic
+returns the connected gateway firmware `DEVICE_ID`. The GUI clears that identity
+on disconnect and rejects contradictions from gateway-local packets; it never
+derives `DEVICE_ID` from the BLE address.
 
 ## Test
 
@@ -61,6 +63,7 @@ The UUIDs are copied from `firmware/app/src/app_gateway_ble.c`:
 | Packet notify | `494d4543-0001-4757-8000-000000000002` |
 | Packet write | `494d4543-0001-4757-8000-000000000003` |
 | Debug-log notify | `494d4543-0001-4757-8000-000000000004` |
+| Gateway identity read | `494d4543-0001-4757-8000-000000000005` |
 
 Host commands are shared IMEC packets with CRC-16/CCITT-FALSE, COBS encoding,
 and a trailing zero delimiter. The GUI chunks a complete frame into ordered
@@ -81,8 +84,8 @@ This GUI is therefore a host-delivery view, not a complete RF trace.
 
 ## Supported Commands
 
-- **Anchor Survey Discovery** sends `MSG_COMMAND` with
-  `CMD_SURVEY_REACHABILITY = 0x0100` to broadcast destination `0`. Its payload
+- **Anchor Survey Discovery** sends a gateway-local `MSG_COMMAND` with
+  `CMD_SURVEY_REACHABILITY = 0x0100` to the identity read from GATT. Its payload
   contains required `SURVEY_ID` and `DURATION_MS`, plus `SAMPLE_COUNT` and
   `DISCOVERY_SLOT_COUNT`. Gateway firmware converts it to
   `SURVEY_DISCOVERY_START`, gathers reachability, and may continue into pair

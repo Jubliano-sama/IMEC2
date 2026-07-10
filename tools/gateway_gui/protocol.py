@@ -15,6 +15,7 @@ SERVICE_UUID = "494d4543-0001-4757-8000-000000000001"
 PACKET_TX_UUID = "494d4543-0001-4757-8000-000000000002"
 PACKET_RX_UUID = "494d4543-0001-4757-8000-000000000003"
 LOG_TX_UUID = "494d4543-0001-4757-8000-000000000004"
+GATEWAY_IDENTITY_UUID = "494d4543-0001-4757-8000-000000000005"
 
 PROTO_MAGIC = 0xC1
 PROTO_VERSION = 0x01
@@ -655,6 +656,15 @@ def format_device_id(value: int) -> str:
     return f"0x{value:016x}"
 
 
+def decode_gateway_identity(raw: bytes) -> int:
+    if len(raw) != 8:
+        raise DecodeError(f"gateway identity must be exactly 8 bytes, received {len(raw)}")
+    gateway_id = int.from_bytes(raw, "little")
+    if gateway_id == 0:
+        raise DecodeError("gateway identity must be non-zero")
+    return gateway_id
+
+
 def crc16_ccitt_false(data: bytes) -> int:
     crc = 0xFFFF
     for byte in data:
@@ -1046,6 +1056,7 @@ def _build_command_frame(
 def build_anchor_discovery_command(
     *,
     host_id: int,
+    gateway_id: int,
     session_id: int,
     seq: int,
     survey_id: int,
@@ -1055,6 +1066,10 @@ def build_anchor_discovery_command(
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
+    if gateway_id == 0:
+        raise ValueError("gateway ID must be non-zero")
+    if gateway_id == host_id:
+        raise ValueError("gateway ID must differ from host ID")
     if not 1 <= survey_id <= 0xFFFFFFFF:
         raise ValueError("survey ID must be in 1..0xffffffff")
     if not 1 <= duration_ms <= 0xFFFFFFFF:
@@ -1074,7 +1089,7 @@ def build_anchor_discovery_command(
         label="Anchor survey discovery",
         command_id=CMD_SURVEY_REACHABILITY,
         host_id=host_id,
-        dst_id=MESH_BROADCAST_ID,
+        dst_id=gateway_id,
         session_id=session_id,
         seq=seq,
         payload=bytes(payload),

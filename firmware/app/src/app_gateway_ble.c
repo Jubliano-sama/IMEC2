@@ -31,6 +31,7 @@
 #include <zephyr/logging/log_backend_std.h>
 #include <zephyr/logging/log_output.h>
 #endif
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
@@ -1231,11 +1232,14 @@ void gateway_command_result_tracking_init(void)
     BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000003ULL)
 #define BT_UUID_IMEC_GATEWAY_LOG_TX_VAL \
     BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000004ULL)
+#define BT_UUID_IMEC_GATEWAY_IDENTITY_VAL \
+    BT_UUID_128_ENCODE(0x494d4543, 0x0001, 0x4757, 0x8000, 0x000000000005ULL)
 
 #define BT_UUID_IMEC_GATEWAY_SERVICE BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_SERVICE_VAL)
 #define BT_UUID_IMEC_GATEWAY_PACKET_TX BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_PACKET_TX_VAL)
 #define BT_UUID_IMEC_GATEWAY_PACKET_RX BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_PACKET_RX_VAL)
 #define BT_UUID_IMEC_GATEWAY_LOG_TX BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_LOG_TX_VAL)
+#define BT_UUID_IMEC_GATEWAY_IDENTITY BT_UUID_DECLARE_128(BT_UUID_IMEC_GATEWAY_IDENTITY_VAL)
 
 #define GATEWAY_BLE_PACKET_TX_ATTR_INDEX 2u
 #define GATEWAY_BLE_LOG_TX_ATTR_INDEX 7u
@@ -1476,6 +1480,18 @@ static ssize_t gateway_ble_packet_rx_write(struct bt_conn *conn,
     return len;
 }
 
+static ssize_t gateway_ble_identity_read(struct bt_conn *conn,
+                                         const struct bt_gatt_attr *attr,
+                                         void *buf,
+                                         uint16_t len,
+                                         uint16_t offset)
+{
+    uint8_t identity[sizeof(uint64_t)];
+
+    sys_put_le64(DEVICE_ID, identity);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, identity, sizeof(identity));
+}
+
 BT_GATT_SERVICE_DEFINE(gateway_ble_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_IMEC_GATEWAY_SERVICE),
     BT_GATT_CHARACTERISTIC(BT_UUID_IMEC_GATEWAY_PACKET_TX,
@@ -1494,6 +1510,10 @@ BT_GATT_SERVICE_DEFINE(gateway_ble_svc,
                            NULL, NULL, NULL),
     BT_GATT_CCC(gateway_ble_log_ccc_changed,
                 BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    BT_GATT_CHARACTERISTIC(BT_UUID_IMEC_GATEWAY_IDENTITY,
+                           BT_GATT_CHRC_READ,
+                           BT_GATT_PERM_READ,
+                           gateway_ble_identity_read, NULL, NULL),
 );
 
 static uint16_t gateway_ble_notify_chunk_len(struct bt_conn *conn)

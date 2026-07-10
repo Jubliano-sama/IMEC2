@@ -9,11 +9,13 @@ import threading
 from typing import Any, Callable, Coroutine
 
 from .protocol import (
+    GATEWAY_IDENTITY_UUID,
     GatewayReceiveBuffer,
     LOG_TX_UUID,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     SERVICE_UUID,
+    decode_gateway_identity,
 )
 
 try:
@@ -158,12 +160,15 @@ class BleTransport:
         try:
             await client.connect()
             services = client.services
-            required = (SERVICE_UUID, PACKET_TX_UUID, PACKET_RX_UUID, LOG_TX_UUID)
+            required = (SERVICE_UUID, PACKET_TX_UUID, PACKET_RX_UUID, LOG_TX_UUID, GATEWAY_IDENTITY_UUID)
             missing = [uuid for uuid in required if services.get_characteristic(uuid) is None and uuid != SERVICE_UUID]
             if services.get_service(SERVICE_UUID) is None:
                 missing.insert(0, SERVICE_UUID)
             if missing:
                 raise RuntimeError("connected device lacks required IMEC GATT UUIDs: " + ", ".join(missing))
+
+            gateway_id = decode_gateway_identity(bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID)))
+            self._emit("gateway_identity", target=target, gateway_id=gateway_id)
 
             self._decoder.reset()
             self._log_decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -171,7 +176,7 @@ class BleTransport:
             await client.start_notify(PACKET_TX_UUID, self._on_packet_notification)
             await client.start_notify(LOG_TX_UUID, self._on_log_notification)
             self._client = client
-            self._emit("connection_state", state="connected", target=target)
+            self._emit("connection_state", state="connected", target=target, gateway_id=gateway_id)
         except Exception:
             if client.is_connected:
                 await client.disconnect()
@@ -197,6 +202,8 @@ class BleTransport:
             self._log_buffer = ""
 
     def _on_disconnected(self, _client: Any) -> None:
+        if self._client is not None and self._client is not _client:
+            return
         if self._log_buffer:
             self._emit("gateway_log", text=self._log_buffer)
             self._log_buffer = ""

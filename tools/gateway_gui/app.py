@@ -155,14 +155,15 @@ class GatewayGui:
         self.sequence = 0
         self.connected = False
         self.scanning = False
+        self.gateway_id: int | None = None
 
         self.connection_text = tk.StringVar(value="Disconnected")
         self.device_text = tk.StringVar()
         self.status_text = tk.StringVar(value="Ready")
         self.error_text = tk.StringVar()
         self.host_id_text = tk.StringVar(value=f"0x{DEFAULT_HOST_ID:016x}")
-        self.gateway_id_text = tk.StringVar()
-        self.gateway_id_source = tk.StringVar(value="Enter the gateway DEVICE_ID or receive a packet to infer it.")
+        self.gateway_id_text = tk.StringVar(value="Unavailable")
+        self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
         self.survey_id_text = tk.StringVar(value=str((time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1))
         self.duration_text = tk.StringVar(value="250")
         self.discovery_slots_text = tk.StringVar(value="6")
@@ -301,16 +302,16 @@ class GatewayGui:
         self.discovery_button.grid(row=5, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.discovery_button,
-            "Send CMD_SURVEY_REACHABILITY (0x0100) to broadcast destination 0. Firmware starts survey discovery and reports COMMAND_RESULT.",
+            "Send gateway-local CMD_SURVEY_REACHABILITY (0x0100). Firmware starts survey discovery and reports COMMAND_RESULT.",
         )
 
         refresh = ttk.LabelFrame(parent, text="Gateway-Local Commands", padding=10)
         refresh.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         refresh.grid_columnconfigure(0, weight=1)
-        ttk.Label(refresh, text="Gateway DEVICE_ID").grid(row=0, column=0, sticky="w")
-        gateway_entry = ttk.Entry(refresh, textvariable=self.gateway_id_text)
-        gateway_entry.grid(row=1, column=0, sticky="ew", pady=(3, 4))
-        Tooltip(gateway_entry, "The command destination must exactly equal the connected gateway's firmware DEVICE_ID.")
+        ttk.Label(refresh, text="Connected gateway DEVICE_ID").grid(row=0, column=0, sticky="w")
+        gateway_identity = ttk.Label(refresh, textvariable=self.gateway_id_text)
+        gateway_identity.grid(row=1, column=0, sticky="w", pady=(3, 4))
+        Tooltip(gateway_identity, "Read directly from the connected gateway identity characteristic.")
         ttk.Label(
             refresh,
             textvariable=self.gateway_id_source,
@@ -631,12 +632,21 @@ class GatewayGui:
         session_id = (time.monotonic_ns() // 1_000_000) & 0xFFFFFFFF
         return session_id or 1, self.sequence
 
+    def _require_gateway_identity(self) -> int:
+        if not self.connected:
+            raise ValueError("Connect to a gateway before sending commands")
+        if self.gateway_id is None:
+            raise ValueError("Connected gateway identity is unavailable; reconnect before sending commands")
+        return self.gateway_id
+
     def _send_discovery(self) -> None:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
+            gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
             command = build_anchor_discovery_command(
                 host_id=host_id,
+                gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
                 survey_id=self._parse_int("Survey ID", self.survey_id_text.get()),
@@ -653,7 +663,7 @@ class GatewayGui:
     def _send_here_i_am(self) -> None:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
-            gateway_id = self._parse_int("Gateway DEVICE_ID", self.gateway_id_text.get())
+            gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
             command = build_here_i_am_command(
                 host_id=host_id,
@@ -670,7 +680,7 @@ class GatewayGui:
     def _send_assign_discovery_slots(self) -> None:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
-            gateway_id = self._parse_int("Gateway DEVICE_ID", self.gateway_id_text.get())
+            gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
             command = build_assign_discovery_slots_command(
                 host_id=host_id,
@@ -713,9 +723,25 @@ class GatewayGui:
                 self.status_text.set("No IMEC BLE devices found")
                 self._append_log("event", "Scan completed with no IMEC BLE advertisements")
         elif kind == "connection_state":
-            self._set_connection_state(str(event.get("state", "disconnected")))
+            state = str(event.get("state", "disconnected"))
+            identity_error = None
+            if state == "connected":
+                identity_error = self._accept_gateway_identity(
+                    event.get("gateway_id"),
+                    "Read from the gateway identity characteristic.",
+                )
+            self._set_connection_state(state)
             target = event.get("target") or ""
             self._append_log("event", f"BLE state: {event.get('state')} {target}".rstrip())
+            if identity_error is not None:
+                self._show_error(identity_error)
+        elif kind == "gateway_identity":
+            identity_error = self._accept_gateway_identity(
+                event.get("gateway_id"),
+                "Read from the gateway identity characteristic.",
+            )
+            if identity_error is not None:
+                self._show_error(identity_error)
         elif kind == "transport_error":
             message = str(event.get("message", "Unknown transport error"))
             self._show_error(message)
@@ -738,6 +764,10 @@ class GatewayGui:
 
     def _set_connection_state(self, state: str) -> None:
         self.connected = state == "connected"
+        if not self.connected and state != "connecting":
+            self._clear_gateway_identity("Connect to read the gateway firmware DEVICE_ID.")
+        elif state == "connecting":
+            self._clear_gateway_identity("Reading the gateway firmware DEVICE_ID...")
         names = {
             "connecting": "Connecting...",
             "connected": "Connected",
@@ -751,14 +781,44 @@ class GatewayGui:
         busy = state in ("connecting", "disconnecting")
         self.connect_button.configure(state="disabled" if self.connected or busy else "normal")
         self.disconnect_button.configure(state="normal" if self.connected else "disabled")
-        command_state = "normal" if self.connected else "disabled"
+        self._update_command_state()
+        if self.connected and self.gateway_id is not None:
+            self.status_text.set(
+                f"Connected to gateway {format_device_id(self.gateway_id)}; packet and log notifications active"
+            )
+        elif self.connected:
+            self.status_text.set("Connected, but gateway identity is unavailable; commands are disabled")
+        elif state == "disconnected":
+            self.status_text.set("Disconnected")
+
+    def _accept_gateway_identity(self, value: Any, source: str) -> str | None:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 0xFFFFFFFFFFFFFFFF:
+            self._clear_gateway_identity("Gateway identity unavailable; commands are disabled.")
+            return "Connected gateway did not provide a valid 64-bit DEVICE_ID"
+        if self.gateway_id is not None and self.gateway_id != value:
+            previous = self.gateway_id
+            self._clear_gateway_identity("Gateway identity conflict; reconnect before sending commands.")
+            return (
+                f"Gateway identity contradiction: expected {format_device_id(previous)}, "
+                f"observed {format_device_id(value)}"
+            )
+        self.gateway_id = value
+        self.gateway_id_text.set(format_device_id(value))
+        self.gateway_id_source.set(source)
+        self._update_command_state()
+        return None
+
+    def _clear_gateway_identity(self, source: str) -> None:
+        self.gateway_id = None
+        self.gateway_id_text.set("Unavailable")
+        self.gateway_id_source.set(source)
+        self._update_command_state()
+
+    def _update_command_state(self) -> None:
+        command_state = "normal" if self.connected and self.gateway_id is not None else "disabled"
         self.discovery_button.configure(state=command_state)
         self.refresh_button.configure(state=command_state)
         self.assignment_button.configure(state=command_state)
-        if self.connected:
-            self.status_text.set("Connected; packet and log notifications active")
-        elif state == "disconnected":
-            self.status_text.set("Disconnected")
 
     def _show_error(self, message: str) -> None:
         self.error_text.set(message)
@@ -885,9 +945,14 @@ class GatewayGui:
             if packet.dst_id == host_id and packet.src_id != 0:
                 observed = packet.src_id
                 source = "Observed as local COMMAND_RESULT source."
-        if observed is not None and not self.gateway_id_text.get().strip():
-            self.gateway_id_text.set(format_device_id(observed))
-            self.gateway_id_source.set(source)
+        if observed is None or self.gateway_id is None or observed == self.gateway_id:
+            return
+        expected = self.gateway_id
+        self._clear_gateway_identity("Gateway identity conflict; reconnect before sending commands.")
+        self._show_error(
+            f"Gateway identity contradiction: GATT reported {format_device_id(expected)}, "
+            f"but packet identity was {format_device_id(observed)} ({source})"
+        )
 
     def _packet_selected(self, _event: tk.Event[Any]) -> None:
         selection = self.packet_tree.selection()
