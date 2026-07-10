@@ -326,6 +326,7 @@ int report_append_cir_fragment_tlvs(
         fragment->event_seq == 0u || fragment->fragment_count == 0u ||
         fragment->fragment_index >= fragment->fragment_count ||
         fragment->chunk == NULL || fragment->chunk_len == 0u ||
+        fragment->chunk_len > RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES ||
         fragment->total_bytes == 0u ||
         fragment->byte_offset >= fragment->total_bytes ||
         fragment->chunk_len > fragment->total_bytes - fragment->byte_offset) {

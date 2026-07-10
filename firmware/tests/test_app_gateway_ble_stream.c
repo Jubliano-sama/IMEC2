@@ -354,11 +354,12 @@ static void test_pool_holds_core_click_and_two_cir_records(void)
     assert(gateway_ble_stream_enqueue_packet(&state,
                                              &click,
                                              payload,
-                                             326u,
+                                             GATEWAY_BLE_STREAM_CLICK_CIR_TAIL_PAYLOAD_BYTES,
                                              0u,
                                              3u,
                                              true) == 1);
     assert(gateway_ble_stream_depth(&state) == 3u);
+    assert(state.pool_used == GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES);
     assert(state.pool_used <= GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
 }
 

@@ -856,6 +856,7 @@ static void test_later_fragmented_range_chunk_omits_single_diagnostics(void)
 static void test_partial_cir_fragment_fits_and_encodes_reassembly_metadata(void)
 {
     uint8_t chunk[RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES];
+    uint8_t oversized_chunk[RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES + 1u];
     struct range_report_cir_fragment fragment = {
         .clicker_id = UINT64_C(0x1111222233334444),
         .anchor_id = UINT64_C(0x5555666677778888),
@@ -886,7 +887,10 @@ static void test_partial_cir_fragment_fits_and_encodes_reassembly_metadata(void)
                                            sizeof(payload),
                                            &payload_len,
                                            &fragment) == PROTO_OK);
-    assert(payload_len == PACKET_EXT_MAX_PAYLOAD_LEN);
+    assert(payload_len == RANGE_REPORT_CIR_PACKET_METADATA_BYTES + sizeof(chunk) +
+                          (2u * RANGE_REPORT_CIR_PACKET_CHUNK_TLV_COUNT));
+    assert(payload_len + MESH_CH9_BATCH_METADATA_TLV_BYTES ==
+           PACKET_EXT_MAX_PAYLOAD_LEN);
     assert(tlv_find(payload, payload_len, TLV_DIAG_FRAGMENT_INDEX,
                     &value, &value_len) == PROTO_OK);
     assert(value_len == sizeof(uint16_t));
@@ -922,19 +926,27 @@ static void test_partial_cir_fragment_fits_and_encodes_reassembly_metadata(void)
 
     fragment.fragment_index = 1u;
     fragment.byte_offset = sizeof(chunk);
-    fragment.chunk_len = 1152u - sizeof(chunk);
+    fragment.chunk_len = RANGE_REPORT_CIR_REMAINDER_RAW_BYTES;
     payload_len = 0u;
     assert(report_append_cir_fragment_tlvs(payload,
                                            sizeof(payload),
                                            &payload_len,
                                            &fragment) == PROTO_OK);
-    assert(payload_len < PACKET_EXT_MAX_PAYLOAD_LEN);
+    assert(payload_len == RANGE_REPORT_CIR_REMAINDER_PAYLOAD_BYTES);
 
     payload_len = 0u;
     assert(report_append_cir_fragment_tlvs(payload,
                                            64u,
                                            &payload_len,
                                            &fragment) == PROTO_ERR_NO_SPACE);
+
+    fragment.chunk = oversized_chunk;
+    fragment.chunk_len = sizeof(oversized_chunk);
+    payload_len = 0u;
+    assert(report_append_cir_fragment_tlvs(payload,
+                                           sizeof(payload),
+                                           &payload_len,
+                                           &fragment) == PROTO_ERR_ARG);
 }
 
 int main(void)

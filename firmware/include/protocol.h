@@ -276,6 +276,8 @@ enum tlv_type {
     TLV_CLICKER_CLOCK_OFFSET_RAW = 0xA8,
 };
 
+#define MESH_CH9_BATCH_METADATA_TLV_BYTES \
+    ((2u + sizeof(uint32_t)) + (2u + sizeof(uint8_t)))
 #define MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED (1u << 0)
 
 enum status_bit {

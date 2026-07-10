@@ -40,8 +40,8 @@ The stream uses fixed descriptor slots plus a compact record pool in RAM:
   40-byte stream header plus the full 958-byte extended shared-packet payload.
 - Payload bytes per record: `GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN`.
 - Record-pool size: `GATEWAY_BLE_STREAM_RECORD_POOL_BYTES`. A build-time guard
-  requires enough space for the core click record plus its 890-byte and
-  262-byte CIR records at the same time.
+  requires enough space for the core click record plus its 881-byte and
+  271-byte CIR records, including the channel-9 batch TLVs, at the same time.
 - RAM budget guard: `GATEWAY_BLE_STREAM_RAM_BUDGET_BYTES`.
 
 There is no dynamic allocation. Enqueue is non-blocking and records are drained

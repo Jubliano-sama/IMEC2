@@ -181,9 +181,12 @@ BUILD_ASSERT(DWM3000_FULL_CIR_BYTES <= UINT16_MAX,
              "CIR reassembly length must fit its protocol field");
 BUILD_ASSERT(RANGE_REPORT_CIR_PACKET_METADATA_BYTES +
              UWB_FULL_CIR_REPORT_PACKET_BYTES +
-             (2u * RANGE_REPORT_CIR_PACKET_CHUNK_TLV_COUNT) <=
+             (2u * RANGE_REPORT_CIR_PACKET_CHUNK_TLV_COUNT) +
+             MESH_CH9_BATCH_METADATA_TLV_BYTES ==
              PACKET_EXT_MAX_PAYLOAD_LEN,
-             "two-record CIR payload must fit one extended packet");
+             "routed CIR payload must exactly fit one extended packet");
+BUILD_ASSERT(RANGE_REPORT_CIR_WINDOW_RAW_BYTES == DWM3000_FULL_CIR_BYTES,
+             "report CIR window must match the captured DWM3000 window");
 #endif
 #endif
 
