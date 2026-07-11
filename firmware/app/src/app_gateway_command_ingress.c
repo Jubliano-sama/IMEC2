@@ -1,0 +1,97 @@
+#include "app_gateway_command_ingress.h"
+
+#include "serial_frame.h"
+
+#include <errno.h>
+#include <string.h>
+
+static struct app_gateway_command_identity command_identity_from_item(
+    const struct app_gateway_command_ingress_item *item,
+    enum command_id command_id)
+{
+    return (struct app_gateway_command_identity) {
+        .msg_type = item->packet.msg_type,
+        .src_id = item->packet.src_id,
+        .dst_id = item->packet.dst_id,
+        .session_id = item->packet.session_id,
+        .seq = item->packet.seq,
+        .admission_id = item->admission_id,
+        .command_id = command_id,
+    };
+}
+
+bool app_gateway_command_identity_matches(
+    const struct app_gateway_command_identity *identity,
+    const struct app_gateway_command_ingress_item *item)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+
+    if (identity == NULL || item == NULL ||
+        gateway_command_extract_id(item->payload, item->payload_len,
+                                   &command_id) != PROTO_OK) {
+        return false;
+    }
+    return identity->msg_type == item->packet.msg_type &&
+           identity->src_id == item->packet.src_id &&
+           identity->dst_id == item->packet.dst_id &&
+           identity->session_id == item->packet.session_id &&
+           identity->seq == item->packet.seq &&
+           identity->admission_id == item->admission_id &&
+           identity->command_id == command_id;
+}
+
+int app_gateway_command_ingress_handle_frame(
+    const struct app_gateway_command_ingress_ops *ops,
+    const uint8_t *frame,
+    size_t frame_len,
+    struct app_gateway_command_ingress_item *item_out,
+    bool *command_handled)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+    struct app_gateway_command_identity identity;
+    int ret;
+
+    if (ops == NULL || !ops->gateway_role || frame == NULL || item_out == NULL ||
+        command_handled == NULL || ops->admit == NULL ||
+        ops->submit_priority == NULL || ops->cancel_admitted == NULL ||
+        ops->emit_result == NULL) {
+        return -EINVAL;
+    }
+
+    memset(item_out, 0, sizeof(*item_out));
+    *command_handled = false;
+    ret = serial_frame_decode_packet(frame, frame_len, &item_out->packet,
+                                     item_out->payload, sizeof(item_out->payload),
+                                     &item_out->payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (ops->note_decoded != NULL) {
+        ops->note_decoded(ops->ctx, item_out);
+    }
+    if (item_out->packet.msg_type != MSG_COMMAND) {
+        return 0;
+    }
+
+    *command_handled = true;
+    (void)gateway_command_extract_id(item_out->payload, item_out->payload_len,
+                                     &command_id);
+    ret = ops->admit(ops->ctx, item_out);
+    if (ret < 0) {
+        ops->emit_result(ops->ctx, &item_out->packet, command_id,
+                         COMMAND_BUSY, (uint8_t)(-ret));
+        return ret;
+    }
+    identity = command_identity_from_item(item_out, command_id);
+    ret = ops->submit_priority(ops->ctx);
+    if (ret < 0) {
+        int cancel_ret = ops->cancel_admitted(ops->ctx, &identity);
+
+        if (cancel_ret < 0) {
+            return cancel_ret;
+        }
+        ops->emit_result(ops->ctx, &item_out->packet, command_id,
+                         COMMAND_INTERNAL_ERROR, (uint8_t)(-ret));
+    }
+    return ret;
+}

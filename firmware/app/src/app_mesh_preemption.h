@@ -5,14 +5,13 @@
 
 #include <stdbool.h>
 
-#include <zephyr/kernel.h>
-
 struct app_mesh_click_preempt_ops {
-    struct k_msgq *report_tx_msgq;
-    struct k_work_delayable *tx_timeout_work;
     int (*save_outbox)(void *ctx);
-    void (*clear_outbox)(void *ctx);
+    int (*clear_outbox)(void *ctx);
+    int (*cancel_timeout)(void *ctx);
     int (*schedule_timeout)(void *ctx);
+    int (*requeue_click_report)(void *ctx,
+                                const struct mesh_outbound *outbound);
     void *ctx;
 };
 
@@ -24,8 +23,10 @@ struct app_mesh_click_preempt_result {
     bool click_report_requeued;
     bool click_report_requeue_failed;
     int save_outbox_ret;
+    int clear_outbox_ret;
     int cancel_timeout_ret;
     int schedule_timeout_ret;
+    int click_report_requeue_ret;
 };
 
 int app_mesh_apply_click_preempt_plan(

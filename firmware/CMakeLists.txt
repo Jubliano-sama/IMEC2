@@ -9,6 +9,9 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(core
     src/debug_log.c
     src/discovery_assignment.c
+    src/dwm3000_runtime.c
+    src/dwm3000_timing.c
+    src/gateway_ble_transport.c
     src/protocol.c
     src/gateway_membership.c
     src/gateway_command.c
@@ -17,9 +20,11 @@ add_library(core
     src/uwb_session.c
     src/mesh.c
     src/mesh_preemption.c
+    src/mesh_runtime.c
     src/mesh_relay.c
     src/report.c
     src/serial_frame.c
+    src/stack_budget.c
     src/status.c
     src/route.c
     src/survey.c
@@ -32,6 +37,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 enable_testing()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
@@ -101,6 +107,33 @@ add_executable(test_app_mesh_coordinator
 target_include_directories(test_app_mesh_coordinator PRIVATE app/src)
 target_link_libraries(test_app_mesh_coordinator PRIVATE core)
 add_test(NAME app_mesh_coordinator COMMAND test_app_mesh_coordinator)
+
+add_executable(test_app_mesh_coordinator_runtime
+    tests/test_app_mesh_coordinator_runtime.c
+    app/src/app_mesh_coordinator.c
+    app/src/app_mesh_coordinator_runtime.c
+)
+target_include_directories(test_app_mesh_coordinator_runtime PRIVATE app/src)
+target_link_libraries(test_app_mesh_coordinator_runtime PRIVATE core)
+add_test(NAME app_mesh_coordinator_runtime COMMAND test_app_mesh_coordinator_runtime)
+
+add_executable(test_app_mesh_gateway_command_priority
+    tests/test_app_mesh_gateway_command_priority.c
+    app/src/app_mesh_gateway_command_priority.c
+)
+target_include_directories(test_app_mesh_gateway_command_priority PRIVATE app/src)
+target_link_libraries(test_app_mesh_gateway_command_priority PRIVATE core)
+add_test(NAME app_mesh_gateway_command_priority
+    COMMAND test_app_mesh_gateway_command_priority)
+
+add_executable(test_app_gateway_command_ingress
+    tests/test_app_gateway_command_ingress.c
+    app/src/app_gateway_command_ingress.c
+)
+target_include_directories(test_app_gateway_command_ingress PRIVATE app/src)
+target_link_libraries(test_app_gateway_command_ingress PRIVATE core)
+add_test(NAME app_gateway_command_ingress
+    COMMAND test_app_gateway_command_ingress)
 
 add_executable(test_app_mesh_flood
     tests/test_app_mesh_flood.c
@@ -240,3 +273,164 @@ add_test(NAME survey COMMAND test_survey)
 add_executable(test_debug_log tests/test_debug_log.c)
 target_link_libraries(test_debug_log PRIVATE core)
 add_test(NAME debug_log COMMAND test_debug_log)
+
+add_executable(test_dwm3000_models
+    tests/mesh_integration/test_dwm3000_models.c
+)
+target_link_libraries(test_dwm3000_models PRIVATE core)
+add_test(NAME dwm3000_models COMMAND test_dwm3000_models)
+set_tests_properties(dwm3000_models PROPERTIES LABELS "hardware_models")
+
+add_executable(test_gateway_ble_transport_model
+    tests/mesh_integration/test_gateway_ble_transport_model.c
+)
+target_link_libraries(test_gateway_ble_transport_model PRIVATE core)
+add_test(NAME gateway_ble_transport_model COMMAND test_gateway_ble_transport_model)
+set_tests_properties(gateway_ble_transport_model
+    PROPERTIES LABELS "hardware_models")
+
+add_executable(test_stack_budget_model
+    tests/mesh_integration/test_stack_budget_model.c
+)
+target_link_libraries(test_stack_budget_model PRIVATE core)
+add_test(NAME stack_budget_model COMMAND test_stack_budget_model)
+set_tests_properties(stack_budget_model PROPERTIES LABELS "hardware_models")
+
+add_test(NAME verify_stack_evidence
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_verify_stack_evidence.py)
+set_tests_properties(verify_stack_evidence PROPERTIES LABELS "hardware_models")
+
+add_test(NAME flash_verified_mesh
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh.py)
+set_tests_properties(flash_verified_mesh PROPERTIES LABELS "hardware_models")
+
+add_library(mesh_sim
+    sim/mesh_sim.c
+    sim/mesh_sim_scheduler.c
+    sim/mesh_sim_trace.c
+)
+target_include_directories(mesh_sim PUBLIC sim)
+target_link_libraries(mesh_sim PUBLIC core)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(mesh_sim PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+
+add_executable(test_mesh_integration
+    tests/mesh_integration/test_mesh_integration.c
+)
+target_link_libraries(test_mesh_integration PRIVATE mesh_sim)
+add_test(NAME mesh_integration COMMAND test_mesh_integration)
+set_tests_properties(mesh_integration
+    PROPERTIES LABELS "mesh_integration;simulator")
+
+add_executable(test_mesh_production_scenarios
+    tests/mesh_integration/test_mesh_production_scenarios.c
+)
+target_link_libraries(test_mesh_production_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_production_scenarios COMMAND test_mesh_production_scenarios)
+set_tests_properties(mesh_production_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator")
+
+add_executable(test_mesh_runtime_priority_scenarios
+    tests/mesh_integration/test_mesh_runtime_priority_scenarios.c
+)
+target_link_libraries(test_mesh_runtime_priority_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_runtime_priority_scenarios
+    COMMAND test_mesh_runtime_priority_scenarios)
+set_tests_properties(mesh_runtime_priority_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;priority")
+
+add_executable(test_mesh_wake_scenarios
+    tests/mesh_integration/test_mesh_wake_scenarios.c
+)
+target_link_libraries(test_mesh_wake_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_wake_scenarios COMMAND test_mesh_wake_scenarios)
+set_tests_properties(mesh_wake_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;wake")
+
+add_executable(test_mesh_discovery_scenarios
+    tests/mesh_integration/test_mesh_discovery_scenarios.c
+)
+target_link_libraries(test_mesh_discovery_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_discovery_scenarios COMMAND test_mesh_discovery_scenarios)
+set_tests_properties(mesh_discovery_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;discovery")
+
+add_executable(test_mesh_route_recovery_scenarios
+    tests/mesh_integration/test_mesh_route_recovery_scenarios.c
+)
+target_link_libraries(test_mesh_route_recovery_scenarios PRIVATE core)
+add_test(NAME mesh_route_recovery_scenarios
+    COMMAND test_mesh_route_recovery_scenarios)
+set_tests_properties(mesh_route_recovery_scenarios
+    PROPERTIES LABELS "mesh_integration;route;recovery")
+
+add_executable(test_mesh_route_formation_scenarios
+    tests/mesh_integration/test_mesh_route_formation_scenarios.c
+)
+target_link_libraries(test_mesh_route_formation_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_route_formation_scenarios
+    COMMAND test_mesh_route_formation_scenarios)
+set_tests_properties(mesh_route_formation_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;route;discovery")
+
+add_executable(test_mesh_network_stress_scenarios
+    tests/mesh_integration/test_mesh_network_stress_scenarios.c
+)
+target_link_libraries(test_mesh_network_stress_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_network_stress_scenarios
+    COMMAND test_mesh_network_stress_scenarios)
+set_tests_properties(mesh_network_stress_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;stress")
+
+add_executable(test_mesh_gateway_ble_scenarios
+    tests/mesh_integration/test_mesh_gateway_ble_scenarios.c
+    app/src/app_gateway_ble_stream.c
+)
+target_include_directories(test_mesh_gateway_ble_scenarios PRIVATE app/src)
+target_link_libraries(test_mesh_gateway_ble_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_gateway_ble_scenarios
+    COMMAND test_mesh_gateway_ble_scenarios)
+set_tests_properties(mesh_gateway_ble_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;ble")
+
+add_executable(test_mesh_app_arbitration_scenarios
+    tests/mesh_integration/test_mesh_app_arbitration_scenarios.c
+    app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_ch9_ack.c
+    app/src/app_mesh_coordinator.c
+    app/src/app_mesh_coordinator_runtime.c
+    app/src/app_mesh_arbitration_zephyr.c
+    app/src/app_gateway_command_ingress.c
+    app/src/app_mesh_gateway_command_priority.c
+    app/src/app_mesh_preemption.c
+)
+target_include_directories(test_mesh_app_arbitration_scenarios PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src
+)
+target_link_libraries(test_mesh_app_arbitration_scenarios PRIVATE core)
+add_test(NAME mesh_app_arbitration_scenarios
+    COMMAND test_mesh_app_arbitration_scenarios)
+set_tests_properties(mesh_app_arbitration_scenarios
+    PROPERTIES LABELS "mesh_integration;production;priority")
+
+add_executable(test_mesh_watchdog_lease_scenarios
+    tests/mesh_integration/test_mesh_watchdog_lease_scenarios.c
+)
+target_link_libraries(test_mesh_watchdog_lease_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_watchdog_lease_scenarios
+    COMMAND test_mesh_watchdog_lease_scenarios)
+set_tests_properties(mesh_watchdog_lease_scenarios
+    PROPERTIES LABELS "mesh_integration;simulator;watchdog")
+
+add_executable(test_mesh_sim_trace_scheduler
+    tests/mesh_integration/test_mesh_sim_trace_scheduler.c
+)
+target_link_libraries(test_mesh_sim_trace_scheduler PRIVATE mesh_sim)
+add_test(NAME mesh_sim_trace_scheduler
+    COMMAND test_mesh_sim_trace_scheduler)
+set_tests_properties(mesh_sim_trace_scheduler
+    PROPERTIES LABELS "mesh_integration;simulator;trace;scheduler")

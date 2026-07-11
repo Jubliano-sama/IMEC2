@@ -1,10 +1,12 @@
 #include "app_anchor.h"
 
-#include "app_anchor_low_power_policy.h"
+#include "app_radio_low_power_policy.h"
 #include "app_board.h"
 #include "app_config.h"
 #include "app_gateway_ble.h"
+#include "app_gateway_command_ingress.h"
 #include "app_high_debug.h"
+#include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
@@ -156,19 +158,21 @@ static uint8_t gateway_survey_action_retry_round;
 static struct proto_packet gateway_survey_pending_command;
 static bool gateway_survey_pending_command_valid;
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
-struct gateway_host_command_item {
-    struct proto_packet packet;
-    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    size_t payload_len;
+struct gateway_host_command_cancelled {
+    struct app_gateway_command_identity identity;
+    bool valid;
 };
 K_MSGQ_DEFINE(gateway_host_command_msgq,
-              sizeof(struct gateway_host_command_item),
+              sizeof(struct app_gateway_command_ingress_item),
               GATEWAY_HOST_COMMAND_QUEUE_DEPTH,
               4);
 static struct k_work_delayable gateway_host_command_work;
 static uint8_t gateway_host_command_retry_round;
 static uint32_t gateway_host_command_retry_started_ms;
 static bool gateway_host_command_retry_pending;
+static uint32_t gateway_host_command_next_admission_id;
+static struct gateway_host_command_cancelled
+    gateway_host_command_cancelled[GATEWAY_HOST_COMMAND_QUEUE_DEPTH];
 #endif
 static uint32_t anchor_collection_node_boot_counter;
 static uint16_t anchor_collection_result_seq;
@@ -282,34 +286,34 @@ static int anchor_append_discovery_assignment_status(uint8_t *payload,
                             (uint8_t)(sizeof(unprovisioned) - 1u));
 }
 
-static int anchor_enter_low_power(enum app_anchor_low_power_mode mode,
+static int anchor_enter_low_power(enum app_radio_low_power_mode mode,
                                   const char *reason)
 {
-    struct app_anchor_low_power_policy policy;
-    enum app_anchor_low_power_action action;
-    const char *mode_name = app_anchor_low_power_mode_name(mode);
+    struct app_radio_low_power_policy policy;
+    enum app_radio_low_power_action action;
+    const char *mode_name = app_radio_low_power_mode_name(mode);
     int first_ret;
     int recovery_ret;
     int retry_ret = 0;
     int final_ret;
     bool retry_attempted = false;
 
-    app_anchor_low_power_policy_init(&policy, mode);
-    first_ret = mode == APP_ANCHOR_LOW_POWER_IDLE ?
+    app_radio_low_power_policy_init(&policy, mode);
+    first_ret = mode == APP_RADIO_LOW_POWER_IDLE ?
                 dwm3000_driver_idle() : dwm3000_driver_standby();
-    action = app_anchor_low_power_policy_note_transition(&policy, first_ret);
-    if (action == APP_ANCHOR_LOW_POWER_COMPLETE) {
+    action = app_radio_low_power_policy_note_transition(&policy, first_ret);
+    if (action == APP_RADIO_LOW_POWER_COMPLETE) {
         return 0;
     }
 
     recovery_ret = dwm3000_driver_force_recovery();
-    action = app_anchor_low_power_policy_note_recovery(&policy, recovery_ret);
-    if (action == APP_ANCHOR_LOW_POWER_RETRY) {
+    action = app_radio_low_power_policy_note_recovery(&policy, recovery_ret);
+    if (action == APP_RADIO_LOW_POWER_RETRY) {
         retry_attempted = true;
-        retry_ret = mode == APP_ANCHOR_LOW_POWER_IDLE ?
+        retry_ret = mode == APP_RADIO_LOW_POWER_IDLE ?
                     dwm3000_driver_idle() : dwm3000_driver_standby();
-        action = app_anchor_low_power_policy_note_transition(&policy, retry_ret);
-        if (action == APP_ANCHOR_LOW_POWER_COMPLETE) {
+        action = app_radio_low_power_policy_note_transition(&policy, retry_ret);
+        if (action == APP_RADIO_LOW_POWER_COMPLETE) {
             LOG_WRN("anchor DWM3000 %s recovered after transition failure: reason=%s first_ret=%d",
                     mode_name,
                     reason,
@@ -3634,9 +3638,118 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
+static int gateway_host_command_admit(
+    void *ctx,
+    struct app_gateway_command_ingress_item *item)
+{
+    ARG_UNUSED(ctx);
+
+    if (item == NULL) {
+        return -EINVAL;
+    }
+    gateway_host_command_next_admission_id++;
+    if (gateway_host_command_next_admission_id == 0u) {
+        gateway_host_command_next_admission_id = 1u;
+    }
+    item->admission_id = gateway_host_command_next_admission_id;
+    return k_msgq_put(&gateway_host_command_msgq, item, K_NO_WAIT);
+}
+
+static int gateway_host_command_submit_priority(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return gateway_host_command_retry_pending ? 0 :
+        mesh_gateway_command_priority_submit(&gateway_host_command_work);
+}
+
+static int gateway_host_command_cancel_admitted(
+    void *ctx,
+    const struct app_gateway_command_identity *identity)
+{
+    ARG_UNUSED(ctx);
+
+    if (identity == NULL) {
+        return -EINVAL;
+    }
+    for (size_t i = 0u; i < ARRAY_SIZE(gateway_host_command_cancelled); i++) {
+        if (!gateway_host_command_cancelled[i].valid) {
+            gateway_host_command_cancelled[i].identity = *identity;
+            gateway_host_command_cancelled[i].valid = true;
+            return 0;
+        }
+    }
+    return -ENOSPC;
+}
+
+static bool gateway_host_command_take_cancelled(
+    const struct app_gateway_command_ingress_item *item)
+{
+    for (size_t i = 0u; i < ARRAY_SIZE(gateway_host_command_cancelled); i++) {
+        if (gateway_host_command_cancelled[i].valid &&
+            app_gateway_command_identity_matches(
+                &gateway_host_command_cancelled[i].identity, item)) {
+            gateway_host_command_cancelled[i].valid = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void gateway_host_command_emit_result(
+    void *ctx,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    enum command_status status,
+    uint8_t reason)
+{
+    ARG_UNUSED(ctx);
+
+    gateway_emit_host_command_result(command, command_id, status, reason);
+}
+
+static void gateway_host_command_note_decoded(
+    void *ctx,
+    const struct app_gateway_command_ingress_item *item)
+{
+    ARG_UNUSED(ctx);
+
+    HIGH_DEBUG_COUNTER_INC(command_rx);
+    high_debug_log_event("COMMAND_RX",
+                         "transport=gateway_ble msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
+                         item->packet.msg_type,
+                         (unsigned long long)item->packet.src_id,
+                         (unsigned long long)item->packet.dst_id,
+                         item->packet.seq,
+                         (unsigned int)item->payload_len);
+}
+
+static void gateway_host_command_schedule_failed(void *ctx, int error)
+{
+    struct app_gateway_command_ingress_item item;
+
+    ARG_UNUSED(ctx);
+    gateway_host_command_retry_pending = false;
+    gateway_host_command_retry_round = 0u;
+    gateway_host_command_retry_started_ms = 0u;
+    while (k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT) == 0) {
+        enum command_id command_id = CMD_VENDOR_BASE;
+
+        (void)gateway_command_extract_id(item.payload, item.payload_len,
+                                         &command_id);
+        gateway_emit_host_command_result(&item.packet, command_id,
+                                         COMMAND_INTERNAL_ERROR,
+                                         (uint8_t)(-error));
+    }
+    memset(gateway_host_command_cancelled, 0,
+           sizeof(gateway_host_command_cancelled));
+    LOG_ERR("gateway command priority safe-boundary scheduling failed: ret=%d; admitted commands cancelled",
+            error);
+}
+
 static void gateway_host_command_work_handler(struct k_work *work)
 {
-    struct gateway_host_command_item item;
+    struct app_gateway_command_ingress_item item;
 
     ARG_UNUSED(work);
     gateway_host_command_retry_pending = false;
@@ -3644,6 +3757,12 @@ static void gateway_host_command_work_handler(struct k_work *work)
     while (k_msgq_peek(&gateway_host_command_msgq, &item) == 0) {
         int ret;
 
+        if (gateway_host_command_take_cancelled(&item)) {
+            (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+            gateway_host_command_retry_round = 0u;
+            gateway_host_command_retry_started_ms = 0u;
+            continue;
+        }
         dwm3000_driver_clear_receive_abort();
         ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
         if (ret == -EAGAIN) {
@@ -3721,56 +3840,32 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
             (unsigned int)frame_len);
 #else
 #if DEVICE_ROLE == ROLE_GATEWAY
-    struct gateway_host_command_item item = {0};
+    struct app_gateway_command_ingress_item item;
+    const struct app_gateway_command_ingress_ops ingress_ops = {
+        .gateway_role = true,
+        .admit = gateway_host_command_admit,
+        .submit_priority = gateway_host_command_submit_priority,
+        .cancel_admitted = gateway_host_command_cancel_admitted,
+        .emit_result = gateway_host_command_emit_result,
+        .note_decoded = gateway_host_command_note_decoded,
+    };
+    bool command_handled;
     int ret;
 
-    ret = serial_frame_decode_packet(frame,
-                                     frame_len,
-                                     &item.packet,
-                                     item.payload,
-                                     sizeof(item.payload),
-                                     &item.payload_len);
-    if (ret != PROTO_OK) {
-        LOG_WRN("gateway BLE COBS frame decode failed: %d", ret);
+    ret = app_gateway_command_ingress_handle_frame(&ingress_ops,
+                                                   frame,
+                                                   frame_len,
+                                                   &item,
+                                                   &command_handled);
+    if (ret != 0) {
+        if (command_handled) {
+            LOG_WRN("gateway BLE command ingress failed: %d", ret);
+        } else {
+            LOG_WRN("gateway BLE COBS frame decode failed: %d", ret);
+        }
         return;
     }
-    HIGH_DEBUG_COUNTER_INC(command_rx);
-    high_debug_log_event("COMMAND_RX",
-                         "transport=gateway_ble msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
-                         item.packet.msg_type,
-                         (unsigned long long)item.packet.src_id,
-                         (unsigned long long)item.packet.dst_id,
-                         item.packet.seq,
-                         (unsigned int)item.payload_len);
-
-    if (item.packet.msg_type == MSG_COMMAND) {
-        enum command_id command_id = CMD_VENDOR_BASE;
-
-        (void)gateway_command_extract_id(item.payload,
-                                         item.payload_len,
-                                         &command_id);
-        ret = k_msgq_put(&gateway_host_command_msgq, &item, K_NO_WAIT);
-        if (ret < 0) {
-            gateway_emit_host_command_result(&item.packet,
-                                             command_id,
-                                             COMMAND_BUSY,
-                                             (uint8_t)(-ret));
-            LOG_WRN("gateway command priority queue full: seq=%u ret=%d",
-                    item.packet.seq,
-                    ret);
-            return;
-        }
-        ret = gateway_host_command_retry_pending ? 0 :
-              mesh_gateway_command_priority_submit(&gateway_host_command_work);
-        if (ret < 0) {
-            gateway_emit_host_command_result(&item.packet,
-                                             command_id,
-                                             COMMAND_INTERNAL_ERROR,
-                                             (uint8_t)(-ret));
-            LOG_ERR("gateway command priority submit failed: seq=%u ret=%d",
-                    item.packet.seq,
-                    ret);
-        }
+    if (command_handled) {
         return;
     }
 
@@ -4147,7 +4242,7 @@ static void anchor_survey_work_handler(struct k_work *work)
         uwb_window_start_ms = k_uptime_get();
         ret = anchor_run_survey_discovery(&discovery_config, discovery_start_ms);
         low_power_ret = anchor_enter_low_power(
-            app_anchor_low_power_mode_for_connection(
+            app_radio_low_power_mode_for_connection(
                 mesh_anchor_connected_radio_active()),
             "survey-discovery-exit");
         if (ret >= 0 && low_power_ret < 0) {
@@ -4231,7 +4326,7 @@ static void anchor_survey_work_handler(struct k_work *work)
         ret = anchor_run_survey_pair_initiator(&pair);
     }
     low_power_ret = anchor_enter_low_power(
-        app_anchor_low_power_mode_for_connection(
+        app_radio_low_power_mode_for_connection(
             mesh_anchor_connected_radio_active()),
         "survey-pair-exit");
     if (ret >= 0 && low_power_ret < 0) {
@@ -5336,7 +5431,7 @@ static uint32_t anchor_run_clicker_pair_survey(
             memset(&range_result, 0, sizeof(range_result));
             range_result.status = RANGE_RX_TIMEOUT;
             ret = dwm3000_driver_range_initiator(&request, &range_result);
-            low_power_ret = anchor_enter_low_power(APP_ANCHOR_LOW_POWER_IDLE,
+            low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
                                                    "pair-survey-initiator");
             if (ret < 0 && !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_INTERNAL_ERROR;
@@ -5369,7 +5464,7 @@ static uint32_t anchor_run_clicker_pair_survey(
                 }
                 break;
             }
-            low_power_ret = anchor_enter_low_power(APP_ANCHOR_LOW_POWER_IDLE,
+            low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
                                                    "pair-survey-responder");
         }
         if (low_power_ret < 0) {
@@ -6122,7 +6217,7 @@ static bool anchor_handle_mesh_click_wake_claim(
 
 release_radio:
     low_power_ret = anchor_enter_low_power(
-        app_anchor_low_power_mode_for_connection(
+        app_radio_low_power_mode_for_connection(
             mesh_anchor_connected_radio_active()),
         "click-release");
     if (low_power_ret < 0) {
@@ -6492,7 +6587,7 @@ scan_complete:
         scan_extra_awake_us = scan_rx_elapsed_us - ANCHOR_UWB_SCAN_RX_US;
     }
     low_power_ret = anchor_enter_low_power(
-        app_anchor_low_power_mode_for_connection(
+        app_radio_low_power_mode_for_connection(
             mesh_anchor_connected_radio_active()),
         "low-duty-scan-release");
     if (low_power_ret < 0 && next_scan_delay_ms < REPORT_TX_RETRY_DELAY_MS) {
@@ -6636,6 +6731,8 @@ int app_anchor_init(void)
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
     k_work_init_delayable(&gateway_host_command_work,
                           gateway_host_command_work_handler);
+    app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
+        gateway_host_command_schedule_failed, NULL);
 #endif
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);

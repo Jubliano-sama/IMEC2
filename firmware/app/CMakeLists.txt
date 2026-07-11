@@ -92,6 +92,7 @@ set(IMEC_GATEWAY_BLE_RANGE_SCANNER OFF CACHE BOOL "Build the gateway BLE connect
 set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant")
 set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant")
 set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
+set(IMEC_STACK_DIAGNOSTICS_BUILD OFF CACHE BOOL "Enable exact-preset RTT stack diagnostics")
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
 set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
 set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
@@ -161,6 +162,7 @@ if(IMEC_BUILD_PRESET)
         set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_PRESET_EXTRA_CONF "mesh-clicker.conf")
+        set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
     elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_([1-8])$")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
@@ -183,6 +185,7 @@ if(IMEC_BUILD_PRESET)
             "Build the isolated mesh-routing test firmware variant" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Test Gateway" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
+        set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
     elseif(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter" OR
            IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
@@ -214,6 +217,7 @@ if(IMEC_BUILD_PRESET)
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_DEVICE_ID "0x222222222222230${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX}ull" CACHE STRING
             "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
+        set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
     else()
         message(FATAL_ERROR "Unknown IMEC_BUILD_PRESET: ${IMEC_BUILD_PRESET}")
     endif()
@@ -336,6 +340,11 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
     list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
 endif()
 
+if(IMEC_STACK_DIAGNOSTICS_BUILD)
+    list(APPEND EXTRA_CONF_FILE
+        "${CMAKE_CURRENT_LIST_DIR}/conf/mesh-stack-diagnostics.conf")
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
@@ -362,11 +371,15 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_smoke_fast.c
     src/app_mesh_c5_priority.c
     src/app_mesh_coordinator.c
+    src/app_mesh_coordinator_runtime.c
+    src/app_mesh_arbitration_zephyr.c
+    src/app_gateway_command_ingress.c
     src/app_mesh_rx_policy.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c
     src/app_mesh_ch9_ack.c
+    src/app_mesh_gateway_command_priority.c
     src/app_mesh_collection_deferral.c
     src/app_mesh_tx_handoff_gate.c
     src/app_mesh_route_reply_ack.c
@@ -388,6 +401,9 @@ if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
         src/main.c
         ${IMEC_APP_LOCAL_SOURCES}
         ../src/gateway_membership.c
+        ../src/gateway_ble_transport.c
+        ../src/protocol.c
+        ../src/serial_frame.c
     )
 else()
     # Operational wake, discovery, ranging, and relay traffic use UWB frames.
@@ -401,6 +417,7 @@ else()
         ../src/debug_log.c
         ../src/protocol.c
         ../src/gateway_command.c
+        ../src/gateway_ble_transport.c
         ../src/discovery_assignment.c
         ../src/gateway_membership.c
         ../src/uwb.c
@@ -440,6 +457,7 @@ target_compile_definitions(app PRIVATE
     IMEC_BUILD_TIMESTAMP="${IMEC_BUILD_TIMESTAMP}"
     IMEC_BOARD_TARGET="${BOARD}"
 )
+target_compile_options(app PRIVATE -fstack-usage)
 if(IMEC_DEVICE_ID)
     target_compile_definitions(app PRIVATE DEVICE_ID=${IMEC_DEVICE_ID})
 endif()
