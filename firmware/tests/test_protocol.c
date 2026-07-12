@@ -288,6 +288,7 @@ static void test_collection_control_packet_types_round_trip(void)
         MSG_RESULT_GRANT,
         MSG_RESULT_BUNDLE,
         MSG_GATEWAY_COLLECTION_EACK,
+        MSG_GATEWAY_COMMAND_EVENT,
     };
     uint8_t encoded[PACKET_MAX_LEN];
     size_t encoded_len = 0u;

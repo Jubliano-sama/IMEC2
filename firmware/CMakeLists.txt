@@ -84,11 +84,20 @@ add_test(NAME gateway_collection_eack COMMAND test_gateway_collection_eack)
 add_executable(test_app_gateway_ble_stream
     tests/test_app_gateway_ble_stream.c
     app/src/app_gateway_ble_stream.c
+    app/src/app_gateway_command_observability.c
 )
 target_include_directories(test_app_gateway_ble_stream PRIVATE app/src)
 target_link_libraries(test_app_gateway_ble_stream PRIVATE core)
 add_test(NAME app_gateway_ble_stream COMMAND test_app_gateway_ble_stream)
 
+add_executable(test_app_gateway_command_observability
+    tests/test_app_gateway_command_observability.c
+    app/src/app_gateway_command_observability.c
+)
+target_include_directories(test_app_gateway_command_observability PRIVATE app/src)
+target_link_libraries(test_app_gateway_command_observability PRIVATE core)
+add_test(NAME app_gateway_command_observability
+    COMMAND test_app_gateway_command_observability)
 add_executable(test_app_mesh_smoke_fast
     tests/test_app_mesh_smoke_fast.c
     app/src/app_mesh_smoke_fast.c
@@ -418,6 +427,17 @@ add_executable(test_mesh_app_arbitration_scenarios
     app/src/app_mesh_gateway_command_priority.c
     app/src/app_mesh_preemption.c
 )
+
+add_executable(test_gateway_command_observability_scenarios
+    tests/mesh_integration/test_gateway_command_observability_scenarios.c
+    app/src/app_gateway_command_observability.c
+)
+target_include_directories(test_gateway_command_observability_scenarios PRIVATE app/src)
+target_link_libraries(test_gateway_command_observability_scenarios PRIVATE core)
+add_test(NAME gateway_command_observability_scenarios
+    COMMAND test_gateway_command_observability_scenarios)
+set_tests_properties(gateway_command_observability_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models")
 target_include_directories(test_mesh_app_arbitration_scenarios PRIVATE
     tests/mesh_integration/zephyr_shim
     app/src

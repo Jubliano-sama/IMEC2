@@ -15,7 +15,8 @@ int app_anchor_start_anchor_role(void);
 int app_anchor_start_gateway_role(void);
 bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                              const uint8_t *payload,
-                                             size_t payload_len);
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id);
 #if defined(CONFIG_IMEC_GATEWAY_BLE)
 void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len);
 #endif

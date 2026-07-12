@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "app_gateway_collection_eack.h"
 #include "app_gateway_eack_policy.h"
+#include "app_gateway_command_observability.h"
 #include "app_gateway_ble_stream.h"
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
@@ -39,10 +40,12 @@ LOG_MODULE_REGISTER(app_gateway_ble, LOG_LEVEL_DBG);
 
 static uint16_t gateway_command_seq;
 static struct gateway_ble_stream_state gateway_ble_stream_state;
+static struct gateway_command_observability_state gateway_command_observability_state;
 static struct k_spinlock gateway_ble_stream_lock;
 
 static bool gateway_ble_stream_ready(void);
 static void gateway_ble_schedule_stream_drain(void);
+static void gateway_observability_flush(bool include_snapshots);
 
 uint16_t gateway_next_command_seq(void)
 {
@@ -51,6 +54,80 @@ uint16_t gateway_next_command_seq(void)
         gateway_command_seq = 1u;
     }
     return gateway_command_seq;
+}
+
+static int gateway_observability_enqueue_prepared(
+    const struct gateway_command_event *event)
+{
+    struct proto_packet packet = {0};
+    uint8_t payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
+    size_t payload_len = 0u;
+    int ret;
+
+    if (event == NULL) {
+        return -EINVAL;
+    }
+    ret = gateway_command_event_encode(event,
+                                       payload,
+                                       sizeof(payload),
+                                       &payload_len);
+    if (ret < 0) {
+        return ret;
+    }
+    packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
+    packet.src_id = DEVICE_ID;
+    packet.dst_id = DEVICE_ID;
+    packet.session_id = event->event_seq;
+    packet.seq = (uint16_t)event->event_seq;
+    packet.payload_len = (uint16_t)payload_len;
+    ret = gateway_ble_stream_packet(&packet,
+                                    payload,
+                                    payload_len,
+                                    k_uptime_get_32());
+    gateway_command_observability_note_enqueue(
+        &gateway_command_observability_state, event->event_seq, ret);
+    return ret;
+}
+
+int gateway_observe_command_event(struct gateway_command_event *event,
+                                  bool terminal)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || event == NULL) {
+        return -EINVAL;
+    }
+    ret = gateway_command_observability_prepare(
+        &gateway_command_observability_state, event, terminal);
+    if (ret < 0) {
+        return ret;
+    }
+    return gateway_observability_enqueue_prepared(event);
+}
+
+static void gateway_observability_flush(bool include_snapshots)
+{
+    struct gateway_command_event event;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || !gateway_ble_stream_ready()) {
+        return;
+    }
+    if (gateway_command_observability_pending_terminal(
+            &gateway_command_observability_state, &event)) {
+        (void)gateway_observability_enqueue_prepared(&event);
+    }
+    if (!include_snapshots) {
+        return;
+    }
+    for (enum gateway_command_event_kind kind =
+             GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION;
+         kind <= GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH;
+         kind++) {
+        if (gateway_command_observability_reconnect_snapshot(
+                &gateway_command_observability_state, kind, &event)) {
+            (void)gateway_observability_enqueue_prepared(&event);
+        }
+    }
 }
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST) && defined(CONFIG_BT)
@@ -1182,7 +1259,8 @@ void gateway_note_command_result(const struct proto_packet *packet,
 
     (void)gateway_discovery_assignment_note_claim(packet,
                                                   payload,
-                                                  payload_len);
+                                                  payload_len,
+                                                  previous_hop_id);
 
     gateway_note_collection_result(packet,
                                    payload,
@@ -1504,6 +1582,7 @@ static void gateway_ble_packet_ccc_changed(const struct bt_gatt_attr *attr,
 
     gateway_ble_packet_notify_enabled = value == BT_GATT_CCC_NOTIFY;
     if (gateway_ble_packet_notify_enabled) {
+        gateway_observability_flush(true);
         gateway_ble_schedule_stream_drain();
     }
 }
@@ -1707,10 +1786,23 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
     k_spin_unlock(&gateway_ble_tx_lock, key);
 
     if (completed_source == GATEWAY_BLE_TX_STREAM) {
+        struct proto_packet completed_packet;
+        int packet_ret;
+
         key = k_spin_lock(&gateway_ble_stream_lock);
+        packet_ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                                    &completed_packet);
         gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
                                      k_uptime_get_32());
         k_spin_unlock(&gateway_ble_stream_lock, key);
+        if (packet_ret == 0) {
+            if (completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+                gateway_command_observability_mark_sent(
+                    &gateway_command_observability_state,
+                    completed_packet.session_id);
+            }
+        }
+        gateway_observability_flush(false);
     }
     gateway_ble_schedule_stream_drain();
 }
@@ -2003,6 +2095,7 @@ int gateway_ble_init(void)
     k_work_init_delayable(&gateway_ble_recovery_work,
                           gateway_ble_recovery_work_handler);
     gateway_ble_stream_init(&gateway_ble_stream_state);
+    gateway_command_observability_init(&gateway_command_observability_state);
     gateway_ble_tx_reset_locked();
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;

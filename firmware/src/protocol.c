@@ -105,6 +105,7 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_SURVEY_PAIR_RESULT:
     case MSG_SURVEY_DISCOVERY_START:
     case MSG_SURVEY_DISCOVERY_REPORT:
+    case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_ERROR:
         return true;
     default:

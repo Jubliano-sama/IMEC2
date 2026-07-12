@@ -53,6 +53,19 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #define GATEWAY_SURVEY_RETRY_MAX_MS 4000u
 #define GATEWAY_SURVEY_RETRY_PER_HOP_MS 250u
 
+BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == SURVEY_GATEWAY_MAX_REPORTS,
+             "gateway enumeration and survey capacities must both cover 50 anchors");
+BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= 50u,
+             "gateway enumeration storage is intentionally capped at 50 anchors");
+BUILD_ASSERT(SURVEY_GATEWAY_MAX_PEERS_PER_REPORT <= 8u,
+             "survey peer storage must remain capped");
+BUILD_ASSERT(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT <= 16u,
+             "survey result accounting uses one bounded 16-bit sample mask");
+BUILD_ASSERT(sizeof(struct mesh_outbound) +
+             sizeof(struct discovery_assignment_claim) * UWB_DISCOVERY_SLOT_COUNT +
+             sizeof(struct discovery_assignment_entry) * UWB_DISCOVERY_SLOT_COUNT <= 4096u,
+             "gateway discovery table publisher must stay below a 4 KiB stack frame");
+
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
              "post-wake route RX buffer must still fit normal ranging schedules");
@@ -107,6 +120,7 @@ struct gateway_discovery_assignment_state {
     uint8_t claim_round;
     uint8_t table_round;
     uint8_t max_hop_count;
+    uint16_t duplicate_count;
     bool round_open;
     bool active;
 };
@@ -157,6 +171,13 @@ static struct survey_gateway_auto_context gateway_survey_auto;
 static uint8_t gateway_survey_action_retry_round;
 static struct proto_packet gateway_survey_pending_command;
 static bool gateway_survey_pending_command_valid;
+static struct proto_packet gateway_survey_host_command;
+static uint16_t gateway_survey_duplicate_count;
+static uint16_t gateway_survey_pair_success_count;
+static uint16_t gateway_survey_pair_failure_count;
+static uint16_t gateway_survey_pair_result_mask;
+static uint16_t gateway_survey_pair_range_failure_count;
+static bool gateway_survey_pair_observation_active;
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
 struct gateway_host_command_cancelled {
     struct app_gateway_command_identity identity;
@@ -2040,6 +2061,112 @@ static int gateway_extract_survey_sample_count(const uint8_t *payload,
     return PROTO_OK;
 }
 
+static enum gateway_command_event_kind gateway_observability_kind(
+    enum command_id command_id)
+{
+    switch (command_id) {
+    case CMD_ASSIGN_DISCOVERY_SLOTS:
+        return GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION;
+    case CMD_SURVEY_REACHABILITY:
+    case CMD_SURVEY_PREPARE_PAIR:
+    case CMD_SURVEY_START_PAIR:
+    case CMD_SURVEY_ABORT:
+        return GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY;
+    case CMD_FORCE_REDISCOVERY:
+        return GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH;
+    default:
+        return 0;
+    }
+}
+
+static struct gateway_command_event gateway_observability_event(
+    enum gateway_command_event_kind kind,
+    enum gateway_command_event_stage stage,
+    enum command_id command_id,
+    const struct proto_packet *host_command,
+    uint32_t gateway_sequence)
+{
+    struct gateway_command_event event = {
+        .kind = kind,
+        .stage = stage,
+        .status = COMMAND_OK,
+        .reason = GATEWAY_COMMAND_EVENT_REASON_NONE,
+        .command_id = command_id,
+        .gateway_epoch = (uint16_t)mesh_runtime.upstream.current_epoch,
+        .gateway_sequence = gateway_sequence,
+        .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
+    };
+
+    if (host_command != NULL) {
+        event.host_session_id = host_command->session_id;
+        event.host_seq = host_command->seq;
+        event.correlation_id = host_command->session_id != 0u ?
+                               host_command->session_id : host_command->seq;
+    }
+    return event;
+}
+
+static void gateway_observe_host_stage(const struct proto_packet *host_command,
+                                       enum command_id command_id,
+                                       enum gateway_command_event_stage stage)
+{
+    enum gateway_command_event_kind kind = gateway_observability_kind(command_id);
+    struct gateway_command_event event;
+
+    if (kind == 0 || host_command == NULL) {
+        return;
+    }
+    event = gateway_observability_event(kind,
+                                        stage,
+                                        command_id,
+                                        host_command,
+                                        0u);
+    (void)gateway_observe_command_event(&event, false);
+}
+
+static void gateway_observe_host_terminal(
+    const struct proto_packet *host_command,
+    enum command_id command_id,
+    enum command_status status,
+    enum gateway_command_event_reason reason)
+{
+    enum gateway_command_event_kind kind = gateway_observability_kind(command_id);
+    struct gateway_command_event event;
+
+    if (kind == 0 || host_command == NULL) {
+        return;
+    }
+    event = gateway_observability_event(kind,
+                                        GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+                                        command_id,
+                                        host_command,
+                                        0u);
+    event.status = status;
+    event.reason = reason;
+    (void)gateway_observe_command_event(&event, true);
+}
+
+static void gateway_observe_survey_terminal(
+    enum command_status status,
+    enum gateway_command_event_reason reason)
+{
+    struct gateway_command_event event = gateway_observability_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+        CMD_SURVEY_REACHABILITY,
+        &gateway_survey_host_command,
+        gateway_survey_context.survey_id);
+
+    event.status = status;
+    event.reason = reason;
+    event.progress_count = (uint16_t)gateway_survey_context.next_pair_index;
+    event.total_count = (uint16_t)gateway_survey_context.pair_count;
+    event.success_count = gateway_survey_pair_success_count;
+    event.failure_count = gateway_survey_pair_failure_count;
+    event.duplicate_count = gateway_survey_duplicate_count;
+    (void)gateway_observe_command_event(&event, true);
+}
+
 static int gateway_route_survey_reachability(const struct proto_packet *host_packet,
                                              const uint8_t *host_payload,
                                              size_t host_payload_len)
@@ -2202,6 +2329,24 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         return mesh_errno_from_proto(ret);
     }
     gateway_survey_active = true;
+    gateway_survey_host_command = *host_packet;
+    gateway_survey_duplicate_count = 0u;
+    gateway_survey_pair_success_count = 0u;
+    gateway_survey_pair_failure_count = 0u;
+    gateway_survey_pair_result_mask = 0u;
+    gateway_survey_pair_range_failure_count = 0u;
+    gateway_survey_pair_observation_active = false;
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING,
+            CMD_SURVEY_REACHABILITY,
+            host_packet,
+            survey_id);
+
+        event.total_count = config.slot_count;
+        (void)gateway_observe_command_event(&event, false);
+    }
 
     ret = mesh_send_c5_flood(&outbound,
                              C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
@@ -2216,6 +2361,19 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                            ret == -EBUSY ? COMMAND_BUSY : COMMAND_RADIO_ERROR,
                                            (uint8_t)(-ret));
         return ret;
+    }
+
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_STAGE_FLOOD_ATTEMPT,
+            CMD_SURVEY_REACHABILITY,
+            host_packet,
+            survey_id);
+
+        event.attempt = 1u;
+        event.total_count = config.slot_count;
+        (void)gateway_observe_command_event(&event, false);
     }
 
     (void)k_work_reschedule(&gateway_survey_work, K_MSEC(collection_delay_ms));
@@ -2233,20 +2391,64 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     return 0;
 }
 
+static void gateway_note_survey_pair_result(const struct proto_packet *packet,
+                                            const uint8_t *payload,
+                                            size_t payload_len)
+{
+    uint64_t initiator_id = 0u;
+    uint64_t responder_id = 0u;
+    uint32_t survey_id = 0u;
+    uint16_t sample_index = 0u;
+    uint8_t range_status = RANGE_INTERNAL_ERROR;
+    uint16_t sample_bit;
+
+    if (!gateway_survey_pair_observation_active || packet == NULL || payload == NULL ||
+        packet->msg_type != MSG_SURVEY_PAIR_RESULT ||
+        command_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, &survey_id) != PROTO_OK ||
+        command_find_u64_tlv(payload, payload_len, TLV_INITIATOR_ID, &initiator_id) != PROTO_OK ||
+        command_find_u64_tlv(payload, payload_len, TLV_RESPONDER_ID, &responder_id) != PROTO_OK ||
+        command_find_u16_tlv(payload, payload_len, TLV_SAMPLE_INDEX, &sample_index) != PROTO_OK ||
+        command_find_u8_tlv(payload, payload_len, TLV_RANGE_STATUS, &range_status) != PROTO_OK ||
+        survey_id != gateway_survey_auto.pair.survey_id ||
+        initiator_id != gateway_survey_auto.pair.initiator_id ||
+        responder_id != gateway_survey_auto.pair.responder_id ||
+        sample_index >= gateway_survey_auto.pair.sample_count || sample_index >= 16u) {
+        return;
+    }
+
+    sample_bit = (uint16_t)(UINT16_C(1) << sample_index);
+    if ((gateway_survey_pair_result_mask & sample_bit) != 0u) {
+        if (gateway_survey_duplicate_count < UINT16_MAX) {
+            gateway_survey_duplicate_count++;
+        }
+        return;
+    }
+    gateway_survey_pair_result_mask |= sample_bit;
+    if (range_status != RANGE_OK && gateway_survey_pair_range_failure_count < UINT16_MAX) {
+        gateway_survey_pair_range_failure_count++;
+    }
+}
+
 static void gateway_handle_survey_discovery_report(const struct proto_packet *packet,
                                                     const uint8_t *payload,
-                                                    size_t payload_len)
+                                                    size_t payload_len,
+                                                    uint64_t previous_hop_id)
 {
     struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
     uint32_t survey_id = 0u;
     uint64_t anchor_id = 0u;
     size_t entry_count = 0u;
+    bool duplicate_report = false;
     int ret;
 
-    if (DEVICE_ROLE != ROLE_GATEWAY ||
-        packet == NULL ||
-        payload == NULL ||
-        packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
+    if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL || payload == NULL) {
+        return;
+    }
+    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
+        gateway_note_survey_pair_result(packet, payload, payload_len);
+        return;
+    }
+    if (packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
         packet->dst_id != DEVICE_ID) {
         return;
     }
@@ -2290,6 +2492,17 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
         return;
     }
 
+    for (size_t i = 0u; i < gateway_survey_context.report_count; i++) {
+        if (gateway_survey_context.reports[i].valid &&
+            gateway_survey_context.reports[i].anchor_id == anchor_id) {
+            if (gateway_survey_duplicate_count < UINT16_MAX) {
+                gateway_survey_duplicate_count++;
+            }
+            duplicate_report = true;
+            break;
+        }
+    }
+
     ret = survey_gateway_note_reach_report(&gateway_survey_context,
                                            survey_id,
                                            anchor_id,
@@ -2302,6 +2515,21 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 (unsigned int)entry_count,
                 ret);
         return;
+    }
+
+    if (!duplicate_report) {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+            CMD_SURVEY_REACHABILITY,
+            &gateway_survey_host_command,
+            survey_id);
+
+        event.anchor_id = anchor_id;
+        event.previous_hop_id = previous_hop_id;
+        event.progress_count = (uint16_t)gateway_survey_context.report_count;
+        event.duplicate_count = gateway_survey_duplicate_count;
+        (void)gateway_observe_command_event(&event, false);
     }
 
     ret = survey_gateway_plan_pairs(&gateway_survey_context);
@@ -2402,6 +2630,22 @@ static bool gateway_survey_auto_schedule_pending_retry(
 
     delay_ms = gateway_survey_retry_delay_ms(command->dst_id);
     gateway_survey_action_retry_round++;
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+            command_id,
+            &gateway_survey_host_command,
+            gateway_survey_context.survey_id);
+
+        event.attempt = gateway_survey_action_retry_round;
+        event.anchor_id = command->dst_id;
+        event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
+        event.pair_responder_id = gateway_survey_auto.pair.responder_id;
+        event.status = status;
+        event.reason = GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE;
+        (void)gateway_observe_command_event(&event, false);
+    }
     status_debug_printf("DBG_SURVEY_COMMAND_RETRY cmd=0x%04x dst=0x%016llx status=%u round=%u delay=%u reason=%s\n",
                         (unsigned int)command_id,
                         (unsigned long long)command->dst_id,
@@ -2413,11 +2657,58 @@ static bool gateway_survey_auto_schedule_pending_retry(
     return true;
 }
 
-static void gateway_survey_auto_finish(void)
+static void gateway_survey_finalize_pair_observation(void)
+{
+    struct gateway_command_event event;
+    uint16_t observed_count;
+    bool success;
+
+    if (!gateway_survey_pair_observation_active) {
+        return;
+    }
+    observed_count = (uint16_t)__builtin_popcount(
+        gateway_survey_pair_result_mask);
+    success = observed_count == gateway_survey_auto.pair.sample_count &&
+              gateway_survey_pair_range_failure_count == 0u;
+    if (success) {
+        gateway_survey_pair_success_count++;
+    } else {
+        gateway_survey_pair_failure_count++;
+    }
+    event = gateway_observability_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        success ? GATEWAY_COMMAND_EVENT_STAGE_PAIR_SUCCESS :
+                  GATEWAY_COMMAND_EVENT_STAGE_PAIR_FAILURE,
+        CMD_SURVEY_START_PAIR,
+        &gateway_survey_host_command,
+        gateway_survey_context.survey_id);
+    event.status = success ? COMMAND_OK : COMMAND_TIMEOUT;
+    event.reason = success ? GATEWAY_COMMAND_EVENT_REASON_NONE :
+                   gateway_survey_pair_range_failure_count > 0u ?
+                   GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED :
+                   GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE;
+    event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
+    event.pair_responder_id = gateway_survey_auto.pair.responder_id;
+    event.progress_count = observed_count;
+    event.total_count = gateway_survey_auto.pair.sample_count;
+    event.success_count = gateway_survey_pair_success_count;
+    event.failure_count = gateway_survey_pair_failure_count;
+    event.duplicate_count = gateway_survey_duplicate_count;
+    (void)gateway_observe_command_event(&event, false);
+    gateway_survey_pair_observation_active = false;
+    gateway_survey_pair_result_mask = 0u;
+    gateway_survey_pair_range_failure_count = 0u;
+}
+
+static void gateway_survey_auto_finish_status(
+    enum command_status status,
+    enum gateway_command_event_reason reason)
 {
     LOG_INF("gateway survey orchestration complete: survey=%u planned_pairs=%u",
             gateway_survey_context.survey_id,
             (unsigned int)gateway_survey_context.pair_count);
+    gateway_survey_finalize_pair_observation();
+    gateway_observe_survey_terminal(status, reason);
     gateway_survey_active = false;
     gateway_survey_action_retry_round = 0u;
     if (gateway_survey_pending_command_valid) {
@@ -2426,6 +2717,21 @@ static void gateway_survey_auto_finish(void)
     }
     (void)k_work_cancel_delayable(&gateway_survey_work);
     (void)survey_gateway_auto_begin(&gateway_survey_auto);
+}
+
+static void gateway_survey_auto_finish(void)
+{
+    enum command_status status = COMMAND_OK;
+    enum gateway_command_event_reason reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
+
+    if (gateway_survey_context.report_count == 0u) {
+        status = COMMAND_TIMEOUT;
+        reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS;
+    } else if (gateway_survey_pair_failure_count > 0u) {
+        status = COMMAND_INTERNAL_ERROR;
+        reason = GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED;
+    }
+    gateway_survey_auto_finish_status(status, reason);
 }
 
 static int gateway_survey_auto_send_outbound(struct mesh_outbound *outbound,
@@ -2557,6 +2863,25 @@ static void gateway_survey_auto_log_skipped_pair(const char *reason,
                                                  enum command_status status,
                                                  uint8_t detail)
 {
+    struct gateway_command_event event = gateway_observability_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        GATEWAY_COMMAND_EVENT_STAGE_PAIR_FAILURE,
+        CMD_SURVEY_START_PAIR,
+        &gateway_survey_host_command,
+        gateway_survey_context.survey_id);
+
+    gateway_survey_pair_failure_count++;
+    event.status = status;
+    event.reason = status == COMMAND_TIMEOUT ?
+                   GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
+                   GATEWAY_COMMAND_EVENT_REASON_RADIO;
+    event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
+    event.pair_responder_id = gateway_survey_auto.pair.responder_id;
+    event.attempt = gateway_survey_action_retry_round;
+    event.success_count = gateway_survey_pair_success_count;
+    event.failure_count = gateway_survey_pair_failure_count;
+    event.duplicate_count = gateway_survey_duplicate_count;
+    (void)gateway_observe_command_event(&event, false);
     LOG_WRN("gateway survey auto pair skipped: survey=%u initiator=0x%016llx responder=0x%016llx reason=%s status=%u detail=%u",
             gateway_survey_auto.pair.survey_id,
             (unsigned long long)gateway_survey_auto.pair.initiator_id,
@@ -2612,6 +2937,24 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
         gateway_survey_auto_log_skipped_pair("command-result", status, reason);
     } else if (pair_launched) {
         gateway_survey_action_retry_round = 0u;
+        gateway_survey_pair_observation_active = true;
+        gateway_survey_pair_result_mask = 0u;
+        gateway_survey_pair_range_failure_count = 0u;
+        {
+            struct gateway_command_event event = gateway_observability_event(
+                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+                GATEWAY_COMMAND_EVENT_STAGE_PAIR_START,
+                CMD_SURVEY_START_PAIR,
+                &gateway_survey_host_command,
+                gateway_survey_context.survey_id);
+
+            event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
+            event.pair_responder_id = gateway_survey_auto.pair.responder_id;
+            event.progress_count =
+                (uint16_t)gateway_survey_context.next_pair_index;
+            event.total_count = (uint16_t)gateway_survey_context.pair_count;
+            (void)gateway_observe_command_event(&event, false);
+        }
         LOG_INF("gateway survey pair launched: survey=%u initiator=0x%016llx responder=0x%016llx samples=%u",
                 gateway_survey_auto.pair.survey_id,
                 (unsigned long long)gateway_survey_auto.pair.initiator_id,
@@ -2840,6 +3183,24 @@ static int gateway_discovery_assignment_open_claim_round(void)
                   sys_rand32_get());
     (void)k_work_reschedule(&gateway_discovery_assignment_finalize_work,
                             K_MSEC(wait_ms));
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            ret == 0 ? GATEWAY_COMMAND_EVENT_STAGE_FLOOD_ATTEMPT :
+                       GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            &gateway_discovery_assignment_state.host_command,
+            gateway_discovery_assignment_state.epoch);
+
+        event.attempt = gateway_discovery_assignment_state.claim_round;
+        event.progress_count =
+            (uint16_t)gateway_discovery_assignment_state.claim_count;
+        event.duplicate_count = gateway_discovery_assignment_state.duplicate_count;
+        event.status = ret == 0 ? COMMAND_OK : COMMAND_RADIO_ERROR;
+        event.reason = ret == 0 ? GATEWAY_COMMAND_EVENT_REASON_NONE :
+                                 GATEWAY_COMMAND_EVENT_REASON_RADIO;
+        (void)gateway_observe_command_event(&event, false);
+    }
     return ret;
 }
 
@@ -2853,6 +3214,28 @@ static void gateway_discovery_assignment_fail(enum command_status status,
                                      CMD_ASSIGN_DISCOVERY_SLOTS,
                                      status,
                                      reason);
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            &gateway_discovery_assignment_state.host_command,
+            gateway_discovery_assignment_state.epoch);
+
+        event.status = status;
+        event.reason = gateway_discovery_assignment_state.claim_count == 0u ?
+                       GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS :
+                       status == COMMAND_TIMEOUT ?
+                       GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
+                       GATEWAY_COMMAND_EVENT_REASON_RADIO;
+        event.progress_count =
+            (uint16_t)gateway_discovery_assignment_state.claim_count;
+        event.total_count =
+            (uint16_t)gateway_discovery_assignment_state.claim_count;
+        event.failure_count = reason;
+        event.duplicate_count = gateway_discovery_assignment_state.duplicate_count;
+        (void)gateway_observe_command_event(&event, true);
+    }
     gateway_discovery_assignment_state.active = false;
     gateway_discovery_assignment_state.round_open = false;
     (void)k_work_cancel_delayable(&gateway_discovery_assignment_finalize_work);
@@ -2885,6 +3268,16 @@ static int gateway_start_discovery_assignment(
     gateway_discovery_assignment_state.stage =
         GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS;
     gateway_discovery_assignment_state.active = true;
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            host_command,
+            gateway_discovery_assignment_state.epoch);
+
+        (void)gateway_observe_command_event(&event, false);
+    }
 
     ret = gateway_discovery_assignment_open_claim_round();
     LOG_INF("gateway discovery-slot collection started: epoch=%u window_ms=%u ret=%d",
@@ -2896,7 +3289,8 @@ static int gateway_start_discovery_assignment(
 
 bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                              const uint8_t *payload,
-                                             size_t payload_len)
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id)
 {
     enum discovery_assignment_phase phase = 0;
     enum command_id command_id = CMD_VENDOR_BASE;
@@ -2992,6 +3386,22 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                 CMD_ASSIGN_DISCOVERY_SLOTS,
                 COMMAND_OK,
                 (uint8_t)gateway_discovery_assignment_state.claim_count);
+            {
+                struct gateway_command_event event = gateway_observability_event(
+                    GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+                    GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+                    CMD_ASSIGN_DISCOVERY_SLOTS,
+                    &gateway_discovery_assignment_state.host_command,
+                    gateway_discovery_assignment_state.epoch);
+
+                event.progress_count =
+                    (uint16_t)gateway_discovery_assignment_state.claim_count;
+                event.total_count = event.progress_count;
+                event.success_count = event.progress_count;
+                event.duplicate_count =
+                    gateway_discovery_assignment_state.duplicate_count;
+                (void)gateway_observe_command_event(&event, true);
+            }
             gateway_discovery_assignment_state.active = false;
             gateway_discovery_assignment_state.round_open = false;
             (void)k_work_cancel_delayable(
@@ -3001,6 +3411,9 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     }
 
     if (anchor_index != SIZE_MAX) {
+        if (gateway_discovery_assignment_state.duplicate_count < UINT16_MAX) {
+            gateway_discovery_assignment_state.duplicate_count++;
+        }
         return true;
     }
     if (gateway_discovery_assignment_state.claim_count >=
@@ -3013,6 +3426,22 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     gateway_discovery_assignment_state.anchor_ids[
         gateway_discovery_assignment_state.claim_count] = packet->src_id;
     gateway_discovery_assignment_state.claim_count++;
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            &gateway_discovery_assignment_state.host_command,
+            gateway_discovery_assignment_state.epoch);
+
+        event.anchor_id = packet->src_id;
+        event.previous_hop_id = previous_hop_id;
+        event.hop_count = hop_count;
+        event.progress_count =
+            (uint16_t)gateway_discovery_assignment_state.claim_count;
+        event.duplicate_count = gateway_discovery_assignment_state.duplicate_count;
+        (void)gateway_observe_command_event(&event, false);
+    }
     if (gateway_discovery_assignment_state.stage ==
         GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS) {
         gateway_discovery_assignment_state.stage =
@@ -3062,6 +3491,42 @@ static int gateway_discovery_assignment_publish_table(void)
             entries,
             ARRAY_SIZE(entries));
     }
+    if (ret == PROTO_OK) {
+        for (size_t i = 0u;
+             i < gateway_discovery_assignment_state.claim_count;
+             i++) {
+            struct gateway_command_event event = gateway_observability_event(
+                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+                GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+                CMD_ASSIGN_DISCOVERY_SLOTS,
+                &gateway_discovery_assignment_state.host_command,
+                gateway_discovery_assignment_state.epoch);
+
+            event.anchor_id = entries[i].anchor_id;
+            event.slot = entries[i].slot;
+            event.progress_count = (uint16_t)(i + 1u);
+            event.total_count =
+                (uint16_t)gateway_discovery_assignment_state.claim_count;
+            event.duplicate_count =
+                gateway_discovery_assignment_state.duplicate_count;
+            (void)gateway_observe_command_event(&event, false);
+        }
+        {
+            struct gateway_command_event event = gateway_observability_event(
+                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+                GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE,
+                CMD_ASSIGN_DISCOVERY_SLOTS,
+                &gateway_discovery_assignment_state.host_command,
+                gateway_discovery_assignment_state.epoch);
+
+            event.progress_count =
+                (uint16_t)gateway_discovery_assignment_state.claim_count;
+            event.total_count = event.progress_count;
+            event.duplicate_count =
+                gateway_discovery_assignment_state.duplicate_count;
+            (void)gateway_observe_command_event(&event, false);
+        }
+    }
     if (gateway_discovery_assignment_state.table_command_seq == 0u) {
         gateway_discovery_assignment_state.table_command_seq =
             gateway_discovery_assignment_state.epoch ^ UINT32_C(0x80000000);
@@ -3101,6 +3566,25 @@ static int gateway_discovery_assignment_publish_table(void)
         ret = mesh_errno_from_proto(ret);
     }
     gateway_discovery_assignment_state.table_round++;
+    {
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            ret == 0 ? GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY :
+                       GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            &gateway_discovery_assignment_state.host_command,
+            gateway_discovery_assignment_state.epoch);
+
+        event.attempt = gateway_discovery_assignment_state.table_round;
+        event.progress_count =
+            (uint16_t)gateway_discovery_assignment_state.claim_count;
+        event.total_count = event.progress_count;
+        event.status = ret == 0 ? COMMAND_OK : COMMAND_RADIO_ERROR;
+        event.reason = ret == 0 ? GATEWAY_COMMAND_EVENT_REASON_NONE :
+                                 GATEWAY_COMMAND_EVENT_REASON_RADIO;
+        event.duplicate_count = gateway_discovery_assignment_state.duplicate_count;
+        (void)gateway_observe_command_event(&event, false);
+    }
     status_debug_printf("DBG_DISCOVERY_SLOT_TABLE_TX epoch=%u generation=%u count=%u bytes=%u round=%u sent_now=%u ret=%d\n",
                         gateway_discovery_assignment_state.epoch,
                         gateway_discovery_assignment_state.table_command_seq,
@@ -3225,11 +3709,13 @@ static int gateway_start_discovery_assignment(
 
 bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                              const uint8_t *payload,
-                                             size_t payload_len)
+                                             size_t payload_len,
+                                             uint64_t previous_hop_id)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
     ARG_UNUSED(payload_len);
+    ARG_UNUSED(previous_hop_id);
     return false;
 }
 #endif
@@ -3272,6 +3758,7 @@ static void gateway_survey_work_handler(struct k_work *work)
     if (gateway_survey_auto.waiting) {
         return;
     }
+    gateway_survey_finalize_pair_observation();
     if (!gateway_survey_auto.running) {
         if (!gateway_survey_context.pairs_planned) {
             ret = survey_gateway_plan_pairs(&gateway_survey_context);
@@ -3282,6 +3769,23 @@ static void gateway_survey_work_handler(struct k_work *work)
                 gateway_survey_auto_finish();
                 return;
             }
+        }
+        {
+            struct gateway_command_event event = gateway_observability_event(
+                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+                GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE,
+                CMD_SURVEY_REACHABILITY,
+                &gateway_survey_host_command,
+                gateway_survey_context.survey_id);
+
+            event.progress_count = (uint16_t)gateway_survey_context.report_count;
+            event.total_count = (uint16_t)gateway_survey_context.report_count;
+            event.duplicate_count = gateway_survey_duplicate_count;
+            (void)gateway_observe_command_event(&event, false);
+            event.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
+            event.progress_count = 0u;
+            event.total_count = (uint16_t)gateway_survey_context.pair_count;
+            (void)gateway_observe_command_event(&event, false);
         }
         LOG_INF("gateway survey orchestration starting: survey=%u reports=%u pairs=%u",
                 gateway_survey_context.survey_id,
@@ -3314,6 +3818,22 @@ static void gateway_survey_work_handler(struct k_work *work)
             uint32_t delay_ms = gateway_survey_retry_delay_ms(action.target_id);
 
             gateway_survey_action_retry_round++;
+            {
+                struct gateway_command_event event = gateway_observability_event(
+                    GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+                    GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+                    action.command_id,
+                    &gateway_survey_host_command,
+                    gateway_survey_context.survey_id);
+
+                event.attempt = gateway_survey_action_retry_round;
+                event.anchor_id = action.target_id;
+                event.pair_initiator_id = action.pair.initiator_id;
+                event.pair_responder_id = action.pair.responder_id;
+                event.status = COMMAND_RADIO_ERROR;
+                event.reason = GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE;
+                (void)gateway_observe_command_event(&event, false);
+            }
             status_debug_printf("DBG_SURVEY_COMMAND_SEND_RETRY cmd=0x%04x dst=0x%016llx ret=%d round=%u delay=%u\n",
                                 (unsigned int)action.command_id,
                                 (unsigned long long)action.target_id,
@@ -3617,6 +4137,22 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                                              ret == -EBUSY ? COMMAND_BUSY :
                                              COMMAND_INTERNAL_ERROR,
                                              ret == 0 ? 0u : (uint8_t)(-ret));
+            {
+                struct gateway_command_event event = gateway_observability_event(
+                    GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
+                    GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+                    command_id,
+                    packet,
+                    0u);
+
+                event.status = ret == 0 ? COMMAND_OK :
+                               ret == -EBUSY ? COMMAND_BUSY :
+                               COMMAND_INTERNAL_ERROR;
+                event.reason = ret == 0 ? GATEWAY_COMMAND_EVENT_REASON_NONE :
+                               ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                               GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
+                (void)gateway_observe_command_event(&event, true);
+            }
             return ret;
         }
         if (ret == PROTO_OK &&
@@ -3630,7 +4166,8 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
         if (ret == PROTO_OK && command_id == CMD_SURVEY_ABORT && gateway_survey_active) {
             LOG_INF("gateway survey orchestration aborted by host: survey=%u",
                     gateway_survey_context.survey_id);
-            gateway_survey_auto_finish();
+            gateway_survey_auto_finish_status(
+                COMMAND_DENIED, GATEWAY_COMMAND_EVENT_REASON_ABORTED);
         }
     }
 
@@ -3642,6 +4179,9 @@ static int gateway_host_command_admit(
     void *ctx,
     struct app_gateway_command_ingress_item *item)
 {
+    enum command_id command_id = CMD_VENDOR_BASE;
+    int ret;
+
     ARG_UNUSED(ctx);
 
     if (item == NULL) {
@@ -3652,7 +4192,18 @@ static int gateway_host_command_admit(
         gateway_host_command_next_admission_id = 1u;
     }
     item->admission_id = gateway_host_command_next_admission_id;
-    return k_msgq_put(&gateway_host_command_msgq, item, K_NO_WAIT);
+    (void)gateway_command_extract_id(item->payload, item->payload_len,
+                                     &command_id);
+    gateway_observe_host_stage(&item->packet,
+                               command_id,
+                               GATEWAY_COMMAND_EVENT_STAGE_ACCEPTED);
+    ret = k_msgq_put(&gateway_host_command_msgq, item, K_NO_WAIT);
+    if (ret == 0) {
+        gateway_observe_host_stage(&item->packet,
+                                   command_id,
+                                   GATEWAY_COMMAND_EVENT_STAGE_QUEUED);
+    }
+    return ret;
 }
 
 static int gateway_host_command_submit_priority(void *ctx)
@@ -3703,9 +4254,25 @@ static void gateway_host_command_emit_result(
     enum command_status status,
     uint8_t reason)
 {
+    enum gateway_command_event_kind kind = gateway_observability_kind(command_id);
+
     ARG_UNUSED(ctx);
 
     gateway_emit_host_command_result(command, command_id, status, reason);
+    if (kind != 0 && command != NULL) {
+        struct gateway_command_event event = gateway_observability_event(
+            kind,
+            GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+            command_id,
+            command,
+            0u);
+
+        event.status = status;
+        event.reason = status == COMMAND_BUSY ?
+                       GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                       GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
+        (void)gateway_observe_command_event(&event, true);
+    }
 }
 
 static void gateway_host_command_note_decoded(
@@ -3740,6 +4307,11 @@ static void gateway_host_command_schedule_failed(void *ctx, int error)
         gateway_emit_host_command_result(&item.packet, command_id,
                                          COMMAND_INTERNAL_ERROR,
                                          (uint8_t)(-error));
+        gateway_observe_host_terminal(
+            &item.packet,
+            command_id,
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
     }
     memset(gateway_host_command_cancelled, 0,
            sizeof(gateway_host_command_cancelled));
@@ -3755,6 +4327,7 @@ static void gateway_host_command_work_handler(struct k_work *work)
     gateway_host_command_retry_pending = false;
 
     while (k_msgq_peek(&gateway_host_command_msgq, &item) == 0) {
+        enum command_id command_id = CMD_VENDOR_BASE;
         int ret;
 
         if (gateway_host_command_take_cancelled(&item)) {
@@ -3763,7 +4336,12 @@ static void gateway_host_command_work_handler(struct k_work *work)
             gateway_host_command_retry_started_ms = 0u;
             continue;
         }
+        (void)gateway_command_extract_id(item.payload, item.payload_len,
+                                         &command_id);
         dwm3000_driver_clear_receive_abort();
+        gateway_observe_host_stage(&item.packet,
+                                   command_id,
+                                   GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING);
         ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
         if (ret == -EAGAIN) {
             uint32_t delay_ms;
@@ -3773,15 +4351,15 @@ static void gateway_host_command_work_handler(struct k_work *work)
             }
             if (gateway_host_command_retry_round >=
                 GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS) {
-                enum command_id command_id = CMD_VENDOR_BASE;
-
-                (void)gateway_command_extract_id(item.payload,
-                                                 item.payload_len,
-                                                 &command_id);
                 gateway_emit_host_command_result(&item.packet,
                                                  command_id,
                                                  COMMAND_TIMEOUT,
                                                  ETIMEDOUT);
+                gateway_observe_host_terminal(
+                    &item.packet,
+                    command_id,
+                    COMMAND_TIMEOUT,
+                    GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
                 LOG_ERR("gateway BLE command send retries exhausted: cmd=0x%04x attempts=%u age_ms=%u",
                         (unsigned int)command_id,
                         gateway_host_command_retry_round,
@@ -3795,6 +4373,24 @@ static void gateway_host_command_work_handler(struct k_work *work)
                 gateway_host_command_retry_round,
                 sys_rand32_get());
             gateway_host_command_retry_round++;
+            {
+                enum gateway_command_event_kind kind =
+                    gateway_observability_kind(command_id);
+
+                if (kind != 0) {
+                    struct gateway_command_event event = gateway_observability_event(
+                        kind,
+                        GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+                        command_id,
+                        &item.packet,
+                        0u);
+
+                    event.attempt = gateway_host_command_retry_round;
+                    event.status = COMMAND_BUSY;
+                    event.reason = GATEWAY_COMMAND_EVENT_REASON_BUSY;
+                    (void)gateway_observe_command_event(&event, false);
+                }
+            }
             gateway_host_command_retry_pending = true;
             (void)k_work_reschedule(&gateway_host_command_work,
                                     K_MSEC(delay_ms));
@@ -3808,6 +4404,31 @@ static void gateway_host_command_work_handler(struct k_work *work)
         gateway_host_command_retry_round = 0u;
         gateway_host_command_retry_started_ms = 0u;
         if (ret < 0) {
+            enum gateway_command_event_kind kind =
+                gateway_observability_kind(command_id);
+
+            if (kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION ||
+                kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY) {
+                struct gateway_command_event event = gateway_observability_event(
+                    kind,
+                    GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+                    command_id,
+                    &item.packet,
+                    0u);
+
+                event.status = ret == -EBUSY ? COMMAND_BUSY :
+                               ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
+                               COMMAND_TIMEOUT :
+                               ret == -EINVAL || ret == -EMSGSIZE ?
+                               COMMAND_MALFORMED_PAYLOAD : COMMAND_RADIO_ERROR;
+                event.reason = ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                               ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
+                               GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
+                               ret == -EINVAL || ret == -EMSGSIZE ?
+                               GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST :
+                               GATEWAY_COMMAND_EVENT_REASON_RADIO;
+                (void)gateway_observe_command_event(&event, true);
+            }
             LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
                     item.packet.msg_type,
                     (unsigned long long)item.packet.dst_id,

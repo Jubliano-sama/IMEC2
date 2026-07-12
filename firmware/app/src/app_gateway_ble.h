@@ -2,6 +2,7 @@
 #define APP_GATEWAY_BLE_H
 
 #include "gateway_command.h"
+#include "app_gateway_command_observability.h"
 #include "app_gateway_ble_stream.h"
 #include "mesh.h"
 #include "protocol.h"
@@ -39,6 +40,8 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
                               size_t payload_len,
                               uint32_t received_at_ms);
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics);
+int gateway_observe_command_event(struct gateway_command_event *event,
+                                  bool terminal);
 uint16_t gateway_next_command_seq(void);
 void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_id command_id,

@@ -1,4 +1,5 @@
 #include "app_gateway_ble_stream.h"
+#include "app_gateway_command_observability.h"
 
 #include <errno.h>
 #include <string.h>
@@ -65,6 +66,7 @@ static uint8_t priority_for_class(enum gateway_ble_stream_class packet_class)
         return 0u;
     case GATEWAY_BLE_STREAM_CLASS_RESULT:
     case GATEWAY_BLE_STREAM_CLASS_SURVEY:
+    case GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT:
         return 1u;
     case GATEWAY_BLE_STREAM_CLASS_DIAGNOSTIC:
         return 2u;
@@ -101,6 +103,8 @@ enum gateway_ble_stream_class gateway_ble_stream_classify_packet(uint8_t msg_typ
     case MSG_SURVEY_PAIR_RESULT:
     case MSG_SURVEY_DISCOVERY_REPORT:
         return GATEWAY_BLE_STREAM_CLASS_SURVEY;
+    case MSG_GATEWAY_COMMAND_EVENT:
+        return GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT;
     case MSG_UWB_CLICKER_DIAG:
     case MSG_UWB_ANCHOR_DIAG:
     case MSG_UWB_ANCHOR_DIAG_FRAGMENT:
@@ -228,6 +232,7 @@ static int build_record(const struct proto_packet *packet,
 {
     size_t offset = 0u;
     uint8_t record_flags = 0u;
+    uint8_t priority;
     size_t copy_len = payload_len;
 
     if (packet == NULL || record == NULL || item == NULL ||
@@ -243,13 +248,22 @@ static int build_record(const struct proto_packet *packet,
         record_flags |= STREAM_FLAG_TRUNCATED;
     }
 
+    priority = priority_for_class(packet_class);
+    if (packet_class == GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT &&
+        payload_len == GATEWAY_COMMAND_EVENT_WIRE_LEN &&
+        payload[0] == GATEWAY_COMMAND_EVENT_SCHEMA_VERSION &&
+        payload[1] == GATEWAY_COMMAND_EVENT_WIRE_LEN &&
+        (payload[4] & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u) {
+        priority = 0u;
+    }
+
     memset(item, 0, sizeof(*item));
     put_u16(record, &offset, GATEWAY_BLE_STREAM_MAGIC);
     put_u8(record, &offset, GATEWAY_BLE_STREAM_VERSION);
     put_u8(record, &offset, GATEWAY_BLE_STREAM_RECORD_HEADER_LEN);
     put_u8(record, &offset, GATEWAY_BLE_STREAM_RECORD_PACKET);
     put_u8(record, &offset, (uint8_t)packet_class);
-    put_u8(record, &offset, priority_for_class(packet_class));
+    put_u8(record, &offset, priority);
     put_u8(record, &offset, record_flags);
     put_u8(record, &offset, packet->msg_type);
     put_u8(record, &offset, packet->flags);
@@ -268,7 +282,7 @@ static int build_record(const struct proto_packet *packet,
     }
     item->len = (uint16_t)(offset + copy_len);
     item->packet_type = packet->msg_type;
-    item->priority = priority_for_class(packet_class);
+    item->priority = priority;
     item->queued_at_ms = now_ms;
     return 0;
 }

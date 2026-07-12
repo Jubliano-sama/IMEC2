@@ -1,4 +1,5 @@
 #include "app_gateway_ble_stream.h"
+#include "app_gateway_command_observability.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -218,6 +219,54 @@ static void test_click_evicts_lower_priority_diagnostic(void)
            MSG_CLICK_REPORT);
 }
 
+static void test_terminal_command_event_evicts_lower_priority_status(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_command_observability_state observability;
+    struct gateway_command_event event = {
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        .stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+        .status = COMMAND_TIMEOUT,
+        .reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS,
+        .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
+        .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
+    };
+    struct proto_packet heartbeat = packet(MSG_ANCHOR_HEARTBEAT, 0u, 1u);
+    struct proto_packet command_event = packet(MSG_GATEWAY_COMMAND_EVENT, 0u, 2u);
+    struct gateway_ble_stream_diagnostics diag;
+    uint8_t status_payload[1] = {0u};
+    uint8_t event_payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
+    size_t event_payload_len = 0u;
+
+    gateway_ble_stream_init(&state);
+    gateway_command_observability_init(&observability);
+    assert(gateway_command_observability_prepare(&observability, &event, true) == 0);
+    assert(gateway_command_event_encode(&event,
+                                        event_payload,
+                                        sizeof(event_payload),
+                                        &event_payload_len) == 0);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        heartbeat.seq = i;
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &heartbeat,
+                                                 status_payload,
+                                                 sizeof(status_payload),
+                                                 0u,
+                                                 i,
+                                                 true) == 1);
+    }
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &command_event,
+                                             event_payload,
+                                             event_payload_len,
+                                             0u,
+                                             20u,
+                                             true) == 1);
+    gateway_ble_stream_get_diagnostics(&state, 20u, &diag);
+    assert(diag.drops_priority == 1u);
+    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+}
+
 static void test_fast_drain_and_counters(void)
 {
     struct gateway_ble_stream_state state;
@@ -380,6 +429,7 @@ int main(void)
     test_max_size_click_is_preserved_and_oversize_is_rejected();
     test_disconnected_full_queue_counts_not_ready();
     test_click_evicts_lower_priority_diagnostic();
+    test_terminal_command_event_evicts_lower_priority_status();
     test_fast_drain_and_counters();
     test_active_head_cannot_be_evicted();
     test_pool_holds_core_click_and_two_cir_records();

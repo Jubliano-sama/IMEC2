@@ -61,7 +61,8 @@ struct app_mesh_report_callbacks {
                                               size_t payload_len);
     void (*gateway_handle_survey_discovery_report)(const struct proto_packet *packet,
                                                    const uint8_t *payload,
-                                                   size_t payload_len);
+                                                   size_t payload_len,
+                                                   uint64_t previous_hop_id);
 };
 
 enum mesh_c5_control_send_mode {

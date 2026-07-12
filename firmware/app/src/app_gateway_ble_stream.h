@@ -36,6 +36,7 @@ enum gateway_ble_stream_class {
     GATEWAY_BLE_STREAM_CLASS_SURVEY = 3,
     GATEWAY_BLE_STREAM_CLASS_DIAGNOSTIC = 4,
     GATEWAY_BLE_STREAM_CLASS_STATUS = 5,
+    GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT = 6,
 };
 
 enum gateway_ble_stream_record_type {

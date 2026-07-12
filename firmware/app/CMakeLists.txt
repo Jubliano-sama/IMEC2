@@ -356,6 +356,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_board.c
     src/app_gateway_ble.c
     src/app_gateway_ble_stream.c
+    src/app_gateway_command_observability.c
     src/app_gateway_collection_eack.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c

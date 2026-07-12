@@ -1684,11 +1684,13 @@ static void mesh_report_anchor_handle_survey_pair_prepare(const struct proto_pac
 static void mesh_report_gateway_handle_survey_discovery_report(
     const struct proto_packet *packet,
     const uint8_t *payload,
-    size_t payload_len)
+    size_t payload_len,
+    uint64_t previous_hop_id)
 {
     if (mesh_report_callbacks != NULL &&
         mesh_report_callbacks->gateway_handle_survey_discovery_report != NULL) {
-        mesh_report_callbacks->gateway_handle_survey_discovery_report(packet, payload, payload_len);
+        mesh_report_callbacks->gateway_handle_survey_discovery_report(
+            packet, payload, payload_len, previous_hop_id);
     }
 }
 
@@ -12293,7 +12295,8 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
             }
             mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
                                                    pending->payload,
-                                                   pending->payload_len);
+                                                   pending->payload_len,
+                                                   pending->previous_hop_id);
             app_mesh_test_note_gateway_delivery(&pending->packet,
                                                 pending->payload,
                                                 pending->payload_len,
