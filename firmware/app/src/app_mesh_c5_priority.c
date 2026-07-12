@@ -73,7 +73,9 @@ bool app_mesh_c5_route_capture_relevant(
         return state->dst_id == state->local_id;
     }
 
-    if (state->control_followup && state->msg_type == MSG_COMMAND) {
+    if (state->control_followup &&
+        (state->msg_type == MSG_COMMAND ||
+         state->msg_type == MSG_SURVEY_DISCOVERY_START)) {
         return state->src_id == state->target_id &&
                state->dst_id == MESH_BROADCAST_ID &&
                state->previous_hop_id == state->target_id;

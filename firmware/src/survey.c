@@ -110,10 +110,117 @@ int survey_discovery_config_validate(const struct survey_discovery_config *confi
 
 uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *config)
 {
+    uint32_t end_ms = 0u;
+
     if (survey_discovery_config_validate(config) != PROTO_OK) {
         return 0u;
     }
-    return (uint32_t)config->slot_ms * (uint32_t)config->slot_count;
+    if (survey_discovery_opportunity_window_ms(
+            config,
+            SURVEY_DISCOVERY_OPPORTUNITY_COUNT - 1u,
+            NULL,
+            &end_ms) != PROTO_OK) {
+        return 0u;
+    }
+    return end_ms;
+}
+
+uint8_t survey_discovery_opportunity_slot(uint64_t anchor_id,
+                                          uint32_t survey_id,
+                                          uint8_t opportunity,
+                                          uint8_t slot_count)
+{
+    uint64_t seed;
+
+    if (anchor_id == 0u || survey_id == 0u || slot_count == 0u ||
+        opportunity >= SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+        return 0u;
+    }
+    seed = anchor_id ^ ((uint64_t)survey_id << 17) ^
+           ((uint64_t)(opportunity + 1u) * UINT64_C(0x9e3779b97f4a7c15));
+    return (uint8_t)(survey_mix64(seed) % slot_count);
+}
+
+static uint32_t survey_discovery_retry_base_ms(uint8_t opportunity)
+{
+    return opportunity == 0u ? 0u :
+           SURVEY_DISCOVERY_RETRY_BASE_MS << (opportunity - 1u);
+}
+
+int survey_discovery_opportunity_window_ms(
+    const struct survey_discovery_config *config,
+    uint8_t opportunity,
+    uint32_t *start_ms,
+    uint32_t *end_ms)
+{
+    uint64_t cursor = 0u;
+
+    if (survey_discovery_config_validate(config) != PROTO_OK ||
+        opportunity >= SURVEY_DISCOVERY_OPPORTUNITY_COUNT ||
+        (start_ms == NULL && end_ms == NULL)) {
+        return PROTO_ERR_ARG;
+    }
+    for (uint8_t current = 0u; current <= opportunity; current++) {
+        uint32_t base_ms = survey_discovery_retry_base_ms(current);
+        uint64_t window_ms = (uint64_t)base_ms * 2u +
+                             (uint64_t)config->slot_ms * config->slot_count;
+
+        if (current == opportunity) {
+            if (cursor > UINT32_MAX || cursor + window_ms > UINT32_MAX) {
+                return PROTO_ERR_NO_SPACE;
+            }
+            if (start_ms != NULL) {
+                *start_ms = (uint32_t)cursor;
+            }
+            if (end_ms != NULL) {
+                *end_ms = (uint32_t)(cursor + window_ms);
+            }
+            return PROTO_OK;
+        }
+        cursor += window_ms;
+    }
+    return PROTO_ERR_ARG;
+}
+
+int survey_discovery_opportunity_tx_ms(
+    const struct survey_discovery_config *config,
+    uint64_t anchor_id,
+    uint8_t opportunity,
+    uint32_t *tx_ms)
+{
+    uint32_t start_ms;
+    uint32_t end_ms;
+    uint32_t base_ms;
+    uint32_t jitter_ms = 0u;
+    uint8_t slot;
+    uint64_t tx;
+
+    if (tx_ms == NULL || anchor_id == 0u ||
+        survey_discovery_opportunity_window_ms(config,
+                                               opportunity,
+                                               &start_ms,
+                                               &end_ms) != PROTO_OK) {
+        return PROTO_ERR_ARG;
+    }
+    base_ms = survey_discovery_retry_base_ms(opportunity);
+    slot = survey_discovery_opportunity_slot(anchor_id,
+                                             config->survey_id,
+                                             opportunity,
+                                             config->slot_count);
+    if (base_ms != 0u) {
+        uint64_t seed = anchor_id ^ ((uint64_t)config->survey_id << 29) ^
+                        ((uint64_t)(opportunity + 1u) *
+                         UINT64_C(0xd1b54a32d192ed03));
+
+        jitter_ms = (uint32_t)(survey_mix64(seed) % base_ms);
+    }
+    tx = (uint64_t)start_ms + base_ms + jitter_ms +
+         (uint64_t)slot * config->slot_ms;
+    if (tx >= end_ms || tx > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *tx_ms = (uint32_t)tx;
+    return PROTO_OK;
 }
 
 int survey_discovery_timing_from_age(const struct survey_discovery_config *config,

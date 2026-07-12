@@ -26,6 +26,8 @@ extern "C" {
 #define SURVEY_DISCOVERY_MIN_SLOT_MS 10u
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
+#define SURVEY_DISCOVERY_OPPORTUNITY_COUNT 4u
+#define SURVEY_DISCOVERY_RETRY_BASE_MS 40u
 
 struct survey_reachability_entry {
     uint64_t peer_id;
@@ -123,6 +125,20 @@ uint64_t survey_sample_nonce(const struct survey_pair *pair, uint16_t sample_ind
 int survey_reachability_entry_validate(const struct survey_reachability_entry *entry);
 int survey_discovery_config_validate(const struct survey_discovery_config *config);
 uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *config);
+uint8_t survey_discovery_opportunity_slot(uint64_t anchor_id,
+                                          uint32_t survey_id,
+                                          uint8_t opportunity,
+                                          uint8_t slot_count);
+int survey_discovery_opportunity_window_ms(
+    const struct survey_discovery_config *config,
+    uint8_t opportunity,
+    uint32_t *start_ms,
+    uint32_t *end_ms);
+int survey_discovery_opportunity_tx_ms(
+    const struct survey_discovery_config *config,
+    uint64_t anchor_id,
+    uint8_t opportunity,
+    uint32_t *tx_ms);
 int survey_discovery_timing_from_age(const struct survey_discovery_config *config,
                                      uint32_t message_age_ms,
                                      struct survey_discovery_timing *timing);

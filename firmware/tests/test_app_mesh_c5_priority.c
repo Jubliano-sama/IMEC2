@@ -148,6 +148,26 @@ static void test_route_reply_and_event_control_capture_rules(void)
         route_request.msg_type));
 }
 
+static void test_control_wake_captures_survey_discovery_like_enumeration(void)
+{
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_SURVEY_DISCOVERY_START,
+        .src_id = 0x9999888877776666ull,
+        .dst_id = MESH_BROADCAST_ID,
+        .previous_hop_id = 0x9999888877776666ull,
+        .target_id = 0x9999888877776666ull,
+        .local_id = 0x3333333333333301ull,
+        .control_followup = true,
+    };
+
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.control_followup = false;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.control_followup = true;
+    state.dst_id = state.local_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+}
+
 static void test_channel5_control_phr_policy(void)
 {
     assert(app_mesh_c5_control_uses_extended_phr(MSG_COMMAND, 117u, 125u));
@@ -302,6 +322,7 @@ int main(void)
     test_gateway_route_adv_counts_as_route_capture();
     test_unrelated_gateway_route_adv_is_ignored();
     test_route_reply_and_event_control_capture_rules();
+    test_control_wake_captures_survey_discovery_like_enumeration();
     test_channel5_control_phr_policy();
     test_wake_claim_click_priority_policy();
     test_connected_gap_stays_armed_until_deadline_or_click();

@@ -23,6 +23,7 @@
 #define PHASE_STEP_US UINT64_C(250)
 #define WATCHDOG_LEASE_US UINT64_C(30000000)
 #define OLD_DISCOVERY_SLOT_US UINT64_C(1000)
+#define SURVEY_REPLY_OPPORTUNITY_COUNT 4u
 
 static unsigned int failures;
 
@@ -356,6 +357,148 @@ static void test_discovery_collision_sweep_and_old_spacing_sensitivity(void)
           "1 ms discovery-slot mutation did not reproduce winner-takes-all");
 }
 
+static void test_fixed_survey_retry_deadlock_is_reproduced(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = UINT32_C(0x50665006),
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+    };
+    const uint32_t airtime_ms = (uint32_t)(
+        (dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_MESH_CONTROL,
+                                        UWB_SURVEY_DISCOVERY_PROBE_LEN) + 999u) /
+        1000u);
+    uint64_t ids[6] = {0};
+    bool fixed_retry_decoded = false;
+
+    CHECK(SURVEY_DISCOVERY_OPPORTUNITY_COUNT == SURVEY_REPLY_OPPORTUNITY_COUNT,
+          "survey opportunity count drifted from four");
+    for (uint8_t anchor_count = 2u; anchor_count <= 6u; anchor_count++) {
+        ids[0] = UINT64_C(0xa700000000000001) + anchor_count;
+        for (uint8_t index = 1u; index < anchor_count; index++) {
+            uint64_t candidate = ids[index - 1u] + 1u;
+
+            while (survey_discovery_opportunity_slot(candidate,
+                                                      config.survey_id,
+                                                      0u,
+                                                      config.slot_count) !=
+                   survey_discovery_opportunity_slot(ids[0],
+                                                      config.survey_id,
+                                                      0u,
+                                                      config.slot_count)) {
+                candidate++;
+            }
+            ids[index] = candidate;
+        }
+        {
+            bool diversified = false;
+
+            CHECK(survey_discovery_opportunity_slot(ids[0], config.survey_id, 0u,
+                                                     config.slot_count) ==
+                      survey_discovery_opportunity_slot(ids[1], config.survey_id, 0u,
+                                                        config.slot_count),
+                  "forced initial survey collision was not constructed");
+            for (uint8_t opportunity = 1u;
+                 opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                 opportunity++) {
+                uint32_t first_ms = 0u;
+                uint32_t second_ms = 0u;
+
+                CHECK(survey_discovery_opportunity_tx_ms(&config, ids[0],
+                                                         opportunity,
+                                                         &first_ms) == PROTO_OK,
+                      "first diversified survey TX calculation failed");
+                CHECK(survey_discovery_opportunity_tx_ms(&config, ids[1],
+                                                         opportunity,
+                                                         &second_ms) == PROTO_OK,
+                      "second diversified survey TX calculation failed");
+                if (first_ms + airtime_ms <= second_ms ||
+                    second_ms + airtime_ms <= first_ms) {
+                    diversified = true;
+                }
+            }
+            CHECK(diversified,
+                  "same initial survey slot repeated collision through all retries");
+        }
+
+        for (uint8_t permutation = 0u; permutation < anchor_count; permutation++) {
+            bool accepted[6] = {false};
+            bool had_available[6] = {false};
+
+            for (uint8_t opportunity = 0u;
+                 opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                 opportunity++) {
+                struct interval tx[6] = {0};
+                bool collided[6] = {false};
+                uint32_t window_start_ms = 0u;
+                uint32_t window_end_ms = 0u;
+
+                CHECK(survey_discovery_opportunity_window_ms(&config,
+                                                              opportunity,
+                                                              &window_start_ms,
+                                                              &window_end_ms) == PROTO_OK,
+                      "survey opportunity window calculation failed");
+                for (uint8_t order = 0u; order < anchor_count; order++) {
+                    uint8_t index = (uint8_t)((order + permutation) % anchor_count);
+                    uint32_t tx_ms = 0u;
+
+                    CHECK(survey_discovery_opportunity_tx_ms(&config,
+                                                             ids[index],
+                                                             opportunity,
+                                                             &tx_ms) == PROTO_OK,
+                          "survey opportunity TX calculation failed");
+                    tx[index] = (struct interval) {
+                        .start_us = (uint64_t)tx_ms * 1000u,
+                        .end_us = ((uint64_t)tx_ms + airtime_ms) * 1000u,
+                    };
+                    CHECK(tx_ms >= window_start_ms &&
+                              tx_ms + airtime_ms <= window_end_ms,
+                          "survey frame was not fully contained in its opportunity");
+                }
+                for (uint8_t i = 0u; i < anchor_count; i++) {
+                    for (uint8_t j = (uint8_t)(i + 1u); j < anchor_count; j++) {
+                        if (tx[i].start_us < tx[j].end_us &&
+                            tx[j].start_us < tx[i].end_us) {
+                            collided[i] = true;
+                            collided[j] = true;
+                        }
+                    }
+                }
+                for (uint8_t i = 0u; i < anchor_count; i++) {
+                    bool lost = opportunity < 2u && i == 0u;
+                    bool activity_consumed = opportunity == 1u && i == 1u;
+                    bool late = opportunity < 2u && i == anchor_count - 1u;
+
+                    if (!collided[i] && !lost && !activity_consumed && !late) {
+                        had_available[i] = true;
+                        accepted[i] = true;
+                    }
+                }
+            }
+            for (uint8_t i = 0u; i < anchor_count; i++) {
+                if (had_available[i]) {
+                    CHECK(accepted[i],
+                          "reachable anchor with an available opportunity was lost");
+                }
+            }
+        }
+    }
+
+    for (uint8_t opportunity = 0u;
+         opportunity < SURVEY_REPLY_OPPORTUNITY_COUNT;
+         opportunity++) {
+        struct interval first = {UINT64_C(40000), UINT64_C(40000) + airtime_ms * 1000u};
+        struct interval second = first;
+
+        if (!(first.start_us < second.end_us && second.start_us < first.end_us)) {
+            fixed_retry_decoded = true;
+        }
+    }
+    CHECK(!fixed_retry_decoded,
+          "fixed same-slot retry sensitivity mutation did not deadlock");
+}
+
 static void test_claim_phase_sweep(void)
 {
     static const int32_t drifts[] = {
@@ -385,6 +528,7 @@ int main(void)
     test_survey_phase_sweep_and_old_defect_sensitivity();
     test_claim_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
+    test_fixed_survey_retry_deadlock_is_reproduced();
     test_multi_anchor_claim_and_range_schedule_invariants();
 
     if (failures != 0u) {

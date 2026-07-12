@@ -214,7 +214,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     uint8_t tlv_len = 0u;
 
     assert(survey_discovery_config_validate(&config) == PROTO_OK);
-    assert(survey_discovery_duration_ms(&config) == 2000u);
+    assert(survey_discovery_duration_ms(&config) == 8560u);
     assert(survey_append_discovery_start_tlvs(payload,
                                               sizeof(payload),
                                               &payload_len,
@@ -241,7 +241,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     assert(tlv_value[0] == config.slot_count);
     assert(tlv_find(payload, payload_len, TLV_DURATION_MS, &tlv_value, &tlv_len) == PROTO_OK);
     assert(tlv_len == 4u);
-    assert(proto_get_u32_le(tlv_value) == 2000u);
+    assert(proto_get_u32_le(tlv_value) == 8560u);
 
     assert(survey_extract_discovery_start_tlvs(payload,
                                                payload_len,
@@ -390,7 +390,7 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(!timing.expired);
     assert(timing.wait_ms == 1500u);
     assert(timing.elapsed_ms == 0u);
-    assert(timing.duration_ms == 2000u);
+    assert(timing.duration_ms == 8560u);
 
     assert(survey_discovery_timing_from_age(&config, 2123u, &timing) == PROTO_OK);
     assert(!timing.pending);
@@ -399,11 +399,11 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(timing.wait_ms == 0u);
     assert(timing.elapsed_ms == 123u);
 
-    assert(survey_discovery_timing_from_age(&config, 4000u, &timing) == PROTO_OK);
+    assert(survey_discovery_timing_from_age(&config, 10560u, &timing) == PROTO_OK);
     assert(!timing.pending);
     assert(!timing.active);
     assert(timing.expired);
-    assert(timing.elapsed_ms == 2000u);
+    assert(timing.elapsed_ms == 8560u);
 }
 
 static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
@@ -417,9 +417,9 @@ static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
     uint32_t delay_ms = 0u;
 
     assert(survey_discovery_report_delay_ms(&config, 0u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 240u);
+    assert(delay_ms == 1520u);
     assert(survey_discovery_report_delay_ms(&config, 3u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 240u + (3u * 2270u));
+    assert(delay_ms == 1520u + (3u * 2270u));
     assert(survey_discovery_report_delay_ms(&config, 6u, 2270u, &delay_ms) ==
            PROTO_ERR_MALFORMED);
     assert(survey_discovery_report_delay_ms(&config, 0u, 0u, &delay_ms) ==
@@ -885,6 +885,51 @@ static void test_reachability_graph_plans_unique_pairs_with_requested_samples(vo
     assert(pairs[1].initiator_id == 0x1111000000000001ull);
     assert(pairs[1].responder_id == 0x3333000000000003ull);
     assert(pairs[1].sample_count == 5u);
+}
+
+static void test_generated_complete_reachability_counts_for_one_to_six_anchors(void)
+{
+    struct survey_reachability_entry entries[6][5] = {{{0}}};
+    struct survey_reachability_report reports[6] = {{0}};
+    struct survey_pair pairs[15] = {{0}};
+
+    for (size_t anchor_count = 1u; anchor_count <= 6u; anchor_count++) {
+        size_t pair_count = 0u;
+
+        memset(entries, 0, sizeof(entries));
+        memset(reports, 0, sizeof(reports));
+        memset(pairs, 0, sizeof(pairs));
+        for (size_t anchor = 0u; anchor < anchor_count; anchor++) {
+            size_t entry_count = 0u;
+
+            reports[anchor].anchor_id = UINT64_C(0xa700000000000001) + anchor;
+            reports[anchor].entries = entries[anchor];
+            for (size_t peer = 0u; peer < anchor_count; peer++) {
+                if (peer == anchor) {
+                    continue;
+                }
+                entries[anchor][entry_count++] = (struct survey_reachability_entry) {
+                    .peer_id = UINT64_C(0xa700000000000001) + peer,
+                    .rssi_dbm = -60,
+                    .quality = 80u,
+                };
+            }
+            reports[anchor].entry_count = entry_count;
+        }
+
+        assert(survey_plan_pairs_from_reachability(0xAABBCCDDu,
+                                                   reports,
+                                                   anchor_count,
+                                                   1u,
+                                                   pairs,
+                                                   sizeof(pairs) / sizeof(pairs[0]),
+                                                   &pair_count) == PROTO_OK);
+        assert(pair_count == anchor_count * (anchor_count - 1u) / 2u);
+        if (anchor_count == 2u) {
+            assert(pair_count == 1u);
+            assert(pairs[0].initiator_id != pairs[0].responder_id);
+        }
+    }
 }
 
 static void test_gateway_context_collects_reports_and_sequences_pairs(void)
@@ -1425,6 +1470,7 @@ int main(void)
     test_pair_tlv_parser_rejects_missing_or_invalid_fields();
     test_pair_prepare_packet_targets_initiator_anchor();
     test_reachability_graph_plans_unique_pairs_with_requested_samples();
+    test_generated_complete_reachability_counts_for_one_to_six_anchors();
     test_gateway_context_collects_reports_and_sequences_pairs();
     test_gateway_context_updates_duplicate_report();
     test_gateway_context_rejects_stale_or_oversized_reports();

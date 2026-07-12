@@ -517,7 +517,17 @@ bool local_anchor_discovery_assignment_get(uint32_t *epoch,
 
 uint8_t local_survey_discovery_slot(uint8_t slot_count)
 {
+    uint32_t epoch = 0u;
     uint8_t anchor_slot = 0u;
+    uint8_t assigned_slot_count = 0u;
+
+    if (slot_count != 0u &&
+        local_anchor_discovery_assignment_get(&epoch,
+                                              &anchor_slot,
+                                              &assigned_slot_count) &&
+        epoch != 0u && assigned_slot_count != 0u) {
+        return (uint8_t)(anchor_slot % slot_count);
+    }
 
     if (uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, &anchor_slot) != PROTO_OK) {
         return 0u;

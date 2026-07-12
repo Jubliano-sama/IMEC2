@@ -5065,15 +5065,72 @@ static void anchor_abort_survey_pair(void)
     LOG_INF("survey pair state aborted locally");
 }
 
+static void anchor_receive_survey_probes_until(
+    const struct survey_discovery_config *config,
+    uint8_t opportunity,
+    uint32_t deadline_ms,
+    struct survey_reachability_entry *entries,
+    size_t entry_cap,
+    size_t *entry_count)
+{
+    while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms) &&
+           !anchor_survey_abort_is_requested()) {
+        struct uwb_survey_discovery_probe_frame probe = {0};
+        uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
+        size_t frame_len = 0u;
+        uint8_t quality = 0u;
+        int8_t rsl_dbm = 0;
+        uint32_t remaining_ms = uptime_ms_until_deadline(k_uptime_get_32(),
+                                                         deadline_ms);
+        int ret;
+
+        if (remaining_ms == 0u) {
+            break;
+        }
+        ret = dwm3000_driver_receive_frame(remaining_ms, frame, sizeof(frame),
+                                           &frame_len, &quality, &rsl_dbm);
+        if (ret == -ETIMEDOUT) {
+            break;
+        }
+        if (ret != 0 ||
+            uwb_decode_survey_discovery_probe(frame, frame_len, &probe) != PROTO_OK ||
+            probe.network_id != NETWORK_ID ||
+            probe.survey_id != config->survey_id ||
+            probe.anchor_id == DEVICE_ID ||
+            probe.slot_count != config->slot_count ||
+            probe.anchor_slot != survey_discovery_opportunity_slot(
+                                     probe.anchor_id, config->survey_id,
+                                     opportunity, config->slot_count)) {
+            continue;
+        }
+        if (quality > 100u) {
+            quality = 100u;
+        }
+        survey_add_reach_entry(entries, entry_cap, entry_count,
+                               probe.anchor_id, quality);
+        for (size_t i = 0u; i < *entry_count; i++) {
+            if (entries[i].peer_id == probe.anchor_id &&
+                quality >= entries[i].quality) {
+                entries[i].rssi_dbm = rsl_dbm;
+                break;
+            }
+        }
+        high_debug_log_event("SURVEY_DISCOVERY_PROBE_RX",
+                             "survey=%u opportunity=%u peer=0x%016llx slot=%u quality=%u rsl=%d peers=%u",
+                             config->survey_id, opportunity,
+                             (unsigned long long)probe.anchor_id,
+                             probe.anchor_slot, quality, rsl_dbm,
+                             (unsigned int)*entry_count);
+    }
+}
+
 static int anchor_run_survey_discovery(const struct survey_discovery_config *config,
                                        uint32_t start_ms)
 {
     struct survey_reachability_entry entries[SURVEY_REACH_MAX_ENTRIES] = {0};
     size_t entry_count = 0u;
-    uint8_t local_slot;
+    uint8_t report_slot;
     uint32_t report_delay_ms = 0u;
-    uint32_t now_ms;
-    uint8_t first_slot;
     int ret;
 
     if (survey_discovery_config_validate(config) != PROTO_OK) {
@@ -5084,161 +5141,104 @@ static int anchor_run_survey_discovery(const struct survey_discovery_config *con
     if (ret < 0) {
         return ret;
     }
-
-    local_slot = local_survey_discovery_slot(config->slot_count);
-    now_ms = k_uptime_get_32();
-    if (!uptime_deadline_reached(now_ms, start_ms)) {
+    if (!uptime_deadline_reached(k_uptime_get_32(), start_ms)) {
         (void)sleep_with_uwb_standby_until_ms(start_ms);
-        now_ms = k_uptime_get_32();
         ret = dwm3000_driver_configure_wake_mode();
         if (ret < 0) {
             return ret;
         }
     }
 
-    first_slot = (uint8_t)MIN((uint32_t)config->slot_count,
-                              (now_ms - start_ms) / config->slot_ms);
-    LOG_INF("survey discovery timing: survey=%u start_ms=%u now_ms=%u elapsed_ms=%u slot_ms=%u slots=%u first_slot=%u local_slot=%u",
-            config->survey_id,
+    report_slot = local_survey_discovery_slot(config->slot_count);
+    for (uint8_t opportunity = 0u;
+         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT &&
+         !anchor_survey_abort_is_requested();
+         opportunity++) {
+        struct uwb_survey_discovery_probe_frame probe = {
+            .network_id = NETWORK_ID,
+            .survey_id = config->survey_id,
+            .anchor_id = DEVICE_ID,
+            .slot_count = config->slot_count,
+            .flags = FLAG_DIAGNOSTIC,
+        };
+        uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
+        size_t frame_len = 0u;
+        uint32_t relative_start_ms = 0u;
+        uint32_t relative_end_ms = 0u;
+        uint32_t relative_tx_ms = 0u;
+        uint32_t opportunity_start_ms;
+        uint32_t opportunity_end_ms;
+        uint32_t opportunity_tx_ms;
+
+        ret = survey_discovery_opportunity_window_ms(config, opportunity,
+                                                     &relative_start_ms,
+                                                     &relative_end_ms);
+        if (ret == PROTO_OK) {
+            ret = survey_discovery_opportunity_tx_ms(config, DEVICE_ID,
+                                                     opportunity,
+                                                     &relative_tx_ms);
+        }
+        if (ret != PROTO_OK) {
+            return mesh_errno_from_proto(ret);
+        }
+        opportunity_start_ms = u32_saturating_add(start_ms, relative_start_ms);
+        opportunity_end_ms = u32_saturating_add(start_ms, relative_end_ms);
+        opportunity_tx_ms = u32_saturating_add(
             start_ms,
-            now_ms,
-            now_ms - start_ms,
-            config->slot_ms,
-            config->slot_count,
-            first_slot,
-            local_slot);
-    for (uint8_t slot = first_slot;
-         slot < config->slot_count && !anchor_survey_abort_is_requested();
-         slot++) {
-        int64_t slot_start_ms = (int64_t)start_ms + ((int64_t)slot * config->slot_ms);
-        int64_t slot_end_ms = slot_start_ms + config->slot_ms;
+            u32_saturating_add(relative_tx_ms, SURVEY_DISCOVERY_RX_GUARD_MS));
+        probe.anchor_slot = survey_discovery_opportunity_slot(
+            DEVICE_ID, config->survey_id, opportunity, config->slot_count);
 
-        if (slot == local_slot) {
-            struct uwb_survey_discovery_probe_frame probe = {
-                .network_id = NETWORK_ID,
-                .survey_id = config->survey_id,
-                .anchor_id = DEVICE_ID,
-                .anchor_slot = local_slot,
-                .slot_count = config->slot_count,
-                .flags = FLAG_DIAGNOSTIC,
-            };
-            uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
-            size_t frame_len = 0u;
-
-            sleep_until_ms(slot_start_ms + SURVEY_DISCOVERY_RX_GUARD_MS);
-            ret = uwb_encode_survey_discovery_probe(&probe,
-                                                    frame,
-                                                    sizeof(frame),
+        if (!uptime_deadline_reached(k_uptime_get_32(), opportunity_start_ms)) {
+            sleep_until_ms(opportunity_start_ms);
+        }
+        if (!uptime_deadline_reached(k_uptime_get_32(), opportunity_tx_ms)) {
+            anchor_receive_survey_probes_until(config, opportunity,
+                                               opportunity_tx_ms, entries,
+                                               ARRAY_SIZE(entries), &entry_count);
+        }
+        if (!uptime_deadline_reached(k_uptime_get_32(), opportunity_end_ms)) {
+            ret = uwb_encode_survey_discovery_probe(&probe, frame, sizeof(frame),
                                                     &frame_len);
-            if (ret != PROTO_OK) {
-                LOG_WRN("survey discovery probe encode failed: survey=%u ret=%d",
-                        config->survey_id,
-                        ret);
-                continue;
+            if (ret == PROTO_OK) {
+                ret = dwm3000_driver_send_frame(frame, frame_len,
+                                                SURVEY_DISCOVERY_TX_TIMEOUT_MS);
             }
-            ret = dwm3000_driver_send_frame(frame,
-                                            frame_len,
-                                            SURVEY_DISCOVERY_TX_TIMEOUT_MS);
             if (ret < 0) {
-                LOG_WRN("survey discovery probe TX failed: survey=%u slot=%u ret=%d",
-                        config->survey_id,
-                        slot,
-                        ret);
+                LOG_WRN("survey discovery probe TX failed: survey=%u opportunity=%u slot=%u ret=%d",
+                        config->survey_id, opportunity, probe.anchor_slot, ret);
             } else {
                 high_debug_log_event("SURVEY_DISCOVERY_PROBE_TX",
-                                     "survey=%u slot=%u slot_ms=%u",
-                                     config->survey_id,
-                                     slot,
-                                     config->slot_ms);
+                                     "survey=%u opportunity=%u slot=%u slot_ms=%u",
+                                     config->survey_id, opportunity,
+                                     probe.anchor_slot, config->slot_ms);
             }
-            continue;
-        }
-
-        sleep_until_ms(slot_start_ms);
-        while (k_uptime_get() < slot_end_ms && !anchor_survey_abort_is_requested()) {
-            struct uwb_survey_discovery_probe_frame probe = {0};
-            uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
-            size_t frame_len = 0u;
-            uint8_t quality = 0u;
-            int8_t rsl_dbm = 0;
-            uint32_t remaining_ms = (uint32_t)MAX(1, slot_end_ms - k_uptime_get());
-
-            ret = dwm3000_driver_receive_frame(remaining_ms,
-                                               frame,
-                                               sizeof(frame),
-                                               &frame_len,
-                                               &quality,
-                                               &rsl_dbm);
-            if (ret == -ETIMEDOUT) {
-                break;
-            }
+            ret = dwm3000_driver_configure_wake_mode();
             if (ret < 0) {
-                continue;
+                return ret;
             }
-            ret = uwb_decode_survey_discovery_probe(frame, frame_len, &probe);
-            if (ret != PROTO_OK ||
-                probe.network_id != NETWORK_ID ||
-                probe.survey_id != config->survey_id ||
-                probe.anchor_id == DEVICE_ID ||
-                probe.anchor_slot != slot ||
-                probe.slot_count != config->slot_count) {
-                continue;
-            }
-            if (quality > 100u) {
-                quality = 100u;
-            }
-            survey_add_reach_entry(entries,
-                                   ARRAY_SIZE(entries),
-                                   &entry_count,
-                                   probe.anchor_id,
-                                   quality);
-            for (size_t i = 0u; i < entry_count; i++) {
-                if (entries[i].peer_id == probe.anchor_id && quality >= entries[i].quality) {
-                    entries[i].rssi_dbm = rsl_dbm;
-                    break;
-                }
-            }
-            high_debug_log_event("SURVEY_DISCOVERY_PROBE_RX",
-                                 "survey=%u peer=0x%016llx slot=%u quality=%u rsl=%d peers=%u",
-                                 config->survey_id,
-                                 (unsigned long long)probe.anchor_id,
-                                 slot,
-                                 quality,
-                                 rsl_dbm,
-                                 (unsigned int)entry_count);
+            anchor_receive_survey_probes_until(config, opportunity,
+                                               opportunity_end_ms, entries,
+                                               ARRAY_SIZE(entries), &entry_count);
         }
     }
 
-    ret = survey_discovery_report_delay_ms(config,
-                                           local_slot,
+    ret = survey_discovery_report_delay_ms(config, report_slot,
                                            SURVEY_RESULT_MESH_SLOT_MS,
                                            &report_delay_ms);
     if (ret != PROTO_OK) {
-        LOG_WRN("survey discovery report slot calculation failed: survey=%u slot=%u ret=%d",
-                config->survey_id,
-                local_slot,
-                ret);
         return mesh_errno_from_proto(ret);
     }
-
-    ret = anchor_queue_survey_discovery_report(config->survey_id,
-                                               entries,
-                                               entry_count,
-                                               u32_saturating_add(start_ms,
-                                                                  report_delay_ms));
+    ret = anchor_queue_survey_discovery_report(
+        config->survey_id, entries, entry_count,
+        u32_saturating_add(start_ms, report_delay_ms));
     if (ret < 0) {
-        LOG_WRN("survey discovery report queue failed: survey=%u peers=%u ret=%d",
-                config->survey_id,
-                (unsigned int)entry_count,
-                ret);
         return ret;
     }
 
-    LOG_INF("survey discovery complete: survey=%u local_slot=%u peers=%u report_delay_ms=%u",
-            config->survey_id,
-            local_slot,
-            (unsigned int)entry_count,
-            report_delay_ms);
+    LOG_INF("survey discovery complete: survey=%u report_slot=%u peers=%u report_delay_ms=%u opportunities=%u",
+            config->survey_id, report_slot, (unsigned int)entry_count,
+            report_delay_ms, SURVEY_DISCOVERY_OPPORTUNITY_COUNT);
     return 0;
 }
 

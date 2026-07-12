@@ -136,6 +136,11 @@ terminal totals. `PAIR_INCOMPLETE` means fewer unique sample indices arrived
 than requested. `PAIR_RANGE_FAILED` means at least one received sample had a
 non-`RANGE_OK` status.
 
+Survey discovery runs four collision-diversified probe opportunities before
+the gateway closes collection. A terminal `NO_ANCHORS` reason therefore means
+that no unique eligible anchor report arrived across the complete expanded
+probe and report horizon; it must not be emitted after only the initial slot.
+
 ## Bounds And Scheduling
 
 Enumeration and survey discovery are capped at 50 anchors. Each survey report

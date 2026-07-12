@@ -516,6 +516,21 @@ has received them:
     path, and the gateway resumes or remains in channel 9 receive while waiting
     for those responses.
 
+Survey reachability uses the same control-followup receive eligibility as
+anchor enumeration. After the `SURVEY_DISCOVERY_START` flood, each participating
+anchor has four probe opportunities. Opportunity timing is derived independently
+from the anchor identity, survey command identity, and opportunity index. The
+first opportunity may expose a deterministic slot collision; later opportunities
+use bounded exponential backoff and deterministic jitter so that collision is
+not repeated merely because both anchors selected the same initial slot. The
+derivation does not depend on synchronized random-number-generator state. An
+anchor listens continuously outside its own complete probe airtime, deduplicates
+peer probes by anchor identity, and sends one reachability report after the full
+four-opportunity horizon. The gateway collection window covers that complete
+horizon plus every report slot and grace interval. A terminal `no anchors`
+result is valid only after this bounded horizon completes without a unique
+eligible report.
+
 Gateway commands must not be blocked behind ordinary packet retries. If a
 local-origin payload, a transit payload, a retry, and a gateway command all need
 radio time, the gateway command's channel 5 propagation is serviced first. The
