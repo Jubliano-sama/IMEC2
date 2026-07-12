@@ -97,6 +97,7 @@ enum msg_type {
 };
 
 enum pkt_flags {
+    FLAG_CONTROL_FOLLOWUP = 0x01,
     FLAG_ROUTE_SETUP = 0x02,
     FLAG_GATEWAY_ACK_REQUIRED = 0x04,
     FLAG_GATEWAY_ACK = 0x08,

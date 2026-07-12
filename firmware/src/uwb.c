@@ -19,8 +19,12 @@ static bool flags_valid(uint8_t flags)
 {
     uint8_t mode_flags = flags & (FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK);
 
-    if ((flags & ~(FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC |
+    if ((flags & ~(FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC |
                    FLAG_COUNT_AS_CLICK | FLAG_RANGE_ONLY)) != 0u) {
+        return false;
+    }
+    if ((flags & FLAG_CONTROL_FOLLOWUP) != 0u &&
+        (flags & FLAG_ROUTE_SETUP) == 0u) {
         return false;
     }
     if ((flags & FLAG_ROUTE_SETUP) != 0u) {

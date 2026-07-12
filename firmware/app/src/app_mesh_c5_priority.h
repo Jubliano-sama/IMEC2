@@ -21,6 +21,11 @@ struct app_mesh_c5_route_capture_state {
     uint64_t previous_hop_id;
     uint64_t target_id;
     uint64_t local_id;
+    uint32_t expected_session_id;
+    uint32_t expected_flood_epoch_id;
+    uint16_t expected_reply_nonce;
+    bool route_identity_required;
+    bool control_followup;
 };
 
 struct app_mesh_c5_route_adv_timing {
@@ -74,6 +79,7 @@ bool app_mesh_c5_wake_claim_preempts_mesh(uint8_t claim_flags);
 bool app_mesh_c5_wake_claim_requires_anchor_handoff(uint8_t claim_flags,
                                                     bool local_can_range_clicks);
 bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags);
+bool app_mesh_c5_wake_followup_is_control(uint8_t claim_flags);
 uint32_t app_mesh_c5_route_reply_listen_window_ms(
     uint8_t route_ttl,
     const struct app_mesh_c5_route_reply_window_timing *timing);

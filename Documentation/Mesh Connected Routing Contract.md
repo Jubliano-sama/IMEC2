@@ -65,6 +65,11 @@ will prove the new behavior.
   anchors must not.
 - Blind channel 5 flooding is reserved for broad discovery, gateway command
   delivery, and "Here I Am" style reachability, not routine route requests.
+- A broad gateway-command wake claim must identify its control follow-up. An
+  unprovisioned anchor that receives it enters a bounded extended-PHR control
+  receive window and accepts the following broadcast command; it must not
+  misclassify that command train as a route solicitation or require an assigned
+  discovery slot before it can receive and answer enumeration.
 - Gateway-originated commands and user-requested "Here I Am" route refresh are
   control-plane traffic. They take priority over queued local-origin click
   report delivery, transit payload relay, ACK retries, route maintenance, and

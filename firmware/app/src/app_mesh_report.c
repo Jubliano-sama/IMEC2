@@ -506,6 +506,7 @@ static void mesh_handoff_note_tx_sent(const struct mesh_outbound *out,
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
+                                      uint8_t purpose,
                                       const char *reason);
 static bool mesh_frame_requires_anchor_click_handoff(
     const uint8_t *frame,
@@ -4056,7 +4057,8 @@ int mesh_send_c5_control(const struct mesh_outbound *out,
 
     if (mode == MESH_C5_CONTROL_WAKE_IF_NEEDED && !active_exchange) {
         wake_target_id = peer_id != 0u ? peer_id : MESH_BROADCAST_ID;
-        ret = mesh_send_route_wake_train(wake_target_id, NULL, NULL, reason);
+        ret = mesh_send_route_wake_train(wake_target_id, NULL, NULL,
+                                         purpose, reason);
         if (ret < 0) {
             mesh_restart_role_scan();
             LOG_WRN("mesh C5 control wake train failed: msg=0x%02x next=0x%016llx ret=%d reason=%s",
@@ -4366,7 +4368,8 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
         }
 
         if (send_wake_train) {
-            ret = mesh_send_route_wake_train(MESH_BROADCAST_ID, NULL, NULL, reason);
+            ret = mesh_send_route_wake_train(MESH_BROADCAST_ID, NULL, NULL,
+                                             purpose, reason);
             if (ret < 0) {
                 mesh_restart_role_scan();
                 LOG_WRN("mesh C5 flood wake train failed: msg=0x%02x ret=%d reason=%s",
@@ -6024,6 +6027,7 @@ static int mesh_route_wake_listen_for_click(
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
+                                      uint8_t purpose,
                                       const char *reason)
 {
     struct uwb_clicker_session *session = &mesh_route_wake_session_scratch;
@@ -6084,6 +6088,9 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     config->wake_channel = UWB_CHANNEL_WAKE_CONTACT;
     config->ranging_channel = UWB_CHANNEL_WAKE_CONTACT;
     config->flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    if (purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
+        config->flags |= FLAG_CONTROL_FOLLOWUP;
+    }
 
     ret = uwb_clicker_session_start(session, config);
     if (ret != PROTO_OK) {
@@ -6144,7 +6151,7 @@ wake_train_attempt:
             polite_retry,
             reason == NULL ? "route" : reason);
     mesh_c5_contact_open(target_id,
-                         C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
+                         purpose,
                          event_seq,
                          true,
                          k_uptime_get_32() + wake_train_config.wake_adv_ms +
@@ -6455,6 +6462,9 @@ static uint8_t mesh_c5_listener_purpose(const char *reason)
     if (reason != NULL && strcmp(reason, "event-accept") == 0) {
         return C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION;
     }
+    if (reason != NULL && strcmp(reason, "gateway-command-wake-followup") == 0) {
+        return C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
+    }
     return C5_CONTACT_PURPOSE_ROUTE_SOLICIT;
 }
 
@@ -6748,6 +6758,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         .expected_reply_nonce =
                             identity == NULL ? 0u : identity->reply_nonce,
                         .route_identity_required = identity != NULL,
+                        .control_followup =
+                            contact_purpose ==
+                                C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
                     })) {
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_printf("DBG_ROUTE_REPLY_UNRELATED msg=0x%02x src=0x%llx dst=0x%llx prev=0x%llx target=0x%llx session=%u/%u flood=%u/%u nonce=%u/%u\n",
@@ -6865,6 +6878,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         parsed.packet.msg_type,
                         parsed.packet.seq,
                         (unsigned int)capture_count);
+                break;
+            }
+            if (contact_purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD &&
+                parsed.packet.msg_type == MSG_COMMAND) {
                 break;
             }
         }
@@ -8081,6 +8098,7 @@ int mesh_request_route(uint64_t target_id, const char *reason)
     ret = mesh_send_route_wake_train(target_id,
                                      &route_req,
                                      &embedded_route_sent,
+                                     C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
                                      reason);
     if (ret < 0) {
         LOG_WRN("mesh route discovery wake train failed: target=0x%016llx attempt=%u ret=%d reason=%s",
@@ -11243,6 +11261,7 @@ static bool mesh_execute_route_request_action(uint64_t previous_hop_id,
     ret = mesh_send_route_wake_train(MESH_BROADCAST_ID,
                                      route_req,
                                      &embedded_route_sent,
+                                     C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
                                      "route-request-rebroadcast");
     if (ret < 0) {
         LOG_WRN("mesh route-request rebroadcast wake train failed: target=0x%016llx ret=%d",
@@ -13340,8 +13359,13 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
                         listen_ms);
 
     if (!embedded_route_frame) {
+        const char *followup_reason =
+            app_mesh_c5_wake_followup_is_control(claim.flags) ?
+            "gateway-command-wake-followup" :
+            "anchor-route-wake-followup";
+
         listen_ret = mesh_listen_for_route_reply(claim.clicker_id,
-                                                 "anchor-route-wake-followup",
+                                                 followup_reason,
                                                  listen_ms,
                                                  NULL,
                                                  &captured_route_reply);

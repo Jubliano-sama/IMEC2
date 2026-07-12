@@ -655,6 +655,15 @@ static void test_clicker_rejects_success_history_overflow_config(void)
     config.flags = FLAG_COUNT_AS_CLICK | FLAG_GATEWAY_ACK_REQUIRED;
     assert(uwb_clicker_session_start(&session, &config) == PROTO_ERR_MALFORMED);
     config = clicker_config();
+    config.flags = FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                   FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    config.min_anchor_count = 1u;
+    config.max_anchor_count = 1u;
+    config.max_attempts = 1u;
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);
+    config.flags = FLAG_CONTROL_FOLLOWUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    assert(uwb_clicker_session_start(&session, &config) == PROTO_ERR_MALFORMED);
+    config = clicker_config();
     config.min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS + 1u;
     assert(uwb_clicker_session_start(&session, &config) == PROTO_ERR_MALFORMED);
     config = clicker_config();

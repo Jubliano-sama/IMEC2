@@ -73,6 +73,12 @@ bool app_mesh_c5_route_capture_relevant(
         return state->dst_id == state->local_id;
     }
 
+    if (state->control_followup && state->msg_type == MSG_COMMAND) {
+        return state->src_id == state->target_id &&
+               state->dst_id == MESH_BROADCAST_ID &&
+               state->previous_hop_id == state->target_id;
+    }
+
     return false;
 }
 
@@ -123,6 +129,11 @@ bool app_mesh_c5_wake_claim_requires_anchor_handoff(uint8_t claim_flags,
 bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags)
 {
     return !app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
+}
+
+bool app_mesh_c5_wake_followup_is_control(uint8_t claim_flags)
+{
+    return (claim_flags & FLAG_CONTROL_FOLLOWUP) != 0u;
 }
 
 uint32_t app_mesh_c5_route_reply_listen_window_ms(
