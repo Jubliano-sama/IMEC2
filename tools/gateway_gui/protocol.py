@@ -39,6 +39,7 @@ MSG_CLICK_REPORT = 0x20
 MSG_MESH_DATA = 0x30
 MSG_COMMAND = 0x40
 MSG_COMMAND_RESULT = 0x41
+MSG_GATEWAY_COMMAND_EVENT = 0x56
 
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
@@ -136,6 +137,7 @@ MESSAGE_NAMES = {
     0x3F: "GATEWAY_ROUTE_REQ",
     MSG_COMMAND: "COMMAND",
     MSG_COMMAND_RESULT: "COMMAND_RESULT",
+    MSG_GATEWAY_COMMAND_EVENT: "GATEWAY_COMMAND_EVENT",
     0x42: "RESULT_OFFER",
     0x43: "RESULT_GRANT",
     0x44: "RESULT_BUNDLE",
@@ -169,6 +171,7 @@ SHARED_MESSAGE_TYPES = {
     0x3F,
     MSG_COMMAND,
     MSG_COMMAND_RESULT,
+    MSG_GATEWAY_COMMAND_EVENT,
     0x42,
     0x43,
     0x44,
@@ -891,9 +894,8 @@ def parse_stream_record(record: bytes) -> Packet:
         age_ms=int.from_bytes(record[32:36], "little"),
         age_kind="gateway_queue_age_ms",
         payload=payload,
-        tlvs=parse_tlvs(
-            payload,
-            allow_truncated_tail=bool(record[7] & GATEWAY_STREAM_FLAG_TRUNCATED),
+        tlvs=() if record[8] == MSG_GATEWAY_COMMAND_EVENT else parse_tlvs(
+            payload, allow_truncated_tail=bool(record[7] & GATEWAY_STREAM_FLAG_TRUNCATED),
         ),
         stream_class=record[5],
         stream_priority=record[6],

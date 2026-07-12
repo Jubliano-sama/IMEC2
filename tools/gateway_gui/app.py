@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from .ble_transport import BLEAK_IMPORT_ERROR, BleDeviceInfo, BleTransport
 from .cir_reassembly import CirAssemblyKey, CirReassembler, CirSample
+from .diagnostics_integration import GatewayDiagnosticsMixin
 from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
@@ -129,7 +130,7 @@ class Tooltip:
             self.window = None
 
 
-class GatewayGui:
+class GatewayGui(GatewayDiagnosticsMixin):
     MAX_PACKET_ROWS = 1000
     MAX_LOG_LINES = 2500
 
@@ -156,6 +157,7 @@ class GatewayGui:
         self.connected = False
         self.scanning = False
         self.gateway_id: int | None = None
+        self._initialize_gateway_diagnostics()
 
         self.connection_text = tk.StringVar(value="Disconnected")
         self.device_text = tk.StringVar()
@@ -380,6 +382,7 @@ class GatewayGui:
         log_tab = ttk.Frame(activity, style="Panel.TFrame", padding=8)
         activity.add(packet_tab, text="Packets")
         activity.add(log_tab, text="Activity")
+        self._build_gateway_diagnostic_tabs(activity)
         self._build_packet_table(packet_tab)
         self._build_log(log_tab)
 
@@ -432,6 +435,7 @@ class GatewayGui:
         self.packet_tree.grid(row=1, column=0, sticky="nsew")
         scrollbar.grid(row=1, column=1, sticky="ns")
         self.packet_tree.bind("<<TreeviewSelect>>", self._packet_selected)
+        self._configure_diagnostic_packet_tags()
 
     def _build_log(self, parent: ttk.Frame) -> None:
         parent.grid_rowconfigure(1, weight=1)
@@ -705,6 +709,8 @@ class GatewayGui:
             self.root.after(50, self._drain_events)
 
     def _handle_event(self, event: dict[str, Any]) -> None:
+        if self._handle_diagnostic_event(event):
+            return
         kind = event.get("kind")
         if kind == "scan_state":
             self.scanning = bool(event.get("active"))
@@ -835,6 +841,7 @@ class GatewayGui:
         self.log_text.configure(state="disabled")
 
     def _add_packet(self, packet: Packet) -> None:
+        self._observe_diagnostic_packet(packet)
         self.packet_counter += 1
         iid = f"packet-{self.packet_counter}"
         self.packet_by_iid[iid] = packet
@@ -860,13 +867,16 @@ class GatewayGui:
                 flags,
                 summary,
             ),
+            tags=self._diagnostic_packet_tags(packet),
         )
+        self._register_diagnostic_packet_row(packet, iid)
         rows = self.packet_tree.get_children()
         while len(rows) > self.MAX_PACKET_ROWS:
             oldest = rows[0]
             self.packet_tree.delete(oldest)
             removed = self.packet_by_iid.pop(oldest, None)
             if removed is not None:
+                self._forget_diagnostic_packet_row(removed)
                 self.cir_key_by_packet_id.pop(id(removed), None)
                 self.cir_errors_by_packet_id.pop(id(removed), None)
             rows = self.packet_tree.get_children()
@@ -906,7 +916,7 @@ class GatewayGui:
             distance = packet.value(TLV_DISTANCE_MM)
             chunk_rows, _ = click_samples(packet)
             return (
-                f"anchor={format_device_id(anchor) if isinstance(anchor, int) else '-'} "
+                f"{self._diagnostic_packet_label(packet)} anchor={format_device_id(anchor) if isinstance(anchor, int) else '-'} "
                 f"clicker={format_device_id(clicker) if isinstance(clicker, int) else '-'} "
                 f"event={event_seq if event_seq is not None else '-'} "
                 f"distance={distance if distance is not None else '-'} mm samples={len(chunk_rows)}"
@@ -1355,6 +1365,7 @@ class GatewayGui:
     def _clear_packets(self) -> None:
         self._clear_tree(self.packet_tree)
         self.packet_by_iid.clear()
+        self._wake_row_iids.clear()
         self.cir_reassembler.clear()
         self.cir_key_by_packet_id.clear()
         self.cir_errors_by_packet_id.clear()

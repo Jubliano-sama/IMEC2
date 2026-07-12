@@ -1,0 +1,255 @@
+"""Operational Tk views for geometry, click, and mesh diagnostics."""
+
+from __future__ import annotations
+
+import math
+from functools import partial
+import tkinter as tk
+from tkinter import ttk
+from typing import Callable, Iterable
+
+from .anchor_geometry import AnchorLayoutResult
+from .diagnostic_models import (
+    ClickDiagnosticState, CommandTimelineModel, SurveyGeometryModel, TopologyComparison,
+    COLLISION_WINDOW_MS, WAKE_COLLISION, WAKE_LATE, WAKE_NORMAL, anchor_label,
+)
+from .command_telemetry import GATEWAY_COMMAND_KIND_NAMES, GATEWAY_COMMAND_REASON_NAMES, GATEWAY_COMMAND_STAGE_NAMES
+
+
+ACCENT = "#126b5b"
+AMBER = "#a56200"
+ERROR = "#a72b2b"
+MUTED = "#667079"
+BLUE = "#315c9b"
+
+
+class AnchorGeometryView(ttk.Frame):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        solve: Callable[[], None],
+        transform: Callable[[str], None],
+    ) -> None:
+        super().__init__(parent, style="Panel.TFrame", padding=8)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=4)
+        self.rowconfigure(2, weight=2)
+        bar = ttk.Frame(self, style="Panel.TFrame")
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        bar.columnconfigure(5, weight=1)
+        self.solver_var = tk.StringVar(value="Visibility branching tuned")
+        ttk.Combobox(
+            bar, textvariable=self.solver_var,
+            values=("Visibility branching tuned", "Spring energy"), state="readonly", width=25,
+        ).grid(row=0, column=0, padx=(0, 6))
+        self.solve_button = ttk.Button(bar, text="Solve", style="Primary.TButton", command=solve)
+        self.solve_button.grid(row=0, column=1, padx=(0, 12))
+        self.status_var = tk.StringVar(value="Waiting for successful survey pair records")
+        for control_column, (button_text, action) in enumerate((("Mirror", "mirror"), ("-90°", "left"), ("+90°", "right")), 2):
+            ttk.Button(bar, text=button_text, style="Tool.TButton", command=partial(transform, action)).grid(row=0, column=control_column, padx=(3, 0))
+        ttk.Label(bar, textvariable=self.status_var, style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
+
+        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=1, highlightbackground="#d5dbdd")
+        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.canvas.bind("<Configure>", lambda _event: self.redraw())
+        self.model: SurveyGeometryModel | None = None
+        self.result: AnchorLayoutResult | None = None
+
+        pair_frame = ttk.Frame(self, style="Panel.TFrame")
+        pair_frame.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
+        pair_frame.columnconfigure(0, weight=1)
+        pair_frame.rowconfigure(0, weight=1)
+        self.pair_tree = ttk.Treeview(
+            pair_frame, columns=("a", "b", "distance", "state", "source"), show="headings", height=6,
+        )
+        for pair_column, title, width in (
+            ("a", "Anchor A", 155), ("b", "Anchor B", 155), ("distance", "Distance", 90),
+            ("state", "Constraint", 95), ("source", "Source", 130),
+        ):
+            self.pair_tree.heading(pair_column, text=title)
+            self.pair_tree.column(pair_column, width=width, minwidth=70, stretch=pair_column == "source")
+        self.pair_tree.grid(row=0, column=0, sticky="nsew")
+        pair_scroll = ttk.Scrollbar(pair_frame, orient="vertical", command=self.pair_tree.yview)
+        pair_scroll.grid(row=0, column=1, sticky="ns")
+        self.pair_tree.configure(yscrollcommand=pair_scroll.set)
+
+    def show_model(self, model: SurveyGeometryModel, result: AnchorLayoutResult | None = None) -> None:
+        self.model = model
+        if result is not None:
+            self.result = result
+        self.pair_tree.delete(*self.pair_tree.get_children())
+        all_pairs = sorted(set(model.pairs) | model.failures)
+        for pair in all_pairs:
+            known = model.pairs.get(pair)
+            state = "known" if known else "missing" if pair in model.missing_pairs else "failed"
+            self.pair_tree.insert("", "end", values=(pair[0], pair[1], f"{known.distance_m:.3f} m" if known else "-", state, known.source if known else "survey"))
+        self.redraw()
+
+    def redraw(self) -> None:
+        self.canvas.delete("all")
+        positions = self.model.positions_m if self.model else {}
+        if not positions:
+            self.canvas.create_text(max(self.canvas.winfo_width(), 400) / 2, max(self.canvas.winfo_height(), 260) / 2, text="No solved geometry", fill=MUTED)
+            return
+        project = _projector(positions.values(), self.canvas.winfo_width(), self.canvas.winfo_height())
+        if self.model:
+            for pair, constraint in self.model.pairs.items():
+                if pair[0] in positions and pair[1] in positions:
+                    self.canvas.create_line(*project(*positions[pair[0]]), *project(*positions[pair[1]]), fill="#aab5b9", width=1)
+                    mid = tuple((a + b) / 2 for a, b in zip(project(*positions[pair[0]]), project(*positions[pair[1]])))
+                    self.canvas.create_text(*mid, text=f"{constraint.distance_m:.2f}", fill=MUTED)
+        for anchor_id, point in sorted(positions.items()):
+            x, y = project(*point)
+            self.canvas.create_oval(x - 7, y - 7, x + 7, y + 7, fill=ACCENT, outline="")
+            self.canvas.create_text(x + 10, y - 8, text=anchor_id, anchor="sw", fill="#20262b")
+
+
+class ClickDiagnosticsView(ttk.Frame):
+    def __init__(self, parent: tk.Misc) -> None:
+        super().__init__(parent, style="Panel.TFrame", padding=8)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+        bar = ttk.Frame(self, style="Panel.TFrame")
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        bar.columnconfigure(1, weight=1)
+        self.identity_var = tk.StringVar(value="No click event")
+        self.fit_var = tk.StringVar(value="Waiting for solved geometry")
+        self.wake_var = tk.StringVar(value="[?] Detection attempt unavailable")
+        ttk.Label(bar, textvariable=self.identity_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(bar, textvariable=self.fit_var, style="PanelMuted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
+        ttk.Label(bar, textvariable=self.wake_var, wraplength=650, justify="left").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(3, 0)
+        )
+        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=1, highlightbackground="#d5dbdd")
+        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.canvas.bind("<Configure>", lambda _event: self.redraw())
+        self.diagnostic_state: ClickDiagnosticState | None = None
+        self.positions: dict[str, tuple[float, float]] = {}
+
+    def show(self, state: ClickDiagnosticState, positions: dict[str, tuple[float, float]]) -> None:
+        self.diagnostic_state = state
+        self.positions = dict(positions)
+        if state.identity:
+            self.identity_var.set(f"Session {state.identity[0]}  •  Event {state.identity[1]}  •  Clicker {anchor_label(state.identity[2])}")
+        else:
+            self.identity_var.set("No click event")
+        if state.result:
+            maximum = max((abs(value) for value in state.result.range_residuals_m.values()), default=0.0)
+            self.fit_var.set(f"x {state.result.x_m:.3f} m   y {state.result.y_m:.3f} m   RMSE {state.result.rmse_m:.3f} m   Max {maximum:.3f} m")
+        else:
+            self.fit_var.set(f"{state.status.replace('_', ' ').title()}  •  {state.message}")
+        wake = state.wake
+        if wake:
+            attempt = "-" if wake.attempt is None else str(wake.attempt)
+            nearby = ", ".join(wake.nearby_click_ids) or "-"
+            timestamp = "-" if wake.event_time_ms is None else f"{wake.event_time_ms:.1f} ms"
+            self.wake_var.set(
+                f"[{wake.marker}] {wake.classification.replace('_', ' ').title()}   Attempt {attempt}   "
+                f"Event {timestamp}   Nearby {nearby}   Window {COLLISION_WINDOW_MS} ms   {wake.reason}"
+            )
+        self.redraw()
+
+    def redraw(self) -> None:
+        self.canvas.delete("all")
+        if not self.positions:
+            self.canvas.create_text(max(self.canvas.winfo_width(), 400) / 2, max(self.canvas.winfo_height(), 260) / 2, text="No solved geometry", fill=MUTED)
+            return
+        points = list(self.positions.values())
+        if self.diagnostic_state and self.diagnostic_state.result:
+            points.append((self.diagnostic_state.result.x_m, self.diagnostic_state.result.y_m))
+        project = _projector(points, self.canvas.winfo_width(), self.canvas.winfo_height())
+        state = self.diagnostic_state
+        if state:
+            for anchor_id, radius in state.ranges_m.items():
+                if anchor_id not in self.positions:
+                    continue
+                x, y = project(*self.positions[anchor_id])
+                scale = project.scale
+                self.canvas.create_oval(x - radius * scale, y - radius * scale, x + radius * scale, y + radius * scale, outline="#7aa7a0", dash=(4, 4))
+        for anchor_id, point in sorted(self.positions.items()):
+            x, y = project(*point)
+            self.canvas.create_oval(x - 6, y - 6, x + 6, y + 6, fill=BLUE, outline="")
+            self.canvas.create_text(x + 9, y - 7, text=anchor_id, anchor="sw", fill="#20262b")
+        if state and state.result:
+            x, y = project(state.result.x_m, state.result.y_m)
+            classification = state.wake.classification if state.wake else "unknown"
+            color, marker = {WAKE_NORMAL: (ACCENT, "OK"), WAKE_LATE: (ERROR, "!"), WAKE_COLLISION: (AMBER, "C")}.get(classification, (MUTED, "?"))
+            self.canvas.create_oval(x - 11, y - 11, x + 11, y + 11, fill=color, outline="#20262b")
+            self.canvas.create_text(x, y, text=marker, fill="#ffffff", font=("TkDefaultFont", 8, "bold"))
+
+
+class MeshDiagnosticsView(ttk.Frame):
+    def __init__(self, parent: tk.Misc, *, accept_baseline: Callable[[], None]) -> None:
+        super().__init__(parent, style="Panel.TFrame", padding=8)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=3)
+        self.rowconfigure(1, weight=2)
+        commands = ttk.Frame(self, style="Panel.TFrame")
+        commands.grid(row=0, column=0, sticky="nsew")
+        commands.columnconfigure(0, weight=1)
+        commands.rowconfigure(1, weight=1)
+        self.timeline_status_var = tk.StringVar(value="No structured command telemetry")
+        ttk.Label(commands, textvariable=self.timeline_status_var, style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        self.timeline = ttk.Treeview(commands, columns=("seq", "run", "kind", "stage", "attempt", "progress", "loss", "reason"), show="headings", height=10)
+        for column, title, width in (("seq", "Event", 55), ("run", "Correlation", 95), ("kind", "Command", 130), ("stage", "Stage", 115), ("attempt", "Try", 40), ("progress", "Progress", 85), ("loss", "Lost", 45), ("reason", "Reason", 130)):
+            self.timeline.heading(column, text=title)
+            self.timeline.column(column, width=width, minwidth=40, stretch=column == "reason")
+        self.timeline.grid(row=1, column=0, sticky="nsew")
+        topology = ttk.Frame(self, style="Panel.TFrame")
+        topology.grid(row=1, column=0, sticky="nsew", pady=(7, 0))
+        topology.columnconfigure(0, weight=1)
+        topology.rowconfigure(1, weight=1)
+        bar = ttk.Frame(topology, style="Panel.TFrame")
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        bar.columnconfigure(0, weight=1)
+        self.topology_var = tk.StringVar(value="[?] No complete Here-I-Am enumeration")
+        ttk.Label(bar, textvariable=self.topology_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(bar, text="✓ Accept baseline", style="Tool.TButton", command=accept_baseline).grid(row=0, column=1, sticky="e")
+        self.topology = ttk.Treeview(topology, columns=("expected", "actual", "result"), show="headings", height=6)
+        for column, title in (("expected", "Expected ID"), ("actual", "Actual ID"), ("result", "Result")):
+            self.topology.heading(column, text=title)
+            self.topology.column(column, width=180, minwidth=100, stretch=True)
+        self.topology.grid(row=1, column=0, sticky="nsew")
+
+    def show_timeline(self, model: CommandTimelineModel) -> None:
+        self.timeline.delete(*self.timeline.get_children())
+        for event in model.ordered():
+            flags = " replay" if event.flags & 0x04 else ""
+            terminal_suffix = " terminal" if event.terminal else ""
+            self.timeline.insert("", "end", values=(
+                event.event_sequence, f"{event.correlation_id}:{event.host_session_id}/{event.host_sequence}",
+                GATEWAY_COMMAND_KIND_NAMES[event.command_kind],
+                GATEWAY_COMMAND_STAGE_NAMES[event.stage] + flags + terminal_suffix, event.attempt,
+                f"{event.progress_count}/{event.total_count or '-'}  {event.success_count}✓ {event.failure_count}!",
+                event.lost_event_count, GATEWAY_COMMAND_REASON_NAMES[event.reason],
+            ))
+        terminals = sorted(model.terminals.values(), key=lambda event: event.event_sequence)
+        if terminals:
+            latest_terminal = terminals[-1]
+            marker = "OK" if latest_terminal.command_status == 0 and latest_terminal.reason == 0 else "!"
+            self.timeline_status_var.set(
+                f"[{marker}] Terminal {GATEWAY_COMMAND_KIND_NAMES[latest_terminal.command_kind]}  •  "
+                f"{latest_terminal.success_count} succeeded  •  {latest_terminal.failure_count} failed  •  "
+                f"{latest_terminal.duplicate_count} duplicates  •  {latest_terminal.lost_event_count} BLE events lost"
+            )
+
+    def show_topology(self, result: TopologyComparison) -> None:
+        marker = "OK" if result.status == "exact" else "?" if not result.complete else "!"
+        self.topology_var.set(f"[{marker}] {result.status.replace('_', ' ').title()}   Expected {len(result.expected)}   Actual {len(result.actual)}   Added {len(result.added)}   Missing {len(result.missing)}")
+        self.topology.delete(*self.topology.get_children())
+        expected, actual = set(result.expected), set(result.actual)
+        for anchor_id in sorted(expected | actual):
+            status = "match" if anchor_id in expected and anchor_id in actual else "missing" if anchor_id in expected else "added"
+            self.topology.insert("", "end", values=(anchor_label(anchor_id) if anchor_id in expected else "", anchor_label(anchor_id) if anchor_id in actual else "", status))
+
+
+def _projector(points: Iterable[tuple[float, float]], width: int, height: int):
+    values = list(points)
+    min_x, max_x = min(point[0] for point in values), max(point[0] for point in values)
+    min_y, max_y = min(point[1] for point in values), max(point[1] for point in values)
+    scale = min((max(width, 300) - 80) / max(max_x - min_x, 1.0), (max(height, 220) - 70) / max(max_y - min_y, 1.0))
+    def project(x: float, y: float) -> tuple[float, float]:
+        return 40 + (x - min_x) * scale, max(height, 220) - 35 - (y - min_y) * scale
+    project.scale = scale  # type: ignore[attr-defined]
+    return project

@@ -148,3 +148,25 @@ imaginary. The CIR inspector plots `hypot(real, imaginary)` by absolute
 accumulator index, marks the declared start and first-path indices, and retains
 every six-byte sample in the table. Incomplete and malformed streams show their
 exact state and errors without synthesizing a waveform.
+
+## Geometry And Mesh Diagnostics
+
+`Anchor Geometry` consumes only successful `SURVEY_PAIR_RESULT` distances.
+Failed pairs become visibility evidence only after terminal telemetry proves
+that every scheduled pair opportunity was observed. The default solver is the
+exact `visibility_branching_tuned` profile adapted from the user-owned
+AnchorGeometrySolver commit `01c3edb470bcd868403e04a6cded754360decdf0`.
+The spring-energy solver is an explicit alternate; failures never fall back.
+
+`Click Location` groups ranges by protocol session, event sequence, and clicker
+ID and solves against the current geometry generation. Duplicate, stale,
+invalid, unknown-anchor, and collinear inputs remain unsolved. The wake monitor
+uses the firmware-derived 1000 ms collision window. Current click reports do
+not export anchor detection attempt, so they remain `unknown` until a structured
+field exists rather than being silently treated as normal.
+
+`Mesh Commands` decodes typed `MSG_GATEWAY_COMMAND_EVENT` schema-1 records into
+a correlated timeline and topology view. A complete terminal enumeration can
+be explicitly accepted as the baseline under
+`~/.config/imec2-gateway-gui/anchor-baseline.json`; incomplete or lossy runs
+remain unknown and never update the baseline automatically.
