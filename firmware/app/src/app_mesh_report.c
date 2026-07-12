@@ -11938,7 +11938,8 @@ after_gateway_ack:
                     if (debug_select_ret == PROTO_OK &&
                         mesh_id_is_unicast(debug_next_hop) &&
                         debug_next_hop != GATEWAY_ID) {
-                        struct mesh_relay_result failure_result;
+                        uint32_t failure_actions = MESH_RELAY_ACTION_NONE;
+                        int failure_status = PROTO_OK;
                         int repair_ret;
                         int failure_ret = PROTO_OK;
 
@@ -11961,11 +11962,12 @@ after_gateway_ack:
                                     downstream_peers,
                                     ARRAY_SIZE(downstream_peers));
 
-                            failure_ret = mesh_relay_note_pending_parent_failure(
+                            failure_ret = mesh_relay_note_pending_parent_failure_status(
                                 &mesh_runtime,
                                 failure_now_ms,
                                 sys_rand32_get(),
-                                &failure_result);
+                                &failure_actions,
+                                &failure_status);
                             defer_ret = failure_ret;
                             if (failure_ret == PROTO_OK) {
                                 mesh_notify_removed_downstream_peers(
@@ -11974,7 +11976,7 @@ after_gateway_ack:
                                     "parent-route-failed");
                             }
                             if (failure_ret == PROTO_OK &&
-                                (failure_result.actions &
+                                (failure_actions &
                                  MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
                                 mesh_schedule_async_route_request(
                                     retransmit->packet.dst_id,
@@ -12005,7 +12007,7 @@ after_gateway_ack:
                                             failure_ret == PROTO_OK &&
                                                 mesh_parent_contact_failure_is_hard(
                                                     repair_ret) ?
-                                                failure_result.actions : 0u,
+                                                failure_actions : 0u,
                                             defer_ret,
                                             mesh_runtime.pending.retry_after_ms);
                     } else {

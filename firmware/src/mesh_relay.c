@@ -6553,7 +6553,8 @@ void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
 static int schedule_pending_parent_failure(struct mesh_relay *relay,
                                            uint32_t now_ms,
                                            uint32_t random_value,
-                                           struct mesh_relay_result *result)
+                                           uint32_t *actions,
+                                           int *status)
 {
     enum route_delivery_action action;
     const struct route_candidate *selected;
@@ -6587,14 +6588,14 @@ static int schedule_pending_parent_failure(struct mesh_relay *relay,
                                    &next_hop_id) != PROTO_OK) {
         mesh_relay_invalidate_upstream_route(relay);
         if (preserve_local_pending_after_parent_loss(relay, now_ms)) {
-            result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
-            result->status = PROTO_ERR_NOT_FOUND;
+            *actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
+            *status = PROTO_ERR_NOT_FOUND;
             return PROTO_OK;
         }
         relay->pending.state = MESH_RELAY_TX_IDLE;
         outbox_record_clear(relay);
-        result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
-        result->status = PROTO_ERR_NOT_FOUND;
+        *actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
+        *status = PROTO_ERR_NOT_FOUND;
         return PROTO_OK;
     }
 
@@ -6623,6 +6624,25 @@ int mesh_relay_note_pending_parent_failure(struct mesh_relay *relay,
     }
 
     result_reset(result);
+    return mesh_relay_note_pending_parent_failure_status(relay,
+                                                         now_ms,
+                                                         random_value,
+                                                         &result->actions,
+                                                         &result->status);
+}
+
+int mesh_relay_note_pending_parent_failure_status(struct mesh_relay *relay,
+                                                  uint32_t now_ms,
+                                                  uint32_t random_value,
+                                                  uint32_t *actions,
+                                                  int *status)
+{
+    if (relay == NULL || actions == NULL || status == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    *actions = MESH_RELAY_ACTION_NONE;
+    *status = PROTO_OK;
     if (relay->pending.packet.dst_id != relay->gateway_id ||
         pending_is_local_collection_result(relay, &relay->pending) ||
         (relay->pending.state != MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
@@ -6633,7 +6653,8 @@ int mesh_relay_note_pending_parent_failure(struct mesh_relay *relay,
     return schedule_pending_parent_failure(relay,
                                            now_ms,
                                            random_value,
-                                           result);
+                                           actions,
+                                           status);
 }
 
 int mesh_relay_tick_with_random(struct mesh_relay *relay,
@@ -6734,7 +6755,8 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
         return schedule_pending_parent_failure(relay,
                                                now_ms,
                                                random_value,
-                                               result);
+                                               &result->actions,
+                                               &result->status);
     }
 
     return PROTO_OK;

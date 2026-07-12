@@ -256,6 +256,36 @@ static int pending_payload_matches(const struct mesh_relay *relay,
                   identity->payload_len) == 0;
 }
 
+static int note_parent_failure_with_lightweight_parity(
+    struct mesh_relay *relay,
+    uint32_t now_ms,
+    uint32_t random_value,
+    struct mesh_relay_result *result)
+{
+    struct mesh_relay lightweight_relay = *relay;
+    uint32_t lightweight_actions = UINT32_MAX;
+    int lightweight_status = PROTO_ERR_MALFORMED;
+    int full_ret;
+    int lightweight_ret;
+
+    full_ret = mesh_relay_note_pending_parent_failure(relay,
+                                                       now_ms,
+                                                       random_value,
+                                                       result);
+    lightweight_ret = mesh_relay_note_pending_parent_failure_status(
+        &lightweight_relay,
+        now_ms,
+        random_value,
+        &lightweight_actions,
+        &lightweight_status);
+
+    CHECK(lightweight_ret == full_ret);
+    CHECK(lightweight_actions == result->actions);
+    CHECK(lightweight_status == result->status);
+    CHECK(memcmp(&lightweight_relay, relay, sizeof(*relay)) == 0);
+    return full_ret;
+}
+
 static int exercise_first_three_failures(
     struct mesh_relay *producer,
     const struct pending_identity *identity,
@@ -275,9 +305,10 @@ static int exercise_first_three_failures(
         test_ctx.phase = failure == 1u ? "parent_failure_1" :
                          (failure == 2u ? "parent_failure_2" :
                           "parent_failure_3");
-        CHECK(mesh_relay_note_pending_parent_failure(producer, *now_ms,
-                                                      random_value,
-                                                      &failure_result) == PROTO_OK);
+        CHECK(note_parent_failure_with_lightweight_parity(producer,
+                                                          *now_ms,
+                                                          random_value,
+                                                          &failure_result) == PROTO_OK);
         CHECK(failure_result.actions == MESH_RELAY_ACTION_NONE);
         selected = route_selected(&producer->upstream);
         CHECK(selected != NULL);
@@ -341,9 +372,11 @@ static int test_no_alternate_fourth_failure(uint32_t seed, uint32_t start_ms)
     CHECK(find_event_timing(&producer, DEPENDENT_CHILD_ID) != NULL);
 
     test_ctx.phase = "parent_failure_4_discovery";
-    CHECK(mesh_relay_note_pending_parent_failure(&producer, now_ms,
-                                                 seed ^ UINT32_C(0xdeadbeef),
-                                                 &result) == PROTO_OK);
+    CHECK(note_parent_failure_with_lightweight_parity(
+              &producer,
+              now_ms,
+              seed ^ UINT32_C(0xdeadbeef),
+              &result) == PROTO_OK);
     CHECK(has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     CHECK(result.status == PROTO_ERR_NOT_FOUND);
     CHECK(route_selected(&producer.upstream) == NULL);
@@ -388,9 +421,11 @@ static int test_alternate_parent_fourth_failure(uint32_t seed,
     CHECK(find_event_timing(&producer, DEPENDENT_CHILD_ID) != NULL);
 
     test_ctx.phase = "parent_failure_4_alternate";
-    CHECK(mesh_relay_note_pending_parent_failure(&producer, now_ms,
-                                                 seed ^ UINT32_C(0x13579bdf),
-                                                 &result) == PROTO_OK);
+    CHECK(note_parent_failure_with_lightweight_parity(
+              &producer,
+              now_ms,
+              seed ^ UINT32_C(0x13579bdf),
+              &result) == PROTO_OK);
     CHECK(!has_action(&result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED));
     CHECK(result.status == PROTO_OK);
     selected = route_selected(&producer.upstream);

@@ -573,6 +573,11 @@ int mesh_relay_note_pending_parent_failure(struct mesh_relay *relay,
                                            uint32_t now_ms,
                                            uint32_t random_value,
                                            struct mesh_relay_result *result);
+int mesh_relay_note_pending_parent_failure_status(struct mesh_relay *relay,
+                                                  uint32_t now_ms,
+                                                  uint32_t random_value,
+                                                  uint32_t *actions,
+                                                  int *status);
 int mesh_relay_start_tx(struct mesh_relay *relay,
                         const struct proto_packet *packet,
                         const uint8_t *payload,
