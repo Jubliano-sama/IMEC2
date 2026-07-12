@@ -70,6 +70,9 @@ will prove the new behavior.
   receive window and accepts the following broadcast command; it must not
   misclassify that command train as a route solicitation or require an assigned
   discovery slot before it can receive and answer enumeration.
+- The bounded extended-PHR control follow-up window must cover the protocol's
+  maximum advertised wake-train duration, including the sender's transition
+  from the final wake claim to the first gateway-command flood frame.
 - Gateway-originated commands and user-requested "Here I Am" route refresh are
   control-plane traffic. They take priority over queued local-origin click
   report delivery, transit payload relay, ACK retries, route maintenance, and

@@ -107,6 +107,10 @@ BUILD_ASSERT(WAKE_ADV_MS * 1000u > ANCHOR_UWB_IDLE_SCAN_AWAKE_US,
 #endif
 BUILD_ASSERT(WAKE_ADV_MS <= UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
              "wake claim timing bounds must cover the configured clicker wake train");
+BUILD_ASSERT(MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS >=
+             UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS +
+             MESH_ROUTE_TEST_REPLY_WINDOW_GUARD_MS,
+             "control follow-up RX must cover wake train and TX transition");
 BUILD_ASSERT(UWB_CLICKER_CLAIMED_DURATION_MS <=
              UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
              "wake claim timing bounds must cover the configured advertised click epoch");

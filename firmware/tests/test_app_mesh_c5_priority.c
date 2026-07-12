@@ -230,7 +230,7 @@ static void test_route_reply_window_covers_direct_probe_and_reply_exchange(void)
     const struct app_mesh_c5_route_reply_window_timing timing = {
         .base_reply_window_ms = 1000u,
         .wake_train_ms = 400u,
-        .post_wake_route_rx_ms = 800u,
+        .post_wake_route_rx_ms = 1250u,
         .wake_to_route_delay_ms = 40u,
         .request_flood_burst_ms = 600u,
         .flood_forward_wave_ms = 1400u,
@@ -247,10 +247,10 @@ static void test_route_reply_window_covers_direct_probe_and_reply_exchange(void)
     uint32_t ttl8_window =
         app_mesh_c5_route_reply_listen_window_ms(8u, &timing);
 
-    assert(ttl1_window == 2600u);
-    assert(ttl2_window == 7425u);
-    assert(ttl4_window == 17075u);
-    assert(ttl8_window == 36375u);
+    assert(ttl1_window == 3050u);
+    assert(ttl2_window == 8325u);
+    assert(ttl4_window == 18875u);
+    assert(ttl8_window == 39975u);
     assert(ttl1_window > timing.base_reply_window_ms);
     assert(ttl1_window < ttl2_window);
     assert(ttl2_window < ttl4_window);

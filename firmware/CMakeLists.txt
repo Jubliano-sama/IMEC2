@@ -76,6 +76,7 @@ set_tests_properties(gateway_gui_cross_layer
 
 add_executable(test_gateway_command_lifecycle_invariants
     tests/mesh_integration/test_gateway_command_lifecycle_invariants.c
+    app/src/app_gateway_command_ingress.c
     app/src/app_gateway_command_lifecycle.c)
 target_include_directories(test_gateway_command_lifecycle_invariants PRIVATE app/src)
 target_link_libraries(test_gateway_command_lifecycle_invariants PRIVATE core)
