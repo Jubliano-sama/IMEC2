@@ -320,6 +320,15 @@ target_link_libraries(test_dwm3000_models PRIVATE core)
 add_test(NAME dwm3000_models COMMAND test_dwm3000_models)
 set_tests_properties(dwm3000_models PROPERTIES LABELS "hardware_models")
 
+add_executable(test_multi_anchor_timing_invariants
+    tests/mesh_integration/test_multi_anchor_timing_invariants.c
+)
+target_link_libraries(test_multi_anchor_timing_invariants PRIVATE core)
+add_test(NAME multi_anchor_timing_invariants
+    COMMAND test_multi_anchor_timing_invariants)
+set_tests_properties(multi_anchor_timing_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;timing;survey;wake")
+
 add_executable(test_gateway_ble_transport_model
     tests/mesh_integration/test_gateway_ble_transport_model.c
 )

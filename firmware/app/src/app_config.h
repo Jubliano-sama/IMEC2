@@ -2,6 +2,7 @@
 #define APP_CONFIG_H
 
 #include "app_device_identity.h"
+#include "mesh_radio_timing.h"
 #include "status.h"
 #include "uwb.h"
 
@@ -116,11 +117,7 @@
 #define BLE_COURTESY_SCAN_INTERVAL_UNITS 40u
 #define BLE_COURTESY_SCAN_WINDOW_UNITS 32u
 
-#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_ML_ANCHOR)
-#define UWB_DISCOVERY_SLOT_US 12000u
-#else
-#define UWB_DISCOVERY_SLOT_US 1000u
-#endif
+#define UWB_DISCOVERY_SLOT_US MESH_RADIO_DISCOVERY_SLOT_US
 #define UWB_POST_BURST_DIAG_GUARD_MS 120u
 #define UWB_POST_BURST_DIAG_SLOT_MS 1000u
 #define GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH 4u

@@ -19,7 +19,8 @@ from .command_telemetry import (
     GATEWAY_COMMAND_STAGE_NAMES,
 )
 from .protocol import (
-    Packet, MSG_CLICK_REPORT, TLV_ANCHOR_ID, TLV_CLICKER_ID,
+    Packet, MSG_CLICK_REPORT, TLV_ANCHOR_ID, TLV_CLICKER_ID, TLV_ATTEMPT_INDEX,
+    TLV_DETECTION_SOURCE,
     TLV_DISTANCE_MM, TLV_EVENT_SEQ, TLV_RANGE_STATUS, TLV_SAMPLE_COUNT,
     TLV_SAMPLE_INDEX, TLV_SURVEY_ID,
 )
@@ -163,11 +164,14 @@ class WakeAttemptAdapter(Protocol):
 
 
 class PendingWakeAttemptAdapter:
-    """Current click schema has no detection-attempt field; never guess from unrelated TLVs."""
+    """Read additive wake-attempt evidence without guessing from unrelated TLVs."""
 
     def attempt(self, packet: Packet) -> int | None:
-        del packet
-        return None
+        attempt = packet.value(TLV_ATTEMPT_INDEX)
+        source = packet.value(TLV_DETECTION_SOURCE)
+        if source != 1 or not isinstance(attempt, int) or attempt <= 0:
+            return None
+        return attempt
 
 
 class WakeTrainMonitor:

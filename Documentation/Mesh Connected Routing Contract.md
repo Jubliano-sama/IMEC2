@@ -41,6 +41,10 @@ will prove the new behavior.
 - Click/ranging discovery uses the standard wake PHY used by the clicker. The
   extended-PHR mesh-control PHY is reserved for route and mesh-control follow-up
   traffic and must not be selected merely because the anchor is a mesh build.
+- Discovery-reply slots must contain the complete standard-wake PHY airtime of
+  a discovery reply plus the required guard for radio transition and bounded
+  clock jitter. Assigned and deterministic unprovisioned slots use the same
+  spacing; adjacent anchors must not overlap on air.
 - The configured click wake train must exceed the worst-case anchor channel 5
   RX-off gap, including startup and retune time. Builds must reject a scan
   interval that cannot guarantee overlap with the first wake train.

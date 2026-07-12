@@ -90,6 +90,8 @@ TLV_UWB_CIR_TOTAL_BYTES = 0x51
 TLV_UWB_CIR_FIRST_PATH_INDEX = 0x52
 TLV_UWB_RAW_TIMESTAMPS = 0x53
 TLV_UWB_RX_DIAG_BYTES = 0x54
+TLV_ATTEMPT_INDEX = 0xA9
+TLV_DETECTION_SOURCE = 0xAA
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -430,6 +432,8 @@ TLV_SPECS: dict[int, TlvSpec] = {
         "DISCOVERY_ASSIGNMENT_TABLE", _discovery_assignment_table
     ),
     TLV_CLICKER_CLOCK_OFFSET_RAW: TlvSpec("CLICKER_CLOCK_OFFSET_RAW", _scalar(2, signed=True)),
+    TLV_ATTEMPT_INDEX: TlvSpec("ATTEMPT_INDEX", _scalar(1)),
+    TLV_DETECTION_SOURCE: TlvSpec("DETECTION_SOURCE", _scalar(1)),
 }
 
 # Keep every currently assigned protocol TLV named even where the GUI does not

@@ -372,7 +372,8 @@ int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot)
                                                &assigned_slot_count) ||
         epoch == 0u || assigned_slot_count != slot_count ||
         assigned_slot >= assigned_slot_count) {
-        return PROTO_ERR_STALE;
+        /* Keep local click ownership alive while enumeration is repaired. */
+        return uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, anchor_slot);
     }
     *anchor_slot = assigned_slot;
     return PROTO_OK;

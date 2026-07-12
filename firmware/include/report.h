@@ -84,8 +84,11 @@ struct range_report_fields {
     uint16_t sample_index;
     uint16_t sample_count;
     uint16_t distance_sample_count;
+    uint8_t attempt_index;
+    uint8_t detection_source;
     bool omit_rsl;
     bool omit_cir;
+    bool detection_attempt_present;
     const struct range_report_diagnostics *diagnostics;
 };
 

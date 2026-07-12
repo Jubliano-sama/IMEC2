@@ -949,6 +949,44 @@ static void test_partial_cir_fragment_fits_and_encodes_reassembly_metadata(void)
                                            &fragment) == PROTO_ERR_ARG);
 }
 
+static void test_click_report_adds_optional_detection_attempt_metadata(void)
+{
+    struct range_report_fields fields = {
+        .clicker_id = UINT64_C(0x1111),
+        .anchor_id = UINT64_C(0x2222),
+        .event_seq = 7u,
+        .timestamp_ms = 8u,
+        .distance_mm = 1234,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+        .omit_rsl = true,
+        .omit_cir = true,
+        .attempt_index = 3u,
+        .detection_source = DETECTION_SOURCE_UWB_WAKE_CLAIM,
+        .detection_attempt_present = true,
+    };
+    uint8_t payload[128];
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    size_t payload_len = 0u;
+
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_ATTEMPT_INDEX,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u && value[0] == 3u);
+    assert(tlv_find(payload, payload_len, TLV_DETECTION_SOURCE,
+                    &value, &value_len) == PROTO_OK);
+    assert(value_len == 1u && value[0] == DETECTION_SOURCE_UWB_WAKE_CLAIM);
+
+    fields.detection_attempt_present = false;
+    payload_len = 0u;
+    assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
+                                    &fields) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_ATTEMPT_INDEX,
+                    &value, &value_len) == PROTO_ERR_NOT_FOUND);
+}
+
 int main(void)
 {
     test_click_report_packet_counts_as_click();
@@ -966,5 +1004,6 @@ int main(void)
     test_first_fragmented_range_chunk_has_single_diagnostics();
     test_later_fragmented_range_chunk_omits_single_diagnostics();
     test_partial_cir_fragment_fits_and_encodes_reassembly_metadata();
+    test_click_report_adds_optional_detection_attempt_metadata();
     return 0;
 }

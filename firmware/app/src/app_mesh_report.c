@@ -14227,6 +14227,7 @@ int mesh_start_uwb_rx(const char *reason)
 
 static int build_range_report_samples(uint64_t clicker_id,
                                        uint32_t event_seq,
+                                       uint8_t attempt_index,
                                        uint32_t burst_id,
                                        const struct dwm3000_range_result *range_result,
                                       const int32_t *distance_samples_mm,
@@ -14303,6 +14304,9 @@ build_payload:
         fields.clicker_id = clicker_id;
         fields.anchor_id = range_result->responder_id;
         fields.event_seq = event_seq;
+        fields.attempt_index = attempt_index;
+        fields.detection_source = DETECTION_SOURCE_UWB_WAKE_CLAIM;
+        fields.detection_attempt_present = attempt_index != 0u;
         fields.distance_mm = range_result->distance_mm;
         fields.quality = range_result->quality;
         fields.rsl_dbm = range_result->rsl_dbm;
@@ -14495,6 +14499,7 @@ void build_uwb_schedule_report_if_relevant(
 
     ret = build_range_report_samples(session->epoch.clicker_id,
                                      session->epoch.click_event_id,
+                                     session->epoch.attempt_index,
                                      uwb_schedule_burst_id(session->epoch.click_event_id,
                                                            session->epoch.attempt_index),
                                      &report->result,

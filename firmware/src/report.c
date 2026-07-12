@@ -273,6 +273,22 @@ int report_append_range_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (fields->detection_attempt_present) {
+        if (fields->attempt_index == 0u ||
+            fields->detection_source != DETECTION_SOURCE_UWB_WAKE_CLAIM) {
+            return PROTO_ERR_MALFORMED;
+        }
+        ret = tlv_append_u8(payload, payload_cap, offset,
+                            TLV_ATTEMPT_INDEX, fields->attempt_index);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        ret = tlv_append_u8(payload, payload_cap, offset,
+                            TLV_DETECTION_SOURCE, fields->detection_source);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     ret = tlv_append_u64(payload, payload_cap, offset, TLV_TIMESTAMP_MS, fields->timestamp_ms);
     if (ret != PROTO_OK) {
         return ret;
