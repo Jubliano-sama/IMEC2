@@ -10,6 +10,10 @@ Entries do **not** need to be contemporary. Many issues listed here may already 
 
 ## Annoying Tool / Environment Issues
 
+- PIL `ImageGrab` can create Tk windows on `DISPLAY=:1` but fail with `X get_image failed: error 8`; use a Wayland/portal screenshot path instead of treating the GUI as non-rendering.
+- `capture_stack_evidence.py` can reject an otherwise successful exact mesh-gateway build before RTT because static RAM headroom and compiler-owner attribution are deployment-policy gates; preserve the rejection and do not bypass it with direct flashing.
+- Context-mode JavaScript execution can fail before running commands with Bun `Expected CommonJS module to have a function wrapper`; rerun verification directly and do not treat the wrapper failure as test evidence.
+
 - The Grok delegate rejected the requested `sol` model ID as unknown; continue locally or select a model returned by the installed backend rather than treating the failed launch as review evidence.
 - A focused provisioning script that imported an in-progress GUI decoder broke when another agent removed that symbol concurrently; keep hardware probes independent of files owned by concurrent agents.
 
@@ -26,6 +30,10 @@ Entries do **not** need to be contemporary. Many issues listed here may already 
 - Build directories (`firmware/build/`, top-level `build/`) frequently re-appeared or contained stale artifacts despite being listed in `.gitignore`.
 
 ## Bugs Fixed & Root Causes (one line per entry)
+
+- Fixed gateway anchor-survey rejection before its first radio attempt by applying the required channel-5 broadcast envelope; root cause was leaving `mesh_outbound.radio_channel` zero before `mesh_send_c5_flood()` validation.
+- Fixed gateway GUI command-status labels by matching the firmware enum values; root cause was stale mappings for busy, denied, radio error, and invalid state.
+- Fixed successful enumeration baseline rejection by measuring telemetry-loss deltas per correlated run; root cause was treating the gateway's cumulative lifetime loss counter as run-local.
 
 - Fixed permanently busy anchor enumeration by enforcing an absolute operation deadline before retrying priority-work handoff; root cause was rescheduling a failed safe-boundary submission forever while retaining active command ownership.
 - Fixed control-followup wake session rejection by aligning the UWB session and frame flag validators; root cause was duplicating packet-flag validation across two modules without a shared acceptance test.

@@ -60,6 +60,30 @@ add_executable(test_gateway_command tests/test_gateway_command.c)
 target_link_libraries(test_gateway_command PRIVATE core)
 add_test(NAME gateway_command COMMAND test_gateway_command)
 
+add_executable(gateway_gui_protocol_oracle
+    tests/mesh_integration/gateway_gui_protocol_oracle.c)
+target_link_libraries(gateway_gui_protocol_oracle PRIVATE core)
+set(GATEWAY_GUI_PYTHON ${CMAKE_CURRENT_SOURCE_DIR}/../.venv/bin/python)
+if(NOT EXISTS ${GATEWAY_GUI_PYTHON})
+    set(GATEWAY_GUI_PYTHON ${Python3_EXECUTABLE})
+endif()
+add_test(NAME gateway_gui_cross_layer
+    COMMAND ${GATEWAY_GUI_PYTHON}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_gui_cross_layer.py
+        $<TARGET_FILE:gateway_gui_protocol_oracle>)
+set_tests_properties(gateway_gui_cross_layer
+    PROPERTIES LABELS "mesh_integration;hardware_models;gateway_gui;deployment")
+
+add_executable(test_gateway_command_lifecycle_invariants
+    tests/mesh_integration/test_gateway_command_lifecycle_invariants.c
+    app/src/app_gateway_command_lifecycle.c)
+target_include_directories(test_gateway_command_lifecycle_invariants PRIVATE app/src)
+target_link_libraries(test_gateway_command_lifecycle_invariants PRIVATE core)
+add_test(NAME gateway_command_lifecycle_invariants
+    COMMAND test_gateway_command_lifecycle_invariants)
+set_tests_properties(gateway_command_lifecycle_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;gateway_command;deployment")
+
 add_executable(test_gateway_membership tests/test_gateway_membership.c)
 target_link_libraries(test_gateway_membership PRIVATE core)
 add_test(NAME gateway_membership COMMAND test_gateway_membership)

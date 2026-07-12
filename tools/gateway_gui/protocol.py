@@ -214,11 +214,11 @@ COMMAND_STATUS_NAMES = {
     0: "OK",
     1: "UNSUPPORTED_COMMAND",
     2: "MALFORMED_PAYLOAD",
-    3: "INVALID_STATE",
-    4: "RADIO_ERROR",
+    3: "BUSY",
+    4: "DENIED",
     5: "TIMEOUT",
-    6: "BUSY",
-    7: "DENIED",
+    6: "RADIO_ERROR",
+    7: "INVALID_STATE",
     8: "INTERNAL_ERROR",
 }
 

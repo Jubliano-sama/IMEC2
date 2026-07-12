@@ -45,7 +45,7 @@ class CommandTelemetryProtocolTests(unittest.TestCase):
                 decode_gateway_command_event(packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES))
 
     def test_exact_length_and_all_unknown_enums_are_rejected(self):
-        for offset, value in ((2, 4), (3, 13), (4, 0x80), (6, 0xFF), (7, 14)):
+        for offset, value in ((2, 4), (3, 13), (4, 0x80), (6, 0xFF), (7, 15)):
             with self.subTest(offset=offset):
                 raw = bytearray(event_payload()); raw[offset] = value
                 packet = parse_stream_record(stream_record(bytes(raw), msg_type=MSG_GATEWAY_COMMAND_EVENT))

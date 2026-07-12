@@ -12,7 +12,9 @@ from .anchor_geometry import AnchorLayoutResult
 from .diagnostic_models import (
     ClickDiagnosticState, CommandTimelineModel, SurveyGeometryModel, TopologyComparison,
     COLLISION_WINDOW_MS, WAKE_COLLISION, WAKE_LATE, WAKE_NORMAL, anchor_label,
+    command_run_status, command_step_sentence,
 )
+from .command_telemetry import GatewayCommandEvent
 from .command_telemetry import GATEWAY_COMMAND_KIND_NAMES, GATEWAY_COMMAND_REASON_NAMES, GATEWAY_COMMAND_STAGE_NAMES
 
 
@@ -180,6 +182,9 @@ class ClickDiagnosticsView(ttk.Frame):
 
 
 class MeshDiagnosticsView(ttk.Frame):
+    RUN_COLUMNS = ("Started", "Command", "Status", "Anchors / Pairs", "Attempts", "Result")
+    ANCHOR_COLUMNS = ("Anchor ID", "Hop to gateway", "Discovery slot", "Reply status", "Last seen", "Baseline comparison")
+
     def __init__(self, parent: tk.Misc, *, accept_baseline: Callable[[], None]) -> None:
         super().__init__(parent, style="Panel.TFrame", padding=8)
         self.columnconfigure(0, weight=1)
@@ -189,59 +194,92 @@ class MeshDiagnosticsView(ttk.Frame):
         commands.grid(row=0, column=0, sticky="nsew")
         commands.columnconfigure(0, weight=1)
         commands.rowconfigure(1, weight=1)
-        self.timeline_status_var = tk.StringVar(value="No structured command telemetry")
+        self.timeline_status_var = tk.StringVar(value="No command has been run yet.")
         ttk.Label(commands, textvariable=self.timeline_status_var, style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 5))
-        self.timeline = ttk.Treeview(commands, columns=("seq", "run", "kind", "stage", "attempt", "progress", "loss", "reason"), show="headings", height=10)
-        for column, title, width in (("seq", "Event", 55), ("run", "Correlation", 95), ("kind", "Command", 130), ("stage", "Stage", 115), ("attempt", "Try", 40), ("progress", "Progress", 85), ("loss", "Lost", 45), ("reason", "Reason", 130)):
+        columns = ("started", "command", "status", "work", "attempts", "result")
+        self.timeline = ttk.Treeview(commands, columns=columns, show="headings", height=6)
+        for column, title, width in zip(columns, self.RUN_COLUMNS, (80, 150, 150, 125, 70, 345)):
             self.timeline.heading(column, text=title)
-            self.timeline.column(column, width=width, minwidth=40, stretch=column == "reason")
+            self.timeline.column(column, width=width, minwidth=60, stretch=column == "result")
         self.timeline.grid(row=1, column=0, sticky="nsew")
+        self.timeline.bind("<<TreeviewSelect>>", self._run_selected)
+        self._run_events: dict[str, tuple[GatewayCommandEvent, ...]] = {}
+        self.step_var = tk.StringVar(value="Select a command run to see its chronological steps.")
+        ttk.Label(commands, textvariable=self.step_var, style="PanelMuted.TLabel", wraplength=900, justify="left").grid(row=2, column=0, sticky="ew", pady=(5, 0))
+
         topology = ttk.Frame(self, style="Panel.TFrame")
         topology.grid(row=1, column=0, sticky="nsew", pady=(7, 0))
         topology.columnconfigure(0, weight=1)
-        topology.rowconfigure(1, weight=1)
+        topology.rowconfigure(2, weight=1)
         bar = ttk.Frame(topology, style="Panel.TFrame")
-        bar.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 3))
         bar.columnconfigure(0, weight=1)
-        self.topology_var = tk.StringVar(value="[?] No complete Here-I-Am enumeration")
+        self.topology_var = tk.StringVar(value="No complete anchor enumeration is available.")
         ttk.Label(bar, textvariable=self.topology_var, style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Button(bar, text="✓ Accept baseline", style="Tool.TButton", command=accept_baseline).grid(row=0, column=1, sticky="e")
-        self.topology = ttk.Treeview(topology, columns=("expected", "actual", "result"), show="headings", height=6)
-        for column, title in (("expected", "Expected ID"), ("actual", "Actual ID"), ("result", "Result")):
+        self.accept_baseline_button = ttk.Button(bar, text="Accept baseline", style="Tool.TButton", command=accept_baseline, state="disabled")
+        self.accept_baseline_button.grid(row=0, column=1, sticky="e")
+        self.baseline_reason_var = tk.StringVar(value="Run anchor enumeration and wait for its terminal result.")
+        ttk.Label(topology, textvariable=self.baseline_reason_var, style="PanelMuted.TLabel", wraplength=900, justify="left").grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        anchor_columns = ("anchor", "hop", "slot", "reply", "seen", "comparison")
+        self.topology = ttk.Treeview(topology, columns=anchor_columns, show="headings", height=5)
+        for column, title, width in zip(anchor_columns, self.ANCHOR_COLUMNS, (185, 105, 105, 120, 90, 150)):
             self.topology.heading(column, text=title)
-            self.topology.column(column, width=180, minwidth=100, stretch=True)
-        self.topology.grid(row=1, column=0, sticky="nsew")
+            self.topology.column(column, width=width, minwidth=75, stretch=column in ("anchor", "comparison"))
+        self.topology.grid(row=2, column=0, sticky="nsew")
 
     def show_timeline(self, model: CommandTimelineModel) -> None:
         self.timeline.delete(*self.timeline.get_children())
-        for event in model.ordered():
-            flags = " replay" if event.flags & 0x04 else ""
-            terminal_suffix = " terminal" if event.terminal else ""
-            self.timeline.insert("", "end", values=(
-                event.event_sequence, f"{event.correlation_id}:{event.host_session_id}/{event.host_sequence}",
-                GATEWAY_COMMAND_KIND_NAMES[event.command_kind],
-                GATEWAY_COMMAND_STAGE_NAMES[event.stage] + flags + terminal_suffix, event.attempt,
-                f"{event.progress_count}/{event.total_count or '-'}  {event.success_count}✓ {event.failure_count}!",
-                event.lost_event_count, GATEWAY_COMMAND_REASON_NAMES[event.reason],
+        self._run_events.clear()
+        runs = model.runs()
+        for index, (_key, events) in enumerate(runs):
+            status, result = command_run_status(events)
+            terminal = next((event for event in reversed(events) if event.terminal), events[-1])
+            attempts = max((event.attempt for event in events), default=0)
+            work = terminal.total_count or terminal.progress_count
+            iid = f"run-{index}"
+            self._run_events[iid] = events
+            self.timeline.insert("", "end", iid=iid, values=(
+                f"Event {events[0].event_sequence}", GATEWAY_COMMAND_KIND_NAMES[events[0].command_kind], status,
+                work if work else "-", attempts if attempts else "Not started", result,
             ))
-        terminals = sorted(model.terminals.values(), key=lambda event: event.event_sequence)
-        if terminals:
-            latest_terminal = terminals[-1]
-            marker = "OK" if latest_terminal.command_status == 0 and latest_terminal.reason == 0 else "!"
-            self.timeline_status_var.set(
-                f"[{marker}] Terminal {GATEWAY_COMMAND_KIND_NAMES[latest_terminal.command_kind]}  •  "
-                f"{latest_terminal.success_count} succeeded  •  {latest_terminal.failure_count} failed  •  "
-                f"{latest_terminal.duplicate_count} duplicates  •  {latest_terminal.lost_event_count} BLE events lost"
-            )
+        if runs:
+            status, result = command_run_status(runs[-1][1])
+            self.timeline_status_var.set(f"{status}: {result}")
 
-    def show_topology(self, result: TopologyComparison) -> None:
-        marker = "OK" if result.status == "exact" else "?" if not result.complete else "!"
-        self.topology_var.set(f"[{marker}] {result.status.replace('_', ' ').title()}   Expected {len(result.expected)}   Actual {len(result.actual)}   Added {len(result.added)}   Missing {len(result.missing)}")
+    def _run_selected(self, _event: tk.Event[tk.Misc]) -> None:
+        selection = self.timeline.selection()
+        if selection:
+            events = self._run_events.get(selection[0], ())
+            self.step_var.set("   ".join(
+                f"{index + 1}. {command_step_sentence(event)}" for index, event in enumerate(events)
+            ))
+
+    def show_topology(self, result: TopologyComparison,
+                      anchors: dict[int, GatewayCommandEvent] | None = None) -> None:
+        if not result.complete:
+            summary = result.eligibility_reason
+        elif result.status == "no_baseline":
+            summary = f"Enumeration complete: {len(result.actual)} anchor(s) found. No baseline has been accepted yet."
+        elif result.status == "exact":
+            summary = f"Topology unchanged: all {len(result.actual)} expected anchor(s) replied."
+        else:
+            summary = f"Topology changed: {len(result.added)} new anchor(s), {len(result.missing)} expected anchor(s) missing."
+        self.topology_var.set(summary)
+        self.baseline_reason_var.set(result.eligibility_reason)
+        self.accept_baseline_button.configure(state="normal" if result.complete else "disabled")
         self.topology.delete(*self.topology.get_children())
         expected, actual = set(result.expected), set(result.actual)
         for anchor_id in sorted(expected | actual):
-            status = "match" if anchor_id in expected and anchor_id in actual else "missing" if anchor_id in expected else "added"
-            self.topology.insert("", "end", values=(anchor_label(anchor_id) if anchor_id in expected else "", anchor_label(anchor_id) if anchor_id in actual else "", status))
+            comparison = "Unchanged" if anchor_id in expected and anchor_id in actual else "Missing" if anchor_id in expected else "Added"
+            detail = (anchors or {}).get(anchor_id)
+            self.topology.insert("", "end", values=(
+                anchor_label(anchor_id),
+                detail.hop_count if detail is not None else "-",
+                detail.discovery_slot if detail is not None and detail.discovery_slot != 255 else "Pending",
+                "Assigned" if detail is not None and detail.discovery_slot != 255 else "Replied" if anchor_id in actual else "No reply",
+                f"Event {detail.event_sequence}" if detail is not None else "Current run",
+                comparison,
+            ))
 
 
 def _projector(points: Iterable[tuple[float, float]], width: int, height: int):

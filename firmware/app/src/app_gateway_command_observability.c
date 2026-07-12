@@ -30,7 +30,7 @@ static bool status_valid(enum command_status status)
 static bool reason_valid(enum gateway_command_event_reason reason)
 {
     return reason >= GATEWAY_COMMAND_EVENT_REASON_NONE &&
-           reason <= GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
+           reason <= GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION;
 }
 
 static bool event_valid(const struct gateway_command_event *event)

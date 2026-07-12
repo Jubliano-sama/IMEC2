@@ -58,7 +58,7 @@ GATEWAY_COMMAND_REASON_NAMES = {
     0: "None", 1: "Invalid request", 2: "Busy", 3: "No anchors", 4: "Capacity",
     5: "Radio", 6: "Timeout", 7: "Malformed response", 8: "Route unavailable",
     9: "Retry exhausted", 10: "Pair incomplete", 11: "Pair range failed",
-    12: "Aborted", 13: "Internal",
+    12: "Aborted", 13: "Internal", 14: "Survey radio preparation failed",
 }
 
 

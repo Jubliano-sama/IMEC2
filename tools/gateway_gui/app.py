@@ -73,6 +73,7 @@ from .protocol import (
     TLV_UWB_RX_DIAG_BYTES,
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
+    build_here_i_am_command,
     click_samples,
     decode_cir_sample,
     format_device_id,
@@ -280,7 +281,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         host_entry.grid(row=0, column=1, sticky="ew")
         Tooltip(host_entry, "Source ID placed in host command envelopes. Accepts decimal or 0x-prefixed hexadecimal.")
 
-        discovery = ttk.LabelFrame(parent, text="Anchor Survey Discovery", padding=10)
+        discovery = ttk.LabelFrame(parent, text="Anchor-Pair Survey", padding=10)
         discovery.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         discovery.grid_columnconfigure(1, weight=1)
         self._labeled_spin(discovery, 0, "Survey ID", self.survey_id_text, 1, 0xFFFFFFFF)
@@ -296,7 +297,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(5, 8))
         self.discovery_button = ttk.Button(
             discovery,
-            text="➤ Send discovery",
+            text="Start anchor-pair survey",
             style="Primary.TButton",
             command=self._send_discovery,
         )
@@ -322,7 +323,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         ).grid(row=2, column=0, sticky="w", pady=(0, 8))
         self.refresh_button = ttk.Button(
             refresh,
-            text="➤ Send Here I Am",
+            text="Refresh mesh routes (Here I Am)",
             style="Primary.TButton",
             command=self._send_here_i_am,
         )
@@ -333,7 +334,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         self.assignment_button = ttk.Button(
             refresh,
-            text="➤ Assign discovery slots",
+            text="Enumerate anchors and assign slots",
             style="Primary.TButton",
             command=self._send_assign_discovery_slots,
         )
@@ -342,6 +343,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.assignment_button,
             "Send gateway-local CMD_ASSIGN_DISCOVERY_SLOTS (0x0104). Firmware collects anchor claims, floods the assignment table, and returns the assigned-anchor count.",
         )
+        self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
+        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=5, column=0, sticky="w", pady=(6, 0))
 
         contract = ttk.LabelFrame(parent, text="Command Surface", padding=10)
         contract.grid(row=3, column=0, sticky="ew")
@@ -660,7 +663,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        self.status_text.set("Writing anchor survey discovery command over BLE...")
+        if not self._begin_gateway_command(2, session_id, seq):
+            return
+        self.status_text.set("Writing anchor-pair survey command over BLE...")
         self.transport.send_frame(command.frame, command.label)
 
     def _send_here_i_am(self) -> None:
@@ -668,7 +673,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
-            command = build_assign_discovery_slots_command(
+            command = build_here_i_am_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
                 session_id=session_id,
@@ -677,9 +682,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(1, session_id, seq):
+        if not self._begin_gateway_command(3, session_id, seq):
             return
-        self.status_text.set("Writing Here I Am anchor enumeration over BLE...")
+        self.status_text.set("Writing Here I Am route-refresh request over BLE...")
         self.transport.send_frame(command.frame, command.label)
 
     def _send_assign_discovery_slots(self) -> None:
@@ -698,7 +703,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         if not self._begin_gateway_command(1, session_id, seq):
             return
-        self.status_text.set("Writing discovery-slot assignment request over BLE...")
+        self.status_text.set("Writing anchor enumeration and discovery-slot assignment request over BLE...")
         self.transport.send_frame(command.frame, command.label)
 
     def _drain_events(self) -> None:
@@ -825,14 +830,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._update_command_state()
 
     def _update_command_state(self) -> None:
-        command_state = "normal" if (
-            self.connected and self.gateway_id is not None and
-            (getattr(self, "command_request_tracker", None) is None or
-             self.command_request_tracker.pending is None)
-        ) else "disabled"
+        tracker = getattr(self, "command_request_tracker", None)
+        if not self.connected:
+            reason = "Connect gateway to run a command."
+        elif self.gateway_id is None:
+            reason = "Waiting for a valid gateway identity."
+        elif tracker is not None and tracker.pending is not None:
+            reason = "Command already running; waiting for its terminal result."
+        else:
+            reason = "Ready for a gateway command."
+        command_state = "normal" if reason.startswith("Ready") else "disabled"
         self.discovery_button.configure(state=command_state)
         self.refresh_button.configure(state=command_state)
         self.assignment_button.configure(state=command_state)
+        if hasattr(self, "command_availability_text"):
+            self.command_availability_text.set(reason)
 
     def _show_error(self, message: str) -> None:
         self.error_text.set(message)

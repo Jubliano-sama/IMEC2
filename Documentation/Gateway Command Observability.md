@@ -113,7 +113,7 @@ Flags are `TERMINAL=0x01`, `SNAPSHOT=0x02`, `REPLAY=0x04`, and
 `DUPLICATE=0x08`. Reasons are: `0 none`, `1 invalid request`, `2 busy`,
 `3 no anchors`, `4 capacity`, `5 radio`, `6 timeout`, `7 malformed response`,
 `8 route unavailable`, `9 retry exhausted`, `10 pair incomplete`, `11 pair
-range failed`, `12 aborted`, and `13 internal`.
+range failed`, `12 aborted`, `13 internal`, and `14 survey radio preparation failed`.
 
 ## GUI Correlation
 

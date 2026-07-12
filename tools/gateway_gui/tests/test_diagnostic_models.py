@@ -8,7 +8,9 @@ from tools.gateway_gui.diagnostic_models import (
     AnchorBaseline, ClickLocationModel, CommandTimelineModel, SurveyGeometryModel,
     TopologyBaselineModel, WakeEvidence, WakeTrainMonitor,
     WAKE_COLLISION, WAKE_LATE, WAKE_NORMAL, WAKE_UNKNOWN, COLLISION_WINDOW_MS,
+    command_run_status, command_step_sentence,
 )
+from tools.gateway_gui.diagnostic_views import MeshDiagnosticsView
 from tools.gateway_gui.command_telemetry import GatewayCommandEvent
 from tools.gateway_gui.protocol import Packet, parse_tlvs
 
@@ -153,6 +155,46 @@ class WakeAndTopologyTests(unittest.TestCase):
         for value in (first, slot_update, terminal): model.observe(value)
         self.assertEqual(model.enumerated_anchors[first.correlation_key][1].discovery_slot, 4)
         self.assertIs(model.terminal_for(first.correlation_key), terminal)
+
+    def test_terminal_before_anchor_settles_and_historical_loss_does_not_poison_baseline(self):
+        with TemporaryDirectory() as temporary:
+            model = TopologyBaselineModel(Path(temporary) / "baseline.json")
+            accepted = event(stage=1, event_seq=10, correlation=80, lost=7)
+            terminal = event(stage=12, flags=1, event_seq=12, correlation=80, total=1, lost=7)
+            model.observe(accepted)
+            waiting = model.observe(terminal)
+            self.assertFalse(waiting.complete)
+            self.assertIn("received 0 of 1", waiting.eligibility_reason)
+            complete = model.observe(event(anchor=0xA7DDDD61D5DD19B3, event_seq=11, correlation=80, lost=7))
+            self.assertTrue(complete.complete)
+            self.assertEqual(complete.actual, (0xA7DDDD61D5DD19B3,))
+            self.assertEqual(model.accept_latest().anchor_ids, complete.actual)
+
+            lossy = TopologyBaselineModel(Path(temporary) / "lossy.json")
+            lossy.observe(event(stage=1, correlation=81, lost=7))
+            lossy.observe(event(anchor=1, correlation=81, event_seq=2, lost=7))
+            result = lossy.observe(event(stage=12, flags=1, correlation=81, event_seq=3, total=1, lost=8))
+            self.assertFalse(result.complete)
+            self.assertIn("1 telemetry event", result.eligibility_reason)
+
+    def test_human_facing_run_statuses_steps_and_visible_columns(self):
+        expected_steps = {
+            1: "accepted", 2: "queued", 3: "preparing", 4: "Broadcast attempt",
+            5: "Retrying", 6: "Anchor", 7: "collection finished", 8: "schedule",
+            9: "started", 10: "succeeded", 11: "failed", 12: "Completed",
+        }
+        for stage, phrase in expected_steps.items():
+            value = event(stage=stage, flags=1 if stage == 12 else 0, total=1 if stage == 12 else 0)
+            self.assertIn(phrase.lower(), command_step_sentence(value).lower())
+        self.assertEqual(command_run_status((event(stage=12, flags=1, total=0),))[0], "Incomplete")
+        self.assertEqual(command_run_status((event(stage=1, lost=2), event(stage=12, flags=1, event_seq=2, total=1, lost=3)))[0], "Succeeded with warnings")
+        for reason, expected in ((2, "Rejected"), (6, "Timed out"), (9, "Timed out"), (1, "Failed")):
+            terminal = event(stage=12, flags=1, status=2, reason=reason)
+            self.assertEqual(command_run_status((terminal,))[0], expected)
+        self.assertEqual(MeshDiagnosticsView.RUN_COLUMNS,
+                         ("Started", "Command", "Status", "Anchors / Pairs", "Attempts", "Result"))
+        self.assertEqual(MeshDiagnosticsView.ANCHOR_COLUMNS,
+                         ("Anchor ID", "Hop to gateway", "Discovery slot", "Reply status", "Last seen", "Baseline comparison"))
 
 
 if __name__ == "__main__":

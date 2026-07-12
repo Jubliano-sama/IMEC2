@@ -34,6 +34,8 @@ class GatewayDiagnosticsMixin:
     packet_by_iid: dict[str, Packet]
     _show_error: Callable[[str], None]
     _packet_summary: Callable[[Packet], str]
+    _update_command_state: Callable[[], None]
+    status_text: Any
     def _initialize_gateway_diagnostics(self) -> None:
         self.geometry_model = SurveyGeometryModel()
         self.click_location_model = ClickLocationModel()
@@ -97,7 +99,9 @@ class GatewayDiagnosticsMixin:
             self.geometry_model.observe_command_event(event)
             comparison = self.topology_model.observe(event)
             if comparison is not None:
-                self.mesh_diagnostics_view.show_topology(comparison)
+                anchors = self.command_timeline_model.enumerated_anchors.get(
+                    event.correlation_key, {})
+                self.mesh_diagnostics_view.show_topology(comparison, anchors)
             return
         if packet.msg_type == MSG_COMMAND_RESULT:
             status = packet.value(TLV_COMMAND_STATUS)
@@ -255,4 +259,6 @@ class GatewayDiagnosticsMixin:
             messagebox.showwarning("Baseline unchanged", str(exc), parent=self.root)
             return
         assert self.topology_model.latest is not None
-        self.mesh_diagnostics_view.show_topology(self.topology_model.latest)
+        key = self.topology_model.current_key
+        anchors = self.command_timeline_model.enumerated_anchors.get(key, {}) if key else {}
+        self.mesh_diagnostics_view.show_topology(self.topology_model.latest, anchors)

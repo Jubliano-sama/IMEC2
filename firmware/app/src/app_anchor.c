@@ -2312,6 +2312,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     outbound.payload_len = (uint8_t)payload_len;
     outbound.next_hop_id = MESH_BROADCAST_ID;
+    outbound.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
 
     ret = survey_gateway_begin(&gateway_survey_context, survey_id, sample_count);
     if (ret != PROTO_OK) {
@@ -4430,7 +4431,9 @@ static void gateway_host_command_work_handler(struct k_work *work)
                                COMMAND_TIMEOUT :
                                ret == -EINVAL || ret == -EMSGSIZE ?
                                COMMAND_MALFORMED_PAYLOAD : COMMAND_RADIO_ERROR;
-                event.reason = ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                event.reason = item.command_id == CMD_SURVEY_REACHABILITY && ret == -EINVAL ?
+                               GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION :
+                               ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
                                ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
                                GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
                                ret == -EINVAL || ret == -EMSGSIZE ?

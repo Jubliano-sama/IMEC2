@@ -115,7 +115,7 @@ class AppModelTests(unittest.TestCase):
     def test_failed_assignment_result_keeps_reason_semantics(self) -> None:
         summary = self.gui_model()._packet_summary(assignment_result_packet(status=6, reason=1))
 
-        self.assertIn("status=6 (BUSY)", summary)
+        self.assertIn("status=6 (RADIO_ERROR)", summary)
         self.assertIn("reason=1", summary)
         self.assertNotIn("assigned_anchors=", summary)
 

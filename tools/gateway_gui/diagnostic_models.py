@@ -14,7 +14,10 @@ from typing import Protocol
 from .anchor_geometry import AnchorPairDistance, AnchorLayoutResult, solve_anchor_layout
 from .anchor_geometry_visibility import solve_visibility_branching_tuned
 from .localization import LocalizationReading, LocalizationResult, solve_position
-from .command_telemetry import GatewayCommandEvent
+from .command_telemetry import (
+    GatewayCommandEvent, GATEWAY_COMMAND_REASON_NAMES,
+    GATEWAY_COMMAND_STAGE_NAMES,
+)
 from .protocol import (
     Packet, MSG_CLICK_REPORT, TLV_ANCHOR_ID, TLV_CLICKER_ID,
     TLV_DISTANCE_MM, TLV_EVENT_SEQ, TLV_RANGE_STATUS, TLV_SAMPLE_COUNT,
@@ -324,6 +327,7 @@ class TopologyComparison:
     missing: tuple[int, ...]
     added: tuple[int, ...]
     complete: bool
+    eligibility_reason: str = ""
 
 
 class TopologyBaselineModel:
@@ -338,24 +342,42 @@ class TopologyBaselineModel:
         self.current_key: tuple[int, int, int, int] | None = None
         self.current_ids: set[int] = set()
         self.latest: TopologyComparison | None = None
+        self._anchors_by_key: dict[tuple[int, int, int, int], set[int]] = {}
+        self._terminals: dict[tuple[int, int, int, int], GatewayCommandEvent] = {}
+        self._first_loss_by_key: dict[tuple[int, int, int, int], int] = {}
 
     def observe(self, event: GatewayCommandEvent) -> TopologyComparison | None:
         if event.command_kind != 1:
             return None
-        if event.correlation_key != self.current_key:
-            self.current_key = event.correlation_key
-            self.current_ids.clear()
+        key = event.correlation_key
+        if key != self.current_key:
+            self.current_key = key
+            self.current_ids = self._anchors_by_key.setdefault(key, set())
+        self._first_loss_by_key.setdefault(key, event.lost_event_count)
         if event.stage == 6 and event.anchor_id:
             self.current_ids.add(event.anchor_id)
-        if not event.terminal:
+        if event.terminal:
+            self._terminals[key] = event
+        terminal = self._terminals.get(key)
+        if terminal is None:
             return None
         actual = tuple(sorted(self.current_ids))
-        complete = (
-            event.command_status == 0 and event.reason == 0 and
-            event.lost_event_count == 0 and event.total_count > 0 and
-            event.failure_count == 0 and event.success_count == event.total_count and
-            len(actual) == event.total_count
-        )
+        telemetry_lost = terminal.lost_event_count > self._first_loss_by_key[key]
+        if terminal.command_status != 0 or terminal.reason != 0:
+            reason = f"Gateway ended the enumeration with status {terminal.command_status}, reason {terminal.reason}."
+        elif terminal.total_count == 0:
+            reason = "Completed, but no anchors replied."
+        elif telemetry_lost:
+            reason = f"Incomplete: {terminal.lost_event_count - self._first_loss_by_key[key]} telemetry event(s) were lost during this run."
+        elif terminal.failure_count:
+            reason = f"Incomplete: {terminal.failure_count} anchor assignment(s) failed."
+        elif terminal.success_count != terminal.total_count:
+            reason = f"Incomplete: gateway reported {terminal.success_count} of {terminal.total_count} successful anchors."
+        elif len(actual) != terminal.total_count:
+            reason = f"Waiting for anchor details: received {len(actual)} of {terminal.total_count}."
+        else:
+            reason = f"Complete: {terminal.total_count} of {terminal.total_count} anchors reported and were assigned."
+        complete = reason.startswith("Complete:")
         expected = self.baseline.anchor_ids if self.baseline else ()
         missing = tuple(sorted(set(expected) - set(actual)))
         added = tuple(sorted(set(actual) - set(expected)))
@@ -373,12 +395,13 @@ class TopologyBaselineModel:
             status = "added"
         else:
             status = "changed"
-        self.latest = TopologyComparison(status, expected, actual, missing, added, complete)
+        self.latest = TopologyComparison(status, expected, actual, missing, added, complete, reason)
         return self.latest
 
     def accept_latest(self) -> AnchorBaseline:
         if self.latest is None or not self.latest.complete:
-            raise ValueError("Only a complete terminal enumeration can become the baseline.")
+            reason = self.latest.eligibility_reason if self.latest else "Run anchor enumeration and wait for its terminal result."
+            raise ValueError(f"Baseline unavailable: {reason}")
         baseline = AnchorBaseline(self.latest.actual, datetime.now(timezone.utc).isoformat(timespec="seconds"), "user accepted Here-I-Am")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f".{self.path.name}.tmp")
@@ -393,7 +416,8 @@ class TopologyBaselineModel:
         finally:
             os.close(directory_fd)
         self.baseline = baseline
-        self.latest = TopologyComparison("exact", baseline.anchor_ids, baseline.anchor_ids, (), (), True)
+        self.latest = TopologyComparison("exact", baseline.anchor_ids, baseline.anchor_ids, (), (), True,
+                                         f"Complete: {len(baseline.anchor_ids)} anchors accepted as the baseline.")
         return baseline
 
     def _load(self) -> AnchorBaseline | None:
@@ -429,6 +453,84 @@ class CommandTimelineModel:
 
     def terminal_for(self, key: tuple[int, int, int, int]) -> GatewayCommandEvent | None:
         return self.terminals.get(key)
+
+    def runs(self) -> tuple[tuple[tuple[int, int, int, int], tuple[GatewayCommandEvent, ...]], ...]:
+        grouped: dict[tuple[int, int, int, int], list[GatewayCommandEvent]] = {}
+        for event in self.events.values():
+            grouped.setdefault(event.correlation_key, []).append(event)
+        return tuple(sorted(
+            ((key, tuple(sorted(events, key=lambda item: item.event_sequence)))
+             for key, events in grouped.items()),
+            key=lambda item: item[1][0].event_sequence,
+        ))
+
+
+def command_run_status(events: tuple[GatewayCommandEvent, ...]) -> tuple[str, str]:
+    """Return an operational status and result sentence for one correlated run."""
+    terminal = next((event for event in reversed(events) if event.terminal), None)
+    if terminal is None:
+        latest = events[-1]
+        if latest.stage == 5:
+            return "Running", "Waiting to retry after the gateway reported a busy radio path."
+        return "Running", command_step_sentence(latest)
+    loss_delta = terminal.lost_event_count - min(event.lost_event_count for event in events)
+    if terminal.command_status == 0 and terminal.reason == 0:
+        if terminal.total_count == 0 and terminal.command_kind == 1:
+            return "Incomplete", "Completed, but no anchors replied."
+        noun = "anchor" if terminal.command_kind == 1 else "pair"
+        result = f"Completed: {terminal.success_count} {noun}{'' if terminal.success_count == 1 else 's'} succeeded"
+        if terminal.failure_count:
+            return "Incomplete", f"{result}; {terminal.failure_count} failed."
+        if loss_delta > 0:
+            return "Succeeded with warnings", f"{result}; {loss_delta} telemetry event(s) were lost."
+        return "Succeeded", result + "."
+    reason = GATEWAY_COMMAND_REASON_NAMES[terminal.reason]
+    if terminal.reason == 1:
+        return "Failed", "Invalid request: check the gateway identity and survey parameters."
+    if terminal.reason == 14:
+        return "Failed", "Survey radio preparation failed before broadcast; retry after the gateway radio is idle."
+    if terminal.reason == 2 or terminal.command_status == 3:
+        return "Rejected", f"Rejected: {reason.lower()}."
+    if terminal.reason in (6, 9):
+        return "Timed out", f"Timed out: {reason.lower()}."
+    return "Failed", f"Failed: {reason.lower()}."
+
+
+def command_step_sentence(event: GatewayCommandEvent) -> str:
+    if event.stage == 1:
+        return "Command accepted by gateway."
+    if event.stage == 2:
+        return "Command queued as priority work."
+    if event.stage == 3:
+        return "Gateway is preparing the radio operation."
+    if event.stage == 4:
+        return f"Broadcast attempt {max(1, event.attempt)} sent."
+    if event.stage == 5:
+        reason = GATEWAY_COMMAND_REASON_NAMES[event.reason]
+        return f"Retrying after {reason.lower()}."
+    if event.stage == 6:
+        anchor = anchor_label(event.anchor_id)
+        hop = f" on hop {event.hop_count}" if event.hop_count else ""
+        if event.discovery_slot != 255:
+            return f"Anchor {anchor} assigned discovery slot {event.discovery_slot}{hop}."
+        return f"Anchor {anchor} replied{hop}."
+    if event.stage == 7:
+        noun = "reply" if event.progress_count == 1 else "replies"
+        return f"Anchor collection finished with {event.progress_count} unique {noun}."
+    if event.stage == 8:
+        return f"Pair schedule prepared for {event.total_count} pair(s)."
+    if event.stage == 9:
+        return "Anchor pair ranging started."
+    if event.stage == 10:
+        return "Anchor pair ranging succeeded."
+    if event.stage == 11:
+        return f"Anchor pair ranging failed: {GATEWAY_COMMAND_REASON_NAMES[event.reason].lower()}."
+    if event.terminal:
+        reason = GATEWAY_COMMAND_REASON_NAMES[event.reason]
+        if event.command_status == 0 and event.reason == 0:
+            return f"Completed: {event.success_count} succeeded, {event.failure_count} failed."
+        return f"Command ended: {reason.lower()}."
+    return GATEWAY_COMMAND_STAGE_NAMES[event.stage]
 
 
 def solve_visibility(model: SurveyGeometryModel) -> AnchorLayoutResult:
