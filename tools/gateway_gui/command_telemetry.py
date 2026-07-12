@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 
 class CommandTelemetryDecodeError(ValueError):
@@ -59,6 +60,73 @@ GATEWAY_COMMAND_REASON_NAMES = {
     9: "Retry exhausted", 10: "Pair incomplete", 11: "Pair range failed",
     12: "Aborted", 13: "Internal",
 }
+
+
+@dataclass(frozen=True)
+class PendingGatewayCommand:
+    command_kind: int
+    host_session_id: int
+    host_sequence: int
+    started_at: float
+
+
+class GatewayCommandRequestTracker:
+    """Own one host command until typed terminal, result, timeout, or disconnect."""
+
+    def __init__(self, *, timeout_s: float = 100.0) -> None:
+        self.timeout_s = timeout_s
+        self.pending: PendingGatewayCommand | None = None
+        self.last_outcome = "idle"
+
+    def begin(self, command_kind: int, host_session_id: int, host_sequence: int,
+              *, now: float | None = None) -> bool:
+        self.expire(now=now)
+        if self.pending is not None:
+            self.last_outcome = "busy"
+            return False
+        self.pending = PendingGatewayCommand(
+            command_kind, host_session_id, host_sequence,
+            time.monotonic() if now is None else now,
+        )
+        self.last_outcome = "pending"
+        return True
+
+    def observe_event(self, event: GatewayCommandEvent) -> bool:
+        pending = self.pending
+        if pending is None or not event.terminal:
+            return False
+        if (event.command_kind, event.host_session_id, event.host_sequence) != (
+            pending.command_kind, pending.host_session_id, pending.host_sequence
+        ):
+            return False
+        self.pending = None
+        self.last_outcome = "complete" if event.command_status == 0 and event.reason == 0 else "failed"
+        return True
+
+    def observe_command_result(self, host_session_id: int, host_sequence: int,
+                               command_status: int) -> bool:
+        pending = self.pending
+        if pending is None or (host_session_id, host_sequence) != (
+            pending.host_session_id, pending.host_sequence
+        ):
+            return False
+        self.pending = None
+        self.last_outcome = "complete" if command_status == 0 else "failed"
+        return True
+
+    def expire(self, *, now: float | None = None) -> bool:
+        if self.pending is None:
+            return False
+        current = time.monotonic() if now is None else now
+        if current - self.pending.started_at < self.timeout_s:
+            return False
+        self.pending = None
+        self.last_outcome = "timeout"
+        return True
+
+    def disconnect(self) -> None:
+        self.pending = None
+        self.last_outcome = "disconnected"
 
 
 def decode_gateway_command_event(raw: bytes, *, valid_statuses: set[int]) -> GatewayCommandEvent:

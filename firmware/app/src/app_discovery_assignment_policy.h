@@ -163,4 +163,11 @@ static inline void app_discovery_assignment_policy_note_unassigned(
     policy->provisioned = false;
 }
 
+static inline bool app_discovery_assignment_operation_expired(
+    uint32_t now_ms,
+    uint32_t deadline_ms)
+{
+    return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
 #endif

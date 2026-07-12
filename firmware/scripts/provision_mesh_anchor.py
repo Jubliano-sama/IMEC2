@@ -25,6 +25,8 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     build_here_i_am_command,
     decode_gateway_identity,
 )
+from tools.gateway_gui.command_telemetry import decode_gateway_command_event  # noqa: E402
+from tools.gateway_gui.protocol import COMMAND_STATUS_NAMES  # noqa: E402
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -47,40 +49,20 @@ async def run(args: argparse.Namespace) -> None:
                 flush=True,
             )
             if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
-                payload = packet.payload
-                if len(payload) == 78 and payload[:2] == bytes((1, 78)):
-                    print(
-                        "GATEWAY_COMMAND_EVENT "
-                        f"kind={payload[2]} stage={payload[3]} flags=0x{payload[4]:02x} "
-                        f"status={int.from_bytes(payload[6:8], 'little')} "
-                        f"reason={payload[8]} command=0x{int.from_bytes(payload[10:12], 'little'):04x} "
-                        f"anchor=0x{int.from_bytes(payload[36:44], 'little'):016x} "
-                        f"slot={payload[61]} progress={int.from_bytes(payload[62:64], 'little')} "
-                        f"total={int.from_bytes(payload[64:66], 'little')} "
-                        f"success={int.from_bytes(payload[66:68], 'little')} "
-                        f"failures={int.from_bytes(payload[68:70], 'little')} "
-                        f"duplicates={int.from_bytes(payload[70:72], 'little')}",
-                        flush=True,
-                    )
-                else:
-                    print(f"GATEWAY_COMMAND_EVENT_INVALID len={len(payload)}", flush=True)
+                event = decode_gateway_command_event(
+                    packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES)
+                )
+                print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
 
     async with BleakClient(args.gateway, timeout=args.connect_timeout) as client:
         gateway_id = decode_gateway_identity(
             bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
         )
         await client.start_notify(PACKET_TX_UUID, on_notify)
-        identity = int(time.time_ns() & 0xFFFFFFFF) or 1
         builder = (
             build_here_i_am_command
             if args.command == "here-i-am"
             else build_assign_discovery_slots_command
-        )
-        command = builder(
-            host_id=args.host_id,
-            gateway_id=gateway_id,
-            session_id=identity,
-            seq=identity & 0xFFFF,
         )
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
         if characteristic is None:
@@ -89,17 +71,28 @@ async def run(args: argparse.Namespace) -> None:
             1,
             min(int(characteristic.max_write_without_response_size or 20), 244),
         )
-        print(
-            f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={args.command} "
-            f"session={identity} frame={command.frame.hex()}",
-            flush=True,
-        )
-        for offset in range(0, len(command.frame), chunk_size):
-            await client.write_gatt_char(
-                characteristic,
-                command.frame[offset : offset + chunk_size],
-                response=False,
+        for index in range(args.repeat):
+            identity = int(time.time_ns() & 0xFFFFFFFF) or 1
+            command = builder(
+                host_id=args.host_id,
+                gateway_id=gateway_id,
+                session_id=identity,
+                seq=identity & 0xFFFF,
             )
+            print(
+                f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={args.command} "
+                f"index={index + 1}/{args.repeat} session={identity} "
+                f"frame={command.frame.hex()}",
+                flush=True,
+            )
+            for offset in range(0, len(command.frame), chunk_size):
+                await client.write_gatt_char(
+                    characteristic,
+                    command.frame[offset : offset + chunk_size],
+                    response=False,
+                )
+            if index + 1 < args.repeat:
+                await asyncio.sleep(args.interval)
         await asyncio.sleep(args.duration)
         print(f"BLE_COMPLETE packets={received}", flush=True)
 
@@ -115,6 +108,8 @@ def main() -> None:
     parser.add_argument("--host-id", type=lambda value: int(value, 0), default=1)
     parser.add_argument("--duration", type=float, default=12.0)
     parser.add_argument("--connect-timeout", type=float, default=12.0)
+    parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--interval", type=float, default=0.05)
     args = parser.parse_args()
     asyncio.run(run(args))
 

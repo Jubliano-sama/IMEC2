@@ -73,7 +73,6 @@ from .protocol import (
     TLV_UWB_RX_DIAG_BYTES,
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
-    build_here_i_am_command,
     click_samples,
     decode_cir_sample,
     format_device_id,
@@ -669,7 +668,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
-            command = build_here_i_am_command(
+            command = build_assign_discovery_slots_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
                 session_id=session_id,
@@ -678,7 +677,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        self.status_text.set("Writing Here I Am route-refresh request over BLE...")
+        if not self._begin_gateway_command(1, session_id, seq):
+            return
+        self.status_text.set("Writing Here I Am anchor enumeration over BLE...")
         self.transport.send_frame(command.frame, command.label)
 
     def _send_assign_discovery_slots(self) -> None:
@@ -695,10 +696,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
         except ValueError as exc:
             self._show_error(str(exc))
             return
+        if not self._begin_gateway_command(1, session_id, seq):
+            return
         self.status_text.set("Writing discovery-slot assignment request over BLE...")
         self.transport.send_frame(command.frame, command.label)
 
     def _drain_events(self) -> None:
+        self._expire_gateway_command()
         try:
             while True:
                 event = self.events.get_nowait()
@@ -768,6 +772,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
 
     def _set_connection_state(self, state: str) -> None:
         self.connected = state == "connected"
+        if not self.connected and state != "connecting" and hasattr(self, "command_request_tracker"):
+            self.command_request_tracker.disconnect()
         if not self.connected and state != "connecting":
             self._clear_gateway_identity("Connect to read the gateway firmware DEVICE_ID.")
         elif state == "connecting":
@@ -819,7 +825,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._update_command_state()
 
     def _update_command_state(self) -> None:
-        command_state = "normal" if self.connected and self.gateway_id is not None else "disabled"
+        command_state = "normal" if (
+            self.connected and self.gateway_id is not None and
+            (getattr(self, "command_request_tracker", None) is None or
+             self.command_request_tracker.pending is None)
+        ) else "disabled"
         self.discovery_button.configure(state=command_state)
         self.refresh_button.configure(state=command_state)
         self.assignment_button.configure(state=command_state)

@@ -10,6 +10,9 @@ Entries do **not** need to be contemporary. Many issues listed here may already 
 
 ## Annoying Tool / Environment Issues
 
+- The Grok delegate rejected the requested `sol` model ID as unknown; continue locally or select a model returned by the installed backend rather than treating the failed launch as review evidence.
+- A focused provisioning script that imported an in-progress GUI decoder broke when another agent removed that symbol concurrently; keep hardware probes independent of files owned by concurrent agents.
+
 - Large monolithic source files (e.g. `app_mesh_report.c` at 14k+ lines, `app_anchor.c` at 6k+, `mesh_relay.c` at 7k+) became extremely difficult to navigate, understand, and modify safely. Past work suffered when files grew this large without being split.
 - Using `git submodule deinit -f` on a path would clear the working tree contents (not just metadata), requiring an explicit `git submodule update --init` recovery afterward.
 - Running `rm -rf` on gitignored build trees could surface historical "D" entries and "M" noise in `git status --porcelain` even when no real source change was intended.
@@ -23,6 +26,10 @@ Entries do **not** need to be contemporary. Many issues listed here may already 
 - Build directories (`firmware/build/`, top-level `build/`) frequently re-appeared or contained stale artifacts despite being listed in `.gitignore`.
 
 ## Bugs Fixed & Root Causes (one line per entry)
+
+- Fixed permanently busy anchor enumeration by enforcing an absolute operation deadline before retrying priority-work handoff; root cause was rescheduling a failed safe-boundary submission forever while retaining active command ownership.
+- Fixed control-followup wake session rejection by aligning the UWB session and frame flag validators; root cause was duplicating packet-flag validation across two modules without a shared acceptance test.
+- Fixed blank-anchor provisioning wake ownership by marking gateway-command wake claims as control follow-ups; root cause was routing every non-click wake claim into the route-reply listener, which discarded assignment commands as unrelated frames.
 
 - Fixed "SDK directory cleared" by running `git submodule update --init -- "dwm3000 examples and sdk"` after deinit; root cause was `deinit -f` aggressively removing the worktree.
 - Fixed apparent loss of `app_anchor_low_power_policy.h` by `git checkout HEAD -- path`; root cause was pre-existing tracked deletion status from uncommitted prior refactor surfacing after fs ops.

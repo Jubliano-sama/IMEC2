@@ -31,7 +31,8 @@ def click(anchor, distance_m, *, event=1, session=7, sequence=1, clicker=0xC1):
 
 
 def event(*, kind=1, stage=6, flags=0, status=0, reason=0, event_seq=1, anchor=0, total=0, lost=0, correlation=9, gateway_sequence=5):
-    return GatewayCommandEvent(kind, stage, flags, 1, status, reason, 0x104, 2, correlation, gateway_sequence, 7, 8, event_seq, anchor, 0, 0, 0, 1, total, 0, 0, 0, lost, 0, 255)
+    success = total if stage == 12 and status == 0 and reason == 0 else 0
+    return GatewayCommandEvent(kind, stage, flags, 1, status, reason, 0x104, 2, correlation, gateway_sequence, 7, 8, event_seq, anchor, 0, 0, 0, 1, total, success, 0, 0, lost, 0, 255)
 
 
 class SurveyAndClickTests(unittest.TestCase):
@@ -108,6 +109,27 @@ class WakeAndTopologyTests(unittest.TestCase):
             result = model.observe(event(stage=12, flags=1, total=2, event_seq=4))
             self.assertEqual(result.status, "exact")
             self.assertEqual(result.actual, (1, 2))
+
+    def test_topology_zero_terminal_is_incomplete_and_slot_updates_merge(self):
+        with TemporaryDirectory() as temporary:
+            model = TopologyBaselineModel(Path(temporary) / "baseline.json")
+            zero = model.observe(event(stage=12, flags=1, total=0, event_seq=1))
+            self.assertEqual(zero.status, "incomplete")
+            self.assertFalse(zero.complete)
+
+            first = event(anchor=0xA7DDDD61D5DD19B3, correlation=40, event_seq=2)
+            slot = replace(first, discovery_slot=0, hop_count=2, event_sequence=3)
+            model.observe(first)
+            model.observe(first)
+            model.observe(slot)
+            terminal = event(
+                stage=12, flags=1, correlation=40, event_seq=4, total=1
+            )
+            terminal = replace(terminal, success_count=1, progress_count=1)
+            result = model.observe(terminal)
+            self.assertEqual(result.actual, (0xA7DDDD61D5DD19B3,))
+            merged = model.current_ids
+            self.assertIn(0xA7DDDD61D5DD19B3, merged)
 
     def test_topology_missing_added_and_exact_sets(self):
         with TemporaryDirectory() as temporary:

@@ -114,6 +114,7 @@ struct gateway_discovery_assignment_state {
     uint32_t epoch;
     uint32_t claim_command_seq;
     uint32_t table_command_seq;
+    uint32_t operation_deadline_ms;
     size_t claim_count;
     size_t claim_count_at_round_start;
     enum gateway_discovery_assignment_stage stage;
@@ -3263,6 +3264,8 @@ static int gateway_start_discovery_assignment(
     gateway_discovery_assignment_state.host_command = *host_command;
     gateway_discovery_assignment_state.epoch =
         gateway_discovery_assignment_new_epoch();
+    gateway_discovery_assignment_state.operation_deadline_ms =
+        k_uptime_get_32() + 90000u;
     gateway_discovery_assignment_state.claim_command_seq =
         gateway_discovery_assignment_state.epoch - 1u;
     gateway_discovery_assignment_state.stage =
@@ -3690,6 +3693,12 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
     ARG_UNUSED(work);
 
     if (!gateway_discovery_assignment_state.active) {
+        return;
+    }
+    if (app_discovery_assignment_operation_expired(
+            k_uptime_get_32(),
+            gateway_discovery_assignment_state.operation_deadline_ms)) {
+        gateway_discovery_assignment_fail(COMMAND_TIMEOUT, 0u);
         return;
     }
     ret = mesh_gateway_command_priority_submit(

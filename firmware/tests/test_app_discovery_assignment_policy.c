@@ -1,5 +1,5 @@
 #include "app_discovery_assignment_policy.h"
-#include "app_anchor_low_power_policy.h"
+#include "app_radio_low_power_policy.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -141,51 +141,60 @@ static void test_authoritative_omission_is_unprovisioned_until_reassigned(void)
 
 static void test_connected_anchor_low_power_policy_uses_idle(void)
 {
-    assert(app_anchor_low_power_mode_for_connection(true) ==
-           APP_ANCHOR_LOW_POWER_IDLE);
-    assert(app_anchor_low_power_mode_for_connection(false) ==
-           APP_ANCHOR_LOW_POWER_STANDBY);
+    assert(app_radio_low_power_mode_for_connection(true) ==
+           APP_RADIO_LOW_POWER_IDLE);
+    assert(app_radio_low_power_mode_for_connection(false) ==
+           APP_RADIO_LOW_POWER_STANDBY);
+}
+
+static void test_gateway_operation_deadline_is_wrap_safe_and_terminal(void)
+{
+    assert(!app_discovery_assignment_operation_expired(999u, 1000u));
+    assert(app_discovery_assignment_operation_expired(1000u, 1000u));
+    assert(app_discovery_assignment_operation_expired(1001u, 1000u));
+    assert(!app_discovery_assignment_operation_expired(UINT32_MAX - 2u, 3u));
+    assert(app_discovery_assignment_operation_expired(3u, 3u));
 }
 
 static void test_low_power_failure_recovers_and_retries_once(void)
 {
-    struct app_anchor_low_power_policy policy;
+    struct app_radio_low_power_policy policy;
 
-    app_anchor_low_power_policy_init(&policy, APP_ANCHOR_LOW_POWER_STANDBY);
-    assert(app_anchor_low_power_policy_note_transition(&policy, -1) ==
-           APP_ANCHOR_LOW_POWER_RECOVER);
-    assert(app_anchor_low_power_policy_note_recovery(&policy, 0) ==
-           APP_ANCHOR_LOW_POWER_RETRY);
-    assert(app_anchor_low_power_policy_note_transition(&policy, -2) ==
-           APP_ANCHOR_LOW_POWER_FAIL);
+    app_radio_low_power_policy_init(&policy, APP_RADIO_LOW_POWER_STANDBY);
+    assert(app_radio_low_power_policy_note_transition(&policy, -1) ==
+           APP_RADIO_LOW_POWER_RECOVER);
+    assert(app_radio_low_power_policy_note_recovery(&policy, 0) ==
+           APP_RADIO_LOW_POWER_RETRY);
+    assert(app_radio_low_power_policy_note_transition(&policy, -2) ==
+           APP_RADIO_LOW_POWER_FAIL);
     assert(policy.transition_attempts == 2u);
-    assert(app_anchor_low_power_policy_note_transition(&policy, 0) ==
-           APP_ANCHOR_LOW_POWER_FAIL);
+    assert(app_radio_low_power_policy_note_transition(&policy, 0) ==
+           APP_RADIO_LOW_POWER_FAIL);
 }
 
 static void test_low_power_recovery_retry_can_complete(void)
 {
-    struct app_anchor_low_power_policy policy;
+    struct app_radio_low_power_policy policy;
 
-    app_anchor_low_power_policy_init(&policy, APP_ANCHOR_LOW_POWER_IDLE);
-    assert(app_anchor_low_power_policy_note_transition(&policy, -1) ==
-           APP_ANCHOR_LOW_POWER_RECOVER);
-    assert(app_anchor_low_power_policy_note_recovery(&policy, 0) ==
-           APP_ANCHOR_LOW_POWER_RETRY);
-    assert(app_anchor_low_power_policy_note_transition(&policy, 0) ==
-           APP_ANCHOR_LOW_POWER_COMPLETE);
+    app_radio_low_power_policy_init(&policy, APP_RADIO_LOW_POWER_IDLE);
+    assert(app_radio_low_power_policy_note_transition(&policy, -1) ==
+           APP_RADIO_LOW_POWER_RECOVER);
+    assert(app_radio_low_power_policy_note_recovery(&policy, 0) ==
+           APP_RADIO_LOW_POWER_RETRY);
+    assert(app_radio_low_power_policy_note_transition(&policy, 0) ==
+           APP_RADIO_LOW_POWER_COMPLETE);
     assert(policy.transition_attempts == 2u);
 }
 
 static void test_low_power_recovery_failure_does_not_retry(void)
 {
-    struct app_anchor_low_power_policy policy;
+    struct app_radio_low_power_policy policy;
 
-    app_anchor_low_power_policy_init(&policy, APP_ANCHOR_LOW_POWER_IDLE);
-    assert(app_anchor_low_power_policy_note_transition(&policy, -1) ==
-           APP_ANCHOR_LOW_POWER_RECOVER);
-    assert(app_anchor_low_power_policy_note_recovery(&policy, -2) ==
-           APP_ANCHOR_LOW_POWER_FAIL);
+    app_radio_low_power_policy_init(&policy, APP_RADIO_LOW_POWER_IDLE);
+    assert(app_radio_low_power_policy_note_transition(&policy, -1) ==
+           APP_RADIO_LOW_POWER_RECOVER);
+    assert(app_radio_low_power_policy_note_recovery(&policy, -2) ==
+           APP_RADIO_LOW_POWER_FAIL);
     assert(policy.transition_attempts == 1u);
 }
 
@@ -197,6 +206,7 @@ int main(void)
     test_erased_nvs_production_anchor_is_unprovisioned();
     test_authoritative_omission_is_unprovisioned_until_reassigned();
     test_connected_anchor_low_power_policy_uses_idle();
+    test_gateway_operation_deadline_is_wrap_safe_and_terminal();
     test_low_power_failure_recovers_and_retries_once();
     test_low_power_recovery_retry_can_complete();
     test_low_power_recovery_failure_does_not_retry();

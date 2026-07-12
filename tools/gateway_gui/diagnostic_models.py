@@ -349,8 +349,13 @@ class TopologyBaselineModel:
             self.current_ids.add(event.anchor_id)
         if not event.terminal:
             return None
-        complete = event.command_status == 0 and event.reason == 0 and event.lost_event_count == 0
         actual = tuple(sorted(self.current_ids))
+        complete = (
+            event.command_status == 0 and event.reason == 0 and
+            event.lost_event_count == 0 and event.total_count > 0 and
+            event.failure_count == 0 and event.success_count == event.total_count and
+            len(actual) == event.total_count
+        )
         expected = self.baseline.anchor_ids if self.baseline else ()
         missing = tuple(sorted(set(expected) - set(actual)))
         added = tuple(sorted(set(actual) - set(expected)))

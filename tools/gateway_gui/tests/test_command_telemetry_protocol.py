@@ -1,6 +1,11 @@
 import unittest
+from dataclasses import replace
 
-from tools.gateway_gui.command_telemetry import CommandTelemetryDecodeError, decode_gateway_command_event
+from tools.gateway_gui.command_telemetry import (
+    CommandTelemetryDecodeError, GatewayCommandEvent,
+    GatewayCommandRequestTracker,
+    decode_gateway_command_event,
+)
 from tools.gateway_gui.protocol import COMMAND_STATUS_NAMES, MSG_GATEWAY_COMMAND_EVENT
 from tools.gateway_gui.tests.test_protocol import stream_record
 from tools.gateway_gui.protocol import parse_stream_record
@@ -49,6 +54,44 @@ class CommandTelemetryProtocolTests(unittest.TestCase):
         short = parse_stream_record(stream_record(event_payload()[:-1], msg_type=MSG_GATEWAY_COMMAND_EVENT))
         with self.assertRaisesRegex(CommandTelemetryDecodeError, "exactly 78"):
             decode_gateway_command_event(short.payload, valid_statuses=set(COMMAND_STATUS_NAMES))
+
+    def test_request_tracker_bounds_rapid_commands_and_recovers(self):
+        tracker = GatewayCommandRequestTracker(timeout_s=10.0)
+        self.assertTrue(tracker.begin(1, 100, 7, now=0.0))
+        for sequence in range(8, 13):
+            self.assertFalse(tracker.begin(1, 100, sequence, now=0.1))
+        self.assertEqual(tracker.pending.host_sequence, 7)
+        self.assertFalse(tracker.observe_command_result(100, 8, 2))
+        self.assertTrue(tracker.observe_command_result(100, 7, 2))
+        self.assertEqual(tracker.last_outcome, "failed")
+        self.assertTrue(tracker.begin(1, 101, 8, now=1.0))
+
+    def test_request_tracker_terminal_loss_timeout_disconnect_and_reconnect(self):
+        tracker = GatewayCommandRequestTracker(timeout_s=5.0)
+        self.assertTrue(tracker.begin(1, 200, 9, now=0.0))
+        self.assertFalse(tracker.expire(now=4.9))
+        self.assertTrue(tracker.expire(now=5.0))
+        self.assertTrue(tracker.begin(1, 201, 10, now=6.0))
+        tracker.disconnect()
+        self.assertIsNone(tracker.pending)
+        self.assertTrue(tracker.begin(1, 202, 11, now=7.0))
+
+    def test_request_tracker_ignores_intermediate_and_duplicate_correlations(self):
+        tracker = GatewayCommandRequestTracker()
+        self.assertTrue(tracker.begin(1, 300, 12, now=0.0))
+        intermediate = decode_gateway_command_event(event_payload(), valid_statuses=set(COMMAND_STATUS_NAMES))
+        self.assertFalse(tracker.observe_event(intermediate))
+        wrong = replace(
+            intermediate, command_kind=1, stage=12, flags=1,
+            host_session_id=301, host_sequence=12,
+        )
+        self.assertFalse(tracker.observe_event(wrong))
+        terminal = replace(
+            wrong, host_session_id=300, event_sequence=2,
+            progress_count=1, success_count=1,
+        )
+        self.assertTrue(tracker.observe_event(terminal))
+        self.assertFalse(tracker.observe_event(terminal))
 
 
 if __name__ == "__main__":

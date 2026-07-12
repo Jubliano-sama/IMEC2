@@ -16,10 +16,14 @@ from .diagnostic_models import (
     anchor_label, solve_geometry,
 )
 from .diagnostic_views import AnchorGeometryView, ClickDiagnosticsView, MeshDiagnosticsView
-from .command_telemetry import CommandTelemetryDecodeError, decode_gateway_command_event
+from .command_telemetry import (
+    CommandTelemetryDecodeError, GatewayCommandRequestTracker,
+    decode_gateway_command_event,
+)
 from .protocol import (
-    COMMAND_STATUS_NAMES, MSG_CLICK_REPORT, MSG_GATEWAY_COMMAND_EVENT, Packet,
-    TLV_ANCHOR_ID, TLV_CLICKER_ID, TLV_EVENT_SEQ,
+    COMMAND_STATUS_NAMES, MSG_CLICK_REPORT, MSG_COMMAND_RESULT,
+    MSG_GATEWAY_COMMAND_EVENT, Packet, TLV_ANCHOR_ID, TLV_CLICKER_ID,
+    TLV_COMMAND_STATUS, TLV_EVENT_SEQ,
 )
 
 
@@ -36,6 +40,7 @@ class GatewayDiagnosticsMixin:
         self.wake_monitor = WakeTrainMonitor()
         self.wake_attempt_adapter = PendingWakeAttemptAdapter()
         self.command_timeline_model = CommandTimelineModel()
+        self.command_request_tracker = GatewayCommandRequestTracker()
         self.topology_model = TopologyBaselineModel(
             Path.home() / ".config" / "imec2-gateway-gui" / "anchor-baseline.json"
         )
@@ -85,12 +90,21 @@ class GatewayDiagnosticsMixin:
                 self._show_error(f"Malformed gateway command telemetry: {exc}")
                 return
             self.command_timeline_model.observe(event)
+            released = self.command_request_tracker.observe_event(event)
+            if released:
+                self._update_command_state()
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
             self.geometry_model.observe_command_event(event)
             comparison = self.topology_model.observe(event)
             if comparison is not None:
                 self.mesh_diagnostics_view.show_topology(comparison)
             return
+        if packet.msg_type == MSG_COMMAND_RESULT:
+            status = packet.value(TLV_COMMAND_STATUS)
+            if isinstance(status, int) and self.command_request_tracker.observe_command_result(
+                packet.session_id, packet.seq, status
+            ):
+                self._update_command_state()
         observation = self.geometry_model.observe_pair_packet(packet)
         if observation is not None:
             self.anchor_geometry_view.show_model(self.geometry_model)
@@ -106,6 +120,19 @@ class GatewayDiagnosticsMixin:
         state = self.click_location_model.observe(packet, diagnostic)
         if state is not None:
             self.click_diagnostics_view.show(state, self.click_location_model.positions_m)
+
+    def _begin_gateway_command(self, command_kind: int, session_id: int,
+                               sequence: int) -> bool:
+        if self.command_request_tracker.begin(command_kind, session_id, sequence):
+            self._update_command_state()
+            return True
+        self.status_text.set("A gateway command is already active")
+        return False
+
+    def _expire_gateway_command(self) -> None:
+        if self.command_request_tracker.expire():
+            self.status_text.set("Gateway command timed out; controls are available again")
+            self._update_command_state()
 
     def _wake_evidence(self, packet: Packet) -> WakeEvidence:
         event_seq = packet.value(TLV_EVENT_SEQ)
