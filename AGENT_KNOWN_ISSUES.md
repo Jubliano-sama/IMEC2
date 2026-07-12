@@ -66,6 +66,7 @@ These are one-line distillations of findings from the 2026-07-11 Simulator Adver
 When working in areas that have had past problems (e.g. mesh, routing, simulation, persistence, large files), review the historical entries to avoid repeating the same classes of mistakes.
 
 Reviewing the history in this file helps agents avoid repeating problems that have been encountered before.
+- Context-mode shell injection can make a command beginning directly with `if` syntactically invalid; prefix shell conditionals with `true;` (similar to the existing `for` issue).
 
 - A repeated TTY-backed pyOCD `pre-reset` RTT capture can find the RTT control block but emit no target boot output; preserve the empty capture and use an explicit reset followed by RTT attach to distinguish capture failure from a dead target.
 - Fixed intermittent mesh-gateway illegal-EPSR resets by replacing a full `struct mesh_relay_result` retransmit-repair local with a scalar action/status API; root cause was an 8904-byte dormant branch frame overflowing the 8192-byte `mesh_route` workqueue stack on every handled RX packet and corrupting the adjacent retained-fatal block.
