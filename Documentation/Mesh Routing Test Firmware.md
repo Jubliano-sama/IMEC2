@@ -7,10 +7,16 @@ the normal `clicker`, `anchor`, and `gateway` builds untouched.
 
 - `mesh_gateway`: gateway/root node, BLE name `IMEC Mesh Test Gateway`.
 - `mesh_transmitter`: anchor-role transmitter node, BLE name `IMEC Mesh Tx`.
-- `mesh_anchor_1` through `mesh_anchor_5`: relay anchors, BLE names
-  `IMEC Mesh Anchor 1` through `IMEC Mesh Anchor 5`.
+- `mesh_anchor`: the single production relay/ranging anchor image.
 
-The mesh anchors use deterministic device IDs and flashed discovery slots.
+Every `mesh_anchor` uses the same HEX. It derives its network identity from the
+nRF FICR hardware ID and starts unassigned when no matching persisted gateway
+assignment exists. `CMD_ASSIGN_DISCOVERY_SLOTS` discovers each physical anchor,
+assigns the logical discovery/ranging order, and persists the local slot. A
+blank or migrated unassigned anchor can claim an assignment but does not answer
+normal click discovery. The removed `mesh_anchor_1` through `mesh_anchor_5`
+presets are not compatibility aliases: after upgrade, rerun the assignment
+command so stale numbered IDs are replaced by hardware-derived identities.
 The transmitter is also an anchor-role mesh node so it can use the normal
 relay, route-discovery, gateway-ACK, and channel-9 timing machinery.
 
@@ -86,7 +92,6 @@ Add relay/transmitter BLE logs when debugging channel scheduling:
 ```sh
 ./tools/mesh_ble_route_monitor.py \
   --gateway "IMEC Mesh Test Gateway" \
-  --log-device "IMEC Mesh Anchor 1" \
   --log-device "IMEC Mesh Tx"
 ```
 
@@ -101,7 +106,7 @@ ctest --test-dir firmware/build --output-on-failure
 
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-gateway -- -DIMEC_BUILD_PRESET=mesh_gateway
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-transmitter -- -DIMEC_BUILD_PRESET=mesh_transmitter
-.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor-1 -- -DIMEC_BUILD_PRESET=mesh_anchor_1
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor -- -DIMEC_BUILD_PRESET=mesh_anchor
 ```
 
 Expected build results:
@@ -110,8 +115,8 @@ Expected build results:
 - Mesh gateway, transmitter, and anchor images build without Kconfig warnings.
 - Boot logs show `mesh-route test` behavior through the preset name and the
   expected BLE names.
-- Anchor boot logs show deterministic flashed slots, not runtime gateway slot
-  assignment.
+- Anchor boot logs show a stable FICR-derived node ID and either a persisted
+  gateway assignment or explicit `UNPROVISIONED` state.
 
 For a close-range smoke test, place the gateway, transmitter, and one anchor
 near each other and run:
@@ -120,7 +125,6 @@ near each other and run:
 ./tools/mesh_ble_route_monitor.py \
   --gateway "IMEC Mesh Test Gateway" \
   --log-device "IMEC Mesh Tx" \
-  --log-device "IMEC Mesh Anchor 1" \
   --duration-s 120
 ```
 

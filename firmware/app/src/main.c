@@ -2,6 +2,7 @@
 #include "app_board.h"
 #include "app_clicker.h"
 #include "app_config.h"
+#include "app_device_identity.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
 #include "app_ml.h"
@@ -252,6 +253,18 @@ int main(void)
     int battery_adc_ret;
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     bool fatal_recovery_boot = false;
+#endif
+
+#if IMEC_USE_HARDWARE_ANCHOR_ID
+    ret = app_device_identity_init();
+    if (ret < 0) {
+        printk("fatal: invalid nRF FICR device identity: %d\n", ret);
+        k_panic();
+    }
+    printk("mesh anchor identity: ficr=0x%016llx node=0x%016llx preset=%s\n",
+           (unsigned long long)app_device_hardware_id(),
+           (unsigned long long)DEVICE_ID,
+           IMEC_BUILD_PRESET_NAME);
 #endif
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)

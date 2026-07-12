@@ -8,6 +8,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
     src/debug_log.c
+    src/device_identity.c
     src/discovery_assignment.c
     src/dwm3000_runtime.c
     src/dwm3000_timing.c
@@ -46,6 +47,10 @@ add_test(NAME protocol COMMAND test_protocol)
 add_executable(test_discovery_assignment tests/test_discovery_assignment.c)
 target_link_libraries(test_discovery_assignment PRIVATE core)
 add_test(NAME discovery_assignment COMMAND test_discovery_assignment)
+
+add_executable(test_device_identity tests/test_device_identity.c)
+target_link_libraries(test_device_identity PRIVATE core)
+add_test(NAME device_identity COMMAND test_device_identity)
 
 add_executable(test_status tests/test_status.c)
 target_link_libraries(test_status PRIVATE core)
@@ -357,6 +362,12 @@ target_link_libraries(test_mesh_discovery_scenarios PRIVATE mesh_sim)
 add_test(NAME mesh_discovery_scenarios COMMAND test_mesh_discovery_scenarios)
 set_tests_properties(mesh_discovery_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;discovery")
+
+add_test(NAME mesh_anchor_preset
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_anchor_preset.py)
+set_tests_properties(mesh_anchor_preset
+    PROPERTIES LABELS "mesh_integration;hardware_models;deployment")
 
 add_executable(test_mesh_route_recovery_scenarios
     tests/mesh_integration/test_mesh_route_recovery_scenarios.c

@@ -38,9 +38,11 @@ the `mesh_` prefix:
 - `mesh_clicker`: normal battery clicker behavior. It sleeps normally, wakes
   for a physical click/range sequence, and uses the connected-routing mesh path
   for delivery. It is not a continuously active test transmitter.
-- `mesh_anchor_1` through `mesh_anchor_5`: anchor identities for the same
-  connected-routing firmware. An anchor ranges local clicks, relays mesh work,
-  and prioritizes its own click reports over transit traffic.
+- `mesh_anchor`: the single connected-routing anchor image for every production
+  anchor. It derives a stable node ID from the nRF FICR hardware identity;
+  logical discovery/ranging order is assigned by the gateway and persisted.
+  An anchor ranges local clicks, relays mesh work, and prioritizes its own click
+  reports over transit traffic.
 - `mesh_gateway`: gateway role for the same connected-routing firmware,
   including gateway BLE ingress/egress and highest-priority gateway commands.
 
@@ -65,7 +67,7 @@ Production-candidate mesh role builds:
 
 ```sh
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-clicker -- -DIMEC_BUILD_PRESET=mesh_clicker
-.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor-1 -- -DIMEC_BUILD_PRESET=mesh_anchor_1
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor -- -DIMEC_BUILD_PRESET=mesh_anchor
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-gateway -- -DIMEC_BUILD_PRESET=mesh_gateway
 ```
 
@@ -79,7 +81,7 @@ Legacy regression role builds:
 
 ### Firmware role meaning
 
-- `mesh_clicker`, `mesh_anchor_<slot>`, and `mesh_gateway` are the active
+- `mesh_clicker`, `mesh_anchor`, and `mesh_gateway` are the active
   production-candidate firmware line and the source of truth for behavior that
   will become the main firmware.
 - Plain `clicker`, `anchor`, and `gateway` role builds are legacy compatibility

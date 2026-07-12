@@ -40,11 +40,7 @@ set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
     mesh_gateway
     mesh_transmitter
     mesh_transmitter_forcedhop
-    mesh_anchor_1
-    mesh_anchor_2
-    mesh_anchor_3
-    mesh_anchor_4
-    mesh_anchor_5
+    mesh_anchor
 )
 if(FIRMWARE_PRESET)
     if(IMEC_BUILD_PRESET AND NOT IMEC_BUILD_PRESET STREQUAL FIRMWARE_PRESET)
@@ -80,11 +76,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     mesh_gateway
     mesh_transmitter
     mesh_transmitter_forcedhop
-    mesh_anchor_1
-    mesh_anchor_2
-    mesh_anchor_3
-    mesh_anchor_4
-    mesh_anchor_5
+    mesh_anchor
 )
 set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile")
 set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test")
@@ -93,6 +85,7 @@ set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant"
 set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant")
 set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
 set(IMEC_STACK_DIAGNOSTICS_BUILD OFF CACHE BOOL "Enable exact-preset RTT stack diagnostics")
+set(IMEC_USE_HARDWARE_ANCHOR_ID OFF)
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
 set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
 set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
@@ -202,7 +195,7 @@ if(IMEC_BUILD_PRESET)
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_DEVICE_ID "0x3333333333333301ull" CACHE STRING
             "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
-    elseif(IMEC_BUILD_PRESET MATCHES "^mesh_anchor_([1-5])$")
+    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_anchor")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
@@ -211,12 +204,11 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_PRESET_ROLE_CONF "role-anchor.conf")
         set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
             "Build the isolated mesh-routing test firmware variant" FORCE)
-        set(IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX "${CMAKE_MATCH_1}")
-        math(EXPR IMEC_MESH_ROUTE_TEST_ANCHOR_SLOT_VALUE "${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX} - 1")
-        set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Anchor ${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX}" CACHE STRING
+        set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Anchor" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
-        set(IMEC_DEVICE_ID "0x222222222222230${IMEC_MESH_ROUTE_TEST_ANCHOR_INDEX}ull" CACHE STRING
-            "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
+        set(IMEC_DEVICE_ID "" CACHE STRING
+            "Production mesh anchors always use the hardware-derived ID" FORCE)
+        set(IMEC_USE_HARDWARE_ANCHOR_ID ON)
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
     else()
         message(FATAL_ERROR "Unknown IMEC_BUILD_PRESET: ${IMEC_BUILD_PRESET}")
@@ -360,6 +352,7 @@ endif()
 
 set(IMEC_APP_LOCAL_SOURCES
     src/app_state.c
+    src/app_device_identity.c
     src/app_board.c
     src/app_gateway_ble.c
     src/app_gateway_ble_stream.c
@@ -415,6 +408,7 @@ else()
         src/dwm3000_sdk_port.c
         "${DWM3000_SDK_DIR}/decadriver/deca_device.c"
         ../src/debug_log.c
+        ../src/device_identity.c
         ../src/protocol.c
         ../src/gateway_command.c
         ../src/gateway_ble_transport.c
@@ -456,6 +450,7 @@ target_compile_definitions(app PRIVATE
     IMEC_GIT_VERSION="${IMEC_GIT_VERSION}"
     IMEC_BUILD_TIMESTAMP="${IMEC_BUILD_TIMESTAMP}"
     IMEC_BOARD_TARGET="${BOARD}"
+    IMEC_USE_HARDWARE_ANCHOR_ID=$<BOOL:${IMEC_USE_HARDWARE_ANCHOR_ID}>
 )
 target_compile_options(app PRIVATE -fstack-usage)
 if(IMEC_DEVICE_ID)

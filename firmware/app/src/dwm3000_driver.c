@@ -1,6 +1,7 @@
 #include "dwm3000_driver.h"
 
 #include "app_board.h"
+#include "app_device_identity.h"
 #include "debug_log.h"
 #include "dwm3000_port.h"
 #include "uwb.h"
@@ -57,7 +58,9 @@ static bool focused_anchor_rx_logs_enabled(void)
 #endif
 
 #ifndef DEVICE_ID
-#if DEVICE_ROLE == ROLE_ANCHOR
+#if IMEC_USE_HARDWARE_ANCHOR_ID
+#define DEVICE_ID app_device_id()
+#elif DEVICE_ROLE == ROLE_ANCHOR
 #define DEVICE_ID 0x2222222222222222ull
 #elif DEVICE_ROLE == ROLE_GATEWAY
 #define DEVICE_ID GATEWAY_ID

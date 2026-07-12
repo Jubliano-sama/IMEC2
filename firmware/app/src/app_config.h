@@ -1,6 +1,7 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
+#include "app_device_identity.h"
 #include "status.h"
 #include "uwb.h"
 
@@ -59,7 +60,9 @@
 #endif
 
 #ifndef DEVICE_ID
-#if DEVICE_ROLE == ROLE_ANCHOR
+#if IMEC_USE_HARDWARE_ANCHOR_ID
+#define DEVICE_ID app_device_id()
+#elif DEVICE_ROLE == ROLE_ANCHOR
 #define DEVICE_ID 0x2222222222222222ull
 #elif DEVICE_ROLE == ROLE_GATEWAY
 #define DEVICE_ID GATEWAY_ID
