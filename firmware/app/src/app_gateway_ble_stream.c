@@ -37,25 +37,33 @@ uint32_t gateway_ble_recovery_backoff_ms(uint8_t retry_round,
 
 static void put_u8(uint8_t *record, size_t *offset, uint8_t value)
 {
-    record[*offset] = value;
+    if (record != NULL) {
+        record[*offset] = value;
+    }
     *offset += sizeof(value);
 }
 
 static void put_u16(uint8_t *record, size_t *offset, uint16_t value)
 {
-    proto_put_u16_le(&record[*offset], value);
+    if (record != NULL) {
+        proto_put_u16_le(&record[*offset], value);
+    }
     *offset += sizeof(value);
 }
 
 static void put_u32(uint8_t *record, size_t *offset, uint32_t value)
 {
-    proto_put_u32_le(&record[*offset], value);
+    if (record != NULL) {
+        proto_put_u32_le(&record[*offset], value);
+    }
     *offset += sizeof(value);
 }
 
 static void put_u64(uint8_t *record, size_t *offset, uint64_t value)
 {
-    proto_put_u64_le(&record[*offset], value);
+    if (record != NULL) {
+        proto_put_u64_le(&record[*offset], value);
+    }
     *offset += sizeof(value);
 }
 
@@ -204,6 +212,9 @@ static bool drop_one_lower_priority(struct gateway_ble_stream_state *state,
     for (uint8_t i = first_offset; i < state->count; i++) {
         uint8_t queued_priority = state->items[i].priority;
 
+        if (state->items[i].retain_until_sent) {
+            continue;
+        }
         if (queued_priority > best_priority) {
             best_priority = queued_priority;
             best_offset = i;
@@ -235,8 +246,8 @@ static int build_record(const struct proto_packet *packet,
     uint8_t priority;
     size_t copy_len = payload_len;
 
-    if (packet == NULL || record == NULL || item == NULL ||
-        record_cap < GATEWAY_BLE_STREAM_RECORD_MAX_LEN ||
+    if (packet == NULL || item == NULL ||
+        (record == NULL && record_cap != 0u) ||
         (payload == NULL && payload_len != 0u)) {
         return -EINVAL;
     }
@@ -246,6 +257,10 @@ static int build_record(const struct proto_packet *packet,
         }
         copy_len = GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN;
         record_flags |= STREAM_FLAG_TRUNCATED;
+    }
+    if (record != NULL &&
+        record_cap < GATEWAY_BLE_STREAM_RECORD_HEADER_LEN + copy_len) {
+        return -EINVAL;
     }
 
     priority = priority_for_class(packet_class);
@@ -277,13 +292,14 @@ static int build_record(const struct proto_packet *packet,
     if (offset != GATEWAY_BLE_STREAM_RECORD_HEADER_LEN) {
         return -EINVAL;
     }
-    if (copy_len > 0u) {
+    if (record != NULL && copy_len > 0u) {
         memcpy(&record[offset], payload, copy_len);
     }
     item->len = (uint16_t)(offset + copy_len);
     item->packet_type = packet->msg_type;
     item->priority = priority;
     item->queued_at_ms = now_ms;
+    item->packet = *packet;
     return 0;
 }
 
@@ -297,7 +313,6 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
 {
     enum gateway_ble_stream_class packet_class;
     struct gateway_ble_stream_item item;
-    uint8_t record[GATEWAY_BLE_STREAM_RECORD_MAX_LEN];
     int ret;
 
     if (state == NULL || packet == NULL) {
@@ -318,8 +333,8 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
                        packet_class,
                        received_at_ms,
                        now_ms,
-                       record,
-                       sizeof(record),
+                       NULL,
+                       0u,
                        &item);
     if (ret == -EMSGSIZE) {
         note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
@@ -343,7 +358,19 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
     }
 
     item.offset = state->pool_used;
-    memcpy(&state->record_pool[state->pool_used], record, item.len);
+    ret = build_record(packet,
+                       payload,
+                       payload_len,
+                       packet_class,
+                       received_at_ms,
+                       now_ms,
+                       &state->record_pool[state->pool_used],
+                       sizeof(state->record_pool) - state->pool_used,
+                       &item);
+    if (ret < 0) {
+        return ret;
+    }
+    item.offset = state->pool_used;
     state->pool_used += item.len;
     state->items[state->count] = item;
     state->count++;
@@ -495,4 +522,17 @@ void gateway_ble_stream_get_diagnostics(
 uint8_t gateway_ble_stream_depth(const struct gateway_ble_stream_state *state)
 {
     return state == NULL ? 0u : state->count;
+}
+
+int gateway_ble_stream_head_packet(const struct gateway_ble_stream_state *state,
+                                   struct proto_packet *packet)
+{
+    if (state == NULL || packet == NULL) {
+        return -EINVAL;
+    }
+    if (state->count == 0u) {
+        return -ENOENT;
+    }
+    *packet = state->items[0].packet;
+    return 0;
 }

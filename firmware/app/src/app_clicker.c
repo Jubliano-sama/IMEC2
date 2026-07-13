@@ -3,6 +3,7 @@
 #include "app_board.h"
 #include "app_config.h"
 #include "app_high_debug.h"
+#include "app_radio_low_power_policy.h"
 #include "app_state.h"
 #include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
@@ -44,6 +45,8 @@
 LOG_MODULE_REGISTER(app_clicker, LOG_LEVEL_DBG);
 
 #define CLICKER_POLITENESS_UWB_RESTART 1
+#define BLE_COURTESY_STOP_RETRY_COUNT 3u
+#define BLE_COURTESY_STOP_RETRY_DELAY_MS 5u
 
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
     .wake_adv_ms = WAKE_ADV_MS,
@@ -2103,6 +2106,7 @@ static void clicker_ble_courtesy_scan_cb(const bt_addr_le_t *addr,
 
 static int clicker_ble_courtesy_init_once(void)
 {
+    int disable_ret;
     int ret;
 
     if (ble_courtesy_available) {
@@ -2116,12 +2120,20 @@ static int clicker_ble_courtesy_init_once(void)
     ret = bt_enable(NULL);
     if (ret != 0 && ret != -EALREADY) {
         LOG_WRN("BLE courtesy disabled: bt_enable failed: %d", ret);
+        ble_courtesy_init_attempted = false;
         return ret;
     }
 
     ret = clicker_ble_courtesy_set_scan_channel();
     if (ret != 0) {
         LOG_WRN("BLE courtesy disabled: scan channel 37 map failed: %d", ret);
+        disable_ret = bt_disable();
+        if (disable_ret == 0 || disable_ret == -EALREADY) {
+            ble_courtesy_init_attempted = false;
+        } else {
+            LOG_WRN("BLE courtesy initialization rollback failed: %d",
+                    disable_ret);
+        }
         return ret;
     }
 
@@ -2225,10 +2237,11 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
         LOG_WRN("BLE courtesy scan start failed: %d", ret);
         ble_courtesy_scan_active = false;
         stop_ret = bt_le_adv_stop();
-        if (stop_ret != 0 && stop_ret != -EALREADY) {
+        if (stop_ret == 0 || stop_ret == -EALREADY) {
+            ble_courtesy_adv_active = false;
+        } else {
             LOG_WRN("BLE courtesy advertising rollback failed: %d", stop_ret);
         }
-        ble_courtesy_adv_active = false;
         return ret;
     }
     return 0;
@@ -2243,45 +2256,98 @@ uint32_t app_clicker_ble_courtesy_higher_wait_ms(void)
     return wait_ms;
 }
 
-void app_clicker_ble_courtesy_stop(void)
+static int clicker_ble_courtesy_stop_advertising(void)
 {
-    int ret;
+    int ret = 0;
 
-    if (ble_courtesy_adv_active) {
+    for (uint8_t attempt = 0u;
+         ble_courtesy_adv_active && attempt < BLE_COURTESY_STOP_RETRY_COUNT;
+         attempt++) {
         ret = bt_le_adv_stop();
-        if (ret != 0 && ret != -EALREADY) {
-            LOG_WRN("BLE courtesy advertising stop failed: %d", ret);
+        if (ret == 0 || ret == -EALREADY) {
+            ble_courtesy_adv_active = false;
+            return 0;
         }
-        ble_courtesy_adv_active = false;
-    }
-    if (ble_courtesy_scan_active) {
-        ret = bt_le_scan_stop();
-        if (ret != 0 && ret != -EALREADY) {
-            LOG_WRN("BLE courtesy scan stop failed: %d", ret);
+        if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
+            k_msleep(BLE_COURTESY_STOP_RETRY_DELAY_MS);
         }
-        ble_courtesy_scan_active = false;
     }
+    if (ble_courtesy_adv_active) {
+        LOG_WRN("BLE courtesy advertising stop failed after %u attempts: %d",
+                BLE_COURTESY_STOP_RETRY_COUNT,
+                ret);
+    }
+    return ret;
 }
 
-void app_clicker_ble_courtesy_low_power_stop(void)
+static int clicker_ble_courtesy_stop_scanning(void)
 {
-    int ret;
+    int ret = 0;
+
+    for (uint8_t attempt = 0u;
+         ble_courtesy_scan_active && attempt < BLE_COURTESY_STOP_RETRY_COUNT;
+         attempt++) {
+        ret = bt_le_scan_stop();
+        if (ret == 0 || ret == -EALREADY) {
+            ble_courtesy_scan_active = false;
+            return 0;
+        }
+        if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
+            k_msleep(BLE_COURTESY_STOP_RETRY_DELAY_MS);
+        }
+    }
+    if (ble_courtesy_scan_active) {
+        LOG_WRN("BLE courtesy scan stop failed after %u attempts: %d",
+                BLE_COURTESY_STOP_RETRY_COUNT,
+                ret);
+    }
+    return ret;
+}
+
+void app_clicker_ble_courtesy_stop(void)
+{
+    (void)clicker_ble_courtesy_stop_advertising();
+    (void)clicker_ble_courtesy_stop_scanning();
+}
+
+int app_clicker_ble_courtesy_low_power_stop(void)
+{
+    int ret = 0;
 
     app_clicker_ble_courtesy_stop();
     if (!ble_courtesy_init_attempted) {
-        return;
+        return 0;
     }
 
-    ret = bt_disable();
-    if (ret != 0 && ret != -EALREADY) {
-        LOG_WRN("BLE courtesy disable before retained idle failed: %d", ret);
-    }
-    ble_courtesy_init_attempted = false;
-    ble_courtesy_available = false;
-    clicker_ble_courtesy_clear_higher_peer();
+    for (uint8_t attempt = 0u; attempt < BLE_COURTESY_STOP_RETRY_COUNT; attempt++) {
+        ret = bt_disable();
+        if (ret == 0 || ret == -EALREADY) {
+            ble_courtesy_init_attempted = false;
+            ble_courtesy_available = false;
+            ble_courtesy_adv_active = false;
+            ble_courtesy_scan_active = false;
+            clicker_ble_courtesy_clear_higher_peer();
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=low_power_stop ret=%d", ret);
+            high_debug_log_event("BLE_TEST",
+                                 "phase=low_power_stop ret=0 attempts=%u",
+                                 (unsigned int)(attempt + 1u));
 #endif
+            return 0;
+        }
+        if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
+            k_msleep(BLE_COURTESY_STOP_RETRY_DELAY_MS);
+        }
+    }
+    LOG_WRN("BLE courtesy disable before retained idle failed after %u attempts: %d",
+            BLE_COURTESY_STOP_RETRY_COUNT,
+            ret);
+#if defined(CONFIG_IMEC_HIGH_DEBUG)
+    high_debug_log_event("BLE_TEST",
+                         "phase=low_power_stop ret=%d attempts=%u",
+                         ret,
+                         BLE_COURTESY_STOP_RETRY_COUNT);
+#endif
+    return ret;
 }
 #else
 int app_clicker_ble_courtesy_start(uint32_t event_seq,
@@ -2306,8 +2372,9 @@ void app_clicker_ble_courtesy_stop(void)
 {
 }
 
-void BLE_CONNECTIVITY_TEST_UNUSED app_clicker_ble_courtesy_low_power_stop(void)
+int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_ble_courtesy_low_power_stop(void)
 {
+    return 0;
 }
 #endif
 
@@ -2347,6 +2414,7 @@ static bool clicker_action_work_q_started;
 #if HAS_CLICK_BUTTON
 static atomic_t clicker_action_active;
 static enum button_action clicker_pending_action;
+static uint32_t clicker_low_power_transition_failures;
 #endif
 
 int app_clicker_init(const struct app_clicker_callbacks *callbacks)
@@ -2845,8 +2913,57 @@ void app_clicker_enter_systemoff_idle(void)
     clicker_systemoff_now();
 }
 
+static int clicker_radio_retained_standby_transition(void)
+{
+    int ret = dwm3000_driver_configure_wake_mode();
+
+    if (ret < 0) {
+        return ret;
+    }
+    return dwm3000_driver_standby();
+}
+
+static int clicker_enter_radio_retained_standby(void)
+{
+    struct app_radio_low_power_policy policy;
+    enum app_radio_low_power_action action;
+    int first_ret;
+    int recovery_ret;
+    int retry_ret = 0;
+
+    app_radio_low_power_policy_init(&policy, APP_RADIO_LOW_POWER_STANDBY);
+    first_ret = clicker_radio_retained_standby_transition();
+    action = app_radio_low_power_policy_note_transition(&policy, first_ret);
+    if (action == APP_RADIO_LOW_POWER_COMPLETE) {
+        return 0;
+    }
+
+    recovery_ret = dwm3000_driver_force_recovery();
+    action = app_radio_low_power_policy_note_recovery(&policy, recovery_ret);
+    if (action == APP_RADIO_LOW_POWER_RETRY) {
+        retry_ret = clicker_radio_retained_standby_transition();
+        action = app_radio_low_power_policy_note_transition(&policy, retry_ret);
+        if (action == APP_RADIO_LOW_POWER_COMPLETE) {
+            LOG_WRN("clicker DWM3000 retained standby recovered: first_ret=%d",
+                    first_ret);
+            return 0;
+        }
+    }
+
+    if (clicker_low_power_transition_failures != UINT32_MAX) {
+        clicker_low_power_transition_failures++;
+    }
+    LOG_ERR("clicker DWM3000 retained standby failed after bounded recovery: first_ret=%d recovery_ret=%d retry_ret=%d failures=%u",
+            first_ret,
+            recovery_ret,
+            retry_ret,
+            clicker_low_power_transition_failures);
+    return recovery_ret < 0 ? recovery_ret : retry_ret;
+}
+
 static void clicker_enter_systemon_retained_idle(void)
 {
+    bool pins_floated = false;
     bool radio_retained = false;
     int ret;
 
@@ -2854,22 +2971,32 @@ static void clicker_enter_systemon_retained_idle(void)
         return;
     }
 
-    (void)battery_adc_divider_disable();
-    app_clicker_ble_courtesy_low_power_stop();
-    ret = dwm3000_driver_configure_wake_mode();
+    ret = battery_adc_divider_disable();
     if (ret < 0) {
-        LOG_WRN("DWM3000 retained-idle preconfigure failed: %d", ret);
-    } else {
-        ret = dwm3000_driver_standby();
-        if (ret < 0) {
-            LOG_WRN("DWM3000 retained-idle sleep failed: %d", ret);
-        } else {
-            radio_retained = true;
-        }
+        LOG_WRN("battery ADC divider disable before retained idle failed: %d",
+                ret);
     }
-    ret = dwm3000_port_float_pins();
+    ret = app_clicker_ble_courtesy_low_power_stop();
     if (ret < 0) {
-        LOG_WRN("DWM3000 retained-idle pin float failed: %d", ret);
+        LOG_WRN("BLE cleanup before retained idle incomplete: %d", ret);
+    }
+    ret = clicker_enter_radio_retained_standby();
+    if (ret == 0) {
+        radio_retained = true;
+        for (uint8_t attempt = 0u; attempt < 2u; attempt++) {
+            ret = dwm3000_port_float_pins();
+            if (ret == 0) {
+                pins_floated = true;
+                break;
+            }
+            if (attempt == 0u) {
+                k_busy_wait(100u);
+            }
+        }
+        if (!pins_floated) {
+            LOG_WRN("DWM3000 retained-idle pin float failed after retry: %d",
+                    ret);
+        }
     }
 
     ret = click_button_arm_idle_interrupt();
@@ -2877,9 +3004,10 @@ static void clicker_enter_systemon_retained_idle(void)
         LOG_WRN("click button retained-idle wake arm failed: %d", ret);
     }
     high_debug_log_event("CLICKER_IDLE",
-                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=float",
+                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=%s",
                          (unsigned int)CLICK_BUTTON_PIN_NUM,
-                         radio_retained ? 1u : 0u);
+                         radio_retained ? 1u : 0u,
+                         pins_floated ? "float" : "driven");
     LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",
             (unsigned int)CLICK_BUTTON_PIN_NUM);
     status_leds_set(false, false, false);

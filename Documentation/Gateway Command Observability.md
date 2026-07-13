@@ -42,6 +42,16 @@ cumulative and increments when an event cannot enter the BLE queue. A sequence
 gap or a larger loss count means intermediate progress was missed. The GUI must
 use the terminal event, not the absence of an error event, to decide success.
 
+The bounded assignment-table publication batch is retained before command-event
+creation. It admits one slot mapping at a time only when BLE notification credit
+and stream capacity are available, then advances only after the send callback.
+Queue pressure, notification stalls, and disconnect therefore leave that exact
+semantic event pending without consuming `event_seq` or incrementing
+`lost_event_count`. Assignment-table retransmission reuses the same retained
+batch; it does not append another set of mappings. Stage 7, stage 8, and the
+terminal event remain behind every slot mapping in that batch, including across
+reconnect. Click and already-pending terminal records retain BLE priority.
+
 ## Event Payload V1
 
 All multibyte integers are little-endian.
@@ -136,6 +146,16 @@ terminal totals. `PAIR_INCOMPLETE` means fewer unique sample indices arrived
 than requested. `PAIR_RANGE_FAILED` means at least one received sample had a
 non-`RANGE_OK` status.
 
+The survey terminal keeps the specific failure class observed during pair
+processing; it does not rewrite every failed pair as `PAIR_RANGE_FAILED`.
+When several pairs fail differently, the deterministic precedence is
+`INTERNAL`, `RETRY_EXHAUSTED`, `ROUTE_UNAVAILABLE`, `RADIO`,
+`PAIR_RANGE_FAILED`, then `PAIR_INCOMPLETE`. A survey with one valid discovery
+report and no possible pair completes successfully. A survey with zero valid
+discovery reports ends with `NO_ANCHORS`; user interfaces should render that
+survey-specific condition as "No survey reports were received", because it
+does not mean that no powered or normally enumerable anchors exist.
+
 Survey discovery runs four collision-diversified probe opportunities before
 the gateway closes collection. A terminal `NO_ANCHORS` reason therefore means
 that no unique eligible anchor report arrived across the complete expanded
@@ -151,4 +171,6 @@ local-frame budget.
 
 Event creation never changes command admission, channel-5 priority, radio
 timing, retries, or survey decisions. A failed BLE enqueue updates bounded loss
-state and does not block or fail the mesh command.
+state and does not block or fail the mesh command. A capacity refusal before
+creation of a retained assignment publication event is backpressure rather than
+a failed enqueue, so it leaves that event pending and does not update loss state.

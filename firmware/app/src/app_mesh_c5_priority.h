@@ -16,6 +16,9 @@ struct app_mesh_c5_flood_priority_state {
 
 struct app_mesh_c5_route_capture_state {
     uint8_t msg_type;
+    uint32_t session_id;
+    uint32_t flood_epoch_id;
+    uint16_t reply_nonce;
     uint64_t src_id;
     uint64_t dst_id;
     uint64_t previous_hop_id;
@@ -71,7 +74,16 @@ bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type);
 bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type);
 bool app_mesh_c5_route_capture_requires_inline_timing_install(
     uint8_t msg_type,
-    bool awaiting_event_accept);
+    bool timing_negotiation_active);
+bool app_mesh_c5_route_capture_requires_post_rx_response(uint8_t msg_type);
+bool app_mesh_c5_event_accept_reservation(
+    const struct mesh_event_timing *accepted,
+    uint16_t realign_slop_ms,
+    struct mesh_event_timing *reservation);
+bool app_mesh_c5_event_accept_realign_is_reserved(
+    const struct mesh_event_timing *reserved,
+    const struct mesh_event_timing *realigned,
+    uint16_t realign_slop_ms);
 bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
                                            size_t frame_len,
                                            size_t standard_frame_max_len);

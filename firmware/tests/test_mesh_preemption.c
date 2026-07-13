@@ -85,9 +85,9 @@ static void test_click_preemption_defers_collection_result(void)
     assert(!plan.clear_outbox);
     assert(!plan.cancel_timeout);
     assert(!plan.requeue_click_report);
+    assert(plan.cancel_active_tx);
     assert(mesh_relay_tx_active(&relay));
-    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.retry_after_ms == 5100u + RELAY_BUSY_RETRY_MIN_MS);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
     assert(relay.pending.packet.msg_type == MSG_COMMAND_RESULT);
     assert(relay.pending.payload_len == payload_len);
     assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
@@ -119,7 +119,8 @@ static void test_click_preemption_cancels_non_collection_tx(void)
     assert(!plan.schedule_timeout);
     assert(plan.clear_outbox);
     assert(plan.cancel_timeout);
-    assert(!mesh_relay_tx_active(&relay));
+    assert(plan.cancel_active_tx);
+    assert(mesh_relay_tx_active(&relay));
 }
 
 static void test_click_preemption_requeues_local_click_report(void)
@@ -157,7 +158,8 @@ static void test_click_preemption_requeues_local_click_report(void)
     assert(memcmp(plan.click_report.payload, payload, sizeof(payload)) == 0);
     assert(plan.clear_outbox);
     assert(plan.cancel_timeout);
-    assert(!mesh_relay_tx_active(&relay));
+    assert(plan.cancel_active_tx);
+    assert(mesh_relay_tx_active(&relay));
 }
 
 static void test_click_preemption_cancels_transit_click_report(void)
@@ -195,7 +197,8 @@ static void test_click_preemption_cancels_transit_click_report(void)
     assert(!plan.requeue_click_report);
     assert(plan.clear_outbox);
     assert(plan.cancel_timeout);
-    assert(!mesh_relay_tx_active(&relay));
+    assert(plan.cancel_active_tx);
+    assert(mesh_relay_tx_active(&relay));
 }
 
 int main(void)

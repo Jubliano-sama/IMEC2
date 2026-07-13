@@ -1,4 +1,5 @@
 #include "mesh_sim.h"
+#include "mesh_sim_internal.h"
 
 #include "mesh_relay.h"
 #include "protocol.h"
@@ -21,6 +22,11 @@
 /* Production keeps at least this TTL-1 origin reply window open. */
 #define ORIGIN_REPLY_BUDGET_MS UINT32_C(1000)
 #define RESPONDER_GROUP_MAX 8u
+#define TTL_LADDER_ATTEMPT_COUNT 4u
+#define TTL_LADDER_RELAY_COUNT 5u
+#define TTL_LADDER_HOP_COUNT (TTL_LADDER_RELAY_COUNT + 1u)
+#define TTL_LADDER_DATA_PHASE_STEP_MS 100u
+#define TTL_LADDER_ACK_BASE_DELAY_MS 2000u
 #define DISCOVERY_BUDGET_MS                                                \
     (2u * MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS + FLOOD_WAVE_MS +    \
      RREP_RESPONDER_JITTER_MAX_MS + 250u)
@@ -93,6 +99,29 @@ static int find_tlv_u16(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
     *value = proto_get_u16_le(encoded);
+    return PROTO_OK;
+}
+
+static int find_tlv_u8(const uint8_t *payload,
+                       size_t payload_len,
+                       uint8_t type,
+                       uint8_t *value)
+{
+    const uint8_t *encoded = NULL;
+    uint8_t encoded_len = 0u;
+    int ret;
+
+    if (value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, type, &encoded, &encoded_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (encoded_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *value = encoded[0];
     return PROTO_OK;
 }
 
@@ -352,6 +381,92 @@ static int assert_selected_hop(const struct mesh_relay *relay,
     return next_hop == expected_next_hop ? 0 : 1;
 }
 
+static struct mesh_event_params route_connection_params(uint32_t first_event_ms,
+                                                        uint32_t interval_ms)
+{
+    return (struct mesh_event_params) {
+        .event_interval_ms = interval_ms,
+        .event_window_ms = 25u,
+        .first_event_time_ms = first_event_ms,
+        .guard_ms = 4u,
+        .peer_clock_skew_estimate_ppm = 20,
+        .max_missed_events = 3u,
+        .supervision_timeout_ms = 20000u,
+    };
+}
+
+static int run_connection_event(struct mesh_sim_world *world,
+                                uint16_t connection_index)
+{
+    struct mesh_sim_connection_action action;
+    int ret = mesh_sim_connection_next_action(world,
+                                              connection_index,
+                                              &action);
+
+    if (ret != MESH_SIM_OK ||
+        action.kind != MESH_SIM_CONNECTION_ACTION_CHANNEL9_EVENT) {
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_EVENT_ORDER : ret;
+    }
+    if (!action.already_scheduled) {
+        ret = mesh_sim_schedule_next_connection_event(world,
+                                                      connection_index,
+                                                      false);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    return mesh_sim_run_until(world, action.end_us);
+}
+
+static int build_ttl_ladder_data(uint64_t source_id,
+                                 struct proto_packet *packet,
+                                 uint8_t *payload,
+                                 size_t payload_capacity,
+                                 size_t *payload_len)
+{
+    size_t length = 0u;
+    int ret = tlv_append_u32(payload,
+                             payload_capacity,
+                             &length,
+                             TLV_MESH_TEST_PACKET_ID,
+                             UINT32_C(0x640001));
+
+    if (ret != PROTO_OK || length > UINT16_MAX) {
+        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+    }
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = source_id,
+        .dst_id = GATEWAY_ID,
+        .session_id = UINT32_C(0x64000001),
+        .seq = UINT16_C(0x6401),
+        .ttl = TTL_LADDER_HOP_COUNT,
+        .payload_len = (uint16_t)length,
+    };
+    *payload_len = length;
+    return PROTO_OK;
+}
+
+static bool route_ack_matches(const struct mesh_outbound *outbound,
+                              uint64_t next_hop_id,
+                              const struct proto_packet *data_packet)
+{
+    uint16_t requested_seq = 0u;
+
+    return outbound != NULL && data_packet != NULL &&
+           outbound->packet.msg_type == MSG_GATEWAY_ACK &&
+           outbound->packet.src_id == GATEWAY_ID &&
+           outbound->packet.dst_id == data_packet->src_id &&
+           outbound->packet.session_id == data_packet->session_id &&
+           outbound->next_hop_id == next_hop_id &&
+           find_tlv_u16(outbound->payload,
+                        outbound->payload_len,
+                        TLV_REQUESTED_MSG_SEQ,
+                        &requested_seq) == PROTO_OK &&
+           requested_seq == data_packet->seq;
+}
+
 static int run_responder_slot_case(uint8_t responder_count)
 {
     static struct mesh_sim_world world;
@@ -537,6 +652,494 @@ static int run_responder_slot_case(uint8_t responder_count)
                                      0u) == (size_t)responder_count * 3u);
     CHECK(world.now_us <= budget_deadline_us);
     CHECK(world.last_error == MESH_SIM_OK);
+    return 0;
+}
+
+static int run_ttl_ladder_data_case(void)
+{
+    static const uint8_t expected_attempt_ttls[TTL_LADDER_ATTEMPT_COUNT] = {
+        1u, 2u, 4u, 6u,
+    };
+    static struct mesh_sim_world world;
+    struct discovery_identity attempt_identity;
+    struct discovery_identity route_identity;
+    struct discovery_identity reply_identity;
+    struct proto_packet data_packet;
+    uint8_t data_payload[32];
+    size_t data_payload_len = 0u;
+    uint8_t relays[TTL_LADDER_RELAY_COUNT];
+    uint8_t path[TTL_LADDER_HOP_COUNT + 1u];
+    uint16_t connections[TTL_LADDER_HOP_COUNT];
+    uint32_t attempt_sessions[TTL_LADDER_ATTEMPT_COUNT] = {0};
+    uint32_t request_start_ms = DISCOVERY_START_MS;
+    uint16_t route_reply_tx = UINT16_MAX;
+    uint16_t reply_nonce = 0u;
+    uint8_t origin;
+    uint8_t gateway;
+    uint8_t first_gateway_ack_ttl = 0u;
+    uint16_t gateway_ack_seq = 0u;
+    char phase[96];
+
+    mesh_sim_init(&world, SCENARIO_SEED ^ UINT32_C(0x64006400));
+    test_phase = "ttl_ladder_setup";
+    CHECK(mesh_sim_add_role(&world,
+                            MESH_SIM_ROLE_ANCHOR,
+                            ORIGIN_ID + UINT64_C(0x2000),
+                            GATEWAY_ID,
+                            ROUTE_EPOCH,
+                            &origin) == MESH_SIM_OK);
+    path[0] = origin;
+    for (size_t i = 0u; i < TTL_LADDER_RELAY_COUNT; i++) {
+        CHECK(mesh_sim_add_role(&world,
+                                MESH_SIM_ROLE_ANCHOR,
+                                RELAY_1_ID + UINT64_C(0x2000) + i,
+                                GATEWAY_ID,
+                                ROUTE_EPOCH,
+                                &relays[i]) == MESH_SIM_OK);
+        path[i + 1u] = relays[i];
+    }
+    CHECK(mesh_sim_add_role(&world,
+                            MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID,
+                            GATEWAY_ID,
+                            ROUTE_EPOCH,
+                            &gateway) == MESH_SIM_OK);
+    path[TTL_LADDER_HOP_COUNT] = gateway;
+    for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
+        CHECK(mesh_sim_set_link(&world,
+                                path[i],
+                                path[i + 1u],
+                                (uint8_t)(98u - i),
+                                (uint16_t)(4u + i)) == MESH_SIM_OK);
+    }
+    CHECK(mesh_sim_install_route(
+              &world,
+              relays[TTL_LADDER_RELAY_COUNT - 1u],
+              gateway,
+              1u,
+              ROUTE_EPOCH) == PROTO_OK);
+    CHECK(assert_selected_hop(&world.roles[origin].relay,
+                              GATEWAY_ID,
+                              world.roles[relays[0]].id) != 0);
+
+    for (size_t attempt = 0u;
+         attempt < TTL_LADDER_ATTEMPT_COUNT;
+         attempt++) {
+        struct mesh_outbound request;
+        uint16_t current_tx;
+        uint8_t attempt_ttl = expected_attempt_ttls[attempt];
+        uint8_t request_hops =
+            attempt == TTL_LADDER_ATTEMPT_COUNT - 1u ?
+                TTL_LADDER_RELAY_COUNT : attempt_ttl;
+        uint64_t requested_start_us;
+
+        if (attempt > 0u) {
+            request_start_ms =
+                world.roles[origin].relay.route_discovery.next_request_ms;
+        }
+        snprintf(phase, sizeof(phase), "ttl_ladder_attempt_%zu_prepare",
+                 attempt + 1u);
+        test_phase = phase;
+        CHECK(mesh_relay_prepare_route_request(
+                  &world.roles[origin].relay,
+                  GATEWAY_ID,
+                  request_start_ms,
+                  0u,
+                  &request) == PROTO_OK);
+        CHECK(request.packet.msg_type == MSG_ROUTE_REQ);
+        CHECK(request.packet.ttl == attempt_ttl);
+        CHECK(world.roles[origin].relay.route_discovery.attempts ==
+              attempt + 1u);
+        attempt_sessions[attempt] = request.packet.session_id;
+        for (size_t previous = 0u; previous < attempt; previous++) {
+            CHECK(attempt_sessions[previous] != attempt_sessions[attempt]);
+        }
+
+        requested_start_us = (uint64_t)request_start_ms * 1000u;
+        if (requested_start_us <= world.now_us + RX_GUARD_US) {
+            requested_start_us = world.now_us + RX_GUARD_US + 1u;
+        }
+        CHECK(mesh_sim_schedule_outbound_tx(&world,
+                                            origin,
+                                            requested_start_us,
+                                            &request,
+                                            &current_tx) == MESH_SIM_OK);
+
+        for (uint8_t hop = 0u; hop < request_hops; hop++) {
+            struct route_reception reception;
+            const struct mesh_sim_reception *radio;
+            uint8_t hop_count = UINT8_MAX;
+            uint8_t receiver = path[hop + 1u];
+            size_t transmission_count_before = world.transmission_count;
+
+            snprintf(phase,
+                     sizeof(phase),
+                     "ttl_ladder_attempt_%zu_hop_%u",
+                     attempt + 1u,
+                     hop + 1u);
+            test_phase = phase;
+            CHECK(mesh_sim_override_next_relay_random(&world,
+                                                      receiver,
+                                                      0u) == MESH_SIM_OK);
+            CHECK(receive_scheduled_outbound(&world,
+                                             current_tx,
+                                             receiver,
+                                             true,
+                                             &reception) == MESH_SIM_OK);
+            radio = &reception.radio;
+            CHECK(radio->outcome == MESH_SIM_RX_DECODED);
+            CHECK(radio->receiver_id == world.roles[receiver].id);
+            CHECK(radio->source_id == world.roles[path[hop]].id);
+            CHECK(radio->packet.msg_type == MSG_ROUTE_REQ);
+            CHECK(radio->packet.ttl == (uint8_t)(attempt_ttl - hop));
+            CHECK(find_tlv_u8(radio->payload,
+                              radio->payload_len,
+                              TLV_HOP_COUNT,
+                              &hop_count) == PROTO_OK);
+            CHECK(hop_count == hop);
+            CHECK(capture_discovery_identity(radio,
+                                             false,
+                                             &attempt_identity) == PROTO_OK);
+            CHECK(attempt_identity.origin_id == world.roles[origin].id);
+            CHECK(attempt_identity.target_id == GATEWAY_ID);
+            CHECK(attempt_identity.session_id == request.packet.session_id);
+            CHECK(attempt_identity.flood_epoch_id == request.packet.session_id);
+
+            if (attempt == TTL_LADDER_ATTEMPT_COUNT - 1u &&
+                hop + 1u == TTL_LADDER_RELAY_COUNT) {
+                CHECK(receiver == relays[TTL_LADDER_RELAY_COUNT - 1u]);
+                CHECK(world.transmission_count ==
+                      transmission_count_before + 1u);
+                route_reply_tx = (uint16_t)transmission_count_before;
+                CHECK(world.transmissions[route_reply_tx].has_outbound);
+                CHECK(world.transmissions[route_reply_tx].outbound.packet
+                          .msg_type == MSG_ROUTE_REPLY);
+                CHECK(world.transmissions[route_reply_tx].outbound.next_hop_id ==
+                      world.roles[relays[TTL_LADDER_RELAY_COUNT - 2u]].id);
+                route_identity = attempt_identity;
+            } else if (hop + 1u < request_hops) {
+                CHECK(world.transmission_count ==
+                      transmission_count_before + 1u);
+                current_tx = (uint16_t)transmission_count_before;
+                CHECK(world.transmissions[current_tx].has_outbound);
+                CHECK(world.transmissions[current_tx].outbound.packet.msg_type ==
+                      MSG_ROUTE_REQ);
+                CHECK(world.transmissions[current_tx].outbound.packet.ttl ==
+                      (uint8_t)(attempt_ttl - hop - 1u));
+            } else {
+                CHECK(world.transmission_count == transmission_count_before);
+            }
+        }
+
+        if (attempt + 1u < TTL_LADDER_ATTEMPT_COUNT) {
+            uint64_t unused_next_hop = 0u;
+
+            CHECK(world.roles[origin].relay.route_discovery.active);
+            CHECK(mesh_relay_select_next_hop(&world.roles[origin].relay,
+                                             GATEWAY_ID,
+                                             &unused_next_hop) ==
+                  PROTO_ERR_NOT_FOUND);
+        }
+    }
+    CHECK(route_reply_tx != UINT16_MAX);
+    CHECK(world.roles[origin].relay.route_discovery.attempts ==
+          TTL_LADDER_ATTEMPT_COUNT);
+
+    {
+        uint16_t current_reply_tx = route_reply_tx;
+
+        for (size_t reverse_step = 0u;
+             reverse_step < TTL_LADDER_RELAY_COUNT;
+             reverse_step++) {
+            struct route_reception reception;
+            size_t receiver_path_index =
+                TTL_LADDER_RELAY_COUNT - reverse_step - 1u;
+            uint8_t receiver = path[receiver_path_index];
+            uint8_t sender = path[receiver_path_index + 1u];
+            size_t transmission_count_before = world.transmission_count;
+
+            snprintf(phase,
+                     sizeof(phase),
+                     "ttl_ladder_reply_hop_%zu",
+                     reverse_step + 1u);
+            test_phase = phase;
+            CHECK(receive_scheduled_outbound(&world,
+                                             current_reply_tx,
+                                             receiver,
+                                             true,
+                                             &reception) == MESH_SIM_OK);
+            CHECK(reception.radio.outcome == MESH_SIM_RX_DECODED);
+            CHECK(reception.radio.source_id == world.roles[sender].id);
+            CHECK(reception.radio.receiver_id == world.roles[receiver].id);
+            CHECK(reception.radio.packet.msg_type == MSG_ROUTE_REPLY);
+            CHECK(capture_discovery_identity(&reception.radio,
+                                             true,
+                                             &reply_identity) == PROTO_OK);
+            reply_nonce = mesh_route_reply_nonce(route_identity.origin_id,
+                                                 route_identity.target_id,
+                                                 route_identity.session_id,
+                                                 route_identity.flood_epoch_id);
+            CHECK(reply_identity.origin_id == route_identity.origin_id);
+            CHECK(reply_identity.target_id == route_identity.target_id);
+            CHECK(reply_identity.session_id == route_identity.session_id);
+            CHECK(reply_identity.flood_epoch_id ==
+                  route_identity.flood_epoch_id);
+            CHECK(reply_identity.reply_nonce == reply_nonce);
+
+            if (receiver != origin) {
+                uint16_t ack_tx = (uint16_t)transmission_count_before;
+                uint16_t forwarded_tx =
+                    (uint16_t)(transmission_count_before + 1u);
+
+                CHECK(world.transmission_count ==
+                      transmission_count_before + 2u);
+                CHECK(world.transmissions[ack_tx].outbound.packet.msg_type ==
+                      MSG_ROUTE_REPLY_ACK);
+                CHECK(world.transmissions[ack_tx].outbound.next_hop_id ==
+                      world.roles[sender].id);
+                CHECK(world.transmissions[forwarded_tx].outbound.packet
+                          .msg_type == MSG_ROUTE_REPLY);
+                CHECK(world.transmissions[forwarded_tx].outbound.next_hop_id ==
+                      world.roles[path[receiver_path_index - 1u]].id);
+                current_reply_tx = forwarded_tx;
+            } else {
+                CHECK(world.transmission_count ==
+                      transmission_count_before + 1u);
+                CHECK(world.transmissions[transmission_count_before].outbound
+                          .packet.msg_type == MSG_ROUTE_REPLY_ACK);
+            }
+        }
+    }
+    CHECK(!world.roles[origin].relay.route_discovery.active);
+
+    test_phase = "ttl_ladder_installed_route";
+    for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
+        const struct route_candidate *selected =
+            route_selected(&world.roles[path[i]].relay.upstream);
+
+        CHECK(selected != NULL);
+        CHECK(selected->next_hop_id == world.roles[path[i + 1u]].id);
+        CHECK(selected->hop_count == TTL_LADDER_HOP_COUNT - i);
+        CHECK(selected->route_epoch == ROUTE_EPOCH);
+    }
+
+    {
+        uint32_t base_ms =
+            (uint32_t)((world.now_us + 999u) / 1000u) + 100u;
+
+        for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
+            uint32_t first_event_ms =
+                base_ms + (uint32_t)i * TTL_LADDER_DATA_PHASE_STEP_MS;
+            uint32_t ack_event_ms =
+                base_ms + TTL_LADDER_ACK_BASE_DELAY_MS +
+                (uint32_t)(TTL_LADDER_HOP_COUNT - i - 1u) *
+                    TTL_LADDER_DATA_PHASE_STEP_MS;
+            struct mesh_event_params params = route_connection_params(
+                first_event_ms,
+                ack_event_ms - first_event_ms);
+
+            CHECK(mesh_sim_add_connection(&world,
+                                          path[i],
+                                          path[i + 1u],
+                                          &params,
+                                          true,
+                                          &connections[i]) == MESH_SIM_OK);
+        }
+    }
+
+    test_phase = "ttl_ladder_queue_data";
+    CHECK(build_ttl_ladder_data(world.roles[origin].id,
+                                &data_packet,
+                                data_payload,
+                                sizeof(data_payload),
+                                &data_payload_len) == PROTO_OK);
+    CHECK(mesh_sim_queue_originated(&world,
+                                    origin,
+                                    &data_packet,
+                                    data_payload,
+                                    data_payload_len) == MESH_SIM_OK);
+
+    for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
+        const struct mesh_sim_transmission *tx;
+        const struct mesh_sim_reception *rx;
+        size_t transmission_count_before = world.transmission_count;
+        size_t reception_count_before = world.reception_count;
+
+        snprintf(phase, sizeof(phase), "ttl_ladder_data_hop_%zu", i + 1u);
+        test_phase = phase;
+        CHECK(run_connection_event(&world, connections[i]) == MESH_SIM_OK);
+        CHECK(world.transmission_count == transmission_count_before + 1u);
+        CHECK(world.reception_count == reception_count_before + 1u);
+        tx = &world.transmissions[transmission_count_before];
+        rx = &world.receptions[reception_count_before];
+        CHECK(tx->node_index == path[i]);
+        CHECK(tx->has_outbound);
+        CHECK(tx->outbound.packet.msg_type == MSG_MESH_DATA);
+        CHECK(tx->outbound.packet.src_id == data_packet.src_id);
+        CHECK(tx->outbound.packet.dst_id == data_packet.dst_id);
+        CHECK(tx->outbound.packet.session_id == data_packet.session_id);
+        CHECK(tx->outbound.packet.seq == data_packet.seq);
+        CHECK(tx->outbound.packet.ttl == TTL_LADDER_HOP_COUNT - i);
+        CHECK(tx->outbound.next_hop_id == world.roles[path[i + 1u]].id);
+        CHECK(rx->outcome == MESH_SIM_RX_DECODED);
+        CHECK(rx->receiver_id == world.roles[path[i + 1u]].id);
+        CHECK(rx->packet.ttl == TTL_LADDER_HOP_COUNT - i);
+    }
+    CHECK(world.roles[gateway].delivery_count == 1u);
+    CHECK(world.roles[gateway].deliveries[0].packet.session_id ==
+          data_packet.session_id);
+    CHECK(world.roles[gateway].deliveries[0].packet.seq == data_packet.seq);
+    CHECK(world.roles[gateway].deliveries[0].packet.ttl == 1u);
+    CHECK(world.roles[origin].relay.pending.state ==
+          MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+
+    for (size_t reverse_step = 0u;
+         reverse_step < TTL_LADDER_HOP_COUNT;
+         reverse_step++) {
+        size_t connection = TTL_LADDER_HOP_COUNT - reverse_step - 1u;
+        const struct mesh_sim_transmission *tx;
+        const struct mesh_sim_reception *rx;
+        size_t transmission_count_before = world.transmission_count;
+        size_t reception_count_before = world.reception_count;
+
+        snprintf(phase,
+                 sizeof(phase),
+                 "ttl_ladder_gateway_ack_hop_%zu",
+                 reverse_step + 1u);
+        test_phase = phase;
+        CHECK(run_connection_event(&world, connections[connection]) ==
+              MESH_SIM_OK);
+        CHECK(world.transmission_count == transmission_count_before + 1u);
+        CHECK(world.reception_count == reception_count_before + 1u);
+        tx = &world.transmissions[transmission_count_before];
+        rx = &world.receptions[reception_count_before];
+        CHECK(tx->node_index == path[connection + 1u]);
+        CHECK(tx->has_outbound);
+        CHECK(route_ack_matches(&tx->outbound,
+                                world.roles[path[connection]].id,
+                                &data_packet));
+        if (reverse_step == 0u) {
+            first_gateway_ack_ttl = tx->outbound.packet.ttl;
+            gateway_ack_seq = tx->outbound.packet.seq;
+        } else {
+            CHECK(tx->outbound.packet.ttl ==
+                  (uint8_t)(first_gateway_ack_ttl - reverse_step));
+            CHECK(tx->outbound.packet.seq == gateway_ack_seq);
+        }
+        CHECK(rx->outcome == MESH_SIM_RX_DECODED);
+        CHECK(rx->packet.msg_type == MSG_GATEWAY_ACK);
+        CHECK(rx->packet.ttl == tx->outbound.packet.ttl);
+        CHECK(world.roles[gateway].delivery_count == 1u);
+        if (connection > 0u) {
+            CHECK(world.roles[origin].relay.pending.state ==
+                  MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+        }
+    }
+    CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[origin].id) == 1u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_ROUTE_REQUIRED,
+                                     0u) == 0u);
+    for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
+        CHECK(world.connections[connections[i]].completed_events == 2u);
+        CHECK(world.connections[connections[i]].completed_repairs == 0u);
+        CHECK(world.connections[connections[i]].timing_a.timing_fresh);
+        CHECK(world.connections[connections[i]].timing_b.timing_fresh);
+        CHECK(!world.connections[connections[i]].timing_a.fallback_required);
+        CHECK(!world.connections[connections[i]].timing_b.fallback_required);
+    }
+    CHECK(world.last_error == MESH_SIM_OK);
+    return 0;
+}
+
+static int run_blank_anchor_retains_local_click_until_route_case(void)
+{
+    static struct mesh_sim_world world;
+    struct proto_packet click = {0};
+    uint8_t anchor;
+    uint8_t gateway;
+    uint16_t connection;
+    uint16_t click_tx = UINT16_MAX;
+    size_t click_tx_count = 0u;
+
+    mesh_sim_init(&world, SCENARIO_SEED ^ UINT32_C(0xb1a0c001));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            ORIGIN_ID, GATEWAY_ID, ROUTE_EPOCH, &anchor) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH, &gateway) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, anchor, gateway, 100u, 1u) == MESH_SIM_OK);
+
+    click.msg_type = MSG_CLICK_REPORT;
+    click.src_id = ORIGIN_ID;
+    click.dst_id = GATEWAY_ID;
+    click.session_id = UINT32_C(0x11223344);
+    click.seq = UINT16_C(0x3344);
+    click.ttl = MESH_DEFAULT_TTL;
+    click.payload_len = 0u;
+    CHECK(mesh_sim_queue_originated(&world, anchor, &click, NULL, 0u) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[anchor].route_waiting_valid);
+
+    for (uint8_t retry = 0u; retry < 2u; retry++) {
+        world.now_us =
+            (uint64_t)world.roles[anchor].relay.route_discovery.next_request_ms *
+            1000u;
+        CHECK(mesh_sim_relay_process_route_discovery_retry(&world, anchor) ==
+              MESH_SIM_OK);
+        CHECK(world.roles[anchor].route_waiting_valid);
+    }
+    CHECK(world.roles[anchor].route_discovery_requests >= 3u);
+    CHECK(world.roles[anchor].relay.route_discovery.attempts >= 3u);
+
+    CHECK(mesh_sim_install_route(&world, anchor, gateway, 1u, ROUTE_EPOCH) ==
+          MESH_SIM_OK);
+    world.now_us =
+        (uint64_t)world.roles[anchor].relay.route_discovery.next_request_ms *
+        1000u;
+    {
+        uint32_t first_event_ms =
+            (uint32_t)((world.now_us + 999u) / 1000u) + 100u;
+        struct mesh_event_params params =
+            route_connection_params(first_event_ms, 1000u);
+
+        CHECK(mesh_sim_add_connection(&world, anchor, gateway, &params,
+                                      true, &connection) == MESH_SIM_OK);
+    }
+    CHECK(mesh_sim_relay_process_route_discovery_retry(&world, anchor) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_schedule_next_connection_event(&world, connection, false) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_run(&world) == MESH_SIM_OK);
+    CHECK(!world.roles[anchor].route_waiting_valid);
+
+    for (size_t i = 0u; i < world.transmission_count; i++) {
+        if (world.transmissions[i].has_outbound &&
+            world.transmissions[i].outbound.packet.msg_type == MSG_CLICK_REPORT &&
+            world.transmissions[i].outbound.packet.session_id == click.session_id &&
+            world.transmissions[i].outbound.packet.seq == click.seq) {
+            click_tx = (uint16_t)i;
+            click_tx_count++;
+        }
+    }
+    if (click_tx_count != 1u) {
+        fprintf(stderr,
+                "blank-anchor retained click transmissions=%u total=%u retries=%u\n",
+                (unsigned int)click_tx_count,
+                (unsigned int)world.transmission_count,
+                world.roles[anchor].route_discovery_requests);
+        fprintf(stderr, "queue=%u deliveries=%u now=%llu\n",
+                (unsigned int)world.roles[anchor].tx_queue_count,
+                (unsigned int)world.roles[gateway].delivery_count,
+                (unsigned long long)world.now_us);
+    }
+    CHECK(click_tx_count == 1u);
+    CHECK(world.roles[gateway].delivery_count == 1u);
+    CHECK(world.roles[gateway].deliveries[0].packet.session_id == click.session_id);
+    CHECK(world.roles[gateway].deliveries[0].packet.seq == click.seq);
     return 0;
 }
 
@@ -835,7 +1438,9 @@ int main(void)
                                      MESH_SIM_TRANSITION_RX_DECODED,
                                      0u) == 4u);
 
-    if (run_route_collision_case() != 0 ||
+    if (run_ttl_ladder_data_case() != 0 ||
+        run_blank_anchor_retains_local_click_until_route_case() != 0 ||
+        run_route_collision_case() != 0 ||
         run_responder_slot_case(3u) != 0 ||
         run_responder_slot_case(8u) != 0) {
         return 1;

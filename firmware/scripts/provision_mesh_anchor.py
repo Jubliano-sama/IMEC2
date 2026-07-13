@@ -21,6 +21,7 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     MSG_GATEWAY_COMMAND_EVENT,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
+    build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
     decode_gateway_identity,
@@ -59,11 +60,6 @@ async def run(args: argparse.Namespace) -> None:
             bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
         )
         await client.start_notify(PACKET_TX_UUID, on_notify)
-        builder = (
-            build_here_i_am_command
-            if args.command == "here-i-am"
-            else build_assign_discovery_slots_command
-        )
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
         if characteristic is None:
             raise RuntimeError("gateway packet RX characteristic is unavailable")
@@ -71,28 +67,47 @@ async def run(args: argparse.Namespace) -> None:
             1,
             min(int(characteristic.max_write_without_response_size or 20), 244),
         )
-        for index in range(args.repeat):
-            identity = int(time.time_ns() & 0xFFFFFFFF) or 1
-            command = builder(
-                host_id=args.host_id,
-                gateway_id=gateway_id,
-                session_id=identity,
-                seq=identity & 0xFFFF,
-            )
+        if args.command == "monitor":
             print(
-                f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={args.command} "
-                f"index={index + 1}/{args.repeat} session={identity} "
-                f"frame={command.frame.hex()}",
+                f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command=monitor",
                 flush=True,
             )
-            for offset in range(0, len(command.frame), chunk_size):
-                await client.write_gatt_char(
-                    characteristic,
-                    command.frame[offset : offset + chunk_size],
-                    response=False,
+        else:
+            for index in range(args.repeat):
+                identity = int(time.time_ns() & 0xFFFFFFFF) or 1
+                command_args = {
+                    "host_id": args.host_id,
+                    "gateway_id": gateway_id,
+                    "session_id": identity,
+                    "seq": identity & 0xFFFF,
+                }
+                if args.command == "here-i-am":
+                    command = build_here_i_am_command(**command_args)
+                elif args.command == "assign-slots":
+                    command = build_assign_discovery_slots_command(**command_args)
+                else:
+                    survey_id = args.survey_id or identity
+                    command = build_anchor_discovery_command(
+                        **command_args,
+                        survey_id=survey_id,
+                        duration_ms=args.survey_duration_ms,
+                        discovery_slot_count=args.discovery_slots,
+                        sample_count=args.samples,
+                    )
+                print(
+                    f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={args.command} "
+                    f"index={index + 1}/{args.repeat} session={identity} "
+                    f"frame={command.frame.hex()}",
+                    flush=True,
                 )
-            if index + 1 < args.repeat:
-                await asyncio.sleep(args.interval)
+                for offset in range(0, len(command.frame), chunk_size):
+                    await client.write_gatt_char(
+                        characteristic,
+                        command.frame[offset : offset + chunk_size],
+                        response=False,
+                    )
+                if index + 1 < args.repeat:
+                    await asyncio.sleep(args.interval)
         await asyncio.sleep(args.duration)
         print(f"BLE_COMPLETE packets={received}", flush=True)
 
@@ -102,7 +117,7 @@ def main() -> None:
     parser.add_argument("--gateway", required=True)
     parser.add_argument(
         "--command",
-        choices=("here-i-am", "assign-slots"),
+        choices=("here-i-am", "assign-slots", "survey", "monitor"),
         required=True,
     )
     parser.add_argument("--host-id", type=lambda value: int(value, 0), default=1)
@@ -110,6 +125,10 @@ def main() -> None:
     parser.add_argument("--connect-timeout", type=float, default=12.0)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--interval", type=float, default=0.05)
+    parser.add_argument("--survey-id", type=lambda value: int(value, 0), default=0)
+    parser.add_argument("--survey-duration-ms", type=int, default=1000)
+    parser.add_argument("--discovery-slots", type=int, default=6)
+    parser.add_argument("--samples", type=int, default=1)
     args = parser.parse_args()
     asyncio.run(run(args))
 

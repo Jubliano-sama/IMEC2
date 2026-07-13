@@ -7,6 +7,7 @@
 #include "app_high_debug.h"
 #include "app_ml.h"
 #include "app_mesh_report.h"
+#include "app_mesh_direct_probe_diag.h"
 #include "app_mesh_test.h"
 #include "app_state.h"
 #include "app_stack_diag.h"
@@ -44,7 +45,6 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
     k_tid_t thread = k_current_get();
 
-    app_watchdog_stop_feeding();
     if (mesh_route_test_fatal_magic != MESH_FATAL_BREADCRUMB_MAGIC) {
         mesh_route_test_fatal_count = 0u;
     }
@@ -153,9 +153,8 @@ BUILD_ASSERT(SERIAL_FRAME_MAX_LEN <= UINT16_MAX,
              "gateway BLE frame queue length field must hold a full COBS frame");
 BUILD_ASSERT(GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH >= 2u,
              "gateway BLE RX queue must absorb at least one pending and one arriving frame");
-BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >=
-             (SURVEY_DISCOVERY_RX_GUARD_MS + SURVEY_DISCOVERY_TX_TIMEOUT_MS + 2u),
-             "survey discovery slots must fit guard time and one probe transmission");
+BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >= SURVEY_DISCOVERY_MIN_SLOT_MS,
+             "survey discovery slots must fit the physical probe envelope");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,
              "survey discovery slot helper must cover the UWB slot count");
 BUILD_ASSERT(MAX_SCHEDULED_ANCHORS > 0u &&
@@ -321,6 +320,17 @@ int main(void)
     } else {
         (void)debug_serial_init();
     }
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    app_mesh_direct_probe_breadcrumb_boot_diagnostics();
+    if (fatal_recovery_boot) {
+        status_debug_printf("DBG_MESH_FATAL_BOOT count=%u reason=%u pc=0x%08x lr=0x%08x\n",
+                            mesh_route_test_fatal_count,
+                            mesh_route_test_fatal_reason,
+                            mesh_route_test_fatal_pc,
+                            mesh_route_test_fatal_lr);
+    }
+#endif
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
     app_high_debug_set_callbacks(&high_debug_callbacks);

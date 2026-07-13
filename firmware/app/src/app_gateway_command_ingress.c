@@ -5,30 +5,31 @@
 #include <errno.h>
 #include <string.h>
 
-static struct app_gateway_command_identity command_identity_from_item(
+int app_gateway_command_identity_from_item(
     const struct app_gateway_command_ingress_item *item,
-    enum command_id command_id)
+    struct app_gateway_command_identity *identity)
 {
-    return (struct app_gateway_command_identity) {
+    if (item == NULL || identity == NULL) {
+        return -EINVAL;
+    }
+
+    *identity = (struct app_gateway_command_identity) {
         .msg_type = item->packet.msg_type,
         .src_id = item->packet.src_id,
         .dst_id = item->packet.dst_id,
         .session_id = item->packet.session_id,
         .seq = item->packet.seq,
         .admission_id = item->admission_id,
-        .command_id = command_id,
+        .command_id = item->command_id,
     };
+    return 0;
 }
 
 bool app_gateway_command_identity_matches(
     const struct app_gateway_command_identity *identity,
     const struct app_gateway_command_ingress_item *item)
 {
-    enum command_id command_id = CMD_VENDOR_BASE;
-
-    if (identity == NULL || item == NULL ||
-        gateway_command_extract_id(item->payload, item->payload_len,
-                                   &command_id) != PROTO_OK) {
+    if (identity == NULL || item == NULL) {
         return false;
     }
     return identity->msg_type == item->packet.msg_type &&
@@ -37,7 +38,7 @@ bool app_gateway_command_identity_matches(
            identity->session_id == item->packet.session_id &&
            identity->seq == item->packet.seq &&
            identity->admission_id == item->admission_id &&
-           identity->command_id == command_id;
+           identity->command_id == item->command_id;
 }
 
 int app_gateway_command_ingress_handle_frame(
@@ -74,22 +75,25 @@ int app_gateway_command_ingress_handle_frame(
     }
 
     *command_handled = true;
-    (void)gateway_command_extract_id(item_out->payload, item_out->payload_len,
-                                     &command_id);
+    if (gateway_command_extract_id(item_out->payload, item_out->payload_len,
+                                   &command_id) != PROTO_OK) {
+        command_id = CMD_VENDOR_BASE;
+    }
+    item_out->command_id = command_id;
     ret = ops->admit(ops->ctx, item_out);
     if (ret < 0) {
         ops->emit_result(ops->ctx, &item_out->packet, command_id,
                          COMMAND_BUSY, (uint8_t)(-ret));
         return ret;
     }
-    identity = command_identity_from_item(item_out, command_id);
+    ret = app_gateway_command_identity_from_item(item_out, &identity);
+    if (ret < 0) {
+        return ret;
+    }
     ret = ops->submit_priority(ops->ctx);
     if (ret < 0) {
-        int cancel_ret = ops->cancel_admitted(ops->ctx, &identity);
-
-        if (cancel_ret < 0) {
-            return cancel_ret;
-        }
+        /* Dispatch must honor the identity tombstone even if removal failed. */
+        (void)ops->cancel_admitted(ops->ctx, &identity);
         ops->emit_result(ops->ctx, &item_out->packet, command_id,
                          COMMAND_INTERNAL_ERROR, (uint8_t)(-ret));
     }

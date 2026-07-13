@@ -13,7 +13,8 @@ extern "C" {
 #endif
 
 #define MESH_DEFAULT_TTL 4u
-#define MESH_GATEWAY_ACK_TTL 4u
+#define MESH_NETWORK_MAX_HOPS 8u
+#define MESH_GATEWAY_ACK_TTL MESH_NETWORK_MAX_HOPS
 #define MESH_EVENT_CHANNEL UWB_CHANNEL_MESH_PAYLOAD
 
 enum mesh_event_plan_action {

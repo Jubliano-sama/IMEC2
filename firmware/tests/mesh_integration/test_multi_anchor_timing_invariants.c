@@ -365,15 +365,19 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
         .slot_ms = 40u,
         .slot_count = 6u,
     };
-    const uint32_t airtime_ms = (uint32_t)(
-        (dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_MESH_CONTROL,
-                                        UWB_SURVEY_DISCOVERY_PROBE_LEN) + 999u) /
-        1000u);
+    const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE, UWB_SURVEY_DISCOVERY_PROBE_LEN);
+    const uint64_t rx_transition_us = runtime_prepare_rx_us(
+        DWM3000_TIMING_PHY_CH5_WAKE);
     uint64_t ids[6] = {0};
     bool fixed_retry_decoded = false;
 
     CHECK(SURVEY_DISCOVERY_OPPORTUNITY_COUNT == SURVEY_REPLY_OPPORTUNITY_COUNT,
           "survey opportunity count drifted from four");
+    CHECK(rx_transition_us > 0u &&
+              rx_transition_us <=
+                  (uint64_t)SURVEY_DISCOVERY_RX_GUARD_MS * 1000u,
+          "survey runtime RX guard does not cover the standard-wake transition");
     for (uint8_t anchor_count = 2u; anchor_count <= 6u; anchor_count++) {
         ids[0] = UINT64_C(0xa700000000000001) + anchor_count;
         for (uint8_t index = 1u; index < anchor_count; index++) {
@@ -413,8 +417,15 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
                                                          opportunity,
                                                          &second_ms) == PROTO_OK,
                       "second diversified survey TX calculation failed");
-                if (first_ms + airtime_ms <= second_ms ||
-                    second_ms + airtime_ms <= first_ms) {
+                uint64_t first_start_us = (uint64_t)first_ms * 1000u +
+                                          (uint64_t)SURVEY_DISCOVERY_RX_GUARD_MS *
+                                              1000u;
+                uint64_t second_start_us = (uint64_t)second_ms * 1000u +
+                                           (uint64_t)SURVEY_DISCOVERY_RX_GUARD_MS *
+                                               1000u;
+
+                if (first_start_us + airtime_us <= second_start_us ||
+                    second_start_us + airtime_us <= first_start_us) {
                     diversified = true;
                 }
             }
@@ -425,35 +436,51 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
         for (uint8_t permutation = 0u; permutation < anchor_count; permutation++) {
             bool accepted[6] = {false};
             bool had_available[6] = {false};
+            uint8_t attempted[6] = {0};
 
             for (uint8_t opportunity = 0u;
                  opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
                  opportunity++) {
                 struct interval tx[6] = {0};
                 bool collided[6] = {false};
-                uint32_t window_start_ms = 0u;
-                uint32_t window_end_ms = 0u;
-
-                CHECK(survey_discovery_opportunity_window_ms(&config,
-                                                              opportunity,
-                                                              &window_start_ms,
-                                                              &window_end_ms) == PROTO_OK,
-                      "survey opportunity window calculation failed");
                 for (uint8_t order = 0u; order < anchor_count; order++) {
                     uint8_t index = (uint8_t)((order + permutation) % anchor_count);
-                    uint32_t tx_ms = 0u;
+                    struct survey_discovery_attempt_schedule schedule;
+                    int schedule_ret = survey_discovery_schedule_attempt(
+                        &config, ids[index], opportunity, 0u, &schedule);
 
-                    CHECK(survey_discovery_opportunity_tx_ms(&config,
-                                                             ids[index],
-                                                             opportunity,
-                                                             &tx_ms) == PROTO_OK,
-                          "survey opportunity TX calculation failed");
-                    tx[index] = (struct interval) {
-                        .start_us = (uint64_t)tx_ms * 1000u,
-                        .end_us = ((uint64_t)tx_ms + airtime_ms) * 1000u,
-                    };
-                    CHECK(tx_ms >= window_start_ms &&
-                              tx_ms + airtime_ms <= window_end_ms,
+                    CHECK(schedule_ret == PROTO_OK,
+                          "survey attempt schedule calculation failed");
+                    if (schedule_ret != PROTO_OK) {
+                        continue;
+                    }
+                    if (opportunity == 1u && index == 1u) {
+                        uint32_t blocked_until_ms =
+                            schedule.latest_tx_start_ms + 1u;
+
+                        schedule_ret = survey_discovery_schedule_attempt(
+                            &config, ids[index], opportunity, blocked_until_ms,
+                            &schedule);
+                        CHECK(schedule_ret == PROTO_OK && schedule.deferred,
+                              "blocked nominal survey window consumed an attempt");
+                    } else {
+                        CHECK(!schedule.deferred,
+                              "unblocked survey attempt unexpectedly deferred");
+                    }
+                    if (schedule_ret != PROTO_OK) {
+                        continue;
+                    }
+                    attempted[index]++;
+                    tx[index].start_us = (uint64_t)schedule.tx_ms * 1000u;
+                    tx[index].end_us = tx[index].start_us + airtime_us;
+                    CHECK(tx[index].start_us >=
+                              (uint64_t)schedule.window_start_ms * 1000u +
+                                  rx_transition_us &&
+                              schedule.tx_ms <= schedule.latest_tx_start_ms &&
+                              tx[index].end_us <=
+                                  (uint64_t)schedule.slot_end_ms * 1000u &&
+                              tx[index].end_us <=
+                                  (uint64_t)schedule.window_end_ms * 1000u,
                           "survey frame was not fully contained in its opportunity");
                 }
                 for (uint8_t i = 0u; i < anchor_count; i++) {
@@ -467,16 +494,17 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
                 }
                 for (uint8_t i = 0u; i < anchor_count; i++) {
                     bool lost = opportunity < 2u && i == 0u;
-                    bool activity_consumed = opportunity == 1u && i == 1u;
                     bool late = opportunity < 2u && i == anchor_count - 1u;
 
-                    if (!collided[i] && !lost && !activity_consumed && !late) {
+                    if (!collided[i] && !lost && !late) {
                         had_available[i] = true;
                         accepted[i] = true;
                     }
                 }
             }
             for (uint8_t i = 0u; i < anchor_count; i++) {
+                CHECK(attempted[i] == SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
+                      "blocked survey window reduced the real TX attempt count");
                 if (had_available[i]) {
                     CHECK(accepted[i],
                           "reachable anchor with an available opportunity was lost");
@@ -488,7 +516,12 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
     for (uint8_t opportunity = 0u;
          opportunity < SURVEY_REPLY_OPPORTUNITY_COUNT;
          opportunity++) {
-        struct interval first = {UINT64_C(40000), UINT64_C(40000) + airtime_ms * 1000u};
+        struct interval first = {
+            UINT64_C(40000) +
+                (uint64_t)SURVEY_DISCOVERY_RX_GUARD_MS * 1000u,
+            UINT64_C(40000) +
+                (uint64_t)SURVEY_DISCOVERY_RX_GUARD_MS * 1000u + airtime_us,
+        };
         struct interval second = first;
 
         if (!(first.start_us < second.end_us && second.start_us < first.end_us)) {
@@ -497,6 +530,91 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
     }
     CHECK(!fixed_retry_decoded,
           "fixed same-slot retry sensitivity mutation did not deadlock");
+}
+
+static void test_survey_deferred_phase_runtime_invariants(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = UINT32_C(0x50665006),
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+    };
+    const uint64_t anchor_id = UINT64_C(0xa700000000000011);
+    struct survey_discovery_attempt_schedule nominal[4];
+    struct survey_discovery_attempt_schedule deferred;
+    uint32_t tx_budget_ms = survey_discovery_probe_tx_budget_ms();
+    uint32_t airtime_only_ms = (uint32_t)(
+        (dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,
+                                        UWB_SURVEY_DISCOVERY_PROBE_LEN) + 999u) /
+        1000u) + SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS;
+    uint8_t real_attempts = 0u;
+
+    CHECK(tx_budget_ms >= 20u + SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS,
+          "survey TX budget omitted the blocking send-timeout envelope");
+    CHECK(airtime_only_ms < tx_budget_ms,
+          "timeout-envelope mutation is not sensitive to airtime-only planning");
+    for (uint8_t opportunity = 0u;
+         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+         opportunity++) {
+        CHECK(survey_discovery_schedule_attempt(&config, anchor_id, opportunity,
+                                                 0u, &nominal[opportunity]) ==
+                  PROTO_OK && !nominal[opportunity].deferred,
+              "nominal survey attempt scheduling failed");
+        CHECK(nominal[opportunity].tx_ms <=
+                  nominal[opportunity].latest_tx_start_ms &&
+                  nominal[opportunity].latest_tx_start_ms + tx_budget_ms <=
+                      nominal[opportunity].slot_end_ms,
+              "nominal survey attempt can start too late to finish");
+    }
+
+    CHECK(survey_discovery_schedule_attempt(
+              &config, anchor_id, 0u,
+              nominal[0].latest_tx_start_ms + 1u, &deferred) == PROTO_OK &&
+              deferred.deferred,
+          "blocked nominal opportunity was not preserved for reserve");
+    for (uint8_t opportunity = 1u;
+         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+         opportunity++) {
+        CHECK(nominal[opportunity].window_end_ms <= deferred.window_start_ms,
+              "reserve TX preempted a later chronological nominal listen window");
+        real_attempts++;
+    }
+    CHECK(deferred.tx_ms <= deferred.latest_tx_start_ms &&
+              deferred.latest_tx_start_ms + tx_budget_ms <=
+                  deferred.slot_end_ms,
+          "deferred survey attempt can start too late to finish");
+    real_attempts++;
+    CHECK(real_attempts == SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
+          "blocked nominal window reduced four real survey transmissions");
+    CHECK(survey_discovery_schedule_attempt(
+              &config, anchor_id, 0u,
+              deferred.latest_tx_start_ms + 1u, &deferred) == PROTO_ERR_BUSY,
+          "missed bounded reserve did not fail explicitly");
+
+    {
+        struct survey_discovery_attempt_schedule timeout_sensitive;
+        uint32_t airtime_only_latest = nominal[0].slot_end_ms - airtime_only_ms;
+
+        CHECK(airtime_only_latest > nominal[0].latest_tx_start_ms,
+              "airtime-only mutation did not create a late unsafe start");
+        CHECK(survey_discovery_schedule_attempt(
+                  &config, anchor_id, 0u, airtime_only_latest,
+                  &timeout_sensitive) == PROTO_OK &&
+                  timeout_sensitive.deferred,
+              "send-timeout envelope failed to defer an airtime-only late start");
+    }
+
+    {
+        uint32_t epoch_ms = UINT32_MAX - nominal[3].window_start_ms + 5u;
+        uint32_t absolute_window_start = epoch_ms + nominal[3].window_start_ms;
+        uint32_t absolute_tx = epoch_ms + nominal[3].tx_ms;
+        uint32_t absolute_slot_end = epoch_ms + nominal[3].slot_end_ms;
+
+        CHECK((int32_t)(absolute_tx - absolute_window_start) >= 0 &&
+                  (int32_t)(absolute_slot_end - absolute_tx) > 0,
+              "UINT32 uptime wrap reversed a valid survey attempt interval");
+    }
 }
 
 static void test_claim_phase_sweep(void)
@@ -529,6 +647,7 @@ int main(void)
     test_claim_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
     test_fixed_survey_retry_deadlock_is_reproduced();
+    test_survey_deferred_phase_runtime_invariants();
     test_multi_anchor_claim_and_range_schedule_invariants();
 
     if (failures != 0u) {

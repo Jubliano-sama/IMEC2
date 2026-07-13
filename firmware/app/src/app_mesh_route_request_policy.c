@@ -56,3 +56,42 @@ void app_mesh_route_request_rf_failure_decide(
         break;
     }
 }
+
+void app_mesh_route_request_defer_decide(
+    const struct app_mesh_route_request_defer_state *state,
+    struct app_mesh_route_request_defer_decision *decision)
+{
+    if (decision != NULL) {
+        memset(decision, 0, sizeof(*decision));
+    }
+    if (state == NULL || decision == NULL) {
+        return;
+    }
+
+    if (!state->pending) {
+        if (state->update_only) {
+            return;
+        }
+        decision->action = APP_MESH_ROUTE_REQUEST_DEFER_ACCEPT_NEW;
+        decision->due_ms = state->requested_due_ms;
+        decision->reply_deadline_ms = state->requested_reply_deadline_ms;
+        return;
+    }
+    if (!state->same_identity) {
+        return;
+    }
+
+    decision->action = APP_MESH_ROUTE_REQUEST_DEFER_REPLACE_SAME;
+    decision->due_ms = state->pending_due_ms;
+    decision->reply_deadline_ms = state->pending_reply_deadline_ms;
+}
+
+uint32_t app_mesh_route_request_defer_delay_ms(uint32_t now_ms,
+                                               uint32_t due_ms)
+{
+    if (due_ms == 0u || (int32_t)(now_ms - due_ms) >= 0) {
+        return 0u;
+    }
+
+    return due_ms - now_ms;
+}

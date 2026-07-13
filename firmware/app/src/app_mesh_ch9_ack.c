@@ -2,6 +2,356 @@
 
 #include <string.h>
 
+_Static_assert(APP_MESH_CH9_ACK_PEER_MAX == 2u,
+               "ACK table must cover one upstream and one downstream peer");
+_Static_assert(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX * sizeof(uint32_t) <= UINT8_MAX,
+               "ACK batch TLV lengths must fit in one byte");
+
+static void ack_queue_result_set(enum app_mesh_ch9_ack_queue_result *result,
+                                 enum app_mesh_ch9_ack_queue_result value)
+{
+    if (result != NULL) {
+        *result = value;
+    }
+}
+
+static bool ack_template_supported(const struct mesh_outbound *ack)
+{
+    return ack != NULL && ack->next_hop_id != 0u &&
+           (ack->packet.msg_type == MSG_GATEWAY_ACK ||
+            ack->packet.msg_type == MSG_MESH_HOP_ACK);
+}
+
+static struct app_mesh_ch9_ack_batch *ack_table_find_peer(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id)
+{
+    if (table == NULL || peer_id == 0u) {
+        return NULL;
+    }
+
+    for (uint8_t i = 0u; i < APP_MESH_CH9_ACK_PEER_MAX; i++) {
+        if (table->batches[i].valid &&
+            table->batches[i].peer_id == peer_id) {
+            return &table->batches[i];
+        }
+    }
+    return NULL;
+}
+
+static const struct app_mesh_ch9_ack_batch *ack_table_find_peer_const(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id)
+{
+    if (table == NULL || peer_id == 0u) {
+        return NULL;
+    }
+
+    for (uint8_t i = 0u; i < APP_MESH_CH9_ACK_PEER_MAX; i++) {
+        if (table->batches[i].valid &&
+            table->batches[i].peer_id == peer_id) {
+            return &table->batches[i];
+        }
+    }
+    return NULL;
+}
+
+static struct app_mesh_ch9_ack_batch *ack_table_find_free(
+    struct app_mesh_ch9_ack_table *table)
+{
+    if (table == NULL) {
+        return NULL;
+    }
+
+    for (uint8_t i = 0u; i < APP_MESH_CH9_ACK_PEER_MAX; i++) {
+        if (!table->batches[i].valid) {
+            return &table->batches[i];
+        }
+    }
+    return NULL;
+}
+
+static void ack_batch_reset_generated(struct app_mesh_ch9_ack_batch *batch,
+                                      const struct mesh_outbound *ack)
+{
+    memset(batch, 0, sizeof(*batch));
+    batch->template_ack = *ack;
+    batch->template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    batch->peer_id = ack->next_hop_id;
+    batch->valid = true;
+}
+
+static bool ack_batch_matches_generated(
+    const struct app_mesh_ch9_ack_batch *batch,
+    const struct mesh_outbound *ack)
+{
+    return batch != NULL && ack != NULL && batch->valid &&
+           !batch->preserve_payload &&
+           batch->peer_id == ack->next_hop_id &&
+           batch->template_ack.packet.msg_type == ack->packet.msg_type &&
+           batch->template_ack.packet.dst_id == ack->packet.dst_id;
+}
+
+static bool ack_batch_is_forwarded_gateway_ack(
+    const struct app_mesh_ch9_ack_batch *batch)
+{
+    return batch != NULL && batch->valid && batch->preserve_payload &&
+           batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK;
+}
+
+void app_mesh_ch9_ack_table_init(struct app_mesh_ch9_ack_table *table)
+{
+    if (table != NULL) {
+        memset(table, 0, sizeof(*table));
+    }
+}
+
+uint8_t app_mesh_ch9_ack_table_peer_count(
+    const struct app_mesh_ch9_ack_table *table)
+{
+    uint8_t count = 0u;
+
+    if (table == NULL) {
+        return 0u;
+    }
+    for (uint8_t i = 0u; i < APP_MESH_CH9_ACK_PEER_MAX; i++) {
+        if (table->batches[i].valid) {
+            count++;
+        }
+    }
+    return count;
+}
+
+bool app_mesh_ch9_ack_table_any_pending(
+    const struct app_mesh_ch9_ack_table *table)
+{
+    return app_mesh_ch9_ack_table_peer_count(table) > 0u;
+}
+
+bool app_mesh_ch9_ack_table_pending_for_peer(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id)
+{
+    const struct app_mesh_ch9_ack_batch *batch =
+        ack_table_find_peer_const(table, peer_id);
+
+    return batch != NULL && batch->count > 0u;
+}
+
+const struct app_mesh_ch9_ack_batch *app_mesh_ch9_ack_table_get_peer(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id)
+{
+    return ack_table_find_peer_const(table, peer_id);
+}
+
+int app_mesh_ch9_ack_table_queue(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    const struct app_mesh_ch9_ack_batch_entry *entry,
+    enum app_mesh_ch9_ack_queue_result *result)
+{
+    struct app_mesh_ch9_ack_batch *batch;
+    bool replaced = false;
+
+    if (table == NULL || entry == NULL || !ack_template_supported(ack)) {
+        return PROTO_ERR_ARG;
+    }
+
+    batch = ack_table_find_peer(table, ack->next_hop_id);
+    if (batch == NULL) {
+        batch = ack_table_find_free(table);
+        if (batch == NULL) {
+            ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_TABLE_FULL);
+            return PROTO_ERR_NO_SPACE;
+        }
+        ack_batch_reset_generated(batch, ack);
+    } else if (ack_batch_is_forwarded_gateway_ack(batch) &&
+               ack->packet.msg_type == MSG_MESH_HOP_ACK &&
+               batch->template_ack.packet.dst_id == ack->packet.dst_id) {
+        ack_queue_result_set(
+            result,
+            APP_MESH_CH9_ACK_QUEUE_SUPPRESSED_BY_FORWARDED_ACK);
+        return PROTO_OK;
+    } else if (!ack_batch_matches_generated(batch, ack)) {
+        ack_batch_reset_generated(batch, ack);
+        replaced = true;
+    }
+
+    for (uint8_t i = 0u; i < batch->count; i++) {
+        if (batch->entries[i].session_id == entry->session_id &&
+            batch->entries[i].seq == entry->seq) {
+            ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+            return PROTO_OK;
+        }
+    }
+
+    if (batch->count >= APP_MESH_CH9_ACK_BATCH_ENTRY_MAX) {
+        ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_BATCH_FULL);
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    batch->entries[batch->count] = *entry;
+    if (!batch->entries[batch->count].has_packet_id) {
+        batch->entries[batch->count].packet_id = 0u;
+    }
+    batch->count++;
+    ack_queue_result_set(result,
+                         replaced ? APP_MESH_CH9_ACK_QUEUE_REPLACED :
+                                    APP_MESH_CH9_ACK_QUEUE_ADDED);
+    return PROTO_OK;
+}
+
+int app_mesh_ch9_ack_table_queue_forwarded(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    enum app_mesh_ch9_ack_queue_result *result)
+{
+    struct app_mesh_ch9_ack_batch *batch;
+    bool replaced;
+
+    if (table == NULL || !ack_template_supported(ack) ||
+        ack->packet.msg_type != MSG_GATEWAY_ACK) {
+        return PROTO_ERR_ARG;
+    }
+
+    batch = ack_table_find_peer(table, ack->next_hop_id);
+    replaced = batch != NULL;
+    if (batch == NULL) {
+        batch = ack_table_find_free(table);
+        if (batch == NULL) {
+            ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_TABLE_FULL);
+            return PROTO_ERR_NO_SPACE;
+        }
+    }
+
+    memset(batch, 0, sizeof(*batch));
+    batch->template_ack = *ack;
+    batch->template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    batch->peer_id = ack->next_hop_id;
+    batch->count = 1u;
+    batch->valid = true;
+    batch->preserve_payload = true;
+    ack_queue_result_set(result,
+                         replaced ? APP_MESH_CH9_ACK_QUEUE_REPLACED :
+                                    APP_MESH_CH9_ACK_QUEUE_ADDED);
+    return PROTO_OK;
+}
+
+int app_mesh_ch9_ack_table_build_peer(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    struct mesh_outbound *outbound)
+{
+    const struct app_mesh_ch9_ack_batch *batch;
+    uint8_t seq_list[APP_MESH_CH9_ACK_BATCH_ENTRY_MAX * sizeof(uint16_t)];
+    uint8_t session_list[APP_MESH_CH9_ACK_BATCH_ENTRY_MAX * sizeof(uint32_t)];
+    uint8_t packet_id_list[APP_MESH_CH9_ACK_BATCH_ENTRY_MAX * sizeof(uint32_t)];
+    size_t payload_len = 0u;
+    int ret;
+
+    if (table == NULL || outbound == NULL || peer_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    batch = ack_table_find_peer_const(table, peer_id);
+    if (batch == NULL || batch->count == 0u) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    *outbound = batch->template_ack;
+    outbound->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    if (batch->preserve_payload) {
+        return PROTO_OK;
+    }
+
+    for (uint8_t i = 0u; i < batch->count; i++) {
+        proto_put_u16_le(&seq_list[i * sizeof(uint16_t)],
+                         batch->entries[i].seq);
+        proto_put_u32_le(&session_list[i * sizeof(uint32_t)],
+                         batch->entries[i].session_id);
+        proto_put_u32_le(&packet_id_list[i * sizeof(uint32_t)],
+                         batch->entries[i].packet_id);
+    }
+
+    ret = mesh_append_requested_seq(outbound->payload,
+                                    sizeof(outbound->payload),
+                                    &payload_len,
+                                    batch->entries[0].seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_bytes(outbound->payload,
+                           sizeof(outbound->payload),
+                           &payload_len,
+                           TLV_MESH_ACK_SESSION_LIST,
+                           session_list,
+                           (uint8_t)(batch->count * sizeof(uint32_t)));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_bytes(outbound->payload,
+                           sizeof(outbound->payload),
+                           &payload_len,
+                           TLV_MESH_ACK_SEQ_LIST,
+                           seq_list,
+                           (uint8_t)(batch->count * sizeof(uint16_t)));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_bytes(outbound->payload,
+                           sizeof(outbound->payload),
+                           &payload_len,
+                           TLV_MESH_ACK_PACKET_ID_LIST,
+                           packet_id_list,
+                           (uint8_t)(batch->count * sizeof(uint32_t)));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    outbound->payload_len = (uint16_t)payload_len;
+    outbound->packet.payload_len = (uint16_t)payload_len;
+    return PROTO_OK;
+}
+
+bool app_mesh_ch9_ack_table_clear_peer(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id)
+{
+    struct app_mesh_ch9_ack_batch *batch =
+        ack_table_find_peer(table, peer_id);
+
+    if (batch == NULL) {
+        return false;
+    }
+    memset(batch, 0, sizeof(*batch));
+    return true;
+}
+
+int app_mesh_ch9_ack_table_flush_peer(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    app_mesh_ch9_ack_flush_fn flush,
+    void *ctx)
+{
+    struct mesh_outbound outbound;
+    int ret;
+
+    if (table == NULL || peer_id == 0u || flush == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = app_mesh_ch9_ack_table_build_peer(table, peer_id, &outbound);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = flush(&outbound, ctx);
+    if (ret == 0) {
+        (void)app_mesh_ch9_ack_table_clear_peer(table, peer_id);
+    }
+    return ret;
+}
+
 static int ack_payload_contains_packet(const struct proto_packet *ack_packet,
                                        const uint8_t *payload,
                                        size_t payload_len,
@@ -216,21 +566,27 @@ bool app_mesh_ch9_core_ack_wait_active(const struct mesh_pending_tx *pending,
            pending->next_hop_id != 0u;
 }
 
+bool app_mesh_ch9_core_pending_allows_rx(const struct mesh_pending_tx *pending,
+                                         bool relay_tx_active)
+{
+    return relay_tx_active && pending != NULL &&
+           (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+            pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
+           pending->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+           pending->next_hop_id != 0u;
+}
+
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,
                                       uint8_t configured_max)
 {
+    (void)next_hop_id;
+
     if (configured_max == 0u) {
         return 0u;
     }
-    if (packet == NULL || next_hop_id == 0u) {
-        return configured_max;
-    }
-
-    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
-        (next_hop_id != packet->dst_id ||
-         packet->msg_type == MSG_COMMAND_RESULT ||
-         packet->msg_type == MSG_RESULT_BUNDLE)) {
+    if (packet != NULL &&
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u) {
         return 1u;
     }
 
@@ -293,18 +649,17 @@ bool app_mesh_ch9_wait_plan_retry_delay_ms(uint32_t now_ms,
     return true;
 }
 
-bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
+bool app_mesh_ch9_tx_timeout_counts_route_failure(
     const struct mesh_outbound *outbound,
     uint64_t next_hop_id,
     uint64_t gateway_id)
 {
-    if (outbound == NULL || gateway_id == 0u) {
+    if (outbound == NULL || next_hop_id == 0u || gateway_id == 0u) {
         return false;
     }
 
     return outbound->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
            outbound->packet.dst_id == gateway_id &&
-           next_hop_id == gateway_id &&
            (outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
 }
 

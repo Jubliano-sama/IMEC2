@@ -70,6 +70,8 @@ void app_mesh_route_ready_handoff_after_proposal(
     struct app_mesh_route_ready_handoff_result *result)
 {
     if (result != NULL && proposal_ret < 0) {
+        result->remember_deferred_peer = true;
+        result->clear_deferred_peer = false;
         result->schedule_event_accept_wait = true;
         result->try_waiting_tx = false;
         result->allow_waiting_tx = false;

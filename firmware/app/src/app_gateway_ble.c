@@ -1,4 +1,8 @@
 #include "app_gateway_ble.h"
+#include "app_gateway_assignment_publisher.h"
+
+#include "app_mesh_gateway_command_flow.h"
+#include "app_mesh_command_orchestrator.h"
 
 #include "app_anchor.h"
 #include "app_board.h"
@@ -7,11 +11,13 @@
 #include "app_gateway_eack_policy.h"
 #include "app_gateway_command_observability.h"
 #include "app_gateway_ble_stream.h"
+#include "app_stack_workload_diag.h"
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
 #include "app_mesh_persistence.h"
 #include "app_state.h"
 #include "gateway_membership.h"
+#include "gateway_ble_transport.h"
 #include "discovery_assignment.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -38,6 +44,24 @@
 
 LOG_MODULE_REGISTER(app_gateway_ble, LOG_LEVEL_DBG);
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+void gateway_command_result_side_effects(const struct proto_packet *command,
+                                         enum command_id command_id,
+                                         enum command_status status,
+                                         uint8_t reason);
+
+static int gateway_command_delivery_boundary(void *ctx,
+                                             const struct proto_packet *command,
+                                             enum command_id command_id,
+                                             enum command_status status,
+                                             uint8_t reason)
+{
+    ARG_UNUSED(ctx);
+    gateway_command_result_side_effects(command, command_id, status, reason);
+    return 0;
+}
+#endif
+
 static uint16_t gateway_command_seq;
 static struct gateway_ble_stream_state gateway_ble_stream_state;
 static struct gateway_command_observability_state gateway_command_observability_state;
@@ -45,7 +69,9 @@ static struct k_spinlock gateway_ble_stream_lock;
 
 static bool gateway_ble_stream_ready(void);
 static void gateway_ble_schedule_stream_drain(void);
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
 static void gateway_observability_flush(bool include_snapshots);
+#endif
 
 uint16_t gateway_next_command_seq(void)
 {
@@ -97,6 +123,10 @@ int gateway_observe_command_event(struct gateway_command_event *event,
     if (DEVICE_ROLE != ROLE_GATEWAY || event == NULL) {
         return -EINVAL;
     }
+    if (terminal &&
+        app_gateway_assignment_publisher_capture_terminal(event)) {
+        return 0;
+    }
     ret = gateway_command_observability_prepare(
         &gateway_command_observability_state, event, terminal);
     if (ret < 0) {
@@ -105,6 +135,7 @@ int gateway_observe_command_event(struct gateway_command_event *event,
     return gateway_observability_enqueue_prepared(event);
 }
 
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
 static void gateway_observability_flush(bool include_snapshots)
 {
     struct gateway_command_event event;
@@ -129,6 +160,7 @@ static void gateway_observability_flush(bool include_snapshots)
         }
     }
 }
+#endif
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST) && defined(CONFIG_BT)
 #define BLE_RANGE_ADV_INTERVAL_MIN_UNITS 0x00a0u
@@ -424,6 +456,7 @@ void gateway_command_result_tracking_init(void)
 {
 }
 #else
+#if DEVICE_ROLE == ROLE_GATEWAY
 static struct gateway_command_pending gateway_command_pending_state;
 static struct gateway_collection_state gateway_collection_state;
 static struct gateway_membership_roster gateway_membership_roster_state;
@@ -492,6 +525,7 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
     }
     gateway_persistence_retry_round = 0u;
 }
+#endif
 
 int gateway_ble_stream_packet(const struct proto_packet *packet,
                               const uint8_t *payload,
@@ -499,6 +533,8 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
                               uint32_t received_at_ms)
 {
     k_spinlock_key_t key;
+    uint16_t queue_depth;
+    bool ready;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
@@ -508,6 +544,7 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
         return -ENOTSUP;
     }
 
+    ready = gateway_ble_stream_ready();
     key = k_spin_lock(&gateway_ble_stream_lock);
     ret = gateway_ble_stream_enqueue_packet(&gateway_ble_stream_state,
                                             packet,
@@ -515,8 +552,23 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
                                             payload_len,
                                             received_at_ms,
                                             k_uptime_get_32(),
-                                            gateway_ble_stream_ready());
+                                            ready);
+    queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
     k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret > 0 && !ready) {
+        const struct app_stack_workload_diag_pressure pressure = {
+            .queue_depth = queue_depth,
+            .custody_depth = queue_depth,
+            .credit_available = 0u,
+            .retry_depth = 0u,
+            .drain_depth = queue_depth,
+        };
+
+        /* This ingress is called from mesh RX/system work, never BT RX. */
+        app_stack_workload_diag_ble_admit_with_pressure(
+            packet, APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE, &pressure);
+        app_stack_workload_diag_ble_sample_with_pressure(packet, &pressure);
+    }
     if (ret > 0) {
         gateway_ble_schedule_stream_drain();
     }
@@ -538,6 +590,7 @@ void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagno
     k_spin_unlock(&gateway_ble_stream_lock, key);
 }
 
+#if DEVICE_ROLE == ROLE_GATEWAY
 static void gateway_persist_collection_state(const char *reason)
 {
     int ret;
@@ -865,6 +918,7 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
         gateway_schedule_collection_eack_round();
     }
 }
+#endif
 
 int gateway_encode_host_packet_frame(const struct proto_packet *packet,
                                      const uint8_t *payload,
@@ -949,93 +1003,7 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
     return 0;
 }
 
-static int gateway_command_find_u8_tlv(const uint8_t *payload,
-                                       size_t payload_len,
-                                       uint8_t type,
-                                       uint8_t *value)
-{
-    const uint8_t *tlv_value = NULL;
-    uint8_t value_len = 0u;
-    int ret;
-
-    if (payload == NULL || value == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (value_len != sizeof(uint8_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    *value = tlv_value[0];
-    return PROTO_OK;
-}
-
-static int gateway_command_find_u16_tlv(const uint8_t *payload,
-                                        size_t payload_len,
-                                        uint8_t type,
-                                        uint16_t *value)
-{
-    const uint8_t *tlv_value = NULL;
-    uint8_t value_len = 0u;
-    int ret;
-
-    if (payload == NULL || value == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (value_len != sizeof(uint16_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    *value = proto_get_u16_le(tlv_value);
-    return PROTO_OK;
-}
-
-static int gateway_command_extract_result_tlvs(const uint8_t *payload,
-                                               size_t payload_len,
-                                               enum command_id *command_id,
-                                               enum command_status *status,
-                                               uint8_t *reason)
-{
-    uint16_t command_value = 0u;
-    uint16_t status_value = 0u;
-    uint8_t reason_value = 0u;
-    int ret;
-
-    if (command_id == NULL || status == NULL || reason == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = gateway_command_find_u16_tlv(payload, payload_len, TLV_COMMAND_ID, &command_value);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = gateway_command_find_u16_tlv(payload, payload_len, TLV_COMMAND_STATUS, &status_value);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = gateway_command_find_u8_tlv(payload, payload_len, TLV_REASON, &reason_value);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (status_value > COMMAND_INTERNAL_ERROR) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    *command_id = (enum command_id)command_value;
-    *status = (enum command_status)status_value;
-    *reason = reason_value;
-    return PROTO_OK;
-}
-
+#if DEVICE_ROLE == ROLE_GATEWAY
 void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_id command_id,
                                       enum command_status status,
@@ -1248,7 +1216,6 @@ void gateway_note_command_result(const struct proto_packet *packet,
 {
     struct proto_packet command;
     enum command_id pending_command_id;
-    enum command_id result_command_id = CMD_VENDOR_BASE;
     enum command_status status = COMMAND_INTERNAL_ERROR;
     uint8_t reason = 0u;
     int ret;
@@ -1269,7 +1236,8 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                    received_radio_channel,
                                    current_channel9_plan);
 
-    if (!gateway_command_pending_matches_result(&gateway_command_pending_state, packet)) {
+    if (!app_mesh_gateway_command_flow_result_matches(
+            &gateway_command_pending_state.command, packet)) {
         return;
     }
 
@@ -1277,25 +1245,30 @@ void gateway_note_command_result(const struct proto_packet *packet,
     pending_command_id = gateway_command_pending_state.command_id;
     gateway_command_pending_clear(&gateway_command_pending_state);
     (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
-    ret = gateway_command_extract_result_tlvs(payload,
-                                              payload_len,
-                                              &result_command_id,
-                                              &status,
-                                              &reason);
-    if (ret != PROTO_OK || result_command_id != pending_command_id) {
-        LOG_WRN("gateway command result payload mismatch: pending=0x%04x result=0x%04x ret=%d",
+    ret = app_mesh_command_orchestrator_gateway_deliver(
+        &command,
+        pending_command_id,
+        packet,
+        payload,
+        payload_len,
+        gateway_command_delivery_boundary,
+        NULL);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway command result payload mismatch: pending=0x%04x ret=%d",
                 (unsigned int)pending_command_id,
-                (unsigned int)result_command_id,
                 ret);
         status = COMMAND_INTERNAL_ERROR;
         reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
     }
 
-    LOG_INF("gateway command result received: src=0x%016llx session=%u seq=%u",
-            (unsigned long long)packet->src_id,
-            packet->session_id,
-            packet->seq);
-    gateway_command_result_side_effects(&command, pending_command_id, status, reason);
+    if (ret == PROTO_OK) {
+        LOG_INF("gateway command result received: src=0x%016llx session=%u seq=%u",
+                (unsigned long long)packet->src_id,
+                packet->session_id,
+                packet->seq);
+    } else {
+        gateway_command_result_side_effects(&command, pending_command_id, status, reason);
+    }
 }
 
 void gateway_note_command_result_bundle(const struct proto_packet *packet,
@@ -1382,6 +1355,90 @@ void gateway_command_result_tracking_init(void)
         gateway_schedule_collection_eack_round();
     }
 }
+#else
+void gateway_emit_host_command_result(const struct proto_packet *command,
+                                      enum command_id command_id,
+                                      enum command_status status,
+                                      uint8_t reason)
+{
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(status);
+    ARG_UNUSED(reason);
+}
+
+int gateway_begin_command_result_wait(const struct proto_packet *command,
+                                      enum command_id command_id)
+{
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    return -ENOTSUP;
+}
+
+void gateway_clear_pending_command_result(const struct proto_packet *command)
+{
+    ARG_UNUSED(command);
+}
+
+int gateway_begin_command_collection(const struct gateway_command_options *options)
+{
+    ARG_UNUSED(options);
+    return -ENOTSUP;
+}
+
+void gateway_clear_command_collection(const struct gateway_command_options *options)
+{
+    ARG_UNUSED(options);
+}
+
+int gateway_set_registered_membership_roster(uint16_t membership_epoch,
+                                             const uint64_t *node_ids,
+                                             size_t node_count)
+{
+    ARG_UNUSED(membership_epoch);
+    ARG_UNUSED(node_ids);
+    ARG_UNUSED(node_count);
+    return -ENOTSUP;
+}
+
+void gateway_clear_registered_membership_roster(void)
+{
+}
+
+void gateway_note_command_result(const struct proto_packet *packet,
+                                 const uint8_t *payload,
+                                 size_t payload_len,
+                                 uint64_t previous_hop_id,
+                                 uint8_t received_radio_channel,
+                                 const struct mesh_event_plan *current_channel9_plan)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(previous_hop_id);
+    ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
+}
+
+void gateway_note_command_result_bundle(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len,
+                                        uint64_t previous_hop_id,
+                                        uint8_t received_radio_channel,
+                                        const struct mesh_event_plan *current_channel9_plan)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(previous_hop_id);
+    ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
+}
+
+void gateway_command_result_tracking_init(void)
+{
+}
+#endif
 #endif
 
 #if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
@@ -1570,6 +1627,9 @@ void gateway_ble_exit_uwb_quiet(const char *reason)
         gateway_ble_schedule_recovery("uwb-quiet-exit");
     }
     gateway_ble_quiet_stopped_advertising = false;
+#if DEVICE_ROLE == ROLE_GATEWAY
+    app_gateway_assignment_publisher_pump();
+#endif
     gateway_ble_schedule_stream_drain();
     LOG_INF("gateway BLE resumed after UWB: reason=%s",
             reason == NULL ? "unknown" : reason);
@@ -1583,6 +1643,9 @@ static void gateway_ble_packet_ccc_changed(const struct bt_gatt_attr *attr,
     gateway_ble_packet_notify_enabled = value == BT_GATT_CCC_NOTIFY;
     if (gateway_ble_packet_notify_enabled) {
         gateway_observability_flush(true);
+#if DEVICE_ROLE == ROLE_GATEWAY
+        app_gateway_assignment_publisher_pump();
+#endif
         gateway_ble_schedule_stream_drain();
     }
 }
@@ -1641,14 +1704,10 @@ BT_GATT_SERVICE_DEFINE(gateway_ble_svc,
 
 static uint16_t gateway_ble_notify_chunk_len(struct bt_conn *conn)
 {
-    uint16_t mtu;
-
     if (conn == NULL) {
         return GATEWAY_BLE_DEFAULT_NOTIFY_CHUNK;
     }
-
-    mtu = bt_gatt_get_mtu(conn);
-    return mtu > 3u ? (uint16_t)(mtu - 3u) : GATEWAY_BLE_DEFAULT_NOTIFY_CHUNK;
+    return gateway_ble_att_payload_max(bt_gatt_get_mtu(conn));
 }
 
 static void gateway_ble_tx_reset_locked(void)
@@ -1794,6 +1853,7 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
                                                     &completed_packet);
         gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
                                      k_uptime_get_32());
+        uint16_t queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
         k_spin_unlock(&gateway_ble_stream_lock, key);
         if (packet_ret == 0) {
             if (completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
@@ -1801,8 +1861,26 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
                     &gateway_command_observability_state,
                     completed_packet.session_id);
             }
+            const struct app_stack_workload_diag_pressure pressure = {
+                .queue_depth = queue_depth,
+                .custody_depth = gateway_ble_tx_in_flight ? 1u : 0u,
+                .credit_available = gateway_ble_tx_in_flight ? 0u : 1u,
+                .retry_depth = gateway_ble_notify_failure_count,
+                .drain_depth = queue_depth,
+            };
+
+            app_stack_workload_diag_ble_terminal_with_pressure(
+                &completed_packet, APP_STACK_DIAG_TERMINAL_ACK, &pressure);
         }
         gateway_observability_flush(false);
+#if DEVICE_ROLE == ROLE_GATEWAY
+        if (packet_ret == 0 &&
+            completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+            app_gateway_assignment_publisher_note_sent(
+                completed_packet.session_id);
+        }
+        app_gateway_assignment_publisher_pump();
+#endif
     }
     gateway_ble_schedule_stream_drain();
 }
@@ -1969,6 +2047,20 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
     gateway_ble_tx_reset_locked();
     k_spin_unlock(&gateway_ble_tx_lock, key);
     gateway_ble_stream_cancel_active();
+    {
+        uint16_t queue_depth = (uint16_t)gateway_ble_stream_depth(
+            &gateway_ble_stream_state);
+        const struct app_stack_workload_diag_pressure pressure = {
+            .queue_depth = queue_depth,
+            .custody_depth = gateway_ble_tx_in_flight ? 1u : 0u,
+            .credit_available = 0u,
+            .retry_depth = gateway_ble_notify_failure_count,
+            .drain_depth = queue_depth,
+        };
+
+        app_stack_workload_diag_ble_release_all_with_pressure(
+            APP_STACK_DIAG_TERMINAL_DISCONNECT, &pressure);
+    }
     (void)k_work_cancel_delayable(&gateway_ble_stream_work);
     bt_conn_unref(disconnected_conn);
     gateway_ble_rx_len = 0u;
@@ -2254,6 +2346,86 @@ void gateway_ble_get_status(struct gateway_ble_status *status)
     status->packet_notify_enabled = false;
 }
 #endif
+
+int gateway_observe_command_event_if_available(
+    struct gateway_command_event *event,
+    bool terminal,
+    void *ctx)
+{
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
+    struct proto_packet packet = {0};
+    uint8_t payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
+    size_t payload_len = 0u;
+    k_spinlock_key_t tx_key;
+    k_spinlock_key_t stream_key;
+    int ret;
+
+    ARG_UNUSED(ctx);
+    if (DEVICE_ROLE != ROLE_GATEWAY || event == NULL) {
+        return -EINVAL;
+    }
+    tx_key = k_spin_lock(&gateway_ble_tx_lock);
+    if (!gateway_ble_stream_ready() || gateway_ble_tx_in_flight ||
+        gateway_ble_tx_source != GATEWAY_BLE_TX_NONE ||
+        gateway_ble_direct_tx_count != 0u) {
+        k_spin_unlock(&gateway_ble_tx_lock, tx_key);
+        return -EAGAIN;
+    }
+    stream_key = k_spin_lock(&gateway_ble_stream_lock);
+    if (gateway_ble_stream_state.count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
+        gateway_ble_stream_state.pool_used +
+            GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
+            GATEWAY_COMMAND_EVENT_WIRE_LEN >
+            sizeof(gateway_ble_stream_state.record_pool)) {
+        k_spin_unlock(&gateway_ble_stream_lock, stream_key);
+        k_spin_unlock(&gateway_ble_tx_lock, tx_key);
+        return -EAGAIN;
+    }
+    for (uint8_t i = 0u; i < gateway_ble_stream_state.count; i++) {
+        if (gateway_ble_stream_state.items[i].priority == 0u) {
+            k_spin_unlock(&gateway_ble_stream_lock, stream_key);
+            k_spin_unlock(&gateway_ble_tx_lock, tx_key);
+            return -EAGAIN;
+        }
+    }
+
+    ret = gateway_command_observability_prepare(
+        &gateway_command_observability_state, event, terminal);
+    if (ret == 0) {
+        ret = gateway_command_event_encode(event, payload, sizeof(payload),
+                                           &payload_len);
+    }
+    if (ret == 0) {
+        packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
+        packet.src_id = DEVICE_ID;
+        packet.dst_id = DEVICE_ID;
+        packet.session_id = event->event_seq;
+        packet.seq = (uint16_t)event->event_seq;
+        packet.payload_len = (uint16_t)payload_len;
+        ret = gateway_ble_stream_enqueue_packet(
+            &gateway_ble_stream_state, &packet, payload, payload_len,
+            k_uptime_get_32(), k_uptime_get_32(), true);
+        if (ret > 0) {
+            gateway_ble_stream_state.items[
+                gateway_ble_stream_state.count - 1u].retain_until_sent = true;
+            gateway_command_observability_note_enqueue(
+                &gateway_command_observability_state, event->event_seq, ret);
+            ret = 0;
+        }
+    }
+    k_spin_unlock(&gateway_ble_stream_lock, stream_key);
+    k_spin_unlock(&gateway_ble_tx_lock, tx_key);
+    if (ret == 0) {
+        gateway_ble_schedule_stream_drain();
+    }
+    return ret;
+#else
+    ARG_UNUSED(event);
+    ARG_UNUSED(terminal);
+    ARG_UNUSED(ctx);
+    return -EAGAIN;
+#endif
+}
 
 int app_gateway_ble_init(void)
 {

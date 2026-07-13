@@ -191,6 +191,15 @@ class WakeAndTopologyTests(unittest.TestCase):
         for reason, expected in ((2, "Rejected"), (6, "Timed out"), (9, "Timed out"), (1, "Failed")):
             terminal = event(stage=12, flags=1, status=2, reason=reason)
             self.assertEqual(command_run_status((terminal,))[0], expected)
+        survey_no_reports = event(kind=2, stage=12, flags=1, status=5, reason=3)
+        self.assertEqual(
+            command_run_status((survey_no_reports,)),
+            ("Failed", "No survey reports were received before the collection deadline."),
+        )
+        self.assertEqual(
+            command_step_sentence(survey_no_reports),
+            "Command ended: no survey reports were received.",
+        )
         self.assertEqual(MeshDiagnosticsView.RUN_COLUMNS,
                          ("Started", "Command", "Status", "Anchors / Pairs", "Attempts", "Result"))
         self.assertEqual(MeshDiagnosticsView.ANCHOR_COLUMNS,

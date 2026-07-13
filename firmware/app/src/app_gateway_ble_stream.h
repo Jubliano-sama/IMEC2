@@ -70,7 +70,9 @@ struct gateway_ble_stream_item {
     uint16_t len;
     uint8_t packet_type;
     uint8_t priority;
+    bool retain_until_sent;
     uint32_t queued_at_ms;
+    struct proto_packet packet;
 };
 
 struct gateway_ble_stream_state {
@@ -123,6 +125,8 @@ void gateway_ble_stream_get_diagnostics(
     uint32_t now_ms,
     struct gateway_ble_stream_diagnostics *diagnostics);
 uint8_t gateway_ble_stream_depth(const struct gateway_ble_stream_state *state);
+int gateway_ble_stream_head_packet(const struct gateway_ble_stream_state *state,
+                                   struct proto_packet *packet);
 uint32_t gateway_ble_recovery_backoff_ms(uint8_t retry_round,
                                          uint32_t random_value);
 

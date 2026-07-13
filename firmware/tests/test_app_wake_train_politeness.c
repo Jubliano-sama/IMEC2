@@ -41,9 +41,18 @@ static void test_backoff_is_random_exponential_between_bounds(void)
     assert(app_wake_train_politeness_backoff_ms(4u, 1234u) == 2000u);
 }
 
+static void test_production_opportunity_budget(void)
+{
+    assert(APP_WAKE_TRAIN_POLITE_SNIFF_MS == 20u);
+    assert(APP_WAKE_TRAIN_POLITE_MAX_RETRIES == 3u);
+    assert(APP_WAKE_TRAIN_POLITE_MAX_RETRIES + 1u ==
+           MESH_RADIO_WAKE_OPPORTUNITIES);
+}
+
 int main(void)
 {
     test_rx_activity_matches_low_duty_preamble_failures();
     test_backoff_is_random_exponential_between_bounds();
+    test_production_opportunity_budget();
     return 0;
 }

@@ -49,10 +49,24 @@ extern "C" {
  *
  * Never add a source-wide, role-wide, or largest-stack fallback here.  The
  * verifier rejects unrooted, ambiguous, and unsupported linked symbols.
+ * The fatal override, Bluetooth CCC hook, and DWM3000 SDK port functions are
+ * explicit ABI boundaries whose callers live in Zephyr or the imported vendor
+ * library and therefore cannot appear in the application IPA graph. The fatal
+ * aggregate is bounded by the smallest configured execution stack, including
+ * idle; the remaining rows enumerate only their reviewed synchronous owners.
  */
 /* STACK_BUDGET_THREAD_ROOTS_BEGIN */
 #define STACK_BUDGET_THREAD_ROOTS(X)                                             \
     X("main.c", "main", "main")                                                \
+    X("main.c", "k_sys_fatal_error_handler", "fatal_context")                  \
+    X("dwm3000_sdk_port.c", "writetospiwithcrc", "main")                       \
+    X("dwm3000_sdk_port.c", "writetospiwithcrc", "system_workqueue")           \
+    X("dwm3000_sdk_port.c", "writetospi", "main")                              \
+    X("dwm3000_sdk_port.c", "writetospi", "system_workqueue")                  \
+    X("dwm3000_sdk_port.c", "readfromspi", "main")                             \
+    X("dwm3000_sdk_port.c", "readfromspi", "system_workqueue")                 \
+    X("dwm3000_sdk_port.c", "deca_usleep", "main")                             \
+    X("dwm3000_sdk_port.c", "deca_usleep", "system_workqueue")                 \
     X("app_clicker.c", "clicker_action_work_handler", "system_workqueue")     \
     X("app_clicker.c", "click_button_release_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_work_handler", "system_workqueue")       \
@@ -65,6 +79,15 @@ extern "C" {
     X("app_anchor.c", "anchor_command_execute_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_survey_work_handler", "system_workqueue")       \
     X("app_anchor.c", "anchor_uwb_scan_work_handler", "system_workqueue")     \
+    X("app_anchor.c", "anchor_survey_discovery_is_pending", "system_workqueue") \
+    X("app_anchor.c", "anchor_note_uwb_awake_since", "system_workqueue")      \
+    X("app_anchor.c", "anchor_handle_mesh_click_wake_claim", "system_workqueue") \
+    X("app_anchor.c", "anchor_handle_local_command", "system_workqueue")      \
+    X("app_anchor.c", "anchor_handle_survey_pair_prepare", "system_workqueue") \
+    X("app_anchor.c", "gateway_handle_survey_discovery_report", "system_workqueue") \
+    X("app_anchor_survey_discovery.c", "app_anchor_survey_discovery_handle_start", "system_workqueue") \
+    X("app_anchor_survey_discovery.c", "app_anchor_survey_delivery_gateway_confirmed", "system_workqueue") \
+    X("app_anchor_survey_discovery.c", "app_anchor_survey_delivery_transport_released", "system_workqueue") \
     X("app_anchor.c", "gateway_discovery_assignment_publish_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_discovery_assignment_finalize_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_survey_work_handler", "system_workqueue")      \
@@ -91,6 +114,7 @@ extern "C" {
     X("app_gateway_ble.c", "gateway_ble_tx_complete", "bt_rx")                \
     X("app_gateway_ble.c", "gateway_ble_connected", "bt_rx")                  \
     X("app_gateway_ble.c", "gateway_ble_disconnected", "bt_rx")                \
+    X("app_gateway_ble.c", "gateway_ble_packet_ccc_changed", "bt_rx")          \
     X("app_board.c", "status1_debug_pulse_restore_handler", "system_workqueue") \
     X("app_board.c", "status0_debug_pulse_restore_handler", "system_workqueue") \
     X("app_board.c", "status0_power_blink_handler", "system_workqueue")       \

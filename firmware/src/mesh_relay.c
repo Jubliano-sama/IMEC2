@@ -4,6 +4,10 @@
 
 #include <string.h>
 
+_Static_assert(sizeof(struct mesh_relay_result) <=
+               (3u * sizeof(struct mesh_outbound)) + 32u,
+               "relay result must retain only three simultaneous outbound buffers");
+
 #define LEGACY_MSG_ROUTE_ADV 0x33u
 #define LEGACY_MSG_ROUTE_STATUS 0x34u
 #define MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION 1u
@@ -1116,6 +1120,37 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
     index = free_index >= 0 ? free_index : replace_index;
     relay->downlinks[index] = *entry;
     relay->downlinks[index].valid = true;
+    return PROTO_OK;
+}
+
+static int upsert_required_gateway_downlink(
+    struct mesh_relay *relay,
+    const struct mesh_downlink_entry *entry)
+{
+    int replace_index = -1;
+    int ret = upsert_downlink(relay, entry);
+
+    if (ret != PROTO_ERR_NO_SPACE) {
+        return ret;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        if (!relay->downlinks[i].valid) {
+            replace_index = (int)i;
+            break;
+        }
+        if (replace_index < 0 ||
+            downlink_is_better(&relay->downlinks[replace_index],
+                               &relay->downlinks[i])) {
+            replace_index = (int)i;
+        }
+    }
+    if (replace_index < 0) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    relay->downlinks[replace_index] = *entry;
+    relay->downlinks[replace_index].valid = true;
     return PROTO_OK;
 }
 
@@ -4571,6 +4606,53 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
     return index >= 0 ? &relay->downlinks[index] : NULL;
 }
 
+int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
+                                                 uint64_t target_id,
+                                                 uint64_t next_hop_id,
+                                                 uint8_t quality,
+                                                 uint32_t now_ms)
+{
+    struct mesh_downlink_entry entry;
+    int ret;
+
+    if (relay == NULL ||
+        relay->role != MESH_RELAY_ROLE_GATEWAY ||
+        !id_is_unicast(relay->local_id) ||
+        relay->local_id != relay->gateway_id ||
+        !id_is_unicast(target_id) ||
+        !id_is_unicast(next_hop_id) ||
+        target_id == relay->local_id ||
+        next_hop_id == relay->local_id ||
+        relay->upstream.current_epoch == 0u ||
+        quality > 100u) {
+        return PROTO_ERR_ARG;
+    }
+
+    /* Current accepted survey evidence supersedes older hints for this target. */
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        if (relay->downlinks[i].valid &&
+            relay->downlinks[i].target_id == target_id) {
+            memset(&relay->downlinks[i], 0, sizeof(relay->downlinks[i]));
+        }
+    }
+
+    entry = (struct mesh_downlink_entry) {
+        .target_id = target_id,
+        .next_hop_id = next_hop_id,
+        .gateway_id = relay->local_id,
+        .route_epoch = relay->upstream.current_epoch,
+        .last_seen_ms = now_ms,
+        .hop_count = target_id == next_hop_id ? 1u : MESH_NETWORK_MAX_HOPS,
+        .quality = quality,
+        .valid = true,
+    };
+    ret = upsert_required_gateway_downlink(relay, &entry);
+    if (ret == PROTO_OK) {
+        mesh_relay_note_route_discovery_ready(relay, target_id);
+    }
+    return ret;
+}
+
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
 {
     if (relay == NULL) {
@@ -6223,6 +6305,14 @@ void mesh_relay_cancel_tx(struct mesh_relay *relay)
 bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms)
 {
     return preserve_pending_gateway_result(relay, now_ms);
+}
+
+bool mesh_relay_can_defer_tx(const struct mesh_relay *relay)
+{
+    return relay != NULL &&
+           (pending_is_local_collection_result(relay, &relay->pending) ||
+            pending_is_forwarded_command_result(relay, &relay->pending) ||
+            pending_is_result_bundle(relay, &relay->pending));
 }
 
 static bool pending_matches_outbound(const struct mesh_pending_tx *pending,

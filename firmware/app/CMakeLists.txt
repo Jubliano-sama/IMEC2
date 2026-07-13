@@ -326,7 +326,8 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_LOG=n\n")
         if(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
             file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
-                "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n")
+                "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n"
+                "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=16384\n")
         endif()
     endif()
     list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
@@ -357,6 +358,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_ble.c
     src/app_gateway_ble_stream.c
     src/app_gateway_command_observability.c
+    src/app_gateway_assignment_publisher.c
     src/app_gateway_collection_eack.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
@@ -366,13 +368,19 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_c5_priority.c
     src/app_mesh_coordinator.c
     src/app_mesh_coordinator_runtime.c
+    src/app_mesh_command_orchestrator.c
     src/app_mesh_arbitration_zephyr.c
     src/app_gateway_command_ingress.c
+    src/app_gateway_command_lifecycle.c
+    src/app_mesh_gateway_command_flow.c
+    src/app_mesh_local_delivery.c
     src/app_mesh_rx_policy.c
     src/app_mesh_persistence.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c
     src/app_mesh_ch9_ack.c
+    src/app_mesh_direct_probe_diag.c
+    src/app_mesh_direct_gateway_retry.c
     src/app_mesh_gateway_command_priority.c
     src/app_mesh_collection_deferral.c
     src/app_mesh_tx_handoff_gate.c
@@ -385,7 +393,9 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_wake_train_politeness.c
     src/app_mesh_report.c
     src/app_stack_diag.c
+    src/app_stack_workload_diag.c
     src/app_anchor.c
+    src/app_anchor_survey_discovery.c
     src/app_high_debug.c
     src/app_watchdog.c
 )
@@ -414,6 +424,7 @@ else()
         ../src/gateway_command.c
         ../src/gateway_ble_transport.c
         ../src/discovery_assignment.c
+        ../src/dwm3000_timing.c
         ../src/gateway_membership.c
         ../src/uwb.c
         ../src/uwb_ble_courtesy.c
@@ -445,15 +456,23 @@ if(NOT IMEC_GIT_VERSION)
     set(IMEC_GIT_VERSION "unknown")
 endif()
 string(TIMESTAMP IMEC_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%S")
+string(SHA256 IMEC_STACK_DIAG_ID_HASH
+    "${IMEC_BUILD_PRESET}|${IMEC_GIT_VERSION}|${IMEC_BUILD_TIMESTAMP}|${BOARD}|${CMAKE_C_COMPILER_ID}|${CMAKE_C_COMPILER_VERSION}")
+set(IMEC_STACK_DIAG_BUILD_ID
+    "imec-stack-v1:${IMEC_BUILD_PRESET}:${IMEC_STACK_DIAG_ID_HASH}")
 
 target_compile_definitions(app PRIVATE
     IMEC_BUILD_PRESET_NAME="${IMEC_BUILD_PRESET}"
     IMEC_GIT_VERSION="${IMEC_GIT_VERSION}"
     IMEC_BUILD_TIMESTAMP="${IMEC_BUILD_TIMESTAMP}"
     IMEC_BOARD_TARGET="${BOARD}"
+    IMEC_STACK_DIAG_BUILD_ID="${IMEC_STACK_DIAG_BUILD_ID}"
     IMEC_USE_HARDWARE_ANCHOR_ID=$<BOOL:${IMEC_USE_HARDWARE_ANCHOR_ID}>
 )
-target_compile_options(app PRIVATE -fstack-usage)
+# The verifier consumes both compiler frame records and IPA call graphs.  The
+# latter is required for root-to-function attribution; missing graphs block a
+# deployable mesh capture or flash.
+target_compile_options(app PRIVATE -fstack-usage -fdump-ipa-cgraph)
 if(IMEC_DEVICE_ID)
     target_compile_definitions(app PRIVATE DEVICE_ID=${IMEC_DEVICE_ID})
 endif()

@@ -1430,13 +1430,11 @@ size_t gateway_collection_return_candidates(const struct gateway_collection_stat
 }
 
 static int gateway_collection_snapshot_validate(
-    const struct gateway_collection_state_snapshot *snapshot,
-    struct gateway_collection_state *restored)
+    const struct gateway_collection_state_snapshot *snapshot)
 {
-    struct gateway_collection_state tmp;
     uint16_t valid_count = 0u;
 
-    if (snapshot == NULL || restored == NULL) {
+    if (snapshot == NULL) {
         return PROTO_ERR_ARG;
     }
     if (snapshot->version != GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION) {
@@ -1458,18 +1456,6 @@ static int gateway_collection_snapshot_validate(
         return PROTO_ERR_MALFORMED;
     }
 
-    memset(&tmp, 0, sizeof(tmp));
-    tmp.gateway_id = snapshot->gateway_id;
-    tmp.gateway_epoch = snapshot->gateway_epoch;
-    tmp.command_seq = snapshot->command_seq;
-    tmp.collection_epoch_id = snapshot->collection_epoch_id;
-    tmp.membership_epoch = snapshot->membership_epoch;
-    tmp.expected_count = snapshot->expected_count;
-    tmp.received_count = snapshot->received_count;
-    tmp.retry_round = snapshot->retry_round;
-    tmp.next_retry_spread_ms = snapshot->next_retry_spread_ms;
-    tmp.collection_open = snapshot->collection_open;
-
     for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
         const struct gateway_collection_result_entry *entry = &snapshot->results[i];
 
@@ -1479,22 +1465,26 @@ static int gateway_collection_snapshot_validate(
         if (entry->id.gateway_id != snapshot->gateway_id ||
             entry->id.gateway_epoch != snapshot->gateway_epoch ||
             entry->id.command_seq != snapshot->command_seq ||
-            entry->id.node_id == 0u ||
-            gateway_collection_contains_result(&tmp, &entry->id)) {
+            entry->id.node_id == 0u) {
             return PROTO_ERR_MALFORMED;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            const struct gateway_collection_result_entry *prior =
+                &snapshot->results[j];
+
+            if (prior->valid && command_result_id_equal(&prior->id, &entry->id)) {
+                return PROTO_ERR_MALFORMED;
+            }
         }
         if (valid_count >= snapshot->result_count) {
             return PROTO_ERR_MALFORMED;
         }
-
-        tmp.results[i] = *entry;
         valid_count++;
     }
     if (valid_count != snapshot->result_count) {
         return PROTO_ERR_MALFORMED;
     }
 
-    *restored = tmp;
     return PROTO_OK;
 }
 
@@ -1571,19 +1561,29 @@ int gateway_collection_restore_snapshot(
     struct gateway_collection_state *collection,
     const struct gateway_collection_state_snapshot *snapshot)
 {
-    struct gateway_collection_state restored;
     int ret;
 
     if (collection == NULL || snapshot == NULL) {
         return PROTO_ERR_ARG;
     }
 
-    ret = gateway_collection_snapshot_validate(snapshot, &restored);
+    ret = gateway_collection_snapshot_validate(snapshot);
     if (ret != PROTO_OK) {
         return ret;
     }
 
-    *collection = restored;
+    memset(collection, 0, sizeof(*collection));
+    collection->gateway_id = snapshot->gateway_id;
+    collection->gateway_epoch = snapshot->gateway_epoch;
+    collection->command_seq = snapshot->command_seq;
+    collection->collection_epoch_id = snapshot->collection_epoch_id;
+    collection->membership_epoch = snapshot->membership_epoch;
+    collection->expected_count = snapshot->expected_count;
+    collection->received_count = snapshot->received_count;
+    collection->retry_round = snapshot->retry_round;
+    collection->next_retry_spread_ms = snapshot->next_retry_spread_ms;
+    collection->collection_open = snapshot->collection_open;
+    memcpy(collection->results, snapshot->results, sizeof(collection->results));
     return PROTO_OK;
 }
 

@@ -1,13 +1,19 @@
 #include "app_anchor.h"
+#include "app_anchor_survey_discovery.h"
 
 #include "app_radio_low_power_policy.h"
 #include "app_board.h"
 #include "app_config.h"
+#include "app_discovery_assignment_stack.h"
 #include "app_gateway_ble.h"
+#include "app_gateway_assignment_publisher.h"
 #include "app_gateway_command_ingress.h"
+#include "app_gateway_command_lifecycle.h"
 #include "app_high_debug.h"
 #include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_c5_priority.h"
+#include "app_mesh_gateway_command_flow.h"
+#include "app_mesh_command_orchestrator.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
 #include "app_ml.h"
@@ -61,9 +67,12 @@ BUILD_ASSERT(SURVEY_GATEWAY_MAX_PEERS_PER_REPORT <= 8u,
              "survey peer storage must remain capped");
 BUILD_ASSERT(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT <= 16u,
              "survey result accounting uses one bounded 16-bit sample mask");
-BUILD_ASSERT(sizeof(struct mesh_outbound) +
-             sizeof(struct discovery_assignment_claim) * UWB_DISCOVERY_SLOT_COUNT +
-             sizeof(struct discovery_assignment_entry) * UWB_DISCOVERY_SLOT_COUNT <= 4096u,
+#if DEVICE_ROLE == ROLE_ANCHOR
+BUILD_ASSERT(REPORT_TX_QUEUE_DEPTH >= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+             "mesh anchor report custody must cover every admitted survey sample");
+#endif
+BUILD_ASSERT(APP_DISCOVERY_ASSIGNMENT_PUBLISH_LARGE_LOCAL_BYTES <=
+             APP_DISCOVERY_ASSIGNMENT_PUBLISH_LARGE_LOCAL_LIMIT_BYTES,
              "gateway discovery table publisher must stay below a 4 KiB stack frame");
 
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
@@ -139,12 +148,6 @@ static const struct k_work_queue_config anchor_uwb_scan_work_q_config = {
     .name = "anchor_uwb_scan",
 };
 #endif
-K_THREAD_STACK_DEFINE(anchor_survey_work_q_stack, ANCHOR_SURVEY_WORKQUEUE_STACK_SIZE);
-
-static struct k_work_q anchor_survey_work_q;
-static const struct k_work_queue_config anchor_survey_work_q_config = {
-    .name = "anchor_survey",
-};
 static uint16_t anchor_heartbeat_seq;
 static uint16_t anchor_survey_seq;
 static uint32_t anchor_ch5_scan_debug_next_ms;
@@ -176,25 +179,25 @@ static struct proto_packet gateway_survey_host_command;
 static uint16_t gateway_survey_duplicate_count;
 static uint16_t gateway_survey_pair_success_count;
 static uint16_t gateway_survey_pair_failure_count;
+static enum gateway_command_event_reason gateway_survey_terminal_failure_reason;
 static uint16_t gateway_survey_pair_result_mask;
 static uint16_t gateway_survey_pair_range_failure_count;
 static bool gateway_survey_pair_observation_active;
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
-struct gateway_host_command_cancelled {
-    struct app_gateway_command_identity identity;
-    bool valid;
-};
 K_MSGQ_DEFINE(gateway_host_command_msgq,
               sizeof(struct app_gateway_command_ingress_item),
               GATEWAY_HOST_COMMAND_QUEUE_DEPTH,
               4);
 static struct k_work_delayable gateway_host_command_work;
+static struct k_work_delayable gateway_host_command_retry_work;
 static uint8_t gateway_host_command_retry_round;
 static uint32_t gateway_host_command_retry_started_ms;
 static bool gateway_host_command_retry_pending;
 static uint32_t gateway_host_command_next_admission_id;
-static struct gateway_host_command_cancelled
-    gateway_host_command_cancelled[GATEWAY_HOST_COMMAND_QUEUE_DEPTH];
+static struct app_gateway_command_lifecycle gateway_host_command_lifecycle;
+BUILD_ASSERT(GATEWAY_HOST_COMMAND_QUEUE_DEPTH <=
+             APP_GATEWAY_COMMAND_LIFECYCLE_MAX_ITEMS,
+             "gateway command lifecycle must cover every queue slot");
 #endif
 static uint32_t anchor_collection_node_boot_counter;
 static uint16_t anchor_collection_result_seq;
@@ -230,7 +233,7 @@ struct anchor_pending_command_execution {
     bool active;
 };
 static struct anchor_pending_command_execution anchor_pending_command_execution;
-static struct gateway_command_rx_duplicate_cache anchor_command_seq_cache;
+static struct app_mesh_command_orchestrator anchor_command_orchestrator;
 #if defined(CONFIG_IMEC_ML_ANCHOR)
 static uint32_t anchor_run_clicker_pair_survey(
     const struct uwb_anchor_pair_schedule_frame *schedule,
@@ -248,11 +251,6 @@ static bool anchor_handle_mesh_click_wake_claim(
 static void anchor_survey_schedule(k_timeout_t delay);
 static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms);
 static bool anchor_survey_pair_queueable(const struct survey_pair *pair);
-static int anchor_run_survey_discovery(const struct survey_discovery_config *config,
-                                       uint32_t start_ms);
-static void anchor_handle_survey_discovery_start(const struct proto_packet *packet,
-                                                  const uint8_t *payload,
-                                                  size_t payload_len);
 static int anchor_start_survey_pair_from_command(const struct proto_packet *packet,
                                                   const uint8_t *payload,
                                                   size_t payload_len,
@@ -444,17 +442,17 @@ static int anchor_send_command_result(const struct proto_packet *command,
     }
 
     diagnostic = (command->flags & FLAG_DIAGNOSTIC) != 0u;
-    ret = mesh_init_command_result(&outbound.packet,
-                                   DEVICE_ID,
-                                   GATEWAY_ID,
-                                   session_id,
-                                   seq,
-                                   (uint8_t)payload_len,
-                                   diagnostic);
+    outbound.payload_len = (uint16_t)payload_len;
+    ret = app_mesh_command_orchestrator_anchor_result(command,
+                                                       DEVICE_ID,
+                                                       GATEWAY_ID,
+                                                       diagnostic,
+                                                       &outbound);
     if (ret != PROTO_OK) {
         return -EINVAL;
     }
-    outbound.payload_len = (uint8_t)payload_len;
+    outbound.packet.session_id = session_id;
+    outbound.packet.seq = seq;
 
     ret = mesh_start_tracked_tx(&outbound, "command-result");
     if (ret == 0) {
@@ -1314,89 +1312,6 @@ static int anchor_set_scan_duty_from_command(const uint8_t *payload,
     return 0;
 }
 
-static int8_t survey_quality_to_rssi(uint8_t quality)
-{
-    uint8_t bounded_quality = quality > 100u ? 100u : quality;
-
-    return (int8_t)(-100 + (int)bounded_quality / 2);
-}
-
-static bool survey_peer_reportable(uint64_t peer_id)
-{
-    return mesh_id_is_unicast(peer_id) &&
-           peer_id != DEVICE_ID &&
-           peer_id != GATEWAY_ID;
-}
-
-static void survey_add_reach_entry(struct survey_reachability_entry *entries,
-                                   size_t entry_cap,
-                                   size_t *entry_count,
-                                   uint64_t peer_id,
-                                   uint8_t quality)
-{
-    if (entries == NULL || entry_count == NULL ||
-        !survey_peer_reportable(peer_id) ||
-        *entry_count >= entry_cap) {
-        return;
-    }
-
-    if (quality > 100u) {
-        quality = 100u;
-    }
-    for (size_t i = 0u; i < *entry_count; i++) {
-        if (entries[i].peer_id == peer_id) {
-            if (quality > entries[i].quality) {
-                entries[i].quality = quality;
-                entries[i].rssi_dbm = survey_quality_to_rssi(quality);
-            }
-            return;
-        }
-    }
-
-    entries[*entry_count].peer_id = peer_id;
-    entries[*entry_count].quality = quality;
-    entries[*entry_count].rssi_dbm = survey_quality_to_rssi(quality);
-    (*entry_count)++;
-}
-
-static int anchor_queue_survey_discovery_report(uint32_t survey_id,
-                                                const struct survey_reachability_entry *entries,
-                                                size_t entry_count,
-                                                uint32_t earliest_tx_ms)
-{
-    struct mesh_outbound outbound = {0};
-    size_t report_payload_len = 0u;
-    int ret;
-
-    if (survey_id == 0u || (entries == NULL && entry_count != 0u)) {
-        return -EINVAL;
-    }
-
-    ret = survey_append_reach_report_tlvs(outbound.payload,
-                                          sizeof(outbound.payload),
-                                          &report_payload_len,
-                                          survey_id,
-                                          DEVICE_ID,
-                                          entries,
-                                          entry_count);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    ret = survey_init_discovery_report_packet(&outbound.packet,
-                                              DEVICE_ID,
-                                              GATEWAY_ID,
-                                              survey_id,
-                                              anchor_next_survey_seq(),
-                                              (uint8_t)report_payload_len);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    outbound.payload_len = (uint8_t)report_payload_len;
-    outbound.earliest_tx_ms = earliest_tx_ms;
-
-    return queue_anchor_report(&outbound);
-}
-
 static void anchor_preempt_for_survey_discovery(uint32_t survey_id)
 {
     if (DEVICE_ROLE != ROLE_ANCHOR) {
@@ -1411,65 +1326,17 @@ static void anchor_preempt_for_survey_discovery(uint32_t survey_id)
     mesh_stop_role_scan();
 }
 
-static void anchor_handle_survey_discovery_start(const struct proto_packet *packet,
-                                                  const uint8_t *payload,
-                                                  size_t payload_len)
+static void anchor_queue_survey_discovery(
+    const struct survey_discovery_config *config,
+    uint32_t start_ms)
 {
-    struct survey_discovery_config config = {0};
-    struct survey_discovery_timing timing = {0};
-    k_spinlock_key_t key;
-    uint32_t now_ms;
-    uint32_t schedule_delay_ms;
-    int ret;
+    k_spinlock_key_t key = k_spin_lock(&anchor_survey_lock);
 
-    if (DEVICE_ROLE != ROLE_ANCHOR ||
-        packet == NULL ||
-        packet->msg_type != MSG_SURVEY_DISCOVERY_START ||
-        packet->dst_id != MESH_BROADCAST_ID ||
-        packet->src_id != GATEWAY_ID) {
-        return;
-    }
-
-    ret = survey_extract_discovery_start_tlvs(payload, payload_len, &config);
-    if (ret != PROTO_OK || packet->session_id != config.survey_id) {
-        LOG_WRN("survey discovery start rejected: ret=%d session=%u survey=%u",
-                ret,
-                packet->session_id,
-                config.survey_id);
-        return;
-    }
-    ret = survey_discovery_timing_from_age(&config, packet->message_age_ms, &timing);
-    if (ret != PROTO_OK || timing.expired) {
-        LOG_WRN("survey discovery start stale: ret=%d survey=%u age_ms=%u duration_ms=%u",
-                ret,
-                config.survey_id,
-                packet->message_age_ms,
-                timing.duration_ms);
-        return;
-    }
-
-    anchor_abort_survey_pair();
-    anchor_preempt_for_survey_discovery(config.survey_id);
-    now_ms = k_uptime_get_32();
-    schedule_delay_ms = timing.pending ? timing.wait_ms : 0u;
-
-    key = k_spin_lock(&anchor_survey_lock);
-    anchor_survey_discovery_config = config;
-    anchor_survey_discovery_start_ms = timing.pending ?
-                                       now_ms + timing.wait_ms :
-                                       now_ms - timing.elapsed_ms;
+    anchor_survey_discovery_config = *config;
+    anchor_survey_discovery_start_ms = start_ms;
     anchor_survey_discovery_pending = true;
     atomic_set(&anchor_survey_abort_requested, 0);
     k_spin_unlock(&anchor_survey_lock, key);
-
-    anchor_survey_schedule(K_MSEC(schedule_delay_ms));
-    LOG_INF("survey discovery scheduled: survey=%u start_delay_ms=%u age_ms=%u wait_ms=%u slot_ms=%u slots=%u",
-            config.survey_id,
-            config.start_delay_ms,
-            packet->message_age_ms,
-            schedule_delay_ms,
-            config.slot_ms,
-            config.slot_count);
 }
 
 static void anchor_handle_survey_pair_prepare(const struct proto_packet *packet,
@@ -1909,7 +1776,9 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
     struct gateway_command_options command_options = {0};
     bool reboot_after_result = false;
     bool force_rediscovery_after_result = false;
-    bool broadcast_command = false;
+    bool broadcast_command;
+    bool expired;
+    bool duplicate;
     uint32_t delay_ms;
     uint32_t now_ms;
     uint8_t reason = 0u;
@@ -1925,31 +1794,29 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
         return;
     }
 
-    ret = gateway_command_extract_id(payload, payload_len, &command_id);
+    now_ms = k_uptime_get_32();
+    ret = app_mesh_command_orchestrator_anchor_receive(
+        &anchor_command_orchestrator,
+        packet,
+        payload,
+        payload_len,
+        now_ms,
+        &command_id,
+        &command_options,
+        &broadcast_command,
+        &expired,
+        &duplicate);
     if (ret != PROTO_OK) {
         if (broadcast_command) {
-            LOG_WRN("anchor ignored malformed broadcast command: ret=%d", ret);
+            LOG_WRN("anchor ignored invalid broadcast command: ret=%d", ret);
             return;
         }
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = (uint8_t)(-ret);
-    } else {
-        if (broadcast_command) {
-            ret = gateway_command_extract_options(payload,
-                                                  payload_len,
-                                                  &command_options);
-            if (ret != PROTO_OK || !command_options.flood_required) {
-                LOG_WRN("anchor ignored invalid broadcast command options: ret=%d flood=%u",
-                        ret,
-                        command_options.flood_required ? 1u : 0u);
-                return;
-            }
-        }
     }
 
     if (broadcast_command) {
-        now_ms = k_uptime_get_32();
-        if (gateway_command_receive_expired(packet, &command_options)) {
+        if (expired) {
             LOG_WRN("anchor ignored expired broadcast command: cmd=0x%04x command_seq=%u age_ms=%u expiry_s=%u delay_ms=%u",
                     (unsigned int)command_id,
                     command_options.command_seq,
@@ -1958,9 +1825,7 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
                     command_options.execute_delay_ms);
             return;
         }
-        if (gateway_command_rx_duplicate_seen(&anchor_command_seq_cache,
-                                              command_options.command_seq,
-                                              now_ms)) {
+        if (duplicate) {
             LOG_INF("anchor ignored duplicate broadcast command: cmd=0x%04x command_seq=%u",
                     (unsigned int)command_id,
                     command_options.command_seq);
@@ -1981,17 +1846,9 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
                         ret);
                 return;
             }
-            gateway_command_rx_duplicate_store(&anchor_command_seq_cache,
-                                               packet,
-                                               &command_options,
-                                               now_ms);
             return;
         }
 
-        gateway_command_rx_duplicate_store(&anchor_command_seq_cache,
-                                           packet,
-                                           &command_options,
-                                           now_ms);
         anchor_finish_broadcast_command(packet,
                                         payload,
                                         payload_len,
@@ -2107,6 +1964,7 @@ static struct gateway_command_event gateway_observability_event(
     return event;
 }
 
+#if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
 static void gateway_observe_host_stage(const struct proto_packet *host_command,
                                        enum command_id command_id,
                                        enum gateway_command_event_stage stage)
@@ -2124,6 +1982,7 @@ static void gateway_observe_host_stage(const struct proto_packet *host_command,
                                         0u);
     (void)gateway_observe_command_event(&event, false);
 }
+#endif
 
 static void gateway_observe_host_terminal(
     const struct proto_packet *host_command,
@@ -2168,6 +2027,26 @@ static void gateway_observe_survey_terminal(
     (void)gateway_observe_command_event(&event, true);
 }
 
+static int gateway_reject_survey_request(
+    const struct proto_packet *host_packet,
+    enum command_status status,
+    uint8_t protocol_reason,
+    enum gateway_command_event_reason event_reason,
+    int error)
+{
+    gateway_emit_host_command_result(host_packet,
+                                     CMD_SURVEY_REACHABILITY,
+                                     status,
+                                     protocol_reason);
+    if (host_packet != NULL) {
+        gateway_observe_host_terminal(host_packet,
+                                      CMD_SURVEY_REACHABILITY,
+                                      status,
+                                      event_reason);
+    }
+    return error;
+}
+
 static int gateway_route_survey_reachability(const struct proto_packet *host_packet,
                                              const uint8_t *host_payload,
                                              size_t host_payload_len)
@@ -2195,21 +2074,17 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         host_packet->msg_type != MSG_COMMAND ||
         host_packet->payload_len != host_payload_len ||
         (host_packet->dst_id != MESH_BROADCAST_ID && host_packet->dst_id != DEVICE_ID)) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_DENIED,
-                                           1u);
-        return -EINVAL;
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_DENIED, 1u,
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
     }
     if (gateway_survey_active) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_BUSY,
-                                           3u);
         LOG_WRN("gateway survey reachability rejected while survey active: current=%u requested_dst=0x%016llx",
                 gateway_survey_context.survey_id,
                 (unsigned long long)host_packet->dst_id);
-        return -EBUSY;
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_BUSY, 3u,
+            GATEWAY_COMMAND_EVENT_REASON_BUSY, -EBUSY);
     }
 
     ret = survey_extract_reach_request_tlvs(host_payload,
@@ -2217,43 +2092,47 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                             &survey_id,
                                             &duration_ms);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_MALFORMED_PAYLOAD,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST,
+            mesh_errno_from_proto(ret));
     }
 
     ret = gateway_extract_survey_sample_count(host_payload,
                                               host_payload_len,
                                               &sample_count);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_MALFORMED_PAYLOAD,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST,
+            mesh_errno_from_proto(ret));
     }
-    if (sample_count > SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_DENIED,
-                                           4u);
+    {
+        enum command_status admission_status;
+        enum gateway_command_event_reason admission_reason;
+
+        if (!gateway_command_survey_sample_admission(sample_count,
+                                                     &admission_status,
+                                                     &admission_reason)) {
         LOG_WRN("gateway survey reachability rejected: samples=%u runtime_max=%u",
                 sample_count,
                 SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT);
-        return -EINVAL;
+            return gateway_reject_survey_request(host_packet,
+                                                 admission_status,
+                                                 4u,
+                                                 admission_reason,
+                                                 -EINVAL);
+        }
     }
     ret = survey_extract_discovery_slot_count_tlv(host_payload,
                                                   host_payload_len,
                                                   SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT,
                                                   &config.slot_count);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_MALFORMED_PAYLOAD,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST,
+            mesh_errno_from_proto(ret));
     }
     config.survey_id = survey_id;
     discovery_duration_ms = survey_discovery_duration_ms(&config);
@@ -2268,33 +2147,37 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         ret = PROTO_ERR_NO_SPACE;
     }
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_MALFORMED_PAYLOAD,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST,
+            mesh_errno_from_proto(ret));
     }
     if (discovery_duration_ms == 0u ||
         UINT32_MAX - config.start_delay_ms < report_mesh_duration_ms ||
-        UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms < duration_ms) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_MALFORMED_PAYLOAD,
-                                           2u);
-        return -EINVAL;
+        UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms < duration_ms ||
+        UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms - duration_ms <
+            SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS ||
+        UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms - duration_ms -
+            SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS <
+            SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS) {
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, 2u,
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
     }
-    collection_delay_ms = config.start_delay_ms + report_mesh_duration_ms + duration_ms;
+    collection_delay_ms = config.start_delay_ms + report_mesh_duration_ms +
+                          duration_ms +
+                          SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS +
+                          SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS;
 
     ret = survey_append_discovery_start_tlvs(outbound.payload,
                                              sizeof(outbound.payload),
                                              &payload_len,
                                              &config);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_INTERNAL_ERROR,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_INTERNAL_ERROR, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
+            mesh_errno_from_proto(ret));
     }
 
     seq = host_packet->seq == 0u ? gateway_next_command_seq() : host_packet->seq;
@@ -2304,11 +2187,10 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                              seq,
                                              (uint8_t)payload_len);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_INTERNAL_ERROR,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_INTERNAL_ERROR, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
+            mesh_errno_from_proto(ret));
     }
     outbound.payload_len = (uint8_t)payload_len;
     outbound.next_hop_id = MESH_BROADCAST_ID;
@@ -2316,25 +2198,24 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
 
     ret = survey_gateway_begin(&gateway_survey_context, survey_id, sample_count);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_INTERNAL_ERROR,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_INTERNAL_ERROR, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
+            mesh_errno_from_proto(ret));
     }
     ret = survey_gateway_auto_begin(&gateway_survey_auto);
     if (ret != PROTO_OK) {
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           COMMAND_INTERNAL_ERROR,
-                                           (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_INTERNAL_ERROR, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
+            mesh_errno_from_proto(ret));
     }
     gateway_survey_active = true;
     gateway_survey_host_command = *host_packet;
     gateway_survey_duplicate_count = 0u;
     gateway_survey_pair_success_count = 0u;
     gateway_survey_pair_failure_count = 0u;
+    gateway_survey_terminal_failure_reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
     gateway_survey_pair_result_mask = 0u;
     gateway_survey_pair_range_failure_count = 0u;
     gateway_survey_pair_observation_active = false;
@@ -2358,11 +2239,13 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         gateway_survey_active = false;
         (void)survey_gateway_auto_begin(&gateway_survey_auto);
         (void)k_work_cancel_delayable(&gateway_survey_work);
-        gateway_emit_host_command_result(host_packet,
-                                           CMD_SURVEY_REACHABILITY,
-                                           ret == -EBUSY ? COMMAND_BUSY : COMMAND_RADIO_ERROR,
-                                           (uint8_t)(-ret));
-        return ret;
+        return gateway_reject_survey_request(
+            host_packet,
+            ret == -EBUSY ? COMMAND_BUSY : COMMAND_RADIO_ERROR,
+            (uint8_t)(-ret),
+            ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                            GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION,
+            ret);
     }
 
     {
@@ -2434,9 +2317,12 @@ static void gateway_note_survey_pair_result(const struct proto_packet *packet,
 static void gateway_handle_survey_discovery_report(const struct proto_packet *packet,
                                                     const uint8_t *payload,
                                                     size_t payload_len,
-                                                    uint64_t previous_hop_id)
+                                                    uint64_t previous_hop_id,
+                                                    uint8_t radio_channel,
+                                                    uint8_t link_quality)
 {
     struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    struct survey_gateway_reverse_hint reverse_hint;
     uint32_t survey_id = 0u;
     uint64_t anchor_id = 0u;
     size_t entry_count = 0u;
@@ -2452,6 +2338,18 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
     }
     if (packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
         packet->dst_id != DEVICE_ID) {
+        return;
+    }
+    if (radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        !mesh_id_is_unicast(previous_hop_id) ||
+        link_quality > 100u) {
+        LOG_WRN("gateway survey discovery report rejected transport: src=0x%016llx prev=0x%016llx channel=%u flags=0x%02x quality=%u",
+                (unsigned long long)packet->src_id,
+                (unsigned long long)previous_hop_id,
+                radio_channel,
+                packet->flags,
+                link_quality);
         return;
     }
 
@@ -2504,12 +2402,28 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
             break;
         }
     }
+    if (duplicate_report) {
+        LOG_INF("gateway survey duplicate report ignored: survey=%u anchor=0x%016llx entries=%u prev=0x%016llx",
+                survey_id,
+                (unsigned long long)anchor_id,
+                (unsigned int)entry_count,
+                (unsigned long long)previous_hop_id);
+        return;
+    }
 
-    ret = survey_gateway_note_reach_report(&gateway_survey_context,
-                                           survey_id,
-                                           anchor_id,
-                                           entries,
-                                           entry_count);
+    reverse_hint = (struct survey_gateway_reverse_hint) {
+        .target_id = anchor_id,
+        .next_hop_id = previous_hop_id,
+        .quality = link_quality,
+        .valid = true,
+    };
+    ret = survey_gateway_note_reach_report_with_reverse_hint(
+        &gateway_survey_context,
+        survey_id,
+        anchor_id,
+        entries,
+        entry_count,
+        &reverse_hint);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway survey discovery report not recorded: survey=%u anchor=0x%016llx entries=%u ret=%d",
                 survey_id,
@@ -2696,6 +2610,12 @@ static void gateway_survey_finalize_pair_observation(void)
     event.success_count = gateway_survey_pair_success_count;
     event.failure_count = gateway_survey_pair_failure_count;
     event.duplicate_count = gateway_survey_duplicate_count;
+    if (!success) {
+        gateway_survey_terminal_failure_reason =
+            gateway_command_survey_failure_reason_merge(
+                gateway_survey_terminal_failure_reason,
+                event.reason);
+    }
     (void)gateway_observe_command_event(&event, false);
     gateway_survey_pair_observation_active = false;
     gateway_survey_pair_result_mask = 0u;
@@ -2723,16 +2643,15 @@ static void gateway_survey_auto_finish_status(
 
 static void gateway_survey_auto_finish(void)
 {
-    enum command_status status = COMMAND_OK;
-    enum gateway_command_event_reason reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
+    enum command_status status;
+    enum gateway_command_event_reason reason;
 
-    if (gateway_survey_context.report_count == 0u) {
-        status = COMMAND_TIMEOUT;
-        reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS;
-    } else if (gateway_survey_pair_failure_count > 0u) {
-        status = COMMAND_INTERNAL_ERROR;
-        reason = GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED;
-    }
+    gateway_command_survey_terminal_outcome(
+        gateway_survey_context.report_count,
+        gateway_survey_pair_failure_count,
+        gateway_survey_terminal_failure_reason,
+        &status,
+        &reason);
     gateway_survey_auto_finish_status(status, reason);
 }
 
@@ -2740,7 +2659,34 @@ static int gateway_survey_auto_send_outbound(struct mesh_outbound *outbound,
                                              enum command_id command_id,
                                              const char *reason)
 {
+    struct survey_gateway_reverse_hint reverse_hint;
+    bool sent_now = false;
     int ret;
+
+    ret = survey_gateway_reverse_hint_for_target(&gateway_survey_context,
+                                                 outbound->packet.dst_id,
+                                                 &reverse_hint);
+    if (ret == PROTO_OK) {
+        ret = mesh_relay_note_gateway_survey_reverse_route(
+            &mesh_runtime,
+            reverse_hint.target_id,
+            reverse_hint.next_hop_id,
+            reverse_hint.quality,
+            k_uptime_get_32());
+        if (ret != PROTO_OK) {
+            LOG_WRN("gateway survey reverse route install failed: dst=0x%016llx next=0x%016llx ret=%d",
+                    (unsigned long long)reverse_hint.target_id,
+                    (unsigned long long)reverse_hint.next_hop_id,
+                    ret);
+            return mesh_errno_from_proto(ret);
+        }
+        outbound->next_hop_id = reverse_hint.next_hop_id;
+    } else if (ret == PROTO_ERR_NOT_FOUND) {
+        return -EHOSTUNREACH;
+    } else {
+        return mesh_errno_from_proto(ret);
+    }
+    outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
 
     ret = gateway_begin_command_result_wait(&outbound->packet, command_id);
     if (ret < 0) {
@@ -2749,19 +2695,26 @@ static int gateway_survey_auto_send_outbound(struct mesh_outbound *outbound,
     gateway_survey_pending_command = outbound->packet;
     gateway_survey_pending_command_valid = true;
 
-    ret = mesh_start_tracked_tx(outbound, reason);
+    /*
+     * Survey control is a priority channel-5 transaction. A reverse hint says
+     * where to forward it, but it deliberately creates no connection or
+     * channel-9 reservation, so a single tracked send can miss a sleeping
+     * anchor forever. The bounded flood owns wake-up, repeated delivery, and
+     * relay forwarding; the command-result wait below owns completion.
+     */
+    ret = mesh_send_c5_flood(outbound,
+                             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                             reason,
+                             &sent_now);
     if (ret < 0) {
-        if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
-            LOG_INF("gateway survey auto command waiting for route: cmd=0x%04x dst=0x%016llx",
-                    (unsigned int)command_id,
-                    (unsigned long long)outbound->packet.dst_id);
-            ret = 0;
-        } else {
-            gateway_clear_pending_command_result(&outbound->packet);
-            gateway_survey_pending_command_valid = false;
-            return ret;
-        }
+        gateway_clear_pending_command_result(&outbound->packet);
+        gateway_survey_pending_command_valid = false;
+        return ret;
     }
+    LOG_INF("gateway survey control submitted: cmd=0x%04x dst=0x%016llx sent_now=%u",
+            (unsigned int)command_id,
+            (unsigned long long)outbound->packet.dst_id,
+            sent_now ? 1u : 0u);
 
     ret = survey_gateway_auto_mark_waiting(&gateway_survey_auto);
     if (ret != PROTO_OK) {
@@ -2863,7 +2816,8 @@ static int gateway_survey_auto_send_action(const struct survey_gateway_auto_acti
 
 static void gateway_survey_auto_log_skipped_pair(const char *reason,
                                                  enum command_status status,
-                                                 uint8_t detail)
+                                                 uint8_t detail,
+                                                 enum gateway_command_event_reason event_reason)
 {
     struct gateway_command_event event = gateway_observability_event(
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
@@ -2874,15 +2828,17 @@ static void gateway_survey_auto_log_skipped_pair(const char *reason,
 
     gateway_survey_pair_failure_count++;
     event.status = status;
-    event.reason = status == COMMAND_TIMEOUT ?
-                   GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
-                   GATEWAY_COMMAND_EVENT_REASON_RADIO;
+    event.reason = event_reason;
     event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
     event.pair_responder_id = gateway_survey_auto.pair.responder_id;
     event.attempt = gateway_survey_action_retry_round;
     event.success_count = gateway_survey_pair_success_count;
     event.failure_count = gateway_survey_pair_failure_count;
     event.duplicate_count = gateway_survey_duplicate_count;
+    gateway_survey_terminal_failure_reason =
+        gateway_command_survey_failure_reason_merge(
+            gateway_survey_terminal_failure_reason,
+            event.reason);
     (void)gateway_observe_command_event(&event, false);
     LOG_WRN("gateway survey auto pair skipped: survey=%u initiator=0x%016llx responder=0x%016llx reason=%s status=%u detail=%u",
             gateway_survey_auto.pair.survey_id,
@@ -2936,7 +2892,13 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
 
     if (pair_skipped) {
         gateway_survey_action_retry_round = 0u;
-        gateway_survey_auto_log_skipped_pair("command-result", status, reason);
+        gateway_survey_auto_log_skipped_pair(
+            "command-result",
+            status,
+            reason,
+            status == COMMAND_TIMEOUT ?
+                GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
+                GATEWAY_COMMAND_EVENT_REASON_RADIO);
     } else if (pair_launched) {
         gateway_survey_action_retry_round = 0u;
         gateway_survey_pair_observation_active = true;
@@ -3008,7 +2970,11 @@ static void gateway_survey_auto_note_command_timeout(const struct proto_packet *
     }
     if (pair_skipped) {
         gateway_survey_action_retry_round = 0u;
-        gateway_survey_auto_log_skipped_pair("command-timeout", COMMAND_TIMEOUT, 0u);
+        gateway_survey_auto_log_skipped_pair(
+            "command-timeout",
+            COMMAND_TIMEOUT,
+            0u,
+            GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
     }
 }
 
@@ -3496,39 +3462,22 @@ static int gateway_discovery_assignment_publish_table(void)
             ARRAY_SIZE(entries));
     }
     if (ret == PROTO_OK) {
-        for (size_t i = 0u;
-             i < gateway_discovery_assignment_state.claim_count;
-             i++) {
-            struct gateway_command_event event = gateway_observability_event(
-                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
-                GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
-                CMD_ASSIGN_DISCOVERY_SLOTS,
-                &gateway_discovery_assignment_state.host_command,
-                gateway_discovery_assignment_state.epoch);
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            &gateway_discovery_assignment_state.host_command,
+            gateway_discovery_assignment_state.epoch);
+        int publish_ret = app_gateway_assignment_publisher_stage_batch(
+            &event,
+            entries,
+            gateway_discovery_assignment_state.claim_count,
+            gateway_discovery_assignment_state.duplicate_count);
 
-            event.anchor_id = entries[i].anchor_id;
-            event.slot = entries[i].slot;
-            event.progress_count = (uint16_t)(i + 1u);
-            event.total_count =
-                (uint16_t)gateway_discovery_assignment_state.claim_count;
-            event.duplicate_count =
-                gateway_discovery_assignment_state.duplicate_count;
-            (void)gateway_observe_command_event(&event, false);
-        }
-        {
-            struct gateway_command_event event = gateway_observability_event(
-                GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
-                GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE,
-                CMD_ASSIGN_DISCOVERY_SLOTS,
-                &gateway_discovery_assignment_state.host_command,
-                gateway_discovery_assignment_state.epoch);
-
-            event.progress_count =
-                (uint16_t)gateway_discovery_assignment_state.claim_count;
-            event.total_count = event.progress_count;
-            event.duplicate_count =
-                gateway_discovery_assignment_state.duplicate_count;
-            (void)gateway_observe_command_event(&event, false);
+        if (publish_ret < 0) {
+            LOG_WRN("discovery assignment telemetry batch unavailable: epoch=%u ret=%d",
+                    gateway_discovery_assignment_state.epoch,
+                    publish_ret);
         }
     }
     if (gateway_discovery_assignment_state.table_command_seq == 0u) {
@@ -3570,11 +3519,10 @@ static int gateway_discovery_assignment_publish_table(void)
         ret = mesh_errno_from_proto(ret);
     }
     gateway_discovery_assignment_state.table_round++;
-    {
+    if (ret == 0) {
         struct gateway_command_event event = gateway_observability_event(
             GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
-            ret == 0 ? GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY :
-                       GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+            GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY,
             CMD_ASSIGN_DISCOVERY_SLOTS,
             &gateway_discovery_assignment_state.host_command,
             gateway_discovery_assignment_state.epoch);
@@ -3583,11 +3531,10 @@ static int gateway_discovery_assignment_publish_table(void)
         event.progress_count =
             (uint16_t)gateway_discovery_assignment_state.claim_count;
         event.total_count = event.progress_count;
-        event.status = ret == 0 ? COMMAND_OK : COMMAND_RADIO_ERROR;
-        event.reason = ret == 0 ? GATEWAY_COMMAND_EVENT_REASON_NONE :
-                                 GATEWAY_COMMAND_EVENT_REASON_RADIO;
+        event.status = COMMAND_OK;
+        event.reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
         event.duplicate_count = gateway_discovery_assignment_state.duplicate_count;
-        (void)gateway_observe_command_event(&event, false);
+        app_gateway_assignment_publisher_stage_table_ready(&event);
     }
     status_debug_printf("DBG_DISCOVERY_SLOT_TABLE_TX epoch=%u generation=%u count=%u bytes=%u round=%u sent_now=%u ret=%d\n",
                         gateway_discovery_assignment_state.epoch,
@@ -3861,8 +3808,13 @@ static void gateway_survey_work_handler(struct k_work *work)
         gateway_survey_auto.stage = SURVEY_GATEWAY_AUTO_LOAD_PAIR;
         gateway_survey_action_retry_round = 0u;
         gateway_survey_auto_log_skipped_pair("send-failed",
-                                             ret == -EHOSTUNREACH ? COMMAND_TIMEOUT : COMMAND_RADIO_ERROR,
-                                             (uint8_t)(-ret));
+            ret == -EHOSTUNREACH ? COMMAND_TIMEOUT : COMMAND_RADIO_ERROR,
+            (uint8_t)(-ret),
+            ret == -EHOSTUNREACH || ret == -ENOTCONN ?
+                GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE :
+                ret == -ETIMEDOUT ?
+                    GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
+                    GATEWAY_COMMAND_EVENT_REASON_RADIO);
     }
 }
 
@@ -3999,10 +3951,11 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
     uint8_t *payload,
     size_t payload_len)
 {
+    struct app_mesh_command_orchestrator *orchestrator;
     struct mesh_outbound outbound = {0};
-    struct gateway_command_options command_options = {0};
-    enum command_id command_id = CMD_VENDOR_BASE;
-    enum gateway_command_tracking_mode tracking_mode = GATEWAY_COMMAND_TRACK_NONE;
+    struct gateway_command_options command_options;
+    enum command_id command_id;
+    enum gateway_command_tracking_mode tracking_mode;
     bool sent_now = false;
     int ret;
 
@@ -4010,15 +3963,23 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         return -EINVAL;
     }
 
-    ret = gateway_command_prepare_outbound(packet,
-                                           payload,
-                                           payload_len,
-                                           DEVICE_ID,
-                                           k_uptime_get_32(),
-                                           packet != NULL && packet->seq == 0u ?
-                                           gateway_next_command_seq() : 0u,
-                                           &outbound,
-                                           &command_id);
+    if (packet == NULL || payload == NULL || payload_len > sizeof(outbound.payload)) {
+        return -EINVAL;
+    }
+    if (packet->msg_type != MSG_COMMAND) {
+        outbound.packet = *packet;
+        outbound.packet.payload_len = (uint16_t)payload_len;
+        outbound.payload_len = (uint16_t)payload_len;
+        memcpy(outbound.payload, payload, payload_len);
+        return mesh_start_tracked_tx(&outbound, "ble-host-packet");
+    }
+
+    orchestrator = mesh_gateway_command_orchestrator_context();
+    ret = app_mesh_command_orchestrator_prepare_flood(
+        orchestrator,
+        DEVICE_ID,
+        k_uptime_get_32(),
+        packet->seq == 0u ? gateway_next_command_seq() : 0u);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway rejected BLE host command: %d", ret);
         gateway_emit_host_command_result(packet,
@@ -4028,17 +3989,10 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
                                          (uint8_t)(-ret));
         return mesh_errno_from_proto(ret);
     }
-
-    ret = gateway_command_extract_options(payload, payload_len, &command_options);
-    if (ret != PROTO_OK) {
-        LOG_WRN("gateway rejected BLE host command options after prepare: %d", ret);
-        gateway_emit_host_command_result(&outbound.packet,
-                                         command_id,
-                                         COMMAND_MALFORMED_PAYLOAD,
-                                         (uint8_t)(-ret));
-        return mesh_errno_from_proto(ret);
-    }
-    tracking_mode = gateway_command_tracking_mode_from_options(&command_options);
+    outbound = orchestrator->gateway_flow.outbound;
+    command_options = orchestrator->gateway_flow.options;
+    command_id = orchestrator->gateway_flow.command_id;
+    tracking_mode = orchestrator->gateway_flow.tracking_mode;
     if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
         ret = gateway_begin_command_result_wait(&outbound.packet, command_id);
         if (ret < 0) {
@@ -4069,10 +4023,9 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
 
     if (gateway_command_transport_mode_from_outbound(&outbound) ==
         GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST) {
-        ret = mesh_send_c5_flood(&outbound,
-                                 C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
-                                 "ble-command-broadcast",
-                                 &sent_now);
+        ret = mesh_send_gateway_command_flood(orchestrator,
+                                              "ble-command-broadcast",
+                                              &sent_now);
         if (ret == 0 && sent_now) {
             mesh_relay_note_tx_sent(&mesh_runtime, &outbound, k_uptime_get_32());
         }
@@ -4189,7 +4142,6 @@ static int gateway_host_command_admit(
     void *ctx,
     struct app_gateway_command_ingress_item *item)
 {
-    enum command_id command_id = CMD_VENDOR_BASE;
     int ret;
 
     ARG_UNUSED(ctx);
@@ -4202,15 +4154,21 @@ static int gateway_host_command_admit(
         gateway_host_command_next_admission_id = 1u;
     }
     item->admission_id = gateway_host_command_next_admission_id;
-    (void)gateway_command_extract_id(item->payload, item->payload_len,
-                                     &command_id);
+    ret = app_gateway_command_lifecycle_admit(&gateway_host_command_lifecycle,
+                                               item);
+    if (ret < 0) {
+        return ret;
+    }
     gateway_observe_host_stage(&item->packet,
-                               command_id,
+                               item->command_id,
                                GATEWAY_COMMAND_EVENT_STAGE_ACCEPTED);
     ret = k_msgq_put(&gateway_host_command_msgq, item, K_NO_WAIT);
-    if (ret == 0) {
+    if (ret < 0) {
+        (void)app_gateway_command_lifecycle_discard(
+            &gateway_host_command_lifecycle, item);
+    } else {
         gateway_observe_host_stage(&item->packet,
-                                   command_id,
+                                   item->command_id,
                                    GATEWAY_COMMAND_EVENT_STAGE_QUEUED);
     }
     return ret;
@@ -4220,8 +4178,9 @@ static int gateway_host_command_submit_priority(void *ctx)
 {
     ARG_UNUSED(ctx);
 
-    return gateway_host_command_retry_pending ? 0 :
-        mesh_gateway_command_priority_submit(&gateway_host_command_work);
+    app_mesh_command_orchestrator_clear_safe_boundary(
+        mesh_gateway_command_orchestrator_context());
+    return mesh_gateway_command_priority_submit(&gateway_host_command_work);
 }
 
 static int gateway_host_command_cancel_admitted(
@@ -4230,31 +4189,11 @@ static int gateway_host_command_cancel_admitted(
 {
     ARG_UNUSED(ctx);
 
-    if (identity == NULL) {
-        return -EINVAL;
-    }
-    for (size_t i = 0u; i < ARRAY_SIZE(gateway_host_command_cancelled); i++) {
-        if (!gateway_host_command_cancelled[i].valid) {
-            gateway_host_command_cancelled[i].identity = *identity;
-            gateway_host_command_cancelled[i].valid = true;
-            return 0;
-        }
-    }
-    return -ENOSPC;
-}
-
-static bool gateway_host_command_take_cancelled(
-    const struct app_gateway_command_ingress_item *item)
-{
-    for (size_t i = 0u; i < ARRAY_SIZE(gateway_host_command_cancelled); i++) {
-        if (gateway_host_command_cancelled[i].valid &&
-            app_gateway_command_identity_matches(
-                &gateway_host_command_cancelled[i].identity, item)) {
-            gateway_host_command_cancelled[i].valid = false;
-            return true;
-        }
-    }
-    return false;
+    return app_gateway_command_lifecycle_cancel(&gateway_host_command_lifecycle,
+                                                identity,
+                                                NULL,
+                                                NULL,
+                                                NULL);
 }
 
 static void gateway_host_command_emit_result(
@@ -4310,143 +4249,237 @@ static void gateway_host_command_schedule_failed(void *ctx, int error)
     gateway_host_command_retry_round = 0u;
     gateway_host_command_retry_started_ms = 0u;
     while (k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT) == 0) {
-        enum command_id command_id = CMD_VENDOR_BASE;
+        enum app_gateway_command_lifecycle_dispatch dispatch;
+        int ret;
 
-        (void)gateway_command_extract_id(item.payload, item.payload_len,
-                                         &command_id);
-        gateway_emit_host_command_result(&item.packet, command_id,
+        ret = app_gateway_command_lifecycle_begin_dispatch(
+            &gateway_host_command_lifecycle, &item, &dispatch);
+        if (ret == 0 &&
+            dispatch == APP_GATEWAY_COMMAND_LIFECYCLE_DISPATCH_CANCELLED) {
+            continue;
+        }
+        gateway_emit_host_command_result(&item.packet, item.command_id,
                                          COMMAND_INTERNAL_ERROR,
                                          (uint8_t)(-error));
         gateway_observe_host_terminal(
             &item.packet,
-            command_id,
+            item.command_id,
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        (void)app_gateway_command_lifecycle_finish(
+            &gateway_host_command_lifecycle, &item);
     }
-    memset(gateway_host_command_cancelled, 0,
-           sizeof(gateway_host_command_cancelled));
     LOG_ERR("gateway command priority safe-boundary scheduling failed: ret=%d; admitted commands cancelled",
             error);
+}
+
+static void gateway_host_command_retry_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+
+    gateway_host_command_retry_pending = false;
+    ret = gateway_host_command_submit_priority(NULL);
+    if (ret < 0) {
+        gateway_host_command_schedule_failed(NULL, ret);
+    }
+}
+
+static void gateway_host_command_submit_next_queued(void)
+{
+    struct app_gateway_command_ingress_item item;
+    int ret;
+
+    if (k_msgq_peek(&gateway_host_command_msgq, &item) != 0) {
+        return;
+    }
+    ret = gateway_host_command_submit_priority(NULL);
+    if (ret < 0) {
+        gateway_host_command_schedule_failed(NULL, ret);
+    }
 }
 
 static void gateway_host_command_work_handler(struct k_work *work)
 {
     struct app_gateway_command_ingress_item item;
+    enum app_gateway_command_lifecycle_dispatch dispatch;
+    int ret;
 
     ARG_UNUSED(work);
     gateway_host_command_retry_pending = false;
 
-    while (k_msgq_peek(&gateway_host_command_msgq, &item) == 0) {
-        enum command_id command_id = CMD_VENDOR_BASE;
-        int ret;
-
-        if (gateway_host_command_take_cancelled(&item)) {
-            (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
-            gateway_host_command_retry_round = 0u;
-            gateway_host_command_retry_started_ms = 0u;
-            continue;
-        }
-        (void)gateway_command_extract_id(item.payload, item.payload_len,
-                                         &command_id);
-        dwm3000_driver_clear_receive_abort();
-        gateway_observe_host_stage(&item.packet,
-                                   command_id,
-                                   GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING);
-        ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
-        if (ret == -EAGAIN) {
-            uint32_t delay_ms;
-
-            if (gateway_host_command_retry_round == 0u) {
-                gateway_host_command_retry_started_ms = k_uptime_get_32();
-            }
-            if (gateway_host_command_retry_round >=
-                GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS) {
-                gateway_emit_host_command_result(&item.packet,
-                                                 command_id,
-                                                 COMMAND_TIMEOUT,
-                                                 ETIMEDOUT);
-                gateway_observe_host_terminal(
-                    &item.packet,
-                    command_id,
-                    COMMAND_TIMEOUT,
-                    GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
-                LOG_ERR("gateway BLE command send retries exhausted: cmd=0x%04x attempts=%u age_ms=%u",
-                        (unsigned int)command_id,
-                        gateway_host_command_retry_round,
-                        k_uptime_get_32() - gateway_host_command_retry_started_ms);
-                (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
-                gateway_host_command_retry_round = 0u;
-                gateway_host_command_retry_started_ms = 0u;
-                continue;
-            }
-            delay_ms = discovery_assignment_retry_backoff_ms(
-                gateway_host_command_retry_round,
-                sys_rand32_get());
-            gateway_host_command_retry_round++;
-            {
-                enum gateway_command_event_kind kind =
-                    gateway_observability_kind(command_id);
-
-                if (kind != 0) {
-                    struct gateway_command_event event = gateway_observability_event(
-                        kind,
-                        GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
-                        command_id,
-                        &item.packet,
-                        0u);
-
-                    event.attempt = gateway_host_command_retry_round;
-                    event.status = COMMAND_BUSY;
-                    event.reason = GATEWAY_COMMAND_EVENT_REASON_BUSY;
-                    (void)gateway_observe_command_event(&event, false);
-                }
-            }
-            gateway_host_command_retry_pending = true;
-            (void)k_work_reschedule(&gateway_host_command_work,
-                                    K_MSEC(delay_ms));
-            LOG_WRN("gateway BLE command send deferred: attempt=%u/%u delay_ms=%u",
-                    gateway_host_command_retry_round,
-                    GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS,
-                    delay_ms);
-            return;
-        }
+    if (k_msgq_peek(&gateway_host_command_msgq, &item) != 0) {
+        return;
+    }
+    ret = app_gateway_command_lifecycle_begin_dispatch(
+        &gateway_host_command_lifecycle, &item, &dispatch);
+    if (ret < 0) {
+        (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+        gateway_emit_host_command_result(&item.packet, item.command_id,
+                                         COMMAND_INTERNAL_ERROR,
+                                         (uint8_t)(-ret));
+        gateway_observe_host_terminal(
+            &item.packet,
+            item.command_id,
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        (void)app_gateway_command_lifecycle_discard(
+            &gateway_host_command_lifecycle, &item);
+        gateway_host_command_retry_round = 0u;
+        gateway_host_command_retry_started_ms = 0u;
+        gateway_host_command_submit_next_queued();
+        return;
+    }
+    if (dispatch == APP_GATEWAY_COMMAND_LIFECYCLE_DISPATCH_CANCELLED) {
         (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
         gateway_host_command_retry_round = 0u;
         gateway_host_command_retry_started_ms = 0u;
-        if (ret < 0) {
-            enum gateway_command_event_kind kind =
-                gateway_observability_kind(command_id);
+        gateway_host_command_submit_next_queued();
+        return;
+    }
+    ret = app_mesh_command_orchestrator_activate(
+        mesh_gateway_command_orchestrator_context(), &item);
+    if (ret < 0) {
+        (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+        gateway_emit_host_command_result(&item.packet, item.command_id,
+                                         COMMAND_INTERNAL_ERROR,
+                                         (uint8_t)(-ret));
+        gateway_observe_host_terminal(
+            &item.packet,
+            item.command_id,
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        (void)app_gateway_command_lifecycle_finish(
+            &gateway_host_command_lifecycle, &item);
+        gateway_host_command_submit_next_queued();
+        return;
+    }
+    dwm3000_driver_clear_receive_abort();
+    gateway_observe_host_stage(&item.packet,
+                               item.command_id,
+                               GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING);
+    ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
+    if (ret == -EAGAIN) {
+        uint32_t delay_ms;
 
-            if (kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION ||
-                kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY) {
+        if (gateway_host_command_retry_round == 0u) {
+            gateway_host_command_retry_started_ms = k_uptime_get_32();
+        }
+        if (gateway_host_command_retry_round >=
+            GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS) {
+            gateway_emit_host_command_result(&item.packet,
+                                             item.command_id,
+                                             COMMAND_TIMEOUT,
+                                             ETIMEDOUT);
+            gateway_observe_host_terminal(
+                &item.packet,
+                item.command_id,
+                COMMAND_TIMEOUT,
+                GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
+            LOG_ERR("gateway BLE command send retries exhausted: cmd=0x%04x attempts=%u age_ms=%u",
+                    (unsigned int)item.command_id,
+                    gateway_host_command_retry_round,
+                    k_uptime_get_32() - gateway_host_command_retry_started_ms);
+            (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+            (void)app_gateway_command_lifecycle_finish(
+                &gateway_host_command_lifecycle, &item);
+            gateway_host_command_retry_round = 0u;
+            gateway_host_command_retry_started_ms = 0u;
+            gateway_host_command_submit_next_queued();
+            return;
+        }
+        delay_ms = discovery_assignment_retry_backoff_ms(
+            gateway_host_command_retry_round,
+            sys_rand32_get());
+        gateway_host_command_retry_round++;
+        {
+            enum gateway_command_event_kind kind =
+                gateway_observability_kind(item.command_id);
+
+            if (kind != 0) {
                 struct gateway_command_event event = gateway_observability_event(
                     kind,
-                    GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
-                    command_id,
+                    GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
+                    item.command_id,
                     &item.packet,
                     0u);
 
-                event.status = ret == -EBUSY ? COMMAND_BUSY :
-                               ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
-                               COMMAND_TIMEOUT :
-                               ret == -EINVAL || ret == -EMSGSIZE ?
-                               COMMAND_MALFORMED_PAYLOAD : COMMAND_RADIO_ERROR;
-                event.reason = item.command_id == CMD_SURVEY_REACHABILITY && ret == -EINVAL ?
-                               GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION :
-                               ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
-                               ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
-                               GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
-                               ret == -EINVAL || ret == -EMSGSIZE ?
-                               GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST :
-                               GATEWAY_COMMAND_EVENT_REASON_RADIO;
-                (void)gateway_observe_command_event(&event, true);
+                event.attempt = gateway_host_command_retry_round;
+                event.status = COMMAND_BUSY;
+                event.reason = GATEWAY_COMMAND_EVENT_REASON_BUSY;
+                (void)gateway_observe_command_event(&event, false);
             }
-            LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
-                    item.packet.msg_type,
-                    (unsigned long long)item.packet.dst_id,
-                    ret);
         }
+        ret = app_gateway_command_lifecycle_requeue_retry(
+            &gateway_host_command_lifecycle, &item);
+        if (ret < 0) {
+            (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+            gateway_emit_host_command_result(&item.packet, item.command_id,
+                                             COMMAND_INTERNAL_ERROR,
+                                             (uint8_t)(-ret));
+            (void)app_gateway_command_lifecycle_finish(
+                &gateway_host_command_lifecycle, &item);
+            gateway_host_command_retry_round = 0u;
+            gateway_host_command_retry_started_ms = 0u;
+            gateway_host_command_submit_next_queued();
+            return;
+        }
+        gateway_host_command_retry_pending = true;
+        ret = k_work_reschedule(&gateway_host_command_retry_work,
+                                K_MSEC(delay_ms));
+        if (ret < 0) {
+            gateway_host_command_retry_pending = false;
+            gateway_host_command_schedule_failed(NULL, ret);
+            return;
+        }
+        LOG_WRN("gateway BLE command send deferred: attempt=%u/%u delay_ms=%u",
+                gateway_host_command_retry_round,
+                GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS,
+                delay_ms);
+        return;
     }
+    (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+    (void)app_gateway_command_lifecycle_finish(&gateway_host_command_lifecycle,
+                                                &item);
+    gateway_host_command_retry_round = 0u;
+    gateway_host_command_retry_started_ms = 0u;
+    if (ret < 0) {
+        enum gateway_command_event_kind kind =
+            gateway_observability_kind(item.command_id);
+
+        /* Reachability owns every immediate terminal outcome at its source. */
+        if (kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION ||
+            (kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY &&
+             item.command_id != CMD_SURVEY_REACHABILITY)) {
+            struct gateway_command_event event = gateway_observability_event(
+                kind,
+                GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+                item.command_id,
+                &item.packet,
+                0u);
+
+            event.status = ret == -EBUSY ? COMMAND_BUSY :
+                           ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
+                           COMMAND_TIMEOUT :
+                           ret == -EINVAL || ret == -EMSGSIZE ?
+                           COMMAND_MALFORMED_PAYLOAD : COMMAND_RADIO_ERROR;
+            event.reason = item.command_id == CMD_SURVEY_REACHABILITY && ret == -EINVAL ?
+                           GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION :
+                           ret == -EBUSY ? GATEWAY_COMMAND_EVENT_REASON_BUSY :
+                           ret == -ETIMEDOUT || ret == -EHOSTUNREACH ?
+                           GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
+                           ret == -EINVAL || ret == -EMSGSIZE ?
+                           GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST :
+                           GATEWAY_COMMAND_EVENT_REASON_RADIO;
+            (void)gateway_observe_command_event(&event, true);
+        }
+        LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
+                item.packet.msg_type,
+                (unsigned long long)item.packet.dst_id,
+                ret);
+    }
+    gateway_host_command_submit_next_queued();
 }
 #endif
 
@@ -4473,7 +4506,8 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
             (unsigned int)frame_len);
 #else
 #if DEVICE_ROLE == ROLE_GATEWAY
-    struct app_gateway_command_ingress_item item;
+    struct app_mesh_command_orchestrator *orchestrator =
+        mesh_gateway_command_orchestrator_context();
     const struct app_gateway_command_ingress_ops ingress_ops = {
         .gateway_role = true,
         .admit = gateway_host_command_admit,
@@ -4485,11 +4519,12 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
     bool command_handled;
     int ret;
 
-    ret = app_gateway_command_ingress_handle_frame(&ingress_ops,
-                                                   frame,
-                                                   frame_len,
-                                                   &item,
-                                                   &command_handled);
+    ret = app_mesh_command_orchestrator_gateway_ingress(
+        orchestrator,
+        &ingress_ops,
+        frame,
+        frame_len,
+        &command_handled);
     if (ret != 0) {
         if (command_handled) {
             LOG_WRN("gateway BLE command ingress failed: %d", ret);
@@ -4502,11 +4537,14 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
         return;
     }
 
-    ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
+    /* Ingress always decodes into the shared context, including non-commands. */
+    ret = gateway_route_host_packet(&orchestrator->admitted.packet,
+                                    orchestrator->admitted.payload,
+                                    orchestrator->admitted.payload_len);
     if (ret < 0) {
         LOG_WRN("gateway BLE packet rejected: msg=0x%02x dst=0x%016llx ret=%d",
-                item.packet.msg_type,
-                (unsigned long long)item.packet.dst_id,
+                orchestrator->admitted.packet.msg_type,
+                (unsigned long long)orchestrator->admitted.packet.dst_id,
                 ret);
     }
 #else
@@ -4565,14 +4603,25 @@ static bool anchor_survey_abort_is_requested(void)
 
 static bool anchor_survey_pair_queueable(const struct survey_pair *pair)
 {
-    return pair != NULL && pair->sample_count <= REPORT_TX_QUEUE_DEPTH;
+    return pair != NULL &&
+           pair->sample_count <= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT &&
+           pair->sample_count <= REPORT_TX_QUEUE_DEPTH;
 }
 
 static void anchor_survey_schedule(k_timeout_t delay)
 {
-    (void)k_work_reschedule_for_queue(&anchor_survey_work_q,
+#if DEVICE_ROLE == ROLE_ANCHOR
+    (void)k_work_reschedule_for_queue(&anchor_uwb_scan_work_q,
                                       &anchor_survey_work,
                                       delay);
+#else
+    ARG_UNUSED(delay);
+#endif
+}
+
+static void anchor_survey_schedule_ms(uint32_t delay_ms)
+{
+    anchor_survey_schedule(K_MSEC(delay_ms));
 }
 
 static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
@@ -4849,6 +4898,7 @@ static void anchor_survey_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
+    (void)app_anchor_survey_discovery_retry_report();
     key = k_spin_lock(&anchor_survey_lock);
     if (anchor_survey_discovery_pending) {
         discovery_config = anchor_survey_discovery_config;
@@ -4873,7 +4923,8 @@ static void anchor_survey_work_handler(struct k_work *work)
 
         anchor_set_uwb_busy(true);
         uwb_window_start_ms = k_uptime_get();
-        ret = anchor_run_survey_discovery(&discovery_config, discovery_start_ms);
+        ret = app_anchor_survey_discovery_run(&discovery_config,
+                                              discovery_start_ms);
         low_power_ret = anchor_enter_low_power(
             app_radio_low_power_mode_for_connection(
                 mesh_anchor_connected_radio_active()),
@@ -4886,6 +4937,7 @@ static void anchor_survey_work_handler(struct k_work *work)
         radio_guard_uwb_stop();
         mesh_restart_role_scan();
         (void)anchor_start_uwb_scan();
+        (void)app_anchor_survey_discovery_retry_report();
         report_tx_schedule(0u);
         key = k_spin_lock(&anchor_survey_lock);
         anchor_survey_running = false;
@@ -5064,185 +5116,6 @@ static void anchor_abort_survey_pair(void)
     (void)k_work_cancel_delayable(&anchor_survey_work);
     LOG_INF("survey pair state aborted locally");
 }
-
-static void anchor_receive_survey_probes_until(
-    const struct survey_discovery_config *config,
-    uint8_t opportunity,
-    uint32_t deadline_ms,
-    struct survey_reachability_entry *entries,
-    size_t entry_cap,
-    size_t *entry_count)
-{
-    while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms) &&
-           !anchor_survey_abort_is_requested()) {
-        struct uwb_survey_discovery_probe_frame probe = {0};
-        uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
-        size_t frame_len = 0u;
-        uint8_t quality = 0u;
-        int8_t rsl_dbm = 0;
-        uint32_t remaining_ms = uptime_ms_until_deadline(k_uptime_get_32(),
-                                                         deadline_ms);
-        int ret;
-
-        if (remaining_ms == 0u) {
-            break;
-        }
-        ret = dwm3000_driver_receive_frame(remaining_ms, frame, sizeof(frame),
-                                           &frame_len, &quality, &rsl_dbm);
-        if (ret == -ETIMEDOUT) {
-            break;
-        }
-        if (ret != 0 ||
-            uwb_decode_survey_discovery_probe(frame, frame_len, &probe) != PROTO_OK ||
-            probe.network_id != NETWORK_ID ||
-            probe.survey_id != config->survey_id ||
-            probe.anchor_id == DEVICE_ID ||
-            probe.slot_count != config->slot_count ||
-            probe.anchor_slot != survey_discovery_opportunity_slot(
-                                     probe.anchor_id, config->survey_id,
-                                     opportunity, config->slot_count)) {
-            continue;
-        }
-        if (quality > 100u) {
-            quality = 100u;
-        }
-        survey_add_reach_entry(entries, entry_cap, entry_count,
-                               probe.anchor_id, quality);
-        for (size_t i = 0u; i < *entry_count; i++) {
-            if (entries[i].peer_id == probe.anchor_id &&
-                quality >= entries[i].quality) {
-                entries[i].rssi_dbm = rsl_dbm;
-                break;
-            }
-        }
-        high_debug_log_event("SURVEY_DISCOVERY_PROBE_RX",
-                             "survey=%u opportunity=%u peer=0x%016llx slot=%u quality=%u rsl=%d peers=%u",
-                             config->survey_id, opportunity,
-                             (unsigned long long)probe.anchor_id,
-                             probe.anchor_slot, quality, rsl_dbm,
-                             (unsigned int)*entry_count);
-    }
-}
-
-static int anchor_run_survey_discovery(const struct survey_discovery_config *config,
-                                       uint32_t start_ms)
-{
-    struct survey_reachability_entry entries[SURVEY_REACH_MAX_ENTRIES] = {0};
-    size_t entry_count = 0u;
-    uint8_t report_slot;
-    uint32_t report_delay_ms = 0u;
-    int ret;
-
-    if (survey_discovery_config_validate(config) != PROTO_OK) {
-        return -EINVAL;
-    }
-
-    ret = dwm3000_driver_configure_wake_mode();
-    if (ret < 0) {
-        return ret;
-    }
-    if (!uptime_deadline_reached(k_uptime_get_32(), start_ms)) {
-        (void)sleep_with_uwb_standby_until_ms(start_ms);
-        ret = dwm3000_driver_configure_wake_mode();
-        if (ret < 0) {
-            return ret;
-        }
-    }
-
-    report_slot = local_survey_discovery_slot(config->slot_count);
-    for (uint8_t opportunity = 0u;
-         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT &&
-         !anchor_survey_abort_is_requested();
-         opportunity++) {
-        struct uwb_survey_discovery_probe_frame probe = {
-            .network_id = NETWORK_ID,
-            .survey_id = config->survey_id,
-            .anchor_id = DEVICE_ID,
-            .slot_count = config->slot_count,
-            .flags = FLAG_DIAGNOSTIC,
-        };
-        uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
-        size_t frame_len = 0u;
-        uint32_t relative_start_ms = 0u;
-        uint32_t relative_end_ms = 0u;
-        uint32_t relative_tx_ms = 0u;
-        uint32_t opportunity_start_ms;
-        uint32_t opportunity_end_ms;
-        uint32_t opportunity_tx_ms;
-
-        ret = survey_discovery_opportunity_window_ms(config, opportunity,
-                                                     &relative_start_ms,
-                                                     &relative_end_ms);
-        if (ret == PROTO_OK) {
-            ret = survey_discovery_opportunity_tx_ms(config, DEVICE_ID,
-                                                     opportunity,
-                                                     &relative_tx_ms);
-        }
-        if (ret != PROTO_OK) {
-            return mesh_errno_from_proto(ret);
-        }
-        opportunity_start_ms = u32_saturating_add(start_ms, relative_start_ms);
-        opportunity_end_ms = u32_saturating_add(start_ms, relative_end_ms);
-        opportunity_tx_ms = u32_saturating_add(
-            start_ms,
-            u32_saturating_add(relative_tx_ms, SURVEY_DISCOVERY_RX_GUARD_MS));
-        probe.anchor_slot = survey_discovery_opportunity_slot(
-            DEVICE_ID, config->survey_id, opportunity, config->slot_count);
-
-        if (!uptime_deadline_reached(k_uptime_get_32(), opportunity_start_ms)) {
-            sleep_until_ms(opportunity_start_ms);
-        }
-        if (!uptime_deadline_reached(k_uptime_get_32(), opportunity_tx_ms)) {
-            anchor_receive_survey_probes_until(config, opportunity,
-                                               opportunity_tx_ms, entries,
-                                               ARRAY_SIZE(entries), &entry_count);
-        }
-        if (!uptime_deadline_reached(k_uptime_get_32(), opportunity_end_ms)) {
-            ret = uwb_encode_survey_discovery_probe(&probe, frame, sizeof(frame),
-                                                    &frame_len);
-            if (ret == PROTO_OK) {
-                ret = dwm3000_driver_send_frame(frame, frame_len,
-                                                SURVEY_DISCOVERY_TX_TIMEOUT_MS);
-            }
-            if (ret < 0) {
-                LOG_WRN("survey discovery probe TX failed: survey=%u opportunity=%u slot=%u ret=%d",
-                        config->survey_id, opportunity, probe.anchor_slot, ret);
-            } else {
-                high_debug_log_event("SURVEY_DISCOVERY_PROBE_TX",
-                                     "survey=%u opportunity=%u slot=%u slot_ms=%u",
-                                     config->survey_id, opportunity,
-                                     probe.anchor_slot, config->slot_ms);
-            }
-            ret = dwm3000_driver_configure_wake_mode();
-            if (ret < 0) {
-                return ret;
-            }
-            anchor_receive_survey_probes_until(config, opportunity,
-                                               opportunity_end_ms, entries,
-                                               ARRAY_SIZE(entries), &entry_count);
-        }
-    }
-
-    ret = survey_discovery_report_delay_ms(config, report_slot,
-                                           SURVEY_RESULT_MESH_SLOT_MS,
-                                           &report_delay_ms);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    ret = anchor_queue_survey_discovery_report(
-        config->survey_id, entries, entry_count,
-        u32_saturating_add(start_ms, report_delay_ms));
-    if (ret < 0) {
-        return ret;
-    }
-
-    LOG_INF("survey discovery complete: survey=%u report_slot=%u peers=%u report_delay_ms=%u opportunities=%u",
-            config->survey_id, report_slot, (unsigned int)entry_count,
-            report_delay_ms, SURVEY_DISCOVERY_OPPORTUNITY_COUNT);
-    return 0;
-}
-
-
 
 static int anchor_start_uwb_scan(void);
 static void anchor_uwb_scan_work_handler(struct k_work *work);
@@ -6304,8 +6177,9 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             (unsigned long long)anchor_uwb_session.epoch.priority_id,
             selected_decision);
     click_priority = app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
-    if (click_priority) {
-        mesh_preempt_for_click_event();
+    if (click_priority && mesh_preempt_for_click_event() < 0) {
+        LOG_ERR("anchor click claim deferred because mesh custody preemption failed");
+        return false;
     }
     anchor_click_window_set_active(click_priority);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -6518,6 +6392,9 @@ discovery_miss:
             reply.anchor_slot = ml_anchor_discovery_slot(discover.discovery_slot_count);
         }
 #else
+        enum app_discovery_assignment_provisioning_state provisioning_state =
+            local_anchor_discovery_assignment_provisioning_state();
+
         ret = local_anchor_discovery_slot(discover.discovery_slot_count,
                                           &reply.anchor_slot);
         if (ret != PROTO_OK) {
@@ -6543,6 +6420,16 @@ discovery_miss:
                         ret);
             }
             return true;
+        }
+        if (provisioning_state == APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
+            status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED event=%u attempt=%u reply=fallback slot=%u\n",
+                                discover.click_event_id,
+                                discover.attempt_index,
+                                reply.anchor_slot);
+            LOG_WRN("anchor UWB DISCOVERY_REPLY using deterministic fallback while UNPROVISIONED: event=%u attempt=%u slot=%u",
+                    discover.click_event_id,
+                    discover.attempt_index,
+                    reply.anchor_slot);
         }
 #endif
 
@@ -6811,7 +6698,11 @@ static bool anchor_handle_mesh_click_wake_claim(
 
     (void)k_work_cancel_delayable(&anchor_uwb_scan_work);
     anchor_click_window_set_active(true);
-    mesh_preempt_for_click_event();
+    if (mesh_preempt_for_click_event() < 0) {
+        anchor_click_window_set_active(false);
+        LOG_ERR("anchor click handoff deferred because mesh custody preemption failed");
+        return false;
+    }
     ret = radio_guard_uwb_start("anchor mesh click handoff");
     if (ret < 0) {
         LOG_ERR("anchor click handoff could not acquire UWB radio: ret=%d", ret);
@@ -7348,9 +7239,14 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
     .anchor_note_uwb_awake_since = anchor_note_uwb_awake_since,
     .anchor_handle_click_wake_claim = anchor_handle_mesh_click_wake_claim,
     .anchor_handle_local_command = anchor_handle_local_command,
-    .anchor_handle_survey_discovery_start = anchor_handle_survey_discovery_start,
+    .anchor_handle_survey_discovery_start =
+        app_anchor_survey_discovery_handle_start,
     .anchor_handle_survey_pair_prepare = anchor_handle_survey_pair_prepare,
     .gateway_handle_survey_discovery_report = gateway_handle_survey_discovery_report,
+    .anchor_survey_delivery_gateway_confirmed =
+        app_anchor_survey_delivery_gateway_confirmed,
+    .anchor_survey_delivery_transport_released =
+        app_anchor_survey_delivery_transport_released,
 };
 
 const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void)
@@ -7360,10 +7256,34 @@ const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void)
 
 int app_anchor_init(void)
 {
+    const struct app_anchor_survey_discovery_ops discovery_ops = {
+        .abort_requested = anchor_survey_abort_is_requested,
+        .abort_pair = anchor_abort_survey_pair,
+        .preempt_radio = anchor_preempt_for_survey_discovery,
+        .queue_start = anchor_queue_survey_discovery,
+        .schedule_work_ms = anchor_survey_schedule_ms,
+        .next_sequence = anchor_next_survey_seq,
+    };
+    int ret;
+
+    ret = app_anchor_survey_discovery_init(&discovery_ops);
+    if (ret < 0) {
+        return ret;
+    }
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
+    if (gateway_host_command_msgq.max_msgs != GATEWAY_HOST_COMMAND_QUEUE_DEPTH) {
+        return -EINVAL;
+    }
+    ret = app_gateway_command_lifecycle_init(&gateway_host_command_lifecycle,
+                                             GATEWAY_HOST_COMMAND_QUEUE_DEPTH);
+    if (ret < 0) {
+        return ret;
+    }
     k_work_init_delayable(&gateway_host_command_work,
                           gateway_host_command_work_handler);
+    k_work_init_delayable(&gateway_host_command_retry_work,
+                          gateway_host_command_retry_work_handler);
     app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
         gateway_host_command_schedule_failed, NULL);
 #endif
@@ -7374,6 +7294,16 @@ int app_anchor_init(void)
     k_work_init_delayable(&anchor_discovery_claim_work,
                           anchor_discovery_claim_work_handler);
 #if DEVICE_ROLE == ROLE_GATEWAY
+    {
+        const struct app_gateway_assignment_publisher_ops publisher_ops = {
+            .emit_if_available = gateway_observe_command_event_if_available,
+        };
+
+        ret = app_gateway_assignment_publisher_init(&publisher_ops);
+        if (ret < 0) {
+            return ret;
+        }
+    }
     k_work_init_delayable(&gateway_discovery_assignment_finalize_work,
                           gateway_discovery_assignment_finalize_work_handler);
     k_work_init_delayable(&gateway_discovery_assignment_publish_work,
@@ -7391,6 +7321,7 @@ int app_anchor_start_anchor_role(void)
         .ranging_channel = UWB_RANGING_CHANNEL,
     };
     int ret;
+    bool delivery_restored = false;
 
     mesh_relay_init(&mesh_runtime,
                     MESH_RELAY_ROLE_ANCHOR,
@@ -7402,6 +7333,10 @@ int app_anchor_start_anchor_role(void)
         LOG_WRN("anchor mesh outbox restore unavailable: %d", ret);
     }
     mesh_report_resume_restored_outbox("anchor-startup");
+    ret = app_anchor_survey_discovery_restore(&delivery_restored);
+    if (ret < 0) {
+        return ret;
+    }
     ret = app_mesh_persistence_restore_child_custody(&mesh_runtime,
                                                     k_uptime_get_32());
     if (ret < 0) {
@@ -7503,11 +7438,9 @@ int app_anchor_start_anchor_role(void)
         status_debug_note("DBG_ANCHOR_CH5_SCAN_WQ_STARTED\n");
     }
 #endif
-    k_work_queue_start(&anchor_survey_work_q,
-                       anchor_survey_work_q_stack,
-                       K_THREAD_STACK_SIZEOF(anchor_survey_work_q_stack),
-                       ANCHOR_SURVEY_WORKQUEUE_PRIORITY,
-                       &anchor_survey_work_q_config);
+    if (delivery_restored) {
+        anchor_survey_schedule(K_NO_WAIT);
+    }
     ret = anchor_start_uwb_scan();
     if (ret < 0) {
         LOG_ERR("anchor UWB scan unavailable: %d", ret);

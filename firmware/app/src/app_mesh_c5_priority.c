@@ -53,7 +53,14 @@ bool app_mesh_c5_route_capture_relevant(
 
     if (state->msg_type == MSG_ROUTE_REPLY) {
         return state->src_id == state->target_id &&
-               state->dst_id == state->local_id;
+               state->dst_id == state->local_id &&
+               (!state->route_identity_required ||
+                (state->expected_session_id != 0u &&
+                 state->expected_flood_epoch_id != 0u &&
+                 state->expected_reply_nonce != 0u &&
+                 state->session_id == state->expected_session_id &&
+                 state->flood_epoch_id == state->expected_flood_epoch_id &&
+                 state->reply_nonce == state->expected_reply_nonce));
     }
 
     if (state->msg_type == MSG_GATEWAY_ROUTE_ADV) {
@@ -98,9 +105,65 @@ bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type)
 
 bool app_mesh_c5_route_capture_requires_inline_timing_install(
     uint8_t msg_type,
-    bool awaiting_event_accept)
+    bool timing_negotiation_active)
 {
-    return awaiting_event_accept && msg_type == MSG_MESH_EVENT_ACCEPT;
+    return timing_negotiation_active && msg_type == MSG_MESH_EVENT_ACCEPT;
+}
+
+bool app_mesh_c5_route_capture_requires_post_rx_response(uint8_t msg_type)
+{
+    return msg_type == MSG_MESH_EVENT_PROPOSE;
+}
+
+bool app_mesh_c5_event_accept_reservation(
+    const struct mesh_event_timing *accepted,
+    uint16_t realign_slop_ms,
+    struct mesh_event_timing *reservation)
+{
+    uint32_t expanded_guard_ms;
+    uint32_t reserved_ms;
+
+    if (accepted == NULL || reservation == NULL ||
+        accepted->event_interval_ms == 0u ||
+        accepted->event_window_ms == 0u || accepted->guard_ms == 0u) {
+        return false;
+    }
+
+    expanded_guard_ms = (uint32_t)accepted->guard_ms + realign_slop_ms;
+    reserved_ms = (uint32_t)accepted->event_window_ms +
+                  (2u * expanded_guard_ms);
+    if (expanded_guard_ms > UINT16_MAX ||
+        reserved_ms >= accepted->event_interval_ms) {
+        return false;
+    }
+
+    *reservation = *accepted;
+    reservation->guard_ms = (uint16_t)expanded_guard_ms;
+    return true;
+}
+
+bool app_mesh_c5_event_accept_realign_is_reserved(
+    const struct mesh_event_timing *reserved,
+    const struct mesh_event_timing *realigned,
+    uint16_t realign_slop_ms)
+{
+    uint32_t forward_delta_ms;
+    uint32_t backward_delta_ms;
+
+    if (reserved == NULL || realigned == NULL ||
+        reserved->event_interval_ms == 0u ||
+        reserved->event_interval_ms != realigned->event_interval_ms) {
+        return false;
+    }
+
+    forward_delta_ms =
+        (realigned->next_event_time_ms - reserved->next_event_time_ms) %
+        reserved->event_interval_ms;
+    backward_delta_ms =
+        (reserved->next_event_time_ms - realigned->next_event_time_ms) %
+        reserved->event_interval_ms;
+    return forward_delta_ms <= realign_slop_ms ||
+           backward_delta_ms <= realign_slop_ms;
 }
 
 bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
@@ -109,6 +172,7 @@ bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
 {
     return frame_len > standard_frame_max_len ||
            msg_type == MSG_COMMAND ||
+           msg_type == MSG_SURVEY_DISCOVERY_START ||
            msg_type == MSG_ROUTE_REQ ||
            msg_type == MSG_ROUTE_REPLY ||
            msg_type == MSG_GATEWAY_ROUTE_ADV ||

@@ -531,6 +531,52 @@ horizon plus every report slot and grace interval. A terminal `no anchors`
 result is valid only after this bounded horizon completes without a unique
 eligible report.
 
+Each anchor owns its encoded `SURVEY_DISCOVERY_REPORT` until the gateway has
+explicitly acknowledged that exact packet identity. Before the first transport
+attempt, the anchor transactionally persists the report bytes, survey identity,
+delivery generation, state, and bounded attempt budget. Route waits, gateway
+command preemption, tracked-transmit retries, and resets must resume that same
+record; admission to an in-memory report queue is not delivery. The durable
+record is cleared in two phases only after the gateway ACK is committed. While
+one report is pending, a later survey start is explicitly rejected and cannot
+overwrite the report whose custody is already owned.
+
+Each real report attempt has a persisted token. The attempt budget is consumed
+before RF can start, so a reset after transmission cannot grant a free retry;
+a pre-RF refusal refunds only the matching token. Late ACK, preemption, and
+post-send callbacks may update only that token and exact packet identity. The
+journal owns route-discovery retry itself and never occupies or overwrites the
+generic single route-wait packet slot. Old-schema or corrupt journal records are
+quarantined and cleared with an observable diagnostic; failure to clear the bad
+record must not stall anchor startup.
+
+When the gateway semantically accepts a current-survey discovery report, that
+report is also fresh reverse-path evidence for the report's anchor. The gateway
+retains the report anchor, the immediate previous hop, and the observed link
+quality in the bounded 50-report survey context. It may install that hint as a
+current-epoch downlink immediately before each survey prepare or start command.
+The hint is route evidence only: it does not create a gateway connection or a
+channel 9 timing reservation. Reinstalling the one target needed by the current
+command lets a 50-anchor survey work without requiring all reverse routes to fit
+simultaneously in the smaller general downlink table.
+
+Reverse evidence is retained only after all of these checks succeed: the frame
+arrived on channel 9 for local gateway delivery, requested a gateway ACK, its
+survey and packet identities agree, its survey is the currently active survey,
+its report payload is valid, and its immediate previous hop and link quality are
+valid. The first accepted report for an anchor owns that anchor's peer
+relationships and reverse hint for the survey. Transport duplicates and later
+valid packets for the same anchor are acknowledged and counted, but they do not
+replace or refresh that first accepted state. Stale, malformed, wrong-channel,
+or rejected reports do not create a hint. The installed downlink uses the
+gateway's current route epoch rather than an epoch supplied by the report. A
+direct report has the anchor itself as previous hop; a relayed report may use a
+different immediate next hop because semantic acceptance binds the hint to the
+originating anchor.
+The present mesh envelope uses network identity and CRC checks, not keyed STS or
+a packet MAC, so this rule prevents stale and accidental identity poisoning but
+must not be described as hostile-RF authentication.
+
 Gateway commands must not be blocked behind ordinary packet retries. If a
 local-origin payload, a transit payload, a retry, and a gateway command all need
 radio time, the gateway command's channel 5 propagation is serviced first. The
@@ -828,6 +874,24 @@ Useful tests or guards include:
 - Direct-to-gateway packets carry a batch identity and final-packet marker.
 - The gateway sends one batch ACK after the final packet marker, and nodes treat
   every packet listed in that ACK as fully gateway-accepted.
+- A survey reachability report remains durably owned across route wait,
+  preemption, timeout, and reset until an exact gateway ACK commits it; a later
+  survey cannot silently replace the pending report.
+- The first current-survey report accepted directly or through a relay retains
+  the anchor's peer relationships and reverse hint. Exact transport duplicates
+  and later valid packets for that anchor are ACKed and counted without changing
+  either, while stale, malformed, wrong-channel, and identity-mismatched reports
+  retain none.
+- Before every survey pair prepare and start command, the gateway reinstalls the
+  target's current-epoch reverse hint on demand, then uses the bounded priority
+  channel 5 wake-and-flood executor. A timing-free hint must never be treated as
+  proof that one unscheduled transmission can reach a sleeping target. Tests
+  cover an empty route table after gateway reset, 20 direct anchors, 50 mixed
+  direct and relayed anchors, and pressure beyond the general downlink-table
+  capacity.
+- Installing a survey reverse hint does not create a gateway connection or a
+  channel 9 timing reservation, and CRC-only frame validation is not represented
+  as hostile-RF authentication.
 - Missing entries from a gateway batch ACK remain queued for channel 9 retry
   without starting a new wake train.
 - ACK retry survives the worst-case click-handling duration.

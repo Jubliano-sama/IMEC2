@@ -139,6 +139,13 @@ static void test_route_reply_and_event_control_capture_rules(void)
         MSG_MESH_EVENT_PROPOSE,
         true));
     assert(!app_mesh_c5_route_capture_requires_inline_timing_install(
+        MSG_MESH_EVENT_PROPOSE,
+        false));
+    assert(app_mesh_c5_route_capture_requires_post_rx_response(
+        MSG_MESH_EVENT_PROPOSE));
+    assert(!app_mesh_c5_route_capture_requires_post_rx_response(
+        MSG_MESH_EVENT_ACCEPT));
+    assert(!app_mesh_c5_route_capture_requires_inline_timing_install(
         MSG_MESH_EVENT_ACCEPT,
         false));
     assert(app_mesh_c5_route_capture_relevant(&route_request));
@@ -146,6 +153,26 @@ static void test_route_reply_and_event_control_capture_rules(void)
         route_request.msg_type));
     assert(!app_mesh_c5_route_capture_requires_ack_hold(
         route_request.msg_type));
+}
+
+static void test_control_wake_captures_gateway_broadcast_command(void)
+{
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_COMMAND,
+        .src_id = 0x9999888877776666ull,
+        .dst_id = MESH_BROADCAST_ID,
+        .previous_hop_id = 0x9999888877776666ull,
+        .target_id = 0x9999888877776666ull,
+        .local_id = 0x3333333333333301ull,
+        .control_followup = true,
+    };
+
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.control_followup = false;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.control_followup = true;
+    state.previous_hop_id = state.local_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
 static void test_control_wake_captures_survey_discovery_like_enumeration(void)
@@ -168,9 +195,86 @@ static void test_control_wake_captures_survey_discovery_like_enumeration(void)
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
+static void test_route_reply_capture_requires_exact_discovery_identity(void)
+{
+    struct app_mesh_c5_route_capture_state route_reply = {
+        .msg_type = MSG_ROUTE_REPLY,
+        .session_id = 0x10203040u,
+        .flood_epoch_id = 0x50607080u,
+        .reply_nonce = 0x3344u,
+        .src_id = 0x9999888877776666ull,
+        .dst_id = 0x3333333333333301ull,
+        .previous_hop_id = 0x9999888877776666ull,
+        .target_id = 0x9999888877776666ull,
+        .local_id = 0x3333333333333301ull,
+        .expected_session_id = 0x10203040u,
+        .expected_flood_epoch_id = 0x50607080u,
+        .expected_reply_nonce = 0x3344u,
+        .route_identity_required = true,
+    };
+
+    assert(app_mesh_c5_route_capture_relevant(&route_reply));
+
+    route_reply.session_id--;
+    assert(!app_mesh_c5_route_capture_relevant(&route_reply));
+    route_reply.session_id = route_reply.expected_session_id;
+
+    route_reply.flood_epoch_id--;
+    assert(!app_mesh_c5_route_capture_relevant(&route_reply));
+    route_reply.flood_epoch_id = route_reply.expected_flood_epoch_id;
+
+    route_reply.reply_nonce--;
+    assert(!app_mesh_c5_route_capture_relevant(&route_reply));
+    route_reply.reply_nonce = route_reply.expected_reply_nonce;
+
+    route_reply.expected_session_id = 0u;
+    assert(!app_mesh_c5_route_capture_relevant(&route_reply));
+}
+
+static void test_event_accept_reservation_covers_bounded_realign(void)
+{
+    const struct mesh_event_timing accepted = {
+        .event_interval_ms = 440u,
+        .event_window_ms = 120u,
+        .next_event_time_ms = UINT32_MAX - 4u,
+        .guard_ms = 30u,
+    };
+    struct mesh_event_timing reservation;
+    struct mesh_event_timing realigned;
+
+    assert(app_mesh_c5_event_accept_reservation(&accepted, 20u, &reservation));
+    assert(reservation.guard_ms == 50u);
+    assert(reservation.next_event_time_ms == accepted.next_event_time_ms);
+
+    realigned = accepted;
+    realigned.next_event_time_ms += 17u;
+    assert(app_mesh_c5_event_accept_realign_is_reserved(&reservation,
+                                                         &realigned,
+                                                         20u));
+    realigned.next_event_time_ms++;
+    assert(app_mesh_c5_event_accept_realign_is_reserved(&reservation,
+                                                         &realigned,
+                                                         20u));
+
+    realigned = accepted;
+    realigned.next_event_time_ms -= 20u;
+    assert(app_mesh_c5_event_accept_realign_is_reserved(&reservation,
+                                                         &realigned,
+                                                         20u));
+    realigned = accepted;
+    realigned.next_event_time_ms += 21u;
+    assert(!app_mesh_c5_event_accept_realign_is_reserved(&reservation,
+                                                          &realigned,
+                                                          20u));
+    assert(!app_mesh_c5_event_accept_reservation(&accepted, 200u, &reservation));
+}
+
 static void test_channel5_control_phr_policy(void)
 {
     assert(app_mesh_c5_control_uses_extended_phr(MSG_COMMAND, 117u, 125u));
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_SURVEY_DISCOVERY_START,
+                                                 117u,
+                                                 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 146u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 95u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY, 95u, 125u));
@@ -215,6 +319,11 @@ static void test_wake_claim_click_priority_policy(void)
     assert(!app_mesh_c5_wake_followup_uses_extended_phr(0u));
     assert(!app_mesh_c5_wake_followup_uses_extended_phr(FLAG_COUNT_AS_CLICK));
     assert(app_mesh_c5_wake_followup_uses_extended_phr(
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY));
+    assert(!app_mesh_c5_wake_followup_is_control(
+        FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY));
+    assert(app_mesh_c5_wake_followup_is_control(
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
         FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY));
 }
 
@@ -322,7 +431,10 @@ int main(void)
     test_gateway_route_adv_counts_as_route_capture();
     test_unrelated_gateway_route_adv_is_ignored();
     test_route_reply_and_event_control_capture_rules();
+    test_control_wake_captures_gateway_broadcast_command();
     test_control_wake_captures_survey_discovery_like_enumeration();
+    test_route_reply_capture_requires_exact_discovery_identity();
+    test_event_accept_reservation_covers_bounded_realign();
     test_channel5_control_phr_policy();
     test_wake_claim_click_priority_policy();
     test_connected_gap_stays_armed_until_deadline_or_click();

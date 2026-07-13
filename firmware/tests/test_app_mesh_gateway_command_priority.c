@@ -11,7 +11,7 @@ enum call_kind {
 };
 
 struct priority_fixture {
-    enum call_kind calls[3];
+    enum call_kind calls[4];
     size_t call_count;
     void *scheduled_work;
     int reschedule_ret;
@@ -91,6 +91,30 @@ static void test_failed_safe_boundary_schedule_clears_abort_request(void)
     assert(fixture.calls[2] == CALL_CLEAR);
 }
 
+static void test_retry_requires_a_new_safe_boundary_handoff(void)
+{
+    struct priority_fixture fixture = {0};
+    struct app_mesh_gateway_command_priority_ops ops = ops_for(&fixture);
+    struct app_mesh_gateway_command_priority priority = {0};
+    int work;
+
+    assert(app_mesh_gateway_command_priority_request(&priority, &ops, &work) == 0);
+    assert(app_mesh_gateway_command_priority_acknowledge_safe_boundary(
+               &priority, &ops) == 0);
+    assert(fixture.call_count == 2u);
+    assert(fixture.calls[0] == CALL_ABORT);
+    assert(fixture.calls[1] == CALL_RESCHEDULE);
+
+    assert(app_mesh_gateway_command_priority_request(&priority, &ops, &work) == 0);
+    assert(app_mesh_gateway_command_priority_waiting_for_safe_boundary(&priority));
+    assert(fixture.call_count == 3u);
+    assert(fixture.calls[2] == CALL_ABORT);
+    assert(app_mesh_gateway_command_priority_acknowledge_safe_boundary(
+               &priority, &ops) == 0);
+    assert(fixture.call_count == 4u);
+    assert(fixture.calls[3] == CALL_RESCHEDULE);
+}
+
 static void test_non_gateway_cannot_preempt_radio(void)
 {
     struct priority_fixture fixture = {0};
@@ -107,6 +131,7 @@ int main(void)
 {
     test_abort_happens_before_command_reschedule();
     test_failed_safe_boundary_schedule_clears_abort_request();
+    test_retry_requires_a_new_safe_boundary_handoff();
     test_non_gateway_cannot_preempt_radio();
     return 0;
 }

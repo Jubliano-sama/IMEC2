@@ -10,6 +10,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
+
+#include <errno.h>
 #if defined(CONFIG_USE_SEGGER_RTT)
 #include <SEGGER_RTT.h>
 #endif
@@ -61,16 +63,23 @@ static const struct adc_dt_spec battery_adc = {
 #define HAS_BATTERY_ADC 0
 #endif
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 static struct k_work_delayable status1_debug_pulse_restore_work;
 static struct k_work_delayable status0_debug_pulse_restore_work;
-static struct k_work_delayable status0_power_blink_work;
 static bool status1_debug_pulse_work_ready;
 static bool status0_debug_pulse_work_ready;
+static bool status0_debug_pulse_active;
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+static struct k_work_delayable status0_power_blink_work;
 static bool status0_power_blink_work_ready;
+#endif
+#endif
 static bool status_power_indicator_enabled;
 static bool status0_power_red_on;
-static bool status0_debug_pulse_active;
 static uint32_t status0_ch5_rx_hold_until_ms;
+
+#define BATTERY_ADC_DISABLE_RETRY_COUNT 3u
+#define BATTERY_ADC_DISABLE_RETRY_DELAY_US 100u
 
 static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
 {
@@ -83,21 +92,50 @@ static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_sp
 int battery_adc_divider_disable(void)
 {
 #if DT_NODE_HAS_STATUS(BATTERY_ADC_ENABLE_NODE, okay)
-    int ret;
+    int ret = -EIO;
 
     if (!gpio_is_ready_dt(&battery_adc_enable)) {
         return -ENODEV;
     }
 
-    ret = gpio_pin_configure(battery_adc_enable.port, battery_adc_enable.pin,
-                             GPIO_OUTPUT_HIGH);
-    if (ret < 0) {
-        return ret;
+    for (uint8_t attempt = 0u; attempt < BATTERY_ADC_DISABLE_RETRY_COUNT; attempt++) {
+        ret = gpio_pin_configure(battery_adc_enable.port,
+                                 battery_adc_enable.pin,
+                                 GPIO_OUTPUT_HIGH);
+        if (ret == 0) {
+            ret = gpio_pin_set_raw(battery_adc_enable.port,
+                                   battery_adc_enable.pin,
+                                   1);
+        }
+        if (ret == 0) {
+            return 0;
+        }
+        if (attempt + 1u < BATTERY_ADC_DISABLE_RETRY_COUNT) {
+            k_busy_wait(BATTERY_ADC_DISABLE_RETRY_DELAY_US);
+        }
     }
-    return gpio_pin_set_raw(battery_adc_enable.port, battery_adc_enable.pin, 1);
+    LOG_WRN("battery ADC divider disable failed after %u attempts: %d",
+            BATTERY_ADC_DISABLE_RETRY_COUNT,
+            ret);
+    return ret;
 #else
     return 0;
 #endif
+}
+
+static int BLE_CONNECTIVITY_TEST_UNUSED battery_adc_finish(int primary_ret)
+{
+    int disable_ret = battery_adc_divider_disable();
+
+    if (disable_ret < 0) {
+        LOG_WRN("battery ADC divider cleanup failed: primary_ret=%d disable_ret=%d",
+                primary_ret,
+                disable_ret);
+        if (primary_ret == 0) {
+            return disable_ret;
+        }
+    }
+    return primary_ret;
 }
 
 static int BLE_CONNECTIVITY_TEST_UNUSED battery_adc_divider_enable(void)
@@ -146,20 +184,20 @@ int battery_sample_lithium_mv(uint16_t *battery_mv)
 
     ret = adc_channel_setup_dt(&battery_adc);
     if (ret < 0) {
-        (void)battery_adc_divider_disable();
-        return ret;
+        return battery_adc_finish(ret);
     }
     ret = adc_sequence_init_dt(&battery_adc, &sequence);
     if (ret < 0) {
-        (void)battery_adc_divider_disable();
-        return ret;
+        return battery_adc_finish(ret);
     }
     ret = adc_read_dt(&battery_adc, &sequence);
     if (ret < 0) {
-        (void)battery_adc_divider_disable();
+        return battery_adc_finish(ret);
+    }
+    ret = battery_adc_finish(0);
+    if (ret < 0) {
         return ret;
     }
-    (void)battery_adc_divider_disable();
 
     adc_mv = raw_sample;
     ret = adc_raw_to_millivolts_dt(&battery_adc, &adc_mv);
@@ -262,6 +300,7 @@ void status_power_indicator_set(bool enabled)
     }
 }
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 static void status1_debug_pulse_restore_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
@@ -283,6 +322,7 @@ static void status0_debug_pulse_restore_handler(struct k_work *work)
     status_led0_set(false, false, false);
 }
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
 static void status0_power_blink_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
@@ -299,9 +339,12 @@ static void status0_power_blink_handler(struct k_work *work)
     status0_route_test_power_apply();
     (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
 }
+#endif
+#endif
 
 static void status1_debug_pulse(bool red, bool green, bool blue)
 {
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         !status1_debug_pulse_work_ready) {
         return;
@@ -310,6 +353,11 @@ static void status1_debug_pulse(bool red, bool green, bool blue)
     status_led1_set(red, green, blue);
     (void)k_work_reschedule(&status1_debug_pulse_restore_work,
                             K_MSEC(DEBUG_LED_PULSE_MS));
+#else
+    ARG_UNUSED(red);
+    ARG_UNUSED(green);
+    ARG_UNUSED(blue);
+#endif
 }
 
 static void status0_debug_pulse_for(bool red,
@@ -317,6 +365,7 @@ static void status0_debug_pulse_for(bool red,
                                     bool blue,
                                     uint32_t duration_ms)
 {
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         !status0_debug_pulse_work_ready) {
         return;
@@ -326,6 +375,12 @@ static void status0_debug_pulse_for(bool red,
     status_led0_set(red, green, blue);
     (void)k_work_reschedule(&status0_debug_pulse_restore_work,
                             K_MSEC(duration_ms));
+#else
+    ARG_UNUSED(red);
+    ARG_UNUSED(green);
+    ARG_UNUSED(blue);
+    ARG_UNUSED(duration_ms);
+#endif
 }
 
 static bool anchor_route_test_activity_leds_enabled(void)
@@ -485,9 +540,11 @@ void status_debug_tx_boot_test(void)
     status_power_indicator_set(true);
     status0_debug_ch5_boot_selftest_pulse();
     debug_rtt_write("DBG_LED_SELFTEST_CH5_RX\n");
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     if (status0_power_blink_work_ready) {
         (void)k_work_reschedule(&status0_power_blink_work, K_MSEC(500));
     }
+#endif
 }
 
 void status_debug_gateway_boot_test(void)
@@ -620,15 +677,19 @@ int status_leds_init(void)
 {
     int ret = 0;
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     k_work_init_delayable(&status1_debug_pulse_restore_work,
                           status1_debug_pulse_restore_handler);
     status1_debug_pulse_work_ready = true;
     k_work_init_delayable(&status0_debug_pulse_restore_work,
                           status0_debug_pulse_restore_handler);
     status0_debug_pulse_work_ready = true;
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     k_work_init_delayable(&status0_power_blink_work,
                           status0_power_blink_handler);
     status0_power_blink_work_ready = true;
+#endif
+#endif
 
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     ret |= configure_output(&status0_red);

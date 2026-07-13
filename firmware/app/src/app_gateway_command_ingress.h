@@ -13,6 +13,7 @@ struct app_gateway_command_ingress_item {
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     size_t payload_len;
     uint32_t admission_id;
+    enum command_id command_id;
 };
 
 struct app_gateway_command_identity {
@@ -51,5 +52,9 @@ int app_gateway_command_ingress_handle_frame(
 bool app_gateway_command_identity_matches(
     const struct app_gateway_command_identity *identity,
     const struct app_gateway_command_ingress_item *item);
+
+int app_gateway_command_identity_from_item(
+    const struct app_gateway_command_ingress_item *item,
+    struct app_gateway_command_identity *identity);
 
 #endif

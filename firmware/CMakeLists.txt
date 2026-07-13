@@ -123,6 +123,41 @@ target_include_directories(test_app_gateway_command_observability PRIVATE app/sr
 target_link_libraries(test_app_gateway_command_observability PRIVATE core)
 add_test(NAME app_gateway_command_observability
     COMMAND test_app_gateway_command_observability)
+
+add_executable(test_app_gateway_assignment_publisher
+    tests/test_app_gateway_assignment_publisher.c
+    app/src/app_gateway_assignment_publisher.c
+    app/src/app_gateway_command_observability.c
+)
+target_include_directories(test_app_gateway_assignment_publisher PRIVATE app/src)
+target_link_libraries(test_app_gateway_assignment_publisher PRIVATE core)
+add_test(NAME app_gateway_assignment_publisher
+    COMMAND test_app_gateway_assignment_publisher)
+set_tests_properties(app_gateway_assignment_publisher
+    PROPERTIES LABELS "mesh_integration;hardware_models;gateway_command;enumeration")
+add_test(NAME assignment_publisher_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_publisher_source_invariants.py)
+set_tests_properties(assignment_publisher_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;gateway_command;enumeration")
+
+add_executable(test_app_stack_workload_diag
+    tests/test_app_stack_workload_diag.c
+    app/src/app_stack_workload_diag.c
+)
+target_compile_definitions(test_app_stack_workload_diag PRIVATE CONFIG_IMEC_STACK_DIAGNOSTICS=1)
+target_include_directories(test_app_stack_workload_diag PRIVATE app/src)
+target_link_libraries(test_app_stack_workload_diag PRIVATE core)
+add_test(NAME app_stack_workload_diag COMMAND test_app_stack_workload_diag)
+
+add_executable(test_app_stack_workload_diag_disabled
+    tests/test_app_stack_workload_diag_disabled.c
+    app/src/app_stack_workload_diag.c
+)
+target_include_directories(test_app_stack_workload_diag_disabled PRIVATE app/src)
+target_link_libraries(test_app_stack_workload_diag_disabled PRIVATE core)
+add_test(NAME app_stack_workload_diag_disabled COMMAND test_app_stack_workload_diag_disabled)
+
 add_executable(test_app_mesh_smoke_fast
     tests/test_app_mesh_smoke_fast.c
     app/src/app_mesh_smoke_fast.c
@@ -173,6 +208,25 @@ target_include_directories(test_app_gateway_command_ingress PRIVATE app/src)
 target_link_libraries(test_app_gateway_command_ingress PRIVATE core)
 add_test(NAME app_gateway_command_ingress
     COMMAND test_app_gateway_command_ingress)
+
+add_executable(test_app_gateway_command_lifecycle
+    tests/test_app_gateway_command_lifecycle.c
+    app/src/app_gateway_command_ingress.c
+    app/src/app_gateway_command_lifecycle.c
+)
+target_include_directories(test_app_gateway_command_lifecycle PRIVATE app/src)
+target_link_libraries(test_app_gateway_command_lifecycle PRIVATE core)
+add_test(NAME app_gateway_command_lifecycle
+    COMMAND test_app_gateway_command_lifecycle)
+
+add_executable(test_app_mesh_gateway_command_flow
+    tests/test_app_mesh_gateway_command_flow.c
+    app/src/app_mesh_gateway_command_flow.c
+)
+target_include_directories(test_app_mesh_gateway_command_flow PRIVATE app/src)
+target_link_libraries(test_app_mesh_gateway_command_flow PRIVATE core)
+add_test(NAME app_mesh_gateway_command_flow
+    COMMAND test_app_mesh_gateway_command_flow)
 
 add_executable(test_app_mesh_flood
     tests/test_app_mesh_flood.c
@@ -228,6 +282,14 @@ add_test(NAME mesh COMMAND test_mesh)
 add_executable(test_mesh_preemption tests/test_mesh_preemption.c)
 target_link_libraries(test_mesh_preemption PRIVATE core)
 add_test(NAME mesh_preemption COMMAND test_mesh_preemption)
+
+add_executable(test_app_mesh_preemption
+    tests/test_app_mesh_preemption.c
+    app/src/app_mesh_preemption.c
+)
+target_include_directories(test_app_mesh_preemption PRIVATE app/src)
+target_link_libraries(test_app_mesh_preemption PRIVATE core)
+add_test(NAME app_mesh_preemption COMMAND test_app_mesh_preemption)
 
 add_executable(test_app_mesh_collection_deferral
     tests/test_app_mesh_collection_deferral.c
@@ -293,6 +355,21 @@ target_include_directories(test_app_mesh_ch9_ack PRIVATE app/src)
 target_link_libraries(test_app_mesh_ch9_ack PRIVATE core)
 add_test(NAME app_mesh_ch9_ack COMMAND test_app_mesh_ch9_ack)
 
+add_executable(test_app_mesh_local_delivery
+    tests/test_app_mesh_local_delivery.c
+    app/src/app_mesh_local_delivery.c)
+target_include_directories(test_app_mesh_local_delivery PRIVATE app/src)
+target_link_libraries(test_app_mesh_local_delivery PRIVATE core)
+add_test(NAME app_mesh_local_delivery COMMAND test_app_mesh_local_delivery)
+set_tests_properties(app_mesh_local_delivery
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence")
+
+add_test(NAME survey_delivery_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_delivery_source_invariants.py)
+set_tests_properties(survey_delivery_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence")
+
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)
@@ -308,6 +385,10 @@ add_test(NAME report COMMAND test_report)
 add_executable(test_survey tests/test_survey.c)
 target_link_libraries(test_survey PRIVATE core)
 add_test(NAME survey COMMAND test_survey)
+
+add_executable(test_packet_initializers tests/test_packet_initializers.c)
+target_link_libraries(test_packet_initializers PRIVATE core)
+add_test(NAME packet_initializers COMMAND test_packet_initializers)
 
 add_executable(test_debug_log tests/test_debug_log.c)
 target_link_libraries(test_debug_log PRIVATE core)
@@ -340,6 +421,7 @@ set_tests_properties(gateway_ble_transport_model
 add_executable(test_stack_budget_model
     tests/mesh_integration/test_stack_budget_model.c
 )
+target_include_directories(test_stack_budget_model PRIVATE app/src)
 target_link_libraries(test_stack_budget_model PRIVATE core)
 add_test(NAME stack_budget_model COMMAND test_stack_budget_model)
 set_tests_properties(stack_budget_model PROPERTIES LABELS "hardware_models")
@@ -354,8 +436,29 @@ add_test(NAME flash_verified_mesh
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh.py)
 set_tests_properties(flash_verified_mesh PROPERTIES LABELS "hardware_models")
 
+add_test(NAME capture_stack_evidence
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_capture_stack_evidence.py)
+set_tests_properties(capture_stack_evidence PROPERTIES LABELS "hardware_models")
+
+add_test(NAME mesh_deployment_policy
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_deployment_policy.py)
+set_tests_properties(mesh_deployment_policy PROPERTIES LABELS "hardware_models")
+
+add_test(NAME mesh_anchor_preset
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_anchor_preset.py)
+set_tests_properties(mesh_anchor_preset
+    PROPERTIES LABELS "mesh_integration;hardware_models;deployment")
+
 add_library(mesh_sim
     sim/mesh_sim.c
+    sim/mesh_sim_connection.c
+    sim/mesh_sim_events.c
+    sim/mesh_sim_interval.c
+    sim/mesh_sim_radio.c
+    sim/mesh_sim_relay.c
     sim/mesh_sim_scheduler.c
     sim/mesh_sim_trace.c
 )
@@ -406,11 +509,76 @@ add_test(NAME mesh_discovery_scenarios COMMAND test_mesh_discovery_scenarios)
 set_tests_properties(mesh_discovery_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;discovery")
 
-add_test(NAME mesh_anchor_preset
+add_executable(test_mesh_discovery_assignment_adversarial_scenarios
+    tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c
+)
+target_include_directories(test_mesh_discovery_assignment_adversarial_scenarios
+    PRIVATE app/src)
+target_link_libraries(test_mesh_discovery_assignment_adversarial_scenarios
+    PRIVATE core)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_mesh_discovery_assignment_adversarial_scenarios
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME mesh_discovery_assignment_adversarial_scenarios
+    COMMAND test_mesh_discovery_assignment_adversarial_scenarios)
+set_tests_properties(mesh_discovery_assignment_adversarial_scenarios
+    PROPERTIES LABELS "mesh_integration;assignment;network_stress")
+
+add_executable(test_mesh_gateway_control_stress_scenarios
+    tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c
+    app/src/app_gateway_command_ingress.c
+    app/src/app_gateway_command_lifecycle.c
+    app/src/app_gateway_command_observability.c
+    app/src/app_mesh_flood.c
+)
+target_include_directories(test_mesh_gateway_control_stress_scenarios
+    PRIVATE app/src)
+target_link_libraries(test_mesh_gateway_control_stress_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_gateway_control_stress_scenarios
+    COMMAND test_mesh_gateway_control_stress_scenarios)
+set_tests_properties(mesh_gateway_control_stress_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;gateway_command;route;network_stress")
+
+add_executable(test_mesh_survey_phy_scenarios
+    tests/mesh_integration/test_mesh_survey_phy_scenarios.c
+    app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_gateway_command_priority.c
+)
+target_include_directories(test_mesh_survey_phy_scenarios PRIVATE app/src)
+target_link_libraries(test_mesh_survey_phy_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_survey_phy_scenarios COMMAND test_mesh_survey_phy_scenarios)
+set_tests_properties(mesh_survey_phy_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;survey;timing")
+
+add_test(NAME survey_command_source_invariants
     COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_anchor_preset.py)
-set_tests_properties(mesh_anchor_preset
-    PROPERTIES LABELS "mesh_integration;hardware_models;deployment")
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_command_source_invariants.py)
+set_tests_properties(survey_command_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;gateway_command")
+
+add_executable(test_mesh_survey_topology_scenarios
+    tests/mesh_integration/test_mesh_survey_topology_scenarios.c
+    app/src/app_mesh_direct_gateway_retry.c
+)
+target_include_directories(test_mesh_survey_topology_scenarios PRIVATE app/src)
+target_link_libraries(test_mesh_survey_topology_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_survey_topology_scenarios
+    COMMAND test_mesh_survey_topology_scenarios)
+set_tests_properties(mesh_survey_topology_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;survey;network_stress")
+
+add_executable(test_mesh_survey_direct_gateway_retry_scenarios
+    tests/mesh_integration/test_mesh_survey_direct_gateway_retry_scenarios.c
+    app/src/app_mesh_direct_gateway_retry.c
+)
+target_include_directories(test_mesh_survey_direct_gateway_retry_scenarios
+    PRIVATE app/src)
+target_link_libraries(test_mesh_survey_direct_gateway_retry_scenarios PRIVATE core)
+add_test(NAME mesh_survey_direct_gateway_retry_scenarios
+    COMMAND test_mesh_survey_direct_gateway_retry_scenarios)
+set_tests_properties(mesh_survey_direct_gateway_retry_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;timing;network_stress")
 
 add_executable(test_mesh_route_recovery_scenarios
     tests/mesh_integration/test_mesh_route_recovery_scenarios.c
@@ -419,6 +587,15 @@ target_link_libraries(test_mesh_route_recovery_scenarios PRIVATE core)
 add_test(NAME mesh_route_recovery_scenarios
     COMMAND test_mesh_route_recovery_scenarios)
 set_tests_properties(mesh_route_recovery_scenarios
+    PROPERTIES LABELS "mesh_integration;route;recovery")
+
+add_executable(test_mesh_direct_probe_recovery_scenarios
+    tests/mesh_integration/test_mesh_direct_probe_recovery_scenarios.c
+)
+target_link_libraries(test_mesh_direct_probe_recovery_scenarios PRIVATE core)
+add_test(NAME mesh_direct_probe_recovery_scenarios
+    COMMAND test_mesh_direct_probe_recovery_scenarios)
+set_tests_properties(mesh_direct_probe_recovery_scenarios
     PROPERTIES LABELS "mesh_integration;route;recovery")
 
 add_executable(test_mesh_route_formation_scenarios
@@ -430,6 +607,18 @@ add_test(NAME mesh_route_formation_scenarios
 set_tests_properties(mesh_route_formation_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;route;discovery")
 
+add_executable(test_mesh_forcedhop_connection_scenarios
+    tests/mesh_integration/test_mesh_forcedhop_connection_scenarios.c
+    app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_route_request_policy.c
+)
+target_include_directories(test_mesh_forcedhop_connection_scenarios PRIVATE app/src)
+target_link_libraries(test_mesh_forcedhop_connection_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_forcedhop_connection_scenarios
+    COMMAND test_mesh_forcedhop_connection_scenarios)
+set_tests_properties(mesh_forcedhop_connection_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;route;connection;forcedhop")
+
 add_executable(test_mesh_network_stress_scenarios
     tests/mesh_integration/test_mesh_network_stress_scenarios.c
 )
@@ -438,6 +627,24 @@ add_test(NAME mesh_network_stress_scenarios
     COMMAND test_mesh_network_stress_scenarios)
 set_tests_properties(mesh_network_stress_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;stress")
+
+add_executable(test_mesh_click_collision_sweep
+    tests/mesh_integration/test_mesh_click_collision_sweep.c
+)
+target_link_libraries(test_mesh_click_collision_sweep PRIVATE mesh_sim)
+add_test(NAME mesh_click_collision_sweep
+    COMMAND test_mesh_click_collision_sweep)
+set_tests_properties(mesh_click_collision_sweep
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;stress;collision;click")
+
+add_executable(test_mesh_click_report_delivery_sweep
+    tests/mesh_integration/test_mesh_click_report_delivery_sweep.c
+)
+target_link_libraries(test_mesh_click_report_delivery_sweep PRIVATE mesh_sim)
+add_test(NAME mesh_click_report_delivery_sweep
+    COMMAND test_mesh_click_report_delivery_sweep)
+set_tests_properties(mesh_click_report_delivery_sweep
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;stress;click;network_stress")
 
 add_executable(test_mesh_gateway_ble_scenarios
     tests/mesh_integration/test_mesh_gateway_ble_scenarios.c
@@ -456,10 +663,14 @@ add_executable(test_mesh_app_arbitration_scenarios
     app/src/app_mesh_ch9_ack.c
     app/src/app_mesh_coordinator.c
     app/src/app_mesh_coordinator_runtime.c
+    app/src/app_mesh_command_orchestrator.c
     app/src/app_mesh_arbitration_zephyr.c
     app/src/app_gateway_command_ingress.c
+    app/src/app_gateway_command_lifecycle.c
+    app/src/app_mesh_gateway_command_flow.c
     app/src/app_mesh_gateway_command_priority.c
     app/src/app_mesh_preemption.c
+    app/src/app_mesh_flood.c
 )
 
 add_executable(test_gateway_command_observability_scenarios

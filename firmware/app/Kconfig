@@ -181,6 +181,15 @@ endmenu
 
 menu "IMEC bench diagnostics"
 
+config IMEC_STACK_DIAGNOSTICS
+    bool "Emit typed RTT stack workload samples"
+    depends on THREAD_MONITOR && THREAD_STACK_INFO && INIT_STACKS && USE_SEGGER_RTT
+    help
+      Emits correlated run, sample, queue, and custody records for real
+      production operations. Deployable mesh presets enable this so their exact
+      ELF can be tied to a hardware capture. Interrupt-stack output is explicit
+      configuration evidence only; Zephyr has no supported ISR high-water mark.
+
 config IMEC_DS_TWR_RTT_DEBUG
     bool "Emit compact DS-TWR stage diagnostics over RTT"
     help

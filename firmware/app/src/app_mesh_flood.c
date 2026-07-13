@@ -50,6 +50,26 @@ uint32_t app_mesh_flood_backoff_ms(uint8_t retry_index, uint32_t random_value)
     return base_ms + (random_value % (jitter_window_ms + 1u));
 }
 
+static bool flood_destination_valid(const struct mesh_outbound *out)
+{
+    bool broadcast;
+    bool targeted_command;
+
+    if (out == NULL) {
+        return false;
+    }
+
+    broadcast = out->packet.dst_id == MESH_BROADCAST_ID &&
+                out->next_hop_id == MESH_BROADCAST_ID;
+    targeted_command = out->packet.dst_id != 0u &&
+                       out->packet.dst_id != MESH_BROADCAST_ID &&
+                       out->next_hop_id != 0u &&
+                       out->next_hop_id != MESH_BROADCAST_ID &&
+                       (out->packet.msg_type == MSG_COMMAND ||
+                        out->packet.msg_type == MSG_SURVEY_PAIR_PREPARE);
+    return broadcast || targeted_command;
+}
+
 int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
                                 const struct app_mesh_flood_ops *ops,
                                 struct app_mesh_flood_result *result)
@@ -72,8 +92,7 @@ int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
         ops->c5_quiet == NULL ||
         ops->random_u32 == NULL ||
         ops->send == NULL ||
-        out->packet.dst_id != MESH_BROADCAST_ID ||
-        out->next_hop_id != MESH_BROADCAST_ID ||
+        !flood_destination_valid(out) ||
         out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ||
         out->packet.msg_type == MSG_ROUTE_REQ ||
         FLOOD_RELAY_REPEAT_MS == 0u) {

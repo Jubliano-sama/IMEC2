@@ -2,6 +2,7 @@
 #define APP_MESH_REPORT_H
 
 #include "dwm3000_driver.h"
+#include "app_mesh_route_wait_tx.h"
 #include "mesh.h"
 #include "mesh_relay.h"
 #include "protocol.h"
@@ -13,6 +14,7 @@
 #include <stdint.h>
 
 struct k_work_delayable;
+struct app_mesh_command_orchestrator;
 
 struct uwb_range_schedule_frame;
 
@@ -62,7 +64,13 @@ struct app_mesh_report_callbacks {
     void (*gateway_handle_survey_discovery_report)(const struct proto_packet *packet,
                                                    const uint8_t *payload,
                                                    size_t payload_len,
-                                                   uint64_t previous_hop_id);
+                                                   uint64_t previous_hop_id,
+                                                   uint8_t radio_channel,
+                                                   uint8_t link_quality);
+    void (*anchor_survey_delivery_gateway_confirmed)(const struct proto_packet *packet);
+    void (*anchor_survey_delivery_transport_released)(
+        const struct proto_packet *packet,
+        bool preempted);
 };
 
 enum mesh_c5_control_send_mode {
@@ -98,6 +106,11 @@ int mesh_send_c5_flood(const struct mesh_outbound *out,
                        uint8_t purpose,
                        const char *reason,
                        bool *sent_now);
+int mesh_send_gateway_command_flood(
+    const struct app_mesh_command_orchestrator *orchestrator,
+    const char *reason,
+    bool *sent_now);
+struct app_mesh_command_orchestrator *mesh_gateway_command_orchestrator_context(void);
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
 int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
                                    const struct mesh_event_plan *plan,
@@ -106,8 +119,15 @@ int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
 int mesh_request_route(uint64_t target_id, const char *reason);
 void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
 int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
+int mesh_start_owned_tracked_tx(const struct mesh_outbound *out,
+                                const char *reason,
+                                bool *rf_sent);
+int mesh_owned_tracked_tx_preflight(const struct mesh_outbound *out,
+                                    const char *reason,
+                                    enum app_mesh_route_wait_tx_owner owner,
+                                    uint32_t generation);
 void mesh_report_resume_restored_outbox(const char *reason);
-void mesh_preempt_for_click_event(void);
+int mesh_preempt_for_click_event(void);
 void report_tx_schedule(uint32_t delay_ms);
 uint32_t report_tx_queue_used(void);
 bool mesh_report_tx_backlog_active(void);

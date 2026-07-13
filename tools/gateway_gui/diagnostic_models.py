@@ -489,6 +489,8 @@ def command_run_status(events: tuple[GatewayCommandEvent, ...]) -> tuple[str, st
             return "Succeeded with warnings", f"{result}; {loss_delta} telemetry event(s) were lost."
         return "Succeeded", result + "."
     reason = GATEWAY_COMMAND_REASON_NAMES[terminal.reason]
+    if terminal.command_kind == 2 and terminal.reason == 3:
+        return "Failed", "No survey reports were received before the collection deadline."
     if terminal.reason == 1:
         return "Failed", "Invalid request: check the gateway identity and survey parameters."
     if terminal.reason == 14:
@@ -533,6 +535,8 @@ def command_step_sentence(event: GatewayCommandEvent) -> str:
         reason = GATEWAY_COMMAND_REASON_NAMES[event.reason]
         if event.command_status == 0 and event.reason == 0:
             return f"Completed: {event.success_count} succeeded, {event.failure_count} failed."
+        if event.command_kind == 2 and event.reason == 3:
+            return "Command ended: no survey reports were received."
         return f"Command ended: {reason.lower()}."
     return GATEWAY_COMMAND_STAGE_NAMES[event.stage]
 

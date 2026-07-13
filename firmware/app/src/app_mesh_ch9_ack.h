@@ -8,6 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define APP_MESH_CH9_ACK_PEER_MAX 2u
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#define APP_MESH_CH9_ACK_BATCH_ENTRY_MAX 4u
+#else
+#define APP_MESH_CH9_ACK_BATCH_ENTRY_MAX 8u
+#endif
+
 struct app_mesh_ch9_tx_ack_entry {
     uint32_t session_id;
     uint16_t seq;
@@ -50,12 +57,83 @@ struct app_mesh_ch9_ack_complete_state {
     bool ack_batch_valid;
 };
 
+enum app_mesh_ch9_ack_queue_result {
+    APP_MESH_CH9_ACK_QUEUE_ADDED = 0,
+    APP_MESH_CH9_ACK_QUEUE_DUPLICATE,
+    APP_MESH_CH9_ACK_QUEUE_REPLACED,
+    APP_MESH_CH9_ACK_QUEUE_SUPPRESSED_BY_FORWARDED_ACK,
+    APP_MESH_CH9_ACK_QUEUE_BATCH_FULL,
+    APP_MESH_CH9_ACK_QUEUE_TABLE_FULL,
+};
+
+struct app_mesh_ch9_ack_batch_entry {
+    uint32_t session_id;
+    uint32_t packet_id;
+    uint16_t seq;
+    bool has_packet_id;
+};
+
+struct app_mesh_ch9_ack_batch {
+    struct mesh_outbound template_ack;
+    struct app_mesh_ch9_ack_batch_entry
+        entries[APP_MESH_CH9_ACK_BATCH_ENTRY_MAX];
+    uint64_t peer_id;
+    uint8_t count;
+    bool valid;
+    bool preserve_payload;
+};
+
+/* One slot for the production upstream and one for the downstream peer. */
+struct app_mesh_ch9_ack_table {
+    struct app_mesh_ch9_ack_batch batches[APP_MESH_CH9_ACK_PEER_MAX];
+};
+
+typedef int (*app_mesh_ch9_ack_flush_fn)(
+    const struct mesh_outbound *outbound,
+    void *ctx);
+
 enum app_mesh_ch9_timeout_pressure_action {
     APP_MESH_CH9_TIMEOUT_RETRY = 0,
     APP_MESH_CH9_TIMEOUT_DROP_TRANSIT,
     APP_MESH_CH9_TIMEOUT_DEFER_LOCAL,
     APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL,
 };
+
+void app_mesh_ch9_ack_table_init(struct app_mesh_ch9_ack_table *table);
+uint8_t app_mesh_ch9_ack_table_peer_count(
+    const struct app_mesh_ch9_ack_table *table);
+bool app_mesh_ch9_ack_table_any_pending(
+    const struct app_mesh_ch9_ack_table *table);
+bool app_mesh_ch9_ack_table_pending_for_peer(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id);
+const struct app_mesh_ch9_ack_batch *app_mesh_ch9_ack_table_get_peer(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id);
+
+int app_mesh_ch9_ack_table_queue(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    const struct app_mesh_ch9_ack_batch_entry *entry,
+    enum app_mesh_ch9_ack_queue_result *result);
+int app_mesh_ch9_ack_table_queue_forwarded(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    enum app_mesh_ch9_ack_queue_result *result);
+int app_mesh_ch9_ack_table_build_peer(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    struct mesh_outbound *outbound);
+bool app_mesh_ch9_ack_table_clear_peer(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id);
+
+/* The batch remains owned by the table unless the flush callback succeeds. */
+int app_mesh_ch9_ack_table_flush_peer(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    app_mesh_ch9_ack_flush_fn flush,
+    void *ctx);
 
 int app_mesh_ch9_tx_ack_apply(const struct proto_packet *ack_packet,
                               const uint8_t *payload,
@@ -77,6 +155,8 @@ bool app_mesh_ch9_tx_should_track_sent(const struct mesh_outbound *sent,
                                        uint64_t local_id);
 bool app_mesh_ch9_core_ack_wait_active(const struct mesh_pending_tx *pending,
                                        bool relay_tx_active);
+bool app_mesh_ch9_core_pending_allows_rx(const struct mesh_pending_tx *pending,
+                                         bool relay_tx_active);
 
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,
@@ -93,7 +173,7 @@ bool app_mesh_ch9_wait_plan_retry_delay_ms(uint32_t now_ms,
                                           uint16_t minimum_guard_ms,
                                           uint32_t *delay_ms);
 
-bool app_mesh_ch9_tx_timeout_counts_gateway_failure(
+bool app_mesh_ch9_tx_timeout_counts_route_failure(
     const struct mesh_outbound *outbound,
     uint64_t next_hop_id,
     uint64_t gateway_id);

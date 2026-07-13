@@ -4,6 +4,8 @@
 #include <limits.h>
 #include <string.h>
 
+#include "survey.h"
+
 _Static_assert(sizeof(struct gateway_command_observability_state) <=
                GATEWAY_COMMAND_OBSERVABILITY_RAM_BUDGET_BYTES,
                "gateway command observability state exceeds RAM budget");
@@ -31,6 +33,81 @@ static bool reason_valid(enum gateway_command_event_reason reason)
 {
     return reason >= GATEWAY_COMMAND_EVENT_REASON_NONE &&
            reason <= GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION;
+}
+
+static uint8_t survey_failure_reason_priority(
+    enum gateway_command_event_reason reason)
+{
+    switch (reason) {
+    case GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE:
+        return 1u;
+    case GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED:
+        return 2u;
+    case GATEWAY_COMMAND_EVENT_REASON_RADIO:
+        return 3u;
+    case GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE:
+        return 4u;
+    case GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED:
+        return 5u;
+    case GATEWAY_COMMAND_EVENT_REASON_INTERNAL:
+        return 6u;
+    default:
+        return 0u;
+    }
+}
+
+enum gateway_command_event_reason gateway_command_survey_failure_reason_merge(
+    enum gateway_command_event_reason current,
+    enum gateway_command_event_reason candidate)
+{
+    return survey_failure_reason_priority(candidate) >
+                   survey_failure_reason_priority(current) ?
+               candidate : current;
+}
+
+bool gateway_command_survey_sample_admission(
+    uint16_t sample_count,
+    enum command_status *status,
+    enum gateway_command_event_reason *reason)
+{
+    if (status == NULL || reason == NULL) {
+        return false;
+    }
+
+    if (sample_count < SURVEY_MIN_SAMPLE_COUNT ||
+        sample_count > SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
+        *status = COMMAND_DENIED;
+        *reason = GATEWAY_COMMAND_EVENT_REASON_CAPACITY;
+        return false;
+    }
+
+    *status = COMMAND_OK;
+    *reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
+    return true;
+}
+
+void gateway_command_survey_terminal_outcome(
+    size_t report_count,
+    uint16_t failure_count,
+    enum gateway_command_event_reason failure_reason,
+    enum command_status *status,
+    enum gateway_command_event_reason *reason)
+{
+    if (status == NULL || reason == NULL) {
+        return;
+    }
+
+    *status = COMMAND_OK;
+    *reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
+    if (report_count == 0u) {
+        *status = COMMAND_TIMEOUT;
+        *reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS;
+    } else if (failure_count > 0u) {
+        *status = COMMAND_INTERNAL_ERROR;
+        *reason = survey_failure_reason_priority(failure_reason) > 0u ?
+                      failure_reason :
+                      GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED;
+    }
 }
 
 static bool event_valid(const struct gateway_command_event *event)

@@ -1,0 +1,17 @@
+name: Mesh Deployment Policy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject production deployment bypasses
+        run: python3 firmware/scripts/check_mesh_deployment_policy.py
+      - name: Run policy negative suite
+        run: python3 firmware/tests/mesh_integration/test_mesh_deployment_policy.py

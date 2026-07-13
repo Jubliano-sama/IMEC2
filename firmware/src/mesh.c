@@ -692,6 +692,7 @@ int mesh_init_event_control(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = MESH_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -759,6 +760,7 @@ int mesh_init_gateway_ack(struct proto_packet *packet,
     packet->seq = ack_seq;
     packet->ttl = MESH_GATEWAY_ACK_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -786,6 +788,7 @@ int mesh_init_command(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = MESH_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -817,5 +820,6 @@ int mesh_init_command_result(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = MESH_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }

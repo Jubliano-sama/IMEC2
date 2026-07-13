@@ -1920,6 +1920,17 @@ static void test_collection_snapshot_rejects_corrupt_without_partial_restore(voi
                                     0u,
                                     COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
 
+    snapshot.results[1] = snapshot.results[0];
+    snapshot.result_count = 2u;
+    snapshot.received_count = 2u;
+    snapshot.collection_open = false;
+    assert(gateway_collection_restore_snapshot(&target, &snapshot) == PROTO_ERR_MALFORMED);
+    assert(target.gateway_id == 0x8888777766665555ull);
+    assert(target.command_seq == 42u);
+    assert(target.collection_epoch_id == 55u);
+    assert(target.received_count == 0u);
+    assert(gateway_collection_export_snapshot(&collection, &snapshot) == PROTO_OK);
+
     snapshot.version = GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION + 1u;
     assert(gateway_collection_restore_snapshot(&target, &snapshot) == PROTO_ERR_BAD_VERSION);
     assert(target.gateway_id == 0x8888777766665555ull);

@@ -66,8 +66,11 @@ static void test_proposal_failure_requests_event_accept_wait(void)
     app_mesh_route_ready_handoff_after_proposal(-1, &result);
 
     assert(result.propose_now);
+    assert(result.remember_deferred_peer);
+    assert(!result.clear_deferred_peer);
     assert(result.schedule_event_accept_wait);
     assert(!result.try_waiting_tx);
+    assert(result.peer_id == 0x4005u);
 }
 
 static void test_waiting_tx_waits_for_rx_to_drain_before_deferred_proposal(void)
@@ -115,8 +118,11 @@ static void test_deferred_proposal_failure_requests_event_accept_wait(void)
     app_mesh_route_ready_handoff_after_proposal(-5, &result);
 
     assert(result.propose_deferred);
+    assert(result.remember_deferred_peer);
+    assert(!result.clear_deferred_peer);
     assert(result.schedule_event_accept_wait);
     assert(!result.allow_waiting_tx);
+    assert(result.peer_id == 0x7008u);
 }
 
 static void test_no_selected_route_only_clears_handoff_and_tries_tx(void)

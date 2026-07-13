@@ -22,7 +22,12 @@ struct ingress_fixture {
     bool cancelled[3];
     int admit_ret;
     int submit_ret;
+    int cancel_ret;
 };
+
+static struct app_gateway_command_ingress_ops ops_for(
+    struct ingress_fixture *fixture);
+static size_t command_frame(uint16_t seq, uint8_t *frame, size_t frame_cap);
 
 static int admit(void *ctx, struct app_gateway_command_ingress_item *item)
 {
@@ -55,10 +60,32 @@ static int cancel_admitted(void *ctx,
     for (uint8_t i = 0u; i < fixture->admit_count; i++) {
         if (app_gateway_command_identity_matches(identity, &fixture->admitted[i])) {
             fixture->cancelled[i] = true;
-            return 0;
+            return fixture->cancel_ret;
         }
     }
     return -ENOENT;
+}
+
+static void test_cancel_failure_still_reports_one_terminal_result(void)
+{
+    struct ingress_fixture fixture = {
+        .submit_ret = -EIO,
+        .cancel_ret = -ENOSPC,
+    };
+    struct app_gateway_command_ingress_ops ops = ops_for(&fixture);
+    struct app_gateway_command_ingress_item item;
+    bool command_handled;
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    size_t frame_len = command_frame(44u, frame, sizeof(frame));
+
+    assert(app_gateway_command_ingress_handle_frame(&ops, frame, frame_len,
+                                                    &item,
+                                                    &command_handled) == -EIO);
+    assert(command_handled);
+    assert(fixture.cancel_count == 1u);
+    assert(fixture.result_count == 1u);
+    assert(fixture.result_command.seq == 44u);
+    assert(fixture.result_status == COMMAND_INTERNAL_ERROR);
 }
 
 static void execute_admitted_in_order(struct ingress_fixture *fixture)
@@ -213,6 +240,7 @@ static void test_non_command_decodes_for_normal_gateway_routing(void)
 int main(void)
 {
     test_priority_failure_cancels_exact_admitted_command_before_one_error();
+    test_cancel_failure_still_reports_one_terminal_result();
     test_queue_admission_failure_reports_once_without_priority_submit();
     test_non_command_decodes_for_normal_gateway_routing();
     return 0;

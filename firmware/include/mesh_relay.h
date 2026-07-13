@@ -399,20 +399,25 @@ struct mesh_relay {
 struct mesh_relay_result {
     uint32_t actions;
     int status;
-    struct mesh_outbound forward;
-    struct mesh_outbound gateway_ack;
-    struct mesh_outbound route_request;
-    struct mesh_outbound route_reply;
-    struct mesh_outbound route_reply_ack;
-    struct mesh_outbound gateway_route_adv;
-    struct mesh_outbound retransmit;
-    uint64_t route_reply_backup_next_hop_id;
-    uint64_t route_discovery_target_id;
+    /* Exactly one primary relay action is produced by a receive/tick path. */
     union {
+        struct mesh_outbound forward;
+        struct mesh_outbound route_request;
+        struct mesh_outbound route_reply;
+        struct mesh_outbound gateway_route_adv;
+        struct mesh_outbound retransmit;
+    };
+    /* Exactly one immediate response is produced for the same input frame. */
+    union {
+        struct mesh_outbound gateway_ack;
         struct mesh_outbound hop_ack;
         struct mesh_outbound busy;
         struct mesh_outbound result_grant;
     };
+    /* Route replies may require this ACK beside either primary or busy output. */
+    struct mesh_outbound route_reply_ack;
+    uint64_t route_reply_backup_next_hop_id;
+    uint64_t route_discovery_target_id;
     bool route_reply_backup_valid;
 };
 
@@ -423,6 +428,12 @@ void mesh_relay_init(struct mesh_relay *relay,
                      uint32_t route_epoch);
 const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_relay *relay,
                                                            uint64_t target_id);
+/* Caller must first accept a current-survey local gateway report and its RX metadata. */
+int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
+                                                 uint64_t target_id,
+                                                 uint64_t next_hop_id,
+                                                 uint8_t quality,
+                                                 uint32_t now_ms);
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
@@ -564,6 +575,7 @@ int mesh_relay_restore_child_custody_snapshot(
     uint32_t now_ms);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
 bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms);
+bool mesh_relay_can_defer_tx(const struct mesh_relay *relay);
 int mesh_relay_defer_pending_retry(struct mesh_relay *relay,
                                    uint32_t retry_at_ms);
 int mesh_relay_note_retransmit_deferred(struct mesh_relay *relay,

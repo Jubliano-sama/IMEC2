@@ -13,6 +13,8 @@ struct mesh_click_preempt_plan {
     bool clear_outbox;
     bool cancel_timeout;
     bool schedule_timeout;
+    /* The runtime copy is released only after the replacement is prepared. */
+    bool cancel_active_tx;
     struct mesh_outbound click_report;
 };
 

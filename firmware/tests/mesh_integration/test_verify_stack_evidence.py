@@ -1,0 +1,549 @@
+#!/usr/bin/env python3
+"""Regression tests for repository-owned typed stack evidence."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+VERIFIER_PATH = REPO_ROOT / "firmware" / "scripts" / "verify_stack_evidence.py"
+POLICY_PATH = REPO_ROOT / "firmware" / "include" / "stack_budget.h"
+SPEC = importlib.util.spec_from_file_location("verify_stack_evidence", VERIFIER_PATH)
+assert SPEC is not None and SPEC.loader is not None
+verifier = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = verifier
+SPEC.loader.exec_module(verifier)
+
+
+def _line(key: str, value: object) -> str:
+    if value is True:
+        return f"{key}=y"
+    if value is False:
+        return f"# {key} is not set"
+    return f"{key}={value}"
+
+
+class StackEvidenceVerifierTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.policies, cls.frame_limit = verifier.load_policy(POLICY_PATH)
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def _write_build(self, policy: object, *, include_usage: bool = True,
+                     include_cgraph: bool = True, source_name: str = "main.c", function: str = "main",
+                     headroom_delta: int = 2048, identity: str | None = None) -> Path:
+        build = self.root / policy.preset
+        zephyr, usage = build / "zephyr", build / "CMakeFiles" / "app.dir" / "src"
+        zephyr.mkdir(parents=True, exist_ok=True)
+        usage.mkdir(parents=True, exist_ok=True)
+        source = self.root / source_name
+        source.write_text(f"void {function}(void) {{}}\n", encoding="utf-8")
+        ninja = build / "fake-ninja"
+        ninja.write_text("#!/bin/sh\necho 'ninja: no work to do.'\n", encoding="utf-8")
+        ninja.chmod(0o755)
+        (build / "CMakeCache.txt").write_text(
+            f"IMEC_BUILD_PRESET:STRING={policy.preset}\nCMAKE_MAKE_PROGRAM:FILEPATH={ninja}\n", encoding="utf-8"
+        )
+        config: dict[str, object] = {
+            "CONFIG_MAIN_STACK_SIZE": policy.main_bytes,
+            "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE": policy.system_workqueue_bytes,
+            "CONFIG_ISR_STACK_SIZE": policy.isr_bytes,
+            "CONFIG_IDLE_STACK_SIZE": policy.idle_bytes,
+            "CONFIG_INIT_STACKS": policy.init_stacks,
+            "CONFIG_HW_STACK_PROTECTION": policy.hw_stack_protection,
+            "CONFIG_MPU_STACK_GUARD": policy.mpu_stack_guard,
+            "CONFIG_THREAD_STACK_INFO": policy.thread_stack_info,
+            "CONFIG_STACK_SENTINEL": policy.stack_sentinel,
+            "CONFIG_LOG_PROCESS_THREAD": bool(policy.log_processor_bytes),
+            "CONFIG_BT": bool(policy.bt_rx_bytes or policy.bt_hci_tx_bytes),
+            "CONFIG_SRAM_SIZE": 128,
+        }
+        if policy.log_processor_bytes:
+            config["CONFIG_LOG_PROCESS_THREAD_STACK_SIZE"] = policy.log_processor_bytes
+        if policy.bt_rx_bytes:
+            config.update({
+                "CONFIG_BT_HCI_TX_STACK_SIZE": policy.bt_hci_tx_bytes,
+                "CONFIG_BT_RX_STACK_SIZE": policy.bt_rx_bytes,
+                "CONFIG_BT_LONG_WQ": True,
+                "CONFIG_BT_LONG_WQ_STACK_SIZE": 1300,
+                "CONFIG_MPSL": True,
+                "CONFIG_MPSL_WORK_STACK_SIZE": 1024,
+            })
+        if policy.deployable:
+            config.update({
+                "CONFIG_IMEC_STACK_DIAGNOSTICS": True,
+                "CONFIG_THREAD_MONITOR": True,
+                "CONFIG_THREAD_NAME": True,
+                "CONFIG_USE_SEGGER_RTT": True,
+            })
+        (zephyr / ".config").write_text("\n".join(_line(key, value) for key, value in config.items()) + "\n", encoding="utf-8")
+        object_path = Path("CMakeFiles/app.dir/src") / f"{source_name}.obj"
+        kernel_source = self.root / "kernel.c"
+        kernel_source.write_text("void kernel_frame(void) {}\n", encoding="utf-8")
+        (build / "build.ninja").write_text(
+            "FLAGS = -fstack-usage\n"
+            f"build {object_path}: C_COMPILER__app {source}\n"
+            f"build zephyr/kernel/CMakeFiles/kernel.dir/kernel.c.obj: C_COMPILER__kernel {kernel_source}\n",
+            encoding="utf-8",
+        )
+        if include_usage:
+            (usage / f"{source_name}.su").write_text(f"{source}:1:1:{function}\t64\tstatic\n", encoding="utf-8")
+        if include_cgraph:
+            (usage / f"{source_name}.c.000i.cgraph").write_text(
+                f"{function}/1 ({function})\n"
+                "  Type: function definition analyzed\n"
+                "  Calls: \n",
+                encoding="utf-8",
+            )
+        origin, size = 0x20000000, 128 * 1024
+        end = origin + size - (policy.minimum_static_ram_headroom_bytes + headroom_delta)
+        (zephyr / "zephyr.map").write_text(
+            "Memory Configuration\n\nName Origin Length Attributes\n"
+            f"RAM 0x{origin:016x} 0x{size:016x} xw\n\nLinker script and memory map\n"
+            f" .text.{function}\n                0x0000000000010000 {function}\n"
+            f"                0x{end:016x} _image_ram_end = .\n", encoding="utf-8"
+        )
+        build_identity = identity or f"imec-stack-v1:{policy.preset}:{'a' * 64}"
+        (zephyr / "zephyr.elf").write_bytes(f"ELF {build_identity}".encode("ascii"))
+        (zephyr / "zephyr.hex").write_bytes(f"HEX {policy.preset}".encode("ascii"))
+        return build
+
+    def _sample(self, policy: object, build: object, run: int, sample: int, kind: str, owner: str, identity: tuple[int, int, int, int, int]) -> str:
+        required = verifier._required_threads(build, policy)
+        src, dst, session, seq, msg_type = identity
+        lines = [f"DBG_STACK_SAMPLE_BEGIN epoch=1 run={run} sample={sample} kind={kind} owner={owner} queue=2 custody=1 credit=1 retry=0 drain=2 src={src} dst={dst} session={session} seq={seq} type={msg_type} uptime={sample * 10}", f"DBG_STACK_ISR_CONFIG size={policy.isr_bytes} run={run} sample={sample}"]
+        for name, size in required.items():
+            service = name in {"logging", "BT HCI TX", "BT RX", "BT LW WQ", "MPSL Work", "idle"}
+            free = verifier._required_free(size, service) + 8
+            lines.append(f"DBG_STACK name={name} tid=0x1 used={size - free} free={free} size={size} ret=0 run={run} sample={sample}")
+        lines.append(f"DBG_STACK_SAMPLE_END run={run} sample={sample}")
+        return "\n".join(lines)
+
+    def _typed_log(self, policy: object, build: object, workloads: list[str] | None = None) -> Path:
+        required = workloads or ["click_spam", "click_spam", "cir_handling", "relay_retry", "ble_backpressure"]
+        owners = {"click_spam": "clicker_action", "cir_handling": "anchor_uwb_scan", "relay_retry": "mesh_route", "ble_backpressure": "shared_min"}
+        lines = [f"DBG_STACK_BOOT preset={policy.preset} build={build.build_identity} epoch=1 uptime=1"]
+        entries = []
+        previous_click = 0
+        sequence = 0
+        for run, kind in enumerate(required, start=1):
+            if kind == "click_spam":
+                sequence += 1
+                previous = previous_click
+                previous_click = run
+            else:
+                previous = 0
+            owner = owners[kind]
+            identity = (100 + run, 200, 300 + run, 400 + run, 0x20 + run)
+            entries.append((run, kind, owner, sequence if kind == "click_spam" else 0, previous, identity))
+        for run, kind, owner, click_sequence, previous, identity in entries:
+            src, dst, session, seq, msg_type = identity
+            lines.append(f"DBG_STACK_RUN_BEGIN epoch=1 run={run} kind={kind} owner={owner} queue=2 custody=1 credit=1 retry=0 drain=2 src={src} dst={dst} session={session} seq={seq} type={msg_type} sequence={click_sequence} previous={previous} uptime={run * 10}")
+        for run, kind, owner, click_sequence, previous, identity in entries:
+            lines.append(self._sample(policy, build, run, run, kind, owner, identity))
+            src, dst, session, seq, msg_type = identity
+            lines.append(f"DBG_STACK_RUN_END epoch=1 run={run} kind={kind} owner={owner} outcome=ack queue=1 custody=1 credit=1 retry=0 drain=1 src={src} dst={dst} session={session} seq={seq} type={msg_type} samples=1 sequence={click_sequence} previous={previous} uptime={run * 10 + 1}")
+        log = self.root / "capture.typescript"
+        log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return log
+
+    def _manifest(self, policy: object, build: object, log: Path | None = None) -> Path:
+        log = log or self._typed_log(policy, build)
+        ended = datetime.now(timezone.utc)
+        started = ended - timedelta(seconds=10)
+        data = {
+            "schema": verifier.CAPTURE_SCHEMA,
+            "preset": policy.preset,
+            "probe_id": "TEST-PROBE",
+            "artifact": {"elf_sha256": build.elf_sha256, "hex_sha256": build.hex_sha256},
+            "target": {"preset": policy.preset, "build_identity": build.build_identity},
+            "transcript": {"path": log.name, "sha256": hashlib.sha256(log.read_bytes()).hexdigest()},
+            "provenance": {
+                "tool": verifier.CAPTURE_TOOL_RELATIVE,
+                "tool_sha256": hashlib.sha256(verifier.CAPTURE_TOOL.read_bytes()).hexdigest(),
+                "workflow": verifier.CAPTURE_WORKFLOW,
+                "rtt_command": ["pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset", "-u", "TEST-PROBE"],
+                "tty_wrapper": "script",
+                "started_at_utc": started.isoformat().replace("+00:00", "Z"),
+                "ended_at_utc": ended.isoformat().replace("+00:00", "Z"),
+            },
+        }
+        data["capture_id"] = verifier._capture_id(data)
+        manifest = self.root / "capture.json"
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        return manifest
+
+    @staticmethod
+    def _replace_manifest(manifest: Path, mutate: object, *, bind: bool = False) -> None:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        mutate(data)
+        if bind:
+            data["capture_id"] = verifier._capture_id(data)
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_policy_covers_exact_deployable_presets_and_static_builds(self) -> None:
+        self.assertEqual(verifier.DEPLOYABLE_PRESETS, {key for key, value in self.policies.items() if value.deployable})
+        builds = [verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit) for policy in self.policies.values()]
+        self.assertEqual([], [(build.preset, build.issues) for build in builds if build.issues])
+
+    def test_missing_usage_and_inadequate_ram_fail(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        missing = verifier.verify_build(self._write_build(policy, include_usage=False), self.policies, self.frame_limit)
+        self.assertTrue(any("missing compiler stack evidence" in issue for issue in missing.issues))
+        low = verifier.verify_build(self._write_build(policy, headroom_delta=-1), self.policies, self.frame_limit)
+        self.assertTrue(any("static RAM headroom" in issue for issue in low.issues))
+
+    def test_disabled_boolean_may_be_absent_but_required_values_may_not(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        build = self._write_build(policy)
+        config = build / "zephyr" / ".config"
+        config.write_text(
+            "\n".join(line for line in config.read_text(encoding="utf-8").splitlines()
+                      if not line.startswith("# CONFIG_STACK_SENTINEL is not set")) + "\n",
+            encoding="utf-8",
+        )
+        accepted = verifier.verify_build(build, self.policies, self.frame_limit)
+        self.assertEqual([], accepted.issues)
+        config.write_text(config.read_text(encoding="utf-8") + "CONFIG_STACK_SENTINEL=y\n", encoding="utf-8")
+        enabled = verifier.verify_build(build, self.policies, self.frame_limit)
+        self.assertTrue(any("CONFIG_STACK_SENTINEL" in issue for issue in enabled.issues), enabled.issues)
+        config.write_text(
+            "\n".join(line for line in config.read_text(encoding="utf-8").splitlines()
+                      if not line.startswith("CONFIG_MAIN_STACK_SIZE=")) + "\n",
+            encoding="utf-8",
+        )
+        missing = verifier.verify_build(build, self.policies, self.frame_limit)
+        self.assertTrue(any("CONFIG_MAIN_STACK_SIZE" in issue for issue in missing.issues), missing.issues)
+
+    def test_rooted_call_graph_requires_exact_reachability(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        accepted = verifier.verify_build(self._write_build(policy, source_name="app_anchor.c", function="anchor_uwb_scan_work_handler"), self.policies, self.frame_limit)
+        self.assertEqual([], accepted.issues)
+        rejected = verifier.verify_build(self._write_build(policy, source_name="app_anchor.c", function="unannotated_anchor_worker"), self.policies, self.frame_limit)
+        self.assertTrue(any("unattributed linked application function" in issue for issue in rejected.issues), rejected.issues)
+        missing_graph = verifier.verify_build(self._write_build(policy, include_cgraph=False), self.policies, self.frame_limit)
+        self.assertTrue(any("missing compiler call graph" in issue for issue in missing_graph.issues), missing_graph.issues)
+
+    def test_anchor_capture_requires_survey_owner_queue_with_exact_stack(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        build = verifier.BuildEvidence(self.root, preset="mesh_anchor")
+        required = verifier._required_threads(build, policy)
+
+        self.assertEqual(required["anchor_uwb_scan"], 12288)
+        rows = {
+            name: (size - verifier._required_free(size),
+                   verifier._required_free(size), size)
+            for name, size in required.items()
+            if name != "anchor_uwb_scan"
+        }
+        issues = verifier._check_sample_rows(rows, policy, build)
+        self.assertTrue(any("misses configured thread anchor_uwb_scan" in issue
+                            for issue in issues), issues)
+
+        rows["anchor_uwb_scan"] = (4080, 16, 4096)
+        issues = verifier._check_sample_rows(rows, policy, build)
+        self.assertTrue(any("anchor_uwb_scan differs" in issue for issue in issues),
+                        issues)
+
+    def test_ambiguous_root_reachability_is_charged_to_every_root(self) -> None:
+        policy = self.policies["mesh_clicker"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("main.c"), 1, "main", 64, "static"),
+            verifier.StackUsage(Path("app_anchor.c"), 1, "shared_callback", policy.main_bytes + 1, "static"),
+        ]
+        graph = {
+            ("main.c", "main"): {"shared_callback"},
+            ("app_anchor.c", "shared_callback"): set(),
+        }
+        roots = {
+            ("main.c", "main"): {"main"},
+            ("app_anchor.c", "shared_callback"): {"system_workqueue"},
+        }
+        verifier._attribute_linked_functions(evidence, policy, linked, graph, roots, self.frame_limit)
+        self.assertTrue(any("owner=main" in issue for issue in evidence.issues), evidence.issues)
+
+    def test_compiler_address_taken_callback_is_a_conservative_edge(self) -> None:
+        graph = self.root / "callback.c.c.000i.cgraph"
+        graph.write_text(
+            "root/1 (root)\n"
+            "  Type: function definition analyzed\n"
+            "  References: callback/2 (addr)\n"
+            "  Calls: \n"
+            "callback/2 (callback)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: \n",
+            encoding="utf-8",
+        )
+        parsed = verifier._parse_cgraph(graph, "callback.c")
+        self.assertEqual(
+            {verifier._CGRAPH_REFERENCE_PREFIX + "callback"},
+            parsed[("callback.c", "root")],
+        )
+
+    def test_callback_and_ops_variables_preserve_exact_stack_ownership(self) -> None:
+        graph_file = self.root / "callback.c.c.000i.cgraph"
+        graph_file.write_text(
+            "root/1 (root)\n"
+            "  Type: function definition analyzed\n"
+            "  References: callback_ops/2 (read)\n"
+            "  Calls: \n"
+            "callback_ops/2 (callback_ops)\n"
+            "  Type: variable definition analyzed\n"
+            "  References: callback/3 (addr)\n"
+            "  Varpool flags: initialized read-only const-value-known\n"
+            "callback/3 (callback)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: callback_helper/4\n"
+            "callback_helper/4 (callback_helper)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: \n"
+            "unrooted/5 (unrooted)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: \n",
+            encoding="utf-8",
+        )
+        graph = verifier._parse_cgraph(graph_file, "callback.c")
+        policy = self.policies["mesh_clicker"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("callback.c"), 1, "root", 64, "static"),
+            verifier.StackUsage(Path("callback.c"), 2, "callback", 64, "static"),
+            verifier.StackUsage(Path("callback.c"), 3, "callback_helper", 64, "static"),
+            verifier.StackUsage(Path("callback.c"), 4, "unrooted", 64, "static"),
+        ]
+
+        verifier._attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            graph,
+            {("callback.c", "root"): {"main"}},
+            self.frame_limit,
+        )
+
+        unattributed = [
+            issue for issue in evidence.issues
+            if "unattributed linked application function" in issue
+        ]
+        self.assertEqual(
+            ["unattributed linked application function callback.c:unrooted"],
+            unattributed,
+        )
+        self.assertEqual(3, evidence.attributed_usage_count)
+
+    def test_reviewed_opaque_abi_boundaries_have_only_exact_owners(self) -> None:
+        roots = verifier.load_thread_roots(POLICY_PATH)
+        self.assertEqual(
+            {"fatal_context"},
+            roots[("main.c", "k_sys_fatal_error_handler")],
+        )
+        self.assertEqual(
+            {"bt_rx"},
+            roots[("app_gateway_ble.c", "gateway_ble_packet_ccc_changed")],
+        )
+        for function in ("writetospiwithcrc", "writetospi", "readfromspi", "deca_usleep"):
+            self.assertEqual(
+                {"main", "system_workqueue"},
+                roots[("dwm3000_sdk_port.c", function)],
+            )
+
+        policy = self.policies["mesh_gateway"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("main.c"), 1, "k_sys_fatal_error_handler", 16, "static"),
+            verifier.StackUsage(Path("app_watchdog.c"), 1, "app_watchdog_stop_feeding", 0, "static"),
+            verifier.StackUsage(Path("app_gateway_ble.c"), 1, "gateway_ble_packet_ccc_changed", 8, "static"),
+            verifier.StackUsage(Path("dwm3000_sdk_port.c"), 1, "writetospi", 8, "static"),
+            verifier.StackUsage(Path("dwm3000_port.c"), 1, "dwm3000_port_write", 32, "static"),
+            verifier.StackUsage(Path("unrelated.c"), 1, "unrelated_callback", 8, "static"),
+        ]
+        graph = {
+            ("main.c", "k_sys_fatal_error_handler"): {"app_watchdog_stop_feeding"},
+            ("app_watchdog.c", "app_watchdog_stop_feeding"): set(),
+            ("app_gateway_ble.c", "gateway_ble_packet_ccc_changed"): set(),
+            ("dwm3000_sdk_port.c", "writetospi"): {"dwm3000_port_write"},
+            ("dwm3000_port.c", "dwm3000_port_write"): set(),
+            ("unrelated.c", "unrelated_callback"): set(),
+        }
+
+        verifier._attribute_linked_functions(
+            evidence, policy, linked, graph, roots, self.frame_limit
+        )
+
+        unattributed = [
+            issue for issue in evidence.issues
+            if "unattributed linked application function" in issue
+        ]
+        self.assertEqual(
+            ["unattributed linked application function unrelated.c:unrelated_callback"],
+            unattributed,
+        )
+        self.assertEqual(5, evidence.attributed_usage_count)
+
+    def test_address_taken_thread_root_ends_inherited_stack_ownership(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("init.c"), 1, "init", 64, "static"),
+            verifier.StackUsage(Path("worker.c"), 1, "work_handler", 64, "static"),
+            verifier.StackUsage(
+                Path("worker.c"), 2, "large_worker_helper",
+                policy.main_bytes + 1, "static"
+            ),
+        ]
+        graph = {
+            ("init.c", "init"): {
+                verifier._CGRAPH_REFERENCE_PREFIX + "work_handler"
+            },
+            ("worker.c", "work_handler"): {"large_worker_helper"},
+            ("worker.c", "large_worker_helper"): set(),
+        }
+        roots = {
+            ("init.c", "init"): {"main"},
+            ("worker.c", "work_handler"): {"system_workqueue"},
+        }
+
+        verifier._attribute_linked_functions(
+            evidence, policy, linked, graph, roots, self.frame_limit
+        )
+
+        self.assertFalse(
+            any("owner=main" in issue for issue in evidence.issues),
+            evidence.issues,
+        )
+        self.assertEqual(3, evidence.attributed_usage_count)
+
+    def test_absent_service_root_does_not_authorize_linked_code(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        self.assertEqual(0, policy.bt_rx_bytes)
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("ble.c"), 1, "bt_callback", 8, "static"),
+        ]
+        graph = {("ble.c", "bt_callback"): set()}
+
+        verifier._attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            graph,
+            {("ble.c", "bt_callback"): {"bt_rx"}},
+            self.frame_limit,
+        )
+
+        self.assertEqual(
+            ["unattributed linked application function ble.c:bt_callback"],
+            evidence.issues,
+        )
+
+    def test_fatal_handler_keeps_only_retained_breadcrumb_and_reboot_path(self) -> None:
+        source = (REPO_ROOT / "firmware" / "app" / "src" / "main.c").read_text(
+            encoding="utf-8"
+        )
+        body = source.split("void k_sys_fatal_error_handler", 1)[1].split("#endif", 1)[0]
+
+        self.assertIn("mesh_route_test_fatal_magic", body)
+        self.assertIn("sys_reboot(SYS_REBOOT_COLD)", body)
+        self.assertNotIn("app_watchdog_", body)
+        self.assertNotIn("status_debug_", body)
+        self.assertNotIn("stack_diag", body)
+
+    def test_linker_local_text_section_counts_as_linked_application_function(self) -> None:
+        map_file = self.root / "zephyr.map"
+        map_file.write_text(
+            "RAM 0x0000000020000000 0x0000000000020000 xw\n"
+            " .text.static_callback\n"
+            "                0x0000000000001234 0x10 app/libapp.a(app_anchor.c.obj)\n"
+            "                0x0000000020010000 _image_ram_end = .\n",
+            encoding="utf-8",
+        )
+        _, _, _, symbols = verifier._ram_map(map_file)
+        self.assertIn("static_callback", symbols)
+
+    def test_valid_typed_capture_binds_provenance_and_artifacts(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit)
+        manifest = self._manifest(policy, build)
+        captures, issues = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertEqual([], issues)
+        self.assertEqual([], captures[0].issues)
+
+    def test_rejects_self_attestation_marker_fabrication_missing_samples_and_replay(self) -> None:
+        policy = self.policies["mesh_clicker"]
+        build = verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit)
+        manifest = self._manifest(policy, build)
+        self._replace_manifest(manifest, lambda data: data.__setitem__("schema", 2))
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("trusted schema-3" in issue for issue in captures[0].issues))
+        marker_log = self.root / "marker.typescript"
+        marker_log.write_text("DBG_STACK_STRESS_BEGIN name=click_spam uptime=1\nDBG_STACK_BEGIN id=1 uptime=2\n", encoding="utf-8")
+        manifest = self._manifest(policy, build, marker_log)
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("target-reported" in issue or "missing completed" in issue for issue in captures[0].issues))
+        missing_log = self._typed_log(policy, build, ["click_spam", "click_spam", "cir_handling", "relay_retry"])
+        manifest = self._manifest(policy, build, missing_log)
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("ble_backpressure" in issue for issue in captures[0].issues))
+        valid = self._manifest(policy, build)
+        data = json.loads(valid.read_text(encoding="utf-8"))
+        captures, _ = verifier.verify_hardware([valid], [build], self.policies, True, {policy.preset}, {data["capture_id"]})
+        self.assertTrue(any("capture replay" in issue for issue in captures[0].issues))
+
+    def test_rejects_forged_retained_click_identity_and_run_reuse(self) -> None:
+        policy = self.policies["mesh_clicker"]
+        build = verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit)
+        log = self._typed_log(policy, build)
+        forged = log.read_text(encoding="utf-8").replace(
+            "DBG_STACK_RUN_BEGIN epoch=1 run=2 kind=click_spam owner=clicker_action queue=2 custody=1 credit=1 retry=0 drain=2 src=102 dst=200 session=302 seq=402 type=34 sequence=2 previous=1",
+            "DBG_STACK_RUN_BEGIN epoch=1 run=2 kind=click_spam owner=clicker_action queue=2 custody=1 credit=1 retry=0 drain=2 src=101 dst=200 session=301 seq=401 type=33 sequence=2 previous=1",
+        )
+        log.write_text(forged, encoding="utf-8")
+        _, issues = verifier.parse_typed_transcript(log.read_text(encoding="utf-8"), policy, build)
+        self.assertTrue(any("identity" in issue for issue in issues), issues)
+
+        log = self._typed_log(policy, build)
+        reused = log.read_text(encoding="utf-8").replace(
+            "DBG_STACK_RUN_BEGIN epoch=1 run=2", "DBG_STACK_RUN_BEGIN epoch=1 run=1", 1)
+        log.write_text(reused, encoding="utf-8")
+        _, issues = verifier.parse_typed_transcript(log.read_text(encoding="utf-8"), policy, build)
+        self.assertTrue(any("invalid typed workload run" in issue for issue in issues), issues)
+
+    def test_rejects_hash_identity_time_and_transcript_tampering(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit)
+        manifest = self._manifest(policy, build)
+        self._replace_manifest(manifest, lambda data: data["artifact"].__setitem__("elf_sha256", "0" * 64), bind=True)
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("artifact hash" in issue for issue in captures[0].issues))
+        manifest = self._manifest(policy, build)
+        self._replace_manifest(manifest, lambda data: data["target"].__setitem__("build_identity", "imec-stack-v1:wrong:" + "b" * 64), bind=True)
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("target identity" in issue for issue in captures[0].issues))
+        manifest = self._manifest(policy, build)
+        self._replace_manifest(manifest, lambda data: data["provenance"].__setitem__("ended_at_utc", "2999-01-01T00:00:00Z"), bind=True)
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("future" in issue for issue in captures[0].issues))
+        manifest = self._manifest(policy, build)
+        log = self.root / json.loads(manifest.read_text(encoding="utf-8"))["transcript"]["path"]
+        log.write_text(log.read_text(encoding="utf-8") + "fabricated\n", encoding="utf-8")
+        captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
+        self.assertTrue(any("SHA-256" in issue for issue in captures[0].issues))
+
+
+if __name__ == "__main__":
+    unittest.main()

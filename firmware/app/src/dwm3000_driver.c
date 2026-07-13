@@ -480,6 +480,7 @@ static bool radio_configured;
 static bool radio_awake;
 static bool radio_restored_from_sleep;
 static enum dwm3000_phy_mode active_phy_mode;
+static struct dwm3000_rx_debug_snapshot last_rx_debug;
 static struct dwm3000_driver_stats driver_stats;
 
 static void clear_all_events(void);
@@ -3075,6 +3076,11 @@ int dwm3000_driver_configure_wake_mode(void)
     return 0;
 }
 
+int dwm3000_driver_ensure_wake_mode(void)
+{
+    return ensure_phy_mode(DWM3000_PHY_WAKE);
+}
+
 int dwm3000_driver_configure_range_mode(void)
 {
     return ensure_phy_mode(DWM3000_PHY_RANGE);
@@ -3302,6 +3308,25 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                         NULL,
                         rsl_dbm != NULL,
                         log_events);
+    {
+        const dwt_config_t *config = config_for_phy(active_phy_mode);
+
+        last_rx_debug = (struct dwm3000_rx_debug_snapshot) {
+            .status = status,
+            .rx_finfo = dwt_read32bitreg(RX_FINFO_ID),
+            .sfd_timeout = effective_sfd_timeout(config),
+            .phy_mode = (uint8_t)active_phy_mode,
+            .channel = config->chan,
+            .preamble_length = config->txPreambLength,
+            .pac = config->rxPAC,
+            .tx_code = config->txCode,
+            .rx_code = config->rxCode,
+            .sfd_type = config->sfdType,
+            .data_rate = config->dataRate,
+            .phr_mode = config->phrMode,
+            .phr_rate = config->phrRate,
+        };
+    }
     if (allow_receive_abort) {
         atomic_set(&receive_abort_enabled, 0);
     }
@@ -3349,6 +3374,13 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
         timing->valid = true;
     }
     return 0;
+}
+
+void dwm3000_driver_last_rx_debug_get(struct dwm3000_rx_debug_snapshot *snapshot)
+{
+    if (snapshot != NULL) {
+        *snapshot = last_rx_debug;
+    }
 }
 
 static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_ms,

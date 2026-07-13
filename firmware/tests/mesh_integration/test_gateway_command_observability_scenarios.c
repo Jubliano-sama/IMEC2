@@ -194,12 +194,78 @@ static void test_pair_success_failure_and_terminal_counts(void)
         &scenario,
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
         GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
-    terminal.status = COMMAND_INTERNAL_ERROR;
-    terminal.reason = GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED;
+    gateway_command_survey_terminal_outcome(
+        scenario.enumerated,
+        scenario.failures,
+        GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE,
+        &terminal.status,
+        &terminal.reason);
     terminal.total_count = 2u;
     emit(&scenario, &terminal, true, 0);
     assert(terminal.success_count == 1u);
     assert(terminal.failure_count == 1u);
+    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
+}
+
+static void test_mixed_survey_failures_and_zero_pair_success(void)
+{
+    struct scenario mixed = {
+        .correlation_id = 41u,
+        .gateway_sequence = 401u,
+        .enumerated = 3u,
+        .failures = 4u,
+    };
+    const enum gateway_command_event_reason failure_reasons[] = {
+        GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE,
+        GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED,
+        GATEWAY_COMMAND_EVENT_REASON_RADIO,
+        GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE,
+        GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED,
+    };
+    enum gateway_command_event_reason failure_reason =
+        GATEWAY_COMMAND_EVENT_REASON_NONE;
+    struct gateway_command_event terminal;
+
+    gateway_command_observability_init(&mixed.state);
+    for (size_t i = 0u;
+         i < sizeof(failure_reasons) / sizeof(failure_reasons[0]);
+         i++) {
+        failure_reason = gateway_command_survey_failure_reason_merge(
+            failure_reason, failure_reasons[i]);
+    }
+    terminal = event_for(&mixed,
+                         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+                         GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
+    gateway_command_survey_terminal_outcome(
+        mixed.enumerated,
+        mixed.failures,
+        failure_reason,
+        &terminal.status,
+        &terminal.reason);
+    emit(&mixed, &terminal, true, 0);
+    assert(terminal.status == COMMAND_INTERNAL_ERROR);
+    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
+
+    struct scenario one_anchor = {
+        .correlation_id = 42u,
+        .gateway_sequence = 402u,
+        .enumerated = 1u,
+    };
+
+    gateway_command_observability_init(&one_anchor.state);
+    terminal = event_for(&one_anchor,
+                         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+                         GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
+    gateway_command_survey_terminal_outcome(
+        one_anchor.enumerated,
+        0u,
+        GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &terminal.status,
+        &terminal.reason);
+    terminal.total_count = 0u;
+    emit(&one_anchor, &terminal, true, 0);
+    assert(terminal.status == COMMAND_OK);
+    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
 }
 
 static void test_ble_disconnect_backpressure_and_reconnect_snapshot(void)
@@ -235,6 +301,7 @@ int main(void)
     test_no_anchor_and_partial_enumeration_terminals();
     test_retry_backoff_and_timeout_are_correlated();
     test_pair_success_failure_and_terminal_counts();
+    test_mixed_survey_failures_and_zero_pair_success();
     test_ble_disconnect_backpressure_and_reconnect_snapshot();
     puts("gateway command observability integration scenarios passed");
     return 0;

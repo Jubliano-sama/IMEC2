@@ -102,6 +102,22 @@ enum dwm3000_rx_failure {
     DWM3000_RX_FAILURE_BAD_FRAME = 5,
 };
 
+struct dwm3000_rx_debug_snapshot {
+    uint32_t status;
+    uint32_t rx_finfo;
+    uint16_t sfd_timeout;
+    uint8_t phy_mode;
+    uint8_t channel;
+    uint8_t preamble_length;
+    uint8_t pac;
+    uint8_t tx_code;
+    uint8_t rx_code;
+    uint8_t sfd_type;
+    uint8_t data_rate;
+    uint8_t phr_mode;
+    uint8_t phr_rate;
+};
+
 struct dwm3000_rx_frame_timing {
     uint64_t rx_timestamp;
     uint32_t rx_enable_time32;
@@ -136,6 +152,7 @@ int dwm3000_driver_configure_range_mode(void);
 int dwm3000_driver_configure_mesh_payload_mode(void);
 int dwm3000_driver_configure_wake_mesh_control_mode(void);
 int dwm3000_driver_configure_wake_mode(void);
+int dwm3000_driver_ensure_wake_mode(void);
 int dwm3000_driver_idle(void);
 int dwm3000_driver_standby(void);
 int dwm3000_driver_force_recovery(void);
@@ -202,5 +219,6 @@ int dwm3000_driver_capture_last_rx_cir(uint8_t *buffer,
                                        uint16_t buffer_cap,
                                        struct dwm3000_range_result *result);
 void dwm3000_driver_stats_get(struct dwm3000_driver_stats *stats);
+void dwm3000_driver_last_rx_debug_get(struct dwm3000_rx_debug_snapshot *snapshot);
 
 #endif

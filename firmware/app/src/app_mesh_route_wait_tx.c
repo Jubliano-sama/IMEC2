@@ -10,6 +10,36 @@ static void decision_init(struct app_mesh_route_wait_tx_decision *decision)
     }
 }
 
+bool app_mesh_route_wait_tx_may_store(
+    enum app_mesh_route_wait_tx_owner owner)
+{
+    return owner == APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC;
+}
+
+void app_mesh_route_retry_identity_select(
+    enum app_mesh_route_wait_tx_owner owner,
+    const struct proto_packet *packet,
+    uint32_t generation,
+    struct app_mesh_route_retry_identity *identity)
+{
+    if (identity == NULL) {
+        return;
+    }
+    identity->mode = APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE;
+    identity->survey_id = 0u;
+    if (packet == NULL ||
+        packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
+        packet->src_id == 0u || packet->session_id == 0u) {
+        return;
+    }
+    if (owner == APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL &&
+        (generation == 0u || generation != packet->session_id)) {
+        return;
+    }
+    identity->mode = APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY;
+    identity->survey_id = packet->session_id;
+}
+
 void app_mesh_route_wait_tx_decide(
     const struct app_mesh_route_wait_tx_state *state,
     struct app_mesh_route_wait_tx_decision *decision)

@@ -3,6 +3,7 @@
 
 #include "gateway_command.h"
 #include "gateway_membership.h"
+#include "app_mesh_local_delivery.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 
@@ -10,6 +11,19 @@
 #include <stdint.h>
 
 #define APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION 1u
+#define APP_MESH_CLICK_HANDOFF_SNAPSHOT_VERSION 1u
+
+enum app_mesh_click_handoff_phase {
+    APP_MESH_CLICK_HANDOFF_STAGED = 1,
+    APP_MESH_CLICK_HANDOFF_COMMITTED,
+};
+
+struct app_mesh_click_handoff_snapshot {
+    uint16_t version;
+    enum app_mesh_click_handoff_phase phase;
+    struct mesh_relay_outbox_snapshot outbox;
+    bool valid;
+};
 
 struct app_mesh_persistence_health {
     uint32_t total_failures;
@@ -48,7 +62,19 @@ struct app_mesh_collection_result_snapshot {
 int app_mesh_persistence_init(void);
 int app_mesh_persistence_restore_outbox(struct mesh_relay *relay, uint32_t now_ms);
 int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms);
-void app_mesh_persistence_clear_outbox(void);
+int app_mesh_persistence_clear_outbox(void);
+int app_mesh_persistence_save_local_delivery(
+    const struct app_mesh_local_delivery_snapshot *snapshot);
+int app_mesh_persistence_restore_local_delivery(
+    struct app_mesh_local_delivery_snapshot *snapshot);
+int app_mesh_persistence_clear_local_delivery(void);
+int app_mesh_persistence_stage_click_handoff(struct mesh_relay *relay,
+                                             uint32_t now_ms);
+int app_mesh_persistence_commit_click_handoff(struct mesh_relay *relay,
+                                              uint32_t now_ms);
+int app_mesh_persistence_rollback_click_handoff(void);
+int app_mesh_persistence_complete_click_handoff(struct mesh_relay *relay,
+                                                uint32_t now_ms);
 int app_mesh_persistence_restore_child_custody(struct mesh_relay *relay,
                                                uint32_t now_ms);
 int app_mesh_persistence_save_child_custody(struct mesh_relay *relay,

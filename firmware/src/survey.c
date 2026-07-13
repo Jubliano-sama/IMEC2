@@ -1,5 +1,8 @@
 #include "survey.h"
 
+#include "dwm3000_timing.h"
+#include "uwb.h"
+
 #include <string.h>
 
 _Static_assert(sizeof(struct survey_pair) == 24u,
@@ -99,7 +102,8 @@ int survey_discovery_config_validate(const struct survey_discovery_config *confi
     if (config->survey_id == 0u ||
         config->start_delay_ms == 0u ||
         config->start_delay_ms > SURVEY_DISCOVERY_MAX_START_DELAY_MS ||
-        config->slot_ms < SURVEY_DISCOVERY_MIN_SLOT_MS ||
+        config->slot_ms < survey_discovery_probe_tx_budget_ms() +
+                              SURVEY_DISCOVERY_RX_GUARD_MS ||
         config->slot_ms > SURVEY_DISCOVERY_MAX_SLOT_MS ||
         config->slot_count == 0u ||
         config->slot_count > SURVEY_DISCOVERY_MAX_SLOT_COUNT) {
@@ -108,21 +112,44 @@ int survey_discovery_config_validate(const struct survey_discovery_config *confi
     return PROTO_OK;
 }
 
+static uint32_t survey_discovery_nominal_duration_ms(
+    const struct survey_discovery_config *config)
+{
+    uint64_t cursor = 0u;
+
+    if (config == NULL) {
+        return 0u;
+    }
+    for (uint8_t opportunity = 0u;
+         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+         opportunity++) {
+        uint32_t base_ms = opportunity == 0u ? 0u :
+            SURVEY_DISCOVERY_RETRY_BASE_MS << (opportunity - 1u);
+
+        cursor += (uint64_t)base_ms * 2u +
+                  (uint64_t)config->slot_ms * config->slot_count;
+    }
+    return cursor > UINT32_MAX ? 0u : (uint32_t)cursor;
+}
+
 uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *config)
 {
-    uint32_t end_ms = 0u;
+    uint32_t nominal_duration_ms;
 
     if (survey_discovery_config_validate(config) != PROTO_OK) {
         return 0u;
     }
-    if (survey_discovery_opportunity_window_ms(
-            config,
-            SURVEY_DISCOVERY_OPPORTUNITY_COUNT - 1u,
-            NULL,
-            &end_ms) != PROTO_OK) {
+    nominal_duration_ms = survey_discovery_nominal_duration_ms(config);
+    if (nominal_duration_ms == 0u ||
+        nominal_duration_ms > UINT32_MAX / 2u) {
         return 0u;
     }
-    return end_ms;
+    /*
+     * The second, equally sized horizon is receive time for idle anchors and
+     * deterministic reserve slots for anchors whose nominal opportunity was
+     * blocked. This keeps four real TX attempts without unbounded extension.
+     */
+    return nominal_duration_ms * 2u;
 }
 
 uint8_t survey_discovery_opportunity_slot(uint64_t anchor_id,
@@ -221,6 +248,182 @@ int survey_discovery_opportunity_tx_ms(
     }
     *tx_ms = (uint32_t)tx;
     return PROTO_OK;
+}
+
+uint32_t survey_discovery_probe_tx_budget_ms(void)
+{
+    uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE, UWB_SURVEY_DISCOVERY_PROBE_LEN);
+    uint64_t airtime_ms;
+
+    if (airtime_us == 0u) {
+        return UINT32_MAX;
+    }
+    airtime_ms = (airtime_us + 999u) / 1000u;
+    airtime_ms = airtime_ms < SURVEY_DISCOVERY_TX_TIMEOUT_MS ?
+                 SURVEY_DISCOVERY_TX_TIMEOUT_MS : airtime_ms;
+    if (airtime_ms > UINT32_MAX - SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)airtime_ms + SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS;
+}
+
+int survey_discovery_schedule_attempt(
+    const struct survey_discovery_config *config,
+    uint64_t anchor_id,
+    uint8_t opportunity,
+    uint32_t earliest_relative_ms,
+    struct survey_discovery_attempt_schedule *schedule)
+{
+    uint32_t nominal_duration_ms;
+    uint32_t raw_tx_ms;
+    uint32_t tx_budget_ms;
+    uint32_t offset_ms = 0u;
+    int ret;
+
+    if (schedule == NULL || anchor_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    memset(schedule, 0, sizeof(*schedule));
+    ret = survey_discovery_opportunity_window_ms(config, opportunity,
+                                                 &schedule->window_start_ms,
+                                                 &schedule->window_end_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_discovery_opportunity_tx_ms(config, anchor_id, opportunity,
+                                             &raw_tx_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    tx_budget_ms = survey_discovery_probe_tx_budget_ms();
+    if (tx_budget_ms == UINT32_MAX ||
+        UINT32_MAX - raw_tx_ms < config->slot_ms ||
+        UINT32_MAX - raw_tx_ms < SURVEY_DISCOVERY_RX_GUARD_MS) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    schedule->tx_ms = raw_tx_ms + SURVEY_DISCOVERY_RX_GUARD_MS;
+    schedule->slot_end_ms = raw_tx_ms + config->slot_ms;
+    if (schedule->slot_end_ms < tx_budget_ms) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    schedule->latest_tx_start_ms = schedule->slot_end_ms - tx_budget_ms;
+    if (schedule->tx_ms > schedule->latest_tx_start_ms ||
+        earliest_relative_ms > schedule->latest_tx_start_ms) {
+        nominal_duration_ms = survey_discovery_nominal_duration_ms(config);
+        if (nominal_duration_ms == 0u) {
+            return PROTO_ERR_NO_SPACE;
+        }
+        offset_ms = nominal_duration_ms;
+        if (UINT32_MAX - schedule->window_start_ms < offset_ms ||
+            UINT32_MAX - schedule->window_end_ms < offset_ms ||
+            UINT32_MAX - schedule->tx_ms < offset_ms ||
+            UINT32_MAX - schedule->latest_tx_start_ms < offset_ms ||
+            UINT32_MAX - schedule->slot_end_ms < offset_ms) {
+            return PROTO_ERR_NO_SPACE;
+        }
+        schedule->window_start_ms += offset_ms;
+        schedule->window_end_ms += offset_ms;
+        schedule->tx_ms += offset_ms;
+        schedule->latest_tx_start_ms += offset_ms;
+        schedule->slot_end_ms += offset_ms;
+        schedule->deferred = true;
+        if (earliest_relative_ms > schedule->latest_tx_start_ms) {
+            return PROTO_ERR_BUSY;
+        }
+    }
+    return PROTO_OK;
+}
+
+static bool survey_time_reached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
+int survey_pending_report_begin(struct survey_pending_report_state *state,
+                                uint32_t survey_id,
+                                uint32_t now_ms,
+                                uint32_t earliest_attempt_ms)
+{
+    uint32_t deadline_base_ms;
+
+    if (state == NULL || survey_id == 0u || state->active) {
+        return PROTO_ERR_ARG;
+    }
+    deadline_base_ms = survey_time_reached(now_ms, earliest_attempt_ms) ?
+                       now_ms : earliest_attempt_ms;
+    memset(state, 0, sizeof(*state));
+    state->survey_id = survey_id;
+    state->next_attempt_ms = earliest_attempt_ms;
+    state->deadline_ms = deadline_base_ms +
+                         SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS;
+    state->active = true;
+    return PROTO_OK;
+}
+
+enum survey_pending_report_action survey_pending_report_action(
+    const struct survey_pending_report_state *state,
+    uint32_t now_ms)
+{
+    if (state == NULL || !state->active) {
+        return SURVEY_PENDING_REPORT_IDLE;
+    }
+    if (survey_time_reached(now_ms, state->deadline_ms)) {
+        return SURVEY_PENDING_REPORT_EXPIRED;
+    }
+    return survey_time_reached(now_ms, state->next_attempt_ms) ?
+           SURVEY_PENDING_REPORT_ATTEMPT : SURVEY_PENDING_REPORT_WAIT;
+}
+
+uint32_t survey_pending_report_delay_ms(
+    const struct survey_pending_report_state *state,
+    uint32_t now_ms)
+{
+    uint32_t target_ms;
+
+    if (state == NULL || !state->active) {
+        return 0u;
+    }
+    target_ms = survey_time_reached(state->next_attempt_ms,
+                                    state->deadline_ms) ?
+                state->deadline_ms : state->next_attempt_ms;
+    return survey_time_reached(now_ms, target_ms) ? 0u : target_ms - now_ms;
+}
+
+int survey_pending_report_note_temporary_failure(
+    struct survey_pending_report_state *state,
+    uint32_t now_ms)
+{
+    uint32_t backoff_ms = SURVEY_DISCOVERY_REPORT_RETRY_INITIAL_MS;
+    uint8_t shift;
+
+    if (state == NULL || !state->active) {
+        return PROTO_ERR_ARG;
+    }
+    if (survey_time_reached(now_ms, state->deadline_ms)) {
+        return PROTO_ERR_BUSY;
+    }
+    shift = state->retry_count > 3u ? 3u : (uint8_t)state->retry_count;
+    backoff_ms <<= shift;
+    if (backoff_ms > SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS) {
+        backoff_ms = SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS;
+    }
+    if (state->retry_count < UINT16_MAX) {
+        state->retry_count++;
+    }
+    state->next_attempt_ms = now_ms + backoff_ms;
+    if (survey_time_reached(state->next_attempt_ms, state->deadline_ms)) {
+        state->next_attempt_ms = state->deadline_ms;
+    }
+    return PROTO_OK;
+}
+
+void survey_pending_report_clear(struct survey_pending_report_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
 }
 
 int survey_discovery_timing_from_age(const struct survey_discovery_config *config,
@@ -396,11 +599,13 @@ survey_gateway_find_report(struct survey_gateway_context *context,
     return NULL;
 }
 
-int survey_gateway_note_reach_report(struct survey_gateway_context *context,
-                                     uint32_t survey_id,
-                                     uint64_t anchor_id,
-                                     const struct survey_reachability_entry *entries,
-                                     size_t entry_count)
+int survey_gateway_note_reach_report_with_reverse_hint(
+    struct survey_gateway_context *context,
+    uint32_t survey_id,
+    uint64_t anchor_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count,
+    const struct survey_gateway_reverse_hint *reverse_hint)
 {
     struct survey_gateway_report_slot *slot;
 
@@ -411,6 +616,13 @@ int survey_gateway_note_reach_report(struct survey_gateway_context *context,
         return PROTO_ERR_STALE;
     }
     if (anchor_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (reverse_hint != NULL &&
+        (!reverse_hint->valid ||
+         reverse_hint->target_id != anchor_id ||
+         reverse_hint->next_hop_id == 0u ||
+         reverse_hint->quality > 100u)) {
         return PROTO_ERR_MALFORMED;
     }
     if (entry_count > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
@@ -429,18 +641,24 @@ int survey_gateway_note_reach_report(struct survey_gateway_context *context,
     }
 
     slot = survey_gateway_find_report(context, anchor_id);
-    if (slot == NULL) {
-        if (context->report_count >= SURVEY_GATEWAY_MAX_REPORTS) {
-            return PROTO_ERR_NO_SPACE;
-        }
-        slot = &context->reports[context->report_count];
-        context->report_count++;
+    if (slot != NULL) {
+        return PROTO_OK;
     }
+    if (context->report_count >= SURVEY_GATEWAY_MAX_REPORTS) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    slot = &context->reports[context->report_count];
+    context->report_count++;
 
     memset(slot, 0, sizeof(*slot));
     slot->anchor_id = anchor_id;
     slot->entry_count = entry_count;
     slot->valid = true;
+    if (reverse_hint != NULL) {
+        slot->reverse_next_hop_id = reverse_hint->next_hop_id;
+        slot->reverse_quality = reverse_hint->quality;
+        slot->reverse_hint_valid = true;
+    }
     if (entry_count > 0u) {
         memcpy(slot->entries, entries, entry_count * sizeof(entries[0]));
     }
@@ -448,6 +666,53 @@ int survey_gateway_note_reach_report(struct survey_gateway_context *context,
     context->pair_count = 0u;
     context->next_pair_index = 0u;
     return PROTO_OK;
+}
+
+int survey_gateway_note_reach_report(struct survey_gateway_context *context,
+                                     uint32_t survey_id,
+                                     uint64_t anchor_id,
+                                     const struct survey_reachability_entry *entries,
+                                     size_t entry_count)
+{
+    return survey_gateway_note_reach_report_with_reverse_hint(context,
+                                                              survey_id,
+                                                              anchor_id,
+                                                              entries,
+                                                              entry_count,
+                                                              NULL);
+}
+
+int survey_gateway_reverse_hint_for_target(
+    const struct survey_gateway_context *context,
+    uint64_t target_id,
+    struct survey_gateway_reverse_hint *reverse_hint)
+{
+    if (context == NULL || reverse_hint == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (context->survey_id == 0u) {
+        return PROTO_ERR_STALE;
+    }
+    if (target_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (size_t i = 0u; i < context->report_count; i++) {
+        const struct survey_gateway_report_slot *slot = &context->reports[i];
+
+        if (slot->valid &&
+            slot->anchor_id == target_id &&
+            slot->reverse_hint_valid) {
+            *reverse_hint = (struct survey_gateway_reverse_hint) {
+                .target_id = slot->anchor_id,
+                .next_hop_id = slot->reverse_next_hop_id,
+                .quality = slot->reverse_quality,
+                .valid = true,
+            };
+            return PROTO_OK;
+        }
+    }
+    return PROTO_ERR_NOT_FOUND;
 }
 
 int survey_gateway_plan_pairs(struct survey_gateway_context *context)
@@ -1384,6 +1649,7 @@ int survey_init_result_packet_from_reporter(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = SURVEY_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -1422,6 +1688,7 @@ int survey_init_reach_request_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = SURVEY_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -1447,6 +1714,7 @@ int survey_init_reach_report_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = SURVEY_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -1474,6 +1742,7 @@ int survey_init_discovery_start_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = SURVEY_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -1499,6 +1768,7 @@ int survey_init_discovery_report_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = SURVEY_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }
 
@@ -1527,5 +1797,6 @@ int survey_init_pair_prepare_packet(struct proto_packet *packet,
     packet->seq = seq;
     packet->ttl = SURVEY_DEFAULT_TTL;
     packet->payload_len = payload_len;
+    packet->message_age_ms = 0u;
     return PROTO_OK;
 }

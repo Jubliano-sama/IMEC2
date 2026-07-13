@@ -32,6 +32,7 @@ int mesh_prepare_click_preemption(struct mesh_relay *relay,
     if (relay == NULL || plan == NULL) {
         return PROTO_ERR_ARG;
     }
+    (void)now_ms;
 
     memset(plan, 0, sizeof(*plan));
     if (!mesh_relay_tx_active(relay)) {
@@ -47,17 +48,20 @@ int mesh_prepare_click_preemption(struct mesh_relay *relay,
 
     if (pending_local_click_report) {
         copy_pending_click_report(&relay->pending, plan);
-    }
-
-    if (!pending_transit_click_report &&
-        mesh_relay_defer_tx(relay, now_ms)) {
+        plan->clear_outbox = true;
+        plan->cancel_timeout = true;
+    } else if (!pending_transit_click_report && mesh_relay_can_defer_tx(relay)) {
         plan->save_outbox = true;
         plan->schedule_timeout = true;
-        return PROTO_OK;
+    } else {
+        plan->clear_outbox = true;
+        plan->cancel_timeout = true;
     }
 
-    mesh_relay_cancel_tx(relay);
-    plan->clear_outbox = true;
-    plan->cancel_timeout = true;
+    /*
+     * Do not release relay->pending here.  The app transaction establishes an
+     * alternate owner first, then performs this cancellation as its commit.
+     */
+    plan->cancel_active_tx = true;
     return PROTO_OK;
 }

@@ -60,6 +60,20 @@ enum gateway_command_event_flag {
     GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE = 1u << 3,
 };
 
+enum gateway_command_event_reason gateway_command_survey_failure_reason_merge(
+    enum gateway_command_event_reason current,
+    enum gateway_command_event_reason candidate);
+bool gateway_command_survey_sample_admission(
+    uint16_t sample_count,
+    enum command_status *status,
+    enum gateway_command_event_reason *reason);
+void gateway_command_survey_terminal_outcome(
+    size_t report_count,
+    uint16_t failure_count,
+    enum gateway_command_event_reason failure_reason,
+    enum command_status *status,
+    enum gateway_command_event_reason *reason);
+
 struct gateway_command_event {
     uint8_t schema_version;
     uint8_t record_len;

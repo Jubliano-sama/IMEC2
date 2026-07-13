@@ -219,6 +219,46 @@ static void test_click_evicts_lower_priority_diagnostic(void)
            MSG_CLICK_REPORT);
 }
 
+static void test_retained_assignment_event_survives_click_eviction(void)
+{
+    struct gateway_ble_stream_state state;
+    struct proto_packet publisher = packet(MSG_GATEWAY_COMMAND_EVENT, 0u, 10u);
+    struct proto_packet diagnostic = packet(MSG_UWB_ANCHOR_DIAG, 0u, 20u);
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 30u);
+    struct proto_packet head;
+    uint8_t payload[1] = {0u};
+
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(&state, &publisher,
+                                             payload, sizeof(payload),
+                                             0u, 1u, true) == 1);
+    state.items[state.count - 1u].retain_until_sent = true;
+    assert(gateway_ble_stream_enqueue_packet(&state, &diagnostic,
+                                             payload, sizeof(payload),
+                                             0u, 2u, true) == 1);
+    diagnostic.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state, &diagnostic,
+                                             payload, sizeof(payload),
+                                             0u, 3u, true) == 1);
+
+    assert(gateway_ble_stream_enqueue_packet(&state, &click,
+                                             payload, sizeof(payload),
+                                             0u, 4u, true) == 1);
+    click.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state, &click,
+                                             payload, sizeof(payload),
+                                             0u, 5u, true) == 1);
+    click.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state, &click,
+                                             payload, sizeof(payload),
+                                             0u, 6u, true) == -ENOSPC);
+    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    assert(gateway_ble_stream_head_packet(&state, &head) == 0);
+    assert(head.msg_type == MSG_GATEWAY_COMMAND_EVENT);
+    assert(head.seq == publisher.seq);
+    assert(state.items[0].retain_until_sent);
+}
+
 static void test_terminal_command_event_evicts_lower_priority_status(void)
 {
     struct gateway_ble_stream_state state;
@@ -429,6 +469,7 @@ int main(void)
     test_max_size_click_is_preserved_and_oversize_is_rejected();
     test_disconnected_full_queue_counts_not_ready();
     test_click_evicts_lower_priority_diagnostic();
+    test_retained_assignment_event_survives_click_eviction();
     test_terminal_command_event_evicts_lower_priority_status();
     test_fast_drain_and_counters();
     test_active_head_cannot_be_evicted();

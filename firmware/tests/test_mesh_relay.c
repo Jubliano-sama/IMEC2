@@ -124,6 +124,32 @@ static void test_route_reply_nonce_value_and_identity(void)
     assert(mesh_route_reply_nonce(0u, 0u, 1u, 1u) == 1u);
 }
 
+static void test_mesh_relay_result_preserves_required_simultaneous_outputs(void)
+{
+    struct mesh_relay_result result = {0};
+
+    assert(sizeof(result) <= (3u * sizeof(struct mesh_outbound)) + 32u);
+
+    result.route_reply.packet.msg_type = MSG_ROUTE_REPLY;
+    result.route_reply.packet.seq = 101u;
+    result.route_reply_ack.packet.msg_type = MSG_ROUTE_REPLY_ACK;
+    result.route_reply_ack.packet.seq = 102u;
+    assert(result.route_reply.packet.msg_type == MSG_ROUTE_REPLY);
+    assert(result.route_reply.packet.seq == 101u);
+    assert(result.route_reply_ack.packet.msg_type == MSG_ROUTE_REPLY_ACK);
+    assert(result.route_reply_ack.packet.seq == 102u);
+
+    memset(&result, 0, sizeof(result));
+    result.busy.packet.msg_type = MSG_RELAY_BUSY;
+    result.busy.packet.seq = 201u;
+    result.route_reply_ack.packet.msg_type = MSG_ROUTE_REPLY_ACK;
+    result.route_reply_ack.packet.seq = 202u;
+    assert(result.busy.packet.msg_type == MSG_RELAY_BUSY);
+    assert(result.busy.packet.seq == 201u);
+    assert(result.route_reply_ack.packet.msg_type == MSG_ROUTE_REPLY_ACK);
+    assert(result.route_reply_ack.packet.seq == 202u);
+}
+
 static int tlv_present(const uint8_t *payload, size_t payload_len, uint8_t type)
 {
     const uint8_t *value = NULL;
@@ -3324,11 +3350,14 @@ static void test_forwarded_child_result_offer_snapshot_restores_after_reinit(voi
                                          4400u,
                                          &offer_tx) == PROTO_OK);
     assert(relay.pending.result_offer_active);
+    assert(relay.pending.queued_at_ms == 4400u);
     assert(relay.outbox_record.valid);
     assert(relay.outbox_record.delivery_state == MESH_RELAY_DELIVERY_WAIT_LOCAL_CUSTODY_ACK);
     assert(mesh_relay_export_outbox_snapshot(&relay,
                                              4410u,
                                              &snapshot) == PROTO_OK);
+    assert(snapshot.pending.queued_at_ms == 4410u);
+    assert(snapshot.record.age_ms_saturating == 10u);
 
     mesh_relay_init(&restored, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
     assert(route_upsert_candidate(&restored.upstream, &route) == PROTO_OK);
@@ -4138,6 +4167,54 @@ static void test_route_discovery_continues_at_ttl_six_with_backoff(void)
                                             0u,
                                             &route_req) == PROTO_OK);
     assert(route_req.packet.ttl == 6u);
+}
+
+static void test_route_discovery_retry_sequence_handles_wrap_and_jitter(void)
+{
+    static const uint32_t base_ms[] = {
+        1000u, 2000u, 4000u, 8000u, 16000u, 32000u, 60000u, 60000u,
+    };
+    static const uint32_t random_values[] = {
+        UINT32_C(0x13579bdf), UINT32_C(0x2468ace0),
+        UINT32_C(0xabcdef01), UINT32_C(0x10203040),
+        UINT32_C(0xfedcba98), UINT32_C(0x55aa55aa),
+        UINT32_C(0xdeadbeef), UINT32_C(0x01010101),
+    };
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    const uint8_t attempt_count =
+        (uint8_t)(sizeof(base_ms) / sizeof(base_ms[0]));
+    uint32_t now_ms = UINT32_MAX - 500u;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 11u);
+
+    for (uint8_t attempt = 1u; attempt <= attempt_count; attempt++) {
+        uint32_t random_value = random_values[attempt - 1u];
+        uint32_t delay_ms = mesh_relay_route_discovery_backoff_ms(attempt,
+                                                                  random_value);
+        uint8_t expected_ttl = attempt == 1u ? 1u :
+                               (attempt == 2u ? 2u :
+                                (attempt == 3u ? 4u : 6u));
+
+        assert(delay_ms >= base_ms[attempt - 1u]);
+        assert(delay_ms <= base_ms[attempt - 1u] * 2u);
+        assert(mesh_relay_prepare_route_request(&relay,
+                                                GATEWAY,
+                                                now_ms,
+                                                random_value,
+                                                &route_req) == PROTO_OK);
+        assert(route_req.packet.ttl == expected_ttl);
+        assert(relay.route_discovery.attempts == attempt);
+        assert(relay.route_discovery.next_request_ms == now_ms + delay_ms);
+        assert(mesh_relay_prepare_route_request(&relay,
+                                                GATEWAY,
+                                                now_ms + 1u,
+                                                random_value ^ UINT32_MAX,
+                                                &route_req) == PROTO_ERR_BUSY);
+        now_ms = relay.route_discovery.next_request_ms;
+    }
+
+    assert(relay.route_discovery.attempts == attempt_count);
 }
 
 static void test_idle_route_solicit_without_upstream_is_forwarded_once(void)
@@ -5893,8 +5970,12 @@ static void test_multihop_route_reply_forward_uses_channel_five(void)
                                 1030u,
                                 &forwarded_reply) == PROTO_OK);
     assert(has_action(&forwarded_reply, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(has_action(&forwarded_reply, MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK));
     assert(forwarded_reply.route_reply.next_hop_id == ANCHOR_A);
     assert(forwarded_reply.route_reply.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
+    assert(forwarded_reply.route_reply_ack.packet.msg_type == MSG_ROUTE_REPLY_ACK);
+    assert(forwarded_reply.route_reply_ack.packet.dst_id == ANCHOR_C);
+    assert(forwarded_reply.route_reply_ack.next_hop_id == ANCHOR_C);
 }
 
 static void test_concurrent_route_replies_use_their_discovery_predecessor(void)
@@ -8024,6 +8105,116 @@ static void test_direct_gateway_route_probe_clears_hold_down(void)
     assert(selected->last_success_ms == 2400u);
 }
 
+static void test_gateway_survey_reverse_route_is_current_epoch_and_timing_free(void)
+{
+    struct mesh_relay gateway;
+    const struct mesh_downlink_entry *downlink;
+    struct mesh_outbound route_request;
+    uint64_t next_hop_id = 0u;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 17u);
+    assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) ==
+           PROTO_ERR_NOT_FOUND);
+    assert(mesh_relay_prepare_route_request(&gateway,
+                                            ANCHOR_A,
+                                            1100u,
+                                            UINT32_C(0x12345678),
+                                            &route_request) == PROTO_OK);
+    assert(gateway.route_discovery.active);
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        ANCHOR_A,
+                                                        ANCHOR_A,
+                                                        91u,
+                                                        1200u) == PROTO_OK);
+    assert(!gateway.route_discovery.active);
+    assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) ==
+           PROTO_OK);
+    assert(next_hop_id == ANCHOR_A);
+    downlink = mesh_relay_find_downlink(&gateway, ANCHOR_A);
+    assert(downlink != NULL);
+    assert(downlink->route_epoch == 17u);
+    assert(downlink->hop_count == 1u);
+    assert(downlink->quality == 91u);
+    assert(downlink->last_seen_ms == 1200u);
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        assert(!gateway.event_timings[i].valid);
+    }
+
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        ANCHOR_A,
+                                                        ANCHOR_B,
+                                                        77u,
+                                                        1300u) == PROTO_OK);
+    assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) ==
+           PROTO_OK);
+    assert(next_hop_id == ANCHOR_B);
+    downlink = mesh_relay_find_downlink(&gateway, ANCHOR_A);
+    assert(downlink != NULL);
+    assert(downlink->route_epoch == 17u);
+    assert(downlink->hop_count == MESH_NETWORK_MAX_HOPS);
+    assert(downlink->last_seen_ms == 1300u);
+}
+
+static void test_gateway_survey_reverse_route_rejects_invalid_evidence(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 3u);
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 3u);
+
+    assert(mesh_relay_note_gateway_survey_reverse_route(&anchor,
+                                                        ANCHOR_B,
+                                                        ANCHOR_B,
+                                                        80u,
+                                                        1u) == PROTO_ERR_ARG);
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        0u,
+                                                        ANCHOR_B,
+                                                        80u,
+                                                        1u) == PROTO_ERR_ARG);
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        ANCHOR_B,
+                                                        0u,
+                                                        80u,
+                                                        1u) == PROTO_ERR_ARG);
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        ANCHOR_B,
+                                                        ANCHOR_B,
+                                                        101u,
+                                                        1u) == PROTO_ERR_ARG);
+    assert(mesh_relay_find_downlink(&gateway, ANCHOR_B) == NULL);
+}
+
+static void test_gateway_survey_reverse_route_reinstalls_beyond_table_capacity(void)
+{
+    struct mesh_relay gateway;
+    const uint64_t anchor_base = UINT64_C(0xa700000000001000);
+    const uint64_t relay_base = UINT64_C(0xa800000000001000);
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 23u);
+    for (size_t i = 0u; i < 50u; i++) {
+        const uint64_t target_id = anchor_base + i;
+        const uint64_t next_hop_id = i < 20u ? target_id : relay_base + (i % 5u);
+        const struct mesh_downlink_entry *downlink;
+        uint64_t selected_next_hop = 0u;
+
+        assert(mesh_relay_note_gateway_survey_reverse_route(
+                   &gateway,
+                   target_id,
+                   next_hop_id,
+                   (uint8_t)(100u - i),
+                   (uint32_t)(1000u + i)) == PROTO_OK);
+        assert(mesh_relay_select_next_hop(&gateway,
+                                          target_id,
+                                          &selected_next_hop) == PROTO_OK);
+        assert(selected_next_hop == next_hop_id);
+        downlink = mesh_relay_find_downlink(&gateway, target_id);
+        assert(downlink != NULL);
+        assert(downlink->route_epoch == 23u);
+    }
+}
+
 static void test_direct_gateway_probe_route_answers_pending_request(void)
 {
     struct mesh_relay origin;
@@ -8088,6 +8279,7 @@ static void test_gateway_commands_use_channel5_control_lane(void)
 
 int main(void)
 {
+    test_mesh_relay_result_preserves_required_simultaneous_outputs();
     test_route_reply_nonce_value_and_identity();
     test_gateway_commands_use_channel5_control_lane();
     test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate();
@@ -8147,6 +8339,7 @@ int main(void)
     test_gateway_ack_timeout_handles_ms_wrap();
     test_deferred_retransmit_waits_for_actual_radio_send();
     test_route_discovery_continues_at_ttl_six_with_backoff();
+    test_route_discovery_retry_sequence_handles_wrap_and_jitter();
     test_idle_route_solicit_without_upstream_is_forwarded_once();
     test_better_route_request_copy_updates_pending_forward();
     test_route_request_retry_uses_new_flood_identity();
@@ -8210,6 +8403,9 @@ int main(void)
     test_mesh_hop_ack_is_protocol_valid();
     test_direct_gateway_route_probe_marks_route_ready();
     test_direct_gateway_route_probe_clears_hold_down();
+    test_gateway_survey_reverse_route_is_current_epoch_and_timing_free();
+    test_gateway_survey_reverse_route_rejects_invalid_evidence();
+    test_gateway_survey_reverse_route_reinstalls_beyond_table_capacity();
     test_direct_gateway_probe_route_answers_pending_request();
     return 0;
 }

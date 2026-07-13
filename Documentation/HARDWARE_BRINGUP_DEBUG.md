@@ -189,7 +189,7 @@ mcumgr --conntype serial --connstring "dev=/dev/ttyACM0,baud=115200" reset
 If serial recovery cannot be entered or the image will not boot, recover with J-Link:
 
 ```sh
-.venv/bin/west flash --runner nrfjprog --build-dir build/<preset>
+.venv/bin/west flash --runner nrfjprog --build-dir build/<legacy-or-bench-preset>
 ```
 
 ## Logs And Gateway Bluetooth

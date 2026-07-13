@@ -13,6 +13,13 @@ extern "C" {
 
 #define SURVEY_MIN_SAMPLE_COUNT 1u
 #define SURVEY_MAX_SAMPLE_COUNT 1000u
+/*
+ * The wire format permits larger surveys, but the connected mesh runtime keeps
+ * one durable result per sample in the anchor report queue. This value is a
+ * cross-role contract: gateways must not admit work that mesh anchors cannot
+ * execute without dropping a result.
+ */
+#define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
 #define SURVEY_DEFAULT_TTL 4u
 #define SURVEY_REACHABILITY_ENTRY_LEN 10u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
@@ -23,11 +30,17 @@ extern "C" {
 #define SURVEY_DISCOVERY_MAX_SLOT_COUNT 50u
 #define SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT 2u
 #define SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT 8u
-#define SURVEY_DISCOVERY_MIN_SLOT_MS 10u
+#define SURVEY_DISCOVERY_RX_GUARD_MS 8u
+#define SURVEY_DISCOVERY_TX_TIMEOUT_MS 20u
+#define SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS 2u
+#define SURVEY_DISCOVERY_MIN_SLOT_MS 30u
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
 #define SURVEY_DISCOVERY_OPPORTUNITY_COUNT 4u
 #define SURVEY_DISCOVERY_RETRY_BASE_MS 40u
+#define SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS 5000u
+#define SURVEY_DISCOVERY_REPORT_RETRY_INITIAL_MS 50u
+#define SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS 500u
 
 struct survey_reachability_entry {
     uint64_t peer_id;
@@ -76,10 +89,44 @@ struct survey_discovery_timing {
     bool expired;
 };
 
+struct survey_discovery_attempt_schedule {
+    uint32_t window_start_ms;
+    uint32_t tx_ms;
+    uint32_t latest_tx_start_ms;
+    uint32_t slot_end_ms;
+    uint32_t window_end_ms;
+    bool deferred;
+};
+
+enum survey_pending_report_action {
+    SURVEY_PENDING_REPORT_IDLE = 0,
+    SURVEY_PENDING_REPORT_WAIT,
+    SURVEY_PENDING_REPORT_ATTEMPT,
+    SURVEY_PENDING_REPORT_EXPIRED,
+};
+
+struct survey_pending_report_state {
+    uint32_t survey_id;
+    uint32_t deadline_ms;
+    uint32_t next_attempt_ms;
+    uint16_t retry_count;
+    bool active;
+};
+
+struct survey_gateway_reverse_hint {
+    uint64_t target_id;
+    uint64_t next_hop_id;
+    uint8_t quality;
+    bool valid;
+};
+
 struct survey_gateway_report_slot {
     uint64_t anchor_id;
     struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    uint64_t reverse_next_hop_id;
     size_t entry_count;
+    uint8_t reverse_quality;
+    bool reverse_hint_valid;
     bool valid;
 };
 
@@ -139,6 +186,27 @@ int survey_discovery_opportunity_tx_ms(
     uint64_t anchor_id,
     uint8_t opportunity,
     uint32_t *tx_ms);
+uint32_t survey_discovery_probe_tx_budget_ms(void);
+int survey_discovery_schedule_attempt(
+    const struct survey_discovery_config *config,
+    uint64_t anchor_id,
+    uint8_t opportunity,
+    uint32_t earliest_relative_ms,
+    struct survey_discovery_attempt_schedule *schedule);
+int survey_pending_report_begin(struct survey_pending_report_state *state,
+                                uint32_t survey_id,
+                                uint32_t now_ms,
+                                uint32_t earliest_attempt_ms);
+enum survey_pending_report_action survey_pending_report_action(
+    const struct survey_pending_report_state *state,
+    uint32_t now_ms);
+uint32_t survey_pending_report_delay_ms(
+    const struct survey_pending_report_state *state,
+    uint32_t now_ms);
+int survey_pending_report_note_temporary_failure(
+    struct survey_pending_report_state *state,
+    uint32_t now_ms);
+void survey_pending_report_clear(struct survey_pending_report_state *state);
 int survey_discovery_timing_from_age(const struct survey_discovery_config *config,
                                      uint32_t message_age_ms,
                                      struct survey_discovery_timing *timing);
@@ -154,6 +222,17 @@ int survey_gateway_note_reach_report(struct survey_gateway_context *context,
                                      uint64_t anchor_id,
                                      const struct survey_reachability_entry *entries,
                                      size_t entry_count);
+int survey_gateway_note_reach_report_with_reverse_hint(
+    struct survey_gateway_context *context,
+    uint32_t survey_id,
+    uint64_t anchor_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count,
+    const struct survey_gateway_reverse_hint *reverse_hint);
+int survey_gateway_reverse_hint_for_target(
+    const struct survey_gateway_context *context,
+    uint64_t target_id,
+    struct survey_gateway_reverse_hint *reverse_hint);
 int survey_gateway_plan_pairs(struct survey_gateway_context *context);
 int survey_gateway_next_pair(struct survey_gateway_context *context,
                              struct survey_pair *pair);

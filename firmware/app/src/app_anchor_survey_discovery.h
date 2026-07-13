@@ -1,0 +1,38 @@
+#ifndef APP_ANCHOR_SURVEY_DISCOVERY_H
+#define APP_ANCHOR_SURVEY_DISCOVERY_H
+
+#include "protocol.h"
+#include "survey.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct app_anchor_survey_discovery_ops {
+    bool (*abort_requested)(void);
+    void (*abort_pair)(void);
+    void (*preempt_radio)(uint32_t survey_id);
+    void (*queue_start)(const struct survey_discovery_config *config,
+                        uint32_t start_ms);
+    void (*schedule_work_ms)(uint32_t delay_ms);
+    uint16_t (*next_sequence)(void);
+};
+
+int app_anchor_survey_discovery_init(
+    const struct app_anchor_survey_discovery_ops *ops);
+int app_anchor_survey_discovery_restore(bool *restored);
+void app_anchor_survey_discovery_handle_start(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
+int app_anchor_survey_discovery_run(
+    const struct survey_discovery_config *config,
+    uint32_t start_ms);
+int app_anchor_survey_discovery_retry_report(void);
+void app_anchor_survey_delivery_gateway_confirmed(
+    const struct proto_packet *packet);
+void app_anchor_survey_delivery_transport_released(
+    const struct proto_packet *packet,
+    bool preempted);
+
+#endif
