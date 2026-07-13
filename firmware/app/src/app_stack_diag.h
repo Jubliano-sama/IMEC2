@@ -12,6 +12,10 @@ enum app_stack_diag_workload {
     APP_STACK_DIAG_WORKLOAD_CIR_HANDLING,
     APP_STACK_DIAG_WORKLOAD_RELAY_RETRY,
     APP_STACK_DIAG_WORKLOAD_BLE_BACKPRESSURE,
+    APP_STACK_DIAG_WORKLOAD_CLICK_ACTIVITY,
+    APP_STACK_DIAG_WORKLOAD_ANCHOR_SURVEY_REPORT,
+    APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS,
+    APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL,
 };
 
 enum app_stack_diag_owner {
@@ -50,10 +54,10 @@ void app_stack_diag_start(void);
 uint32_t app_stack_diag_run_begin(enum app_stack_diag_workload workload,
                                   enum app_stack_diag_owner owner,
                                   const struct app_stack_diag_state *state);
-void app_stack_diag_sample(uint32_t run_id,
+int app_stack_diag_sample(uint32_t run_id,
+                          const struct app_stack_diag_state *state);
+int app_stack_diag_run_end(uint32_t run_id,
+                           enum app_stack_diag_terminal_outcome outcome,
                            const struct app_stack_diag_state *state);
-void app_stack_diag_run_end(uint32_t run_id,
-                            enum app_stack_diag_terminal_outcome outcome,
-                            const struct app_stack_diag_state *state);
 
 #endif

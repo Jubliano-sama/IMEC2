@@ -509,13 +509,16 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
     local_result.queued_before = ops->queue_used(ops->ctx);
 
     for (uint8_t i = 0u; i < entry_count; i++) {
-        if (entries[i].acked) {
+        if (entries[i].outbound == NULL || entries[i].acked == NULL) {
+            return PROTO_ERR_ARG;
+        }
+        if (*entries[i].acked) {
             continue;
         }
 
-        entries[i].outbound.queued_at_ms = now_ms;
-        if (ops->put(&entries[i].outbound, ops->ctx) == 0) {
-            entries[i].acked = true;
+        entries[i].outbound->queued_at_ms = now_ms;
+        if (ops->put(entries[i].outbound, ops->ctx) == 0) {
+            *entries[i].acked = true;
             local_result.requeued++;
         } else {
             local_result.retained++;

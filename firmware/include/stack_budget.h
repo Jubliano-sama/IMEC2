@@ -26,7 +26,7 @@ extern "C" {
     X(ANCHOR, "mesh_anchor", 4096u, 6144u, 8192u, 320u, 2048u, 0u,        \
       0u, 10240u, true, true, true, true, false)                              \
     X(GATEWAY, "mesh_gateway", 4096u, 6144u, 8192u, 320u, 2048u, 1536u,  \
-      1024u, 7168u, true, true, true, true, false)
+      1088u, 7168u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 8192u, 320u, 0u, 0u, \
@@ -38,6 +38,22 @@ extern "C" {
     STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X) \
     STACK_BUDGET_BENCH_PRESET_POLICY(X)
 /* STACK_BUDGET_POLICY_END */
+
+/*
+ * Hardware qualification workloads are preset-specific.  Each row is:
+ * preset, typed workload, semantic owner, minimum successful runs, and
+ * whether those runs must form an ordered retained-click sequence.
+ * Keep this table machine-readable; the verifier rejects a capture that
+ * substitutes another role's workload or owner.
+ */
+/* STACK_BUDGET_WORKLOAD_POLICY_BEGIN */
+#define STACK_BUDGET_DEPLOYABLE_WORKLOAD_POLICY(X)                           \
+    X("mesh_clicker", "click_activity", "clicker_action", 1u, false)      \
+    X("mesh_anchor", "anchor_survey_report", "anchor_uwb_scan", 1u, false) \
+    X("mesh_gateway", "gateway_report_ingress", "system_workqueue", 1u, false) \
+    X("mesh_gateway", "gateway_priority_control", "system_workqueue", 1u, false) \
+    X("mesh_gateway", "ble_backpressure", "system_workqueue", 1u, false)
+/* STACK_BUDGET_WORKLOAD_POLICY_END */
 
 /*
  * Every linked application function is attributed by compiler IPA call graph
@@ -95,7 +111,8 @@ extern "C" {
     X("app_anchor.c", "gateway_host_command_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_persistence_retry_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_route_discovery_work_handler", "system_workqueue") \
-    X("app_mesh_report.c", "gateway_route_adv_work_handler", "system_workqueue") \
+    X("app_node_comm_gateway_route_refresh.c", "refresh_work_handler", "system_workqueue") \
+    X("app_node_comm.c", "app_node_comm_lifecycle_watchdog_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_uwb_rx_rearm_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_c5_flood_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "report_tx_work_handler", "system_workqueue")      \
@@ -137,7 +154,17 @@ extern "C" {
     X("app_stack_workload_diag.c", "app_stack_workload_diag_ble_admit_with_pressure", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_ble_sample_with_pressure", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_ble_terminal_with_pressure", "bt_rx") \
-    X("app_stack_workload_diag.c", "app_stack_workload_diag_ble_release_all_with_pressure", "bt_rx")
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_ble_release_all_with_pressure", "bt_rx") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_click_activity_admit", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_click_activity_sample", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_click_activity_release", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_anchor_survey_admit", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_anchor_survey_sample", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_anchor_survey_release", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_report_cycle", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_control_admit", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_control_sample", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_control_release", "system_workqueue")
 /* STACK_BUDGET_THREAD_ROOTS_END */
 
 enum stack_budget_role {

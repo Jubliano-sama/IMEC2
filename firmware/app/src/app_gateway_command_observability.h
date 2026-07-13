@@ -107,6 +107,7 @@ struct gateway_command_event {
 struct gateway_command_event_snapshot {
     struct gateway_command_event event;
     bool valid;
+    bool enqueue_pending;
 };
 
 struct gateway_command_event_terminal {
@@ -143,6 +144,10 @@ bool gateway_command_observability_pending_terminal(
     struct gateway_command_observability_state *state,
     struct gateway_command_event *event);
 bool gateway_command_observability_reconnect_snapshot(
+    const struct gateway_command_observability_state *state,
+    enum gateway_command_event_kind kind,
+    struct gateway_command_event *event);
+bool gateway_command_observability_pending_snapshot(
     const struct gateway_command_observability_state *state,
     enum gateway_command_event_kind kind,
     struct gateway_command_event *event);

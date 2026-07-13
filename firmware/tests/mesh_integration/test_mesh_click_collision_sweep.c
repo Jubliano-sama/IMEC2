@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define CLICK_SWEEP_MAX_SOURCES 9u
+#define CLICK_SWEEP_MAX_SOURCES 20u
 #define CLICK_SWEEP_MAX_ROUNDS 6u
 #define CLICK_SWEEP_ROUND_US UINT64_C(100000)
 #define CLICK_SWEEP_GATEWAY_ID UINT64_C(0x9100000000000001)
@@ -375,13 +375,18 @@ static void print_metrics(const struct sweep_config *config,
 
 static void test_phy_collision_sweep_without_delivery_claim(void)
 {
+    static const uint8_t source_counts[] = {1u, 2u, 4u, 8u, 12u, 16u, 20u};
     uint32_t total_clicks = 0u;
     uint32_t total_delivered = 0u;
 
     for (uint32_t seed_index = 0u;
          seed_index < CLICK_SWEEP_SEED_COUNT;
          seed_index++) {
-        for (uint8_t source_count = 1u; source_count <= 8u; source_count++) {
+        for (size_t count_index = 0u;
+             count_index < sizeof(source_counts) / sizeof(source_counts[0]);
+             count_index++) {
+            uint8_t source_count = source_counts[count_index];
+
             for (enum offset_pattern pattern = OFFSET_SIMULTANEOUS;
                  pattern <= OFFSET_STAGGERED;
                  pattern++) {
@@ -430,7 +435,9 @@ static void test_phy_collision_sweep_without_delivery_claim(void)
            total_delivered,
            total_clicks,
            CLICK_SWEEP_SEED_COUNT,
-           CLICK_SWEEP_SEED_COUNT * 8u * 3u);
+           CLICK_SWEEP_SEED_COUNT *
+               (uint32_t)(sizeof(source_counts) / sizeof(source_counts[0])) *
+               3u);
 }
 
 static enum mesh_sim_rx_outcome containment_outcome(int32_t rx_end_adjust_us)

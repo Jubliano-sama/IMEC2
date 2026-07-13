@@ -81,6 +81,15 @@ will prove the new behavior.
   control-plane traffic. They take priority over queued local-origin click
   report delivery, transit payload relay, ACK retries, route maintenance, and
   background maintenance at the first safe radio boundary.
+- After an anchor accepts a gateway-originated channel 5 control follow-up, the
+  communication service installs or refreshes the upstream response candidate
+  from the frame's actual previous hop before the protocol handler can commit
+  state. The remaining control TTL must agree with a direct or bounded relayed
+  path. This fresh reverse hint creates no gateway connection or channel 9
+  reservation; it only prevents an immediate command response from starting a
+  redundant route-discovery cycle. Inconsistent source, hop, TTL, epoch, or
+  quality evidence rejects the control frame before it can strand protocol
+  state.
 - When a connected anchor has gateway-bound packets produced locally by its own
   click/ranging or command-result work, that local-origin work outranks transit
   packets it is relaying for another producer. The anchor may defer, drop, or
@@ -119,11 +128,12 @@ will prove the new behavior.
   low-duty scanning, they do not extend into a longer receive window.
 - A bounded channel-5 flood burst has exactly four transmission opportunities.
   Every opportunity is preceded by its own 20 ms channel-5 quiet check. Channel
-  activity consumes that opportunity and schedules the next remaining
-  opportunity after randomized exponential backoff; it does not silently drop
-  the rest of the burst. Successful repeated sends use the normal 40 ms repeat
-  spacing. Gateway-command priority schedules this work before lower-priority
-  mesh work, but does not bypass the per-opportunity activity check.
+  activity defers that opportunity after randomized exponential backoff but
+  does not consume it; four actual RF starts are required unless the absolute
+  deadline or a permanent failure ends the burst. Successful repeated sends use
+  the normal 40 ms repeat spacing. Gateway-command priority schedules this work
+  before lower-priority mesh work, but does not bypass the per-opportunity
+  activity check.
 - An anchor has at most one upstream channel 9 connection and one downstream
   channel 9 connection. A connected anchor must not answer new route requests
   because no extra channel 9 rhythm is available for a second route.
@@ -174,6 +184,76 @@ will prove the new behavior.
 - A channel 9 connection ends only by explicit close or by sustained inactivity,
   such as several missed channel 9 receive cycles. A temporary click does not
   close the connection by itself.
+
+## Communication Service Boundary
+
+Protocol state machines submit datagrams through one node-communication
+boundary. They provide the immutable payload and packet identity, a named
+delivery profile, the destination, and an absolute deadline. They do not tune
+retry counts, backoff, channel priority, route acquisition, ACK timing, or
+custody rules independently. Those policies belong to the communication
+service, so survey, assignment, Here-I-Am, click reporting, and later protocols
+cannot drift into incompatible transport behavior.
+
+Named delivery profiles are part of the communication contract. A caller may
+choose the profile that matches its semantics, such as bounded control flood,
+reliable uplink, durably owned reliable uplink, control response, or best
+effort. A caller must not construct a private profile to make one protocol pass
+a narrow timing case. Changing a profile requires testing every protocol that
+uses it under collision, busy-radio, retry, route-loss, and deadline pressure.
+
+A logical request keeps one immutable packet identity and payload across every
+communication attempt. The communication service may defer or retry that same
+datagram, but a protocol must not allocate a new sequence number merely because
+an RF attempt or a short result-wait window ended. A matching application result
+is accepted exactly once while the logical transaction remains inside its
+absolute deadline; duplicates are harmless, conflicting payloads fail closed,
+and a late result cannot advance a later transaction.
+
+Any operation that can commit remote state has an explicit cleanup phase. If
+delivery fails, the logical deadline expires, or the caller cancels, cleanup is
+required whenever the remote side effect may have occurred. Survey PREPARE is
+the canonical two-phase case: every accepted PREPARE ends in the matching START
+or an idempotent ABORT, with an anchor-side prepared lease as the final bounded
+safety net. That lease remains active through local START_PENDING and is cleared
+only when DS-TWR actually begins, so a permanently busy radio cannot strand the
+anchor between control acceptance and execution. The coordinator cannot skip a
+pair while leaving an anchor prepared indefinitely.
+
+The communication service owns whether an RF attempt actually started.
+Deferral before RF begins does not consume an opportunity; once RF begins, the
+attempt is counted even if it collides or times out. Every accepted datagram
+reaches exactly one terminal result: delivered, deadline expired, attempts
+exhausted, permanent failure, or explicit cancellation. Retries preserve the
+same packet identity so receiver deduplication and durable custody remain
+valid, while immutable source/session/sequence-derived jitter prevents
+independent nodes from repeating the same synchronized collision.
+
+The bounded-control-flood profile always runs four real RF opportunities, even
+when an earlier transmission succeeds, because a blind broadcast has no link
+ACK that can prove delivery. Successful opportunities repeat after 40 ms;
+failed RF opportunities use deterministic jitter derived from the immutable
+source, session, and sequence identity so independent senders do not replay the
+same collision schedule. A pre-RF busy decision remains a deferred opportunity
+and consumes none of the four. The facade freezes accepted envelopes in a
+fixed-capacity compact queue and rejects a full queue or an oversized payload
+explicitly; it never falls through to a direct-route send or a second private
+retry queue.
+
+The service can be quiesced, paused, resumed, or stopped without letting a
+protocol steal transport state. A pause has one generation-checked owner and a
+bounded lease. Absolute protocol deadlines continue while paused, while
+relative retry timers resume from their remaining delay. If the radio owner
+does not quiesce after the lease expires, bounded recovery aborts the owner and
+then deliberately allows the watchdog to reset the node rather than leaving
+communication paused forever.
+
+The current mesh report runtime remains the compatibility backend while this
+boundary is being extracted. New or migrated protocol code must enter through
+the node-communication facade; it must not add another direct queue, route,
+flood, retry, or radio-ownership path. Compatibility aliases do not change the
+wire protocol or imply that the gateway owns a connection: gateway delivery is
+still unscheduled channel 9 reception followed by the required ACK behavior.
 
 ## Roles
 
@@ -531,6 +611,12 @@ horizon plus every report slot and grace interval. A terminal `no anchors`
 result is valid only after this bounded horizon completes without a unique
 eligible report.
 
+Each report may retain up to twelve heard peers. The gateway first builds a
+deterministic degree-six-or-less spanning graph from every reported directed
+reachability edge, then fills remaining degree with mutual, higher-quality
+pairs. If the reported graph cannot be connected within that degree bound, pair
+planning fails explicitly instead of silently returning isolated anchors.
+
 Each anchor owns its encoded `SURVEY_DISCOVERY_REPORT` until the gateway has
 explicitly acknowledged that exact packet identity. Before the first transport
 attempt, the anchor transactionally persists the report bytes, survey identity,
@@ -573,6 +659,11 @@ gateway's current route epoch rather than an epoch supplied by the report. A
 direct report has the anchor itself as previous hop; a relayed report may use a
 different immediate next hop because semantic acceptance binds the hint to the
 originating anchor.
+Automatic pair orchestration and host-issued manual pair control share this
+same rule: before every prepare or start, the gateway reinstalls the retained
+hint and submits the command through the node-communication bounded channel-5
+wake-and-flood profile. A manual command must not fall back to one tracked
+channel-9 send merely because its target is explicit.
 The present mesh envelope uses network identity and CRC checks, not keyed STS or
 a packet MAC, so this rule prevents stale and accidental identity poisoning but
 must not be described as hostile-RF authentication.
@@ -885,10 +976,14 @@ Useful tests or guards include:
 - Before every survey pair prepare and start command, the gateway reinstalls the
   target's current-epoch reverse hint on demand, then uses the bounded priority
   channel 5 wake-and-flood executor. A timing-free hint must never be treated as
-  proof that one unscheduled transmission can reach a sleeping target. Tests
+  proof that one unscheduled transmission can reach a sleeping target. The wake
+  claim and every follow-up frame use the same extended-PHR control PHY; this
+  includes the dedicated `MSG_SURVEY_PAIR_PREPARE` packet as well as the
+  `MSG_COMMAND` start packet. Tests
   cover an empty route table after gateway reset, 20 direct anchors, 50 mixed
   direct and relayed anchors, and pressure beyond the general downlink-table
-  capacity.
+  capacity. The source boundary also proves that automatic and host-issued
+  manual prepare/start commands share that exact communication-service path.
 - Installing a survey reverse hint does not create a gateway connection or a
   channel 9 timing reservation, and CRC-only frame validation is not represented
   as hostile-RF authentication.

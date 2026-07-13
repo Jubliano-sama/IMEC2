@@ -28,11 +28,15 @@ POLICY_BEGIN = "/* STACK_BUDGET_POLICY_BEGIN */"
 POLICY_END = "/* STACK_BUDGET_POLICY_END */"
 ROOT_BEGIN = "/* STACK_BUDGET_THREAD_ROOTS_BEGIN */"
 ROOT_END = "/* STACK_BUDGET_THREAD_ROOTS_END */"
+WORKLOAD_BEGIN = "/* STACK_BUDGET_WORKLOAD_POLICY_BEGIN */"
+WORKLOAD_END = "/* STACK_BUDGET_WORKLOAD_POLICY_END */"
 DEPLOYABLE_PRESETS = frozenset({
     "mesh_clicker", "mesh_anchor", "mesh_gateway",
 })
-REQUIRED_WORKLOADS = frozenset({
+KNOWN_WORKLOADS = frozenset({
     "click_spam", "cir_handling", "relay_retry", "ble_backpressure",
+    "click_activity", "anchor_survey_report", "gateway_report_ingress",
+    "gateway_priority_control",
 })
 THREAD_ROOTS = frozenset({
     "main", "system_workqueue", "isr", "bt_rx", "fatal_context",
@@ -63,6 +67,14 @@ class PresetPolicy:
     thread_stack_info: bool
     stack_sentinel: bool
     deployable: bool
+
+
+@dataclass(frozen=True)
+class WorkloadRequirement:
+    kind: str
+    owner: str
+    minimum_successes: int
+    ordered_sequence: bool
 
 
 @dataclass(frozen=True)
@@ -166,6 +178,45 @@ def load_policy(header: Path = POLICY_HEADER) -> tuple[dict[str, PresetPolicy], 
     if limit is None:
         raise EvidenceError("stack frame limit is missing")
     return policies, _uint(limit.group(1))
+
+
+def load_workload_policy(
+    header: Path = POLICY_HEADER,
+) -> dict[str, tuple[WorkloadRequirement, ...]]:
+    text = header.read_text(encoding="utf-8")
+    try:
+        workload_text = text.split(WORKLOAD_BEGIN, 1)[1].split(WORKLOAD_END, 1)[0]
+    except IndexError as exc:
+        raise EvidenceError("hardware workload policy markers are missing") from exc
+    requirements: dict[str, list[WorkloadRequirement]] = {
+        preset: [] for preset in DEPLOYABLE_PRESETS
+    }
+    for match in re.finditer(r"\bX\(([^()]*)\)", workload_text, re.DOTALL):
+        fields = _split_macro_args(match.group(1))
+        if len(fields) != 5:
+            raise EvidenceError("malformed hardware workload policy row")
+        preset = fields[0].strip('"')
+        requirement = WorkloadRequirement(
+            kind=fields[1].strip('"'),
+            owner=fields[2].strip('"'),
+            minimum_successes=_uint(fields[3]),
+            ordered_sequence=_bool(fields[4]),
+        )
+        if preset not in DEPLOYABLE_PRESETS:
+            raise EvidenceError(f"workload policy names non-deployable preset {preset}")
+        if requirement.kind not in KNOWN_WORKLOADS:
+            raise EvidenceError(f"workload policy names unknown kind {requirement.kind}")
+        if requirement.owner not in KNOWN_DYNAMIC_THREAD_NAMES:
+            raise EvidenceError(f"workload policy names unknown owner {requirement.owner}")
+        if requirement.minimum_successes == 0:
+            raise EvidenceError("workload policy minimum must be positive")
+        if any(item.kind == requirement.kind for item in requirements[preset]):
+            raise EvidenceError(f"duplicate workload policy for {preset}:{requirement.kind}")
+        requirements[preset].append(requirement)
+    missing = sorted(preset for preset, rows in requirements.items() if not rows)
+    if missing:
+        raise EvidenceError("hardware workload policy misses " + ",".join(missing))
+    return {preset: tuple(rows) for preset, rows in requirements.items()}
 
 
 def load_thread_roots(header: Path = POLICY_HEADER) -> dict[tuple[str, str], set[str]]:
@@ -307,8 +358,13 @@ def _parse_su(path: Path) -> list[StackUsage]:
     return records
 
 
+_GCC_CLONE_SUFFIX_RE = re.compile(
+    r"(?:\.(?:isra|constprop|part)(?:\.\d+)?)+$"
+)
+
+
 def _canonical_function(function: str) -> str:
-    return re.sub(r"\.(?:isra|constprop|part)\.\d+$", "", function)
+    return _GCC_CLONE_SUFFIX_RE.sub("", function)
 
 
 _CGRAPH_VARIABLE_PREFIX = "<variable>:"
@@ -556,20 +612,47 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
     return evidence
 
 
+def _runtime_kernel_stack_size(build: BuildEvidence, configured_size: int) -> int:
+    """Mirror K_KERNEL_STACK_SIZEOF for the exact ARM Zephyr build."""
+    pointer_alignment = 8 if build.config.get("CONFIG_STACK_ALIGN_DOUBLE_WORD") else 4
+    reserved = 0
+    object_alignment = pointer_alignment
+    if build.config.get("CONFIG_MPU_STACK_GUARD"):
+        minimum = int(build.config.get(
+            "CONFIG_ARM_MPU_REGION_MIN_ALIGN_AND_SIZE", 32
+        ))
+        reserved = max(64, minimum)
+        object_alignment = reserved
+
+    adjusted = ((configured_size + pointer_alignment - 1) //
+                pointer_alignment) * pointer_alignment + reserved
+    allocated = ((adjusted + object_alignment - 1) //
+                 object_alignment) * object_alignment
+    return allocated - reserved
+
+
 def _required_threads(build: BuildEvidence, policy: PresetPolicy) -> dict[str, int]:
-    required = {"main": policy.main_bytes, "sysworkq": policy.system_workqueue_bytes}
+    # Runtime watermarks cover threads which still exist when the workload is
+    # sampled. The startup main thread has returned by then, while the
+    # integrated controller's HCI TX size is a synchronous call-stack setting,
+    # not a live thread. Both remain checked by exact config/compiler evidence.
+    required = {"sysworkq": policy.system_workqueue_bytes}
     if policy.preset == "mesh_anchor":
         required["anchor_uwb_scan"] = 12288
     if policy.idle_bytes:
         required["idle"] = policy.idle_bytes
     if policy.log_processor_bytes:
         required["logging"] = policy.log_processor_bytes
-    if policy.bt_hci_tx_bytes:
-        required["BT HCI TX"] = policy.bt_hci_tx_bytes
     if policy.bt_rx_bytes:
-        required["BT RX"] = policy.bt_rx_bytes
+        if build.config.get("CONFIG_BT_RECV_WORKQ_BT"):
+            required["BT RX WQ"] = policy.bt_rx_bytes
+        elif not build.config.get("CONFIG_BT_RECV_WORKQ_SYS"):
+            required["BT RX"] = policy.bt_rx_bytes
         if build.config.get("CONFIG_BT_LONG_WQ"):
-            required["BT LW WQ"] = int(build.config.get("CONFIG_BT_LONG_WQ_STACK_SIZE", 0))
+            required["BT LW WQ"] = _runtime_kernel_stack_size(
+                build,
+                int(build.config.get("CONFIG_BT_LONG_WQ_STACK_SIZE", 0)),
+            )
         if build.config.get("CONFIG_MPSL"):
             required["MPSL Work"] = int(build.config.get("CONFIG_MPSL_WORK_STACK_SIZE", 0))
     return required
@@ -636,7 +719,7 @@ def _check_sample_rows(rows: dict[str, tuple[int, int, int]], policy: PresetPoli
         if row is None:
             issues.append(f"RTT sample misses configured thread {name}")
             continue
-        service = name in {"logging", "BT HCI TX", "BT RX", "BT LW WQ", "MPSL Work", "idle"}
+        service = name in {"logging", "BT RX", "BT RX WQ", "BT LW WQ", "MPSL Work", "idle"}
         if row[2] != size:
             issues.append(f"RTT stack size for {name} differs from generated config")
         if row[1] < _required_free(size, service):
@@ -646,6 +729,8 @@ def _check_sample_rows(rows: dict[str, tuple[int, int, int]], policy: PresetPoli
 
 def parse_typed_transcript(log: str, policy: PresetPolicy, build: BuildEvidence) -> tuple[int, list[str]]:
     issues: list[str] = []
+    requirements = load_workload_policy().get(policy.preset, ())
+    requirements_by_kind = {item.kind: item for item in requirements}
     boot: dict[str, str] | None = None
     runs: dict[int, dict[str, Any]] = {}
     completed_ids: set[int] = set()
@@ -663,12 +748,17 @@ def parse_typed_transcript(log: str, policy: PresetPolicy, build: BuildEvidence)
                 boot = _fields(line, "DBG_STACK_BOOT", {"preset", "build", "epoch", "uptime"})
                 if _u64(boot, "epoch") == 0:
                     raise EvidenceError("target boot epoch is zero")
+                _u32(boot, "uptime")
             elif line.startswith("DBG_STACK_RUN_BEGIN "):
                 fields = _fields(line, "DBG_STACK_RUN_BEGIN", {"epoch", "run", "kind", "owner", "queue", "custody", "credit", "retry", "drain", "src", "dst", "session", "seq", "type", "sequence", "previous", "uptime"})
+                _u32(fields, "uptime")
                 run_id = _u32(fields, "run")
                 identity = (_u64(fields, "src"), _u64(fields, "dst"), _u32(fields, "session"), _u32(fields, "seq"), _u32(fields, "type"))
-                if boot is None or _u64(fields, "epoch") != _u64(boot, "epoch") or run_id == 0 or run_id == 0xFFFFFFFF or run_id in runs or run_id in completed_ids or fields["kind"] not in REQUIRED_WORKLOADS or fields["owner"] not in KNOWN_DYNAMIC_THREAD_NAMES or identity == (0, 0, 0, 0, 0):
+                if boot is None or _u64(fields, "epoch") != _u64(boot, "epoch") or run_id == 0 or run_id == 0xFFFFFFFF or run_id in runs or run_id in completed_ids or fields["kind"] not in KNOWN_WORKLOADS or fields["owner"] not in KNOWN_DYNAMIC_THREAD_NAMES or identity == (0, 0, 0, 0, 0):
                     raise EvidenceError("invalid typed workload run")
+                requirement = requirements_by_kind.get(fields["kind"])
+                if requirement is not None and fields["owner"] != requirement.owner:
+                    raise EvidenceError("typed workload owner differs from preset policy")
                 sequence, previous = _u32(fields, "sequence"), _u32(fields, "previous")
                 if fields["kind"] == "click_spam":
                     if sequence == 0 or sequence == 0xFFFFFFFF:
@@ -686,6 +776,7 @@ def parse_typed_transcript(log: str, policy: PresetPolicy, build: BuildEvidence)
                 if open_sample is not None:
                     raise EvidenceError("overlapping RTT stack samples")
                 fields = _fields(line, "DBG_STACK_SAMPLE_BEGIN", {"epoch", "run", "sample", "kind", "owner", "queue", "custody", "credit", "retry", "drain", "src", "dst", "session", "seq", "type", "uptime"})
+                _u32(fields, "uptime")
                 run_id, sample_id = _u32(fields, "run"), _u32(fields, "sample")
                 run = runs.get(run_id)
                 identity = (_u64(fields, "src"), _u64(fields, "dst"), _u32(fields, "session"), _u32(fields, "seq"), _u32(fields, "type"))
@@ -719,6 +810,7 @@ def parse_typed_transcript(log: str, policy: PresetPolicy, build: BuildEvidence)
                 open_sample = None
             elif line.startswith("DBG_STACK_RUN_END "):
                 fields = _fields(line, "DBG_STACK_RUN_END", {"epoch", "run", "kind", "owner", "outcome", "queue", "custody", "credit", "retry", "drain", "src", "dst", "session", "seq", "type", "samples", "sequence", "previous", "uptime"})
+                _u32(fields, "uptime")
                 run_id = _u32(fields, "run")
                 run = runs.pop(run_id, None)
                 if run is None or open_sample is not None and open_sample["run"] == run_id:
@@ -742,14 +834,23 @@ def parse_typed_transcript(log: str, policy: PresetPolicy, build: BuildEvidence)
         issues.append("unterminated typed stack sample")
     if runs:
         issues.append("unterminated typed workload run")
-    for workload in REQUIRED_WORKLOADS:
-        if not any(run["kind"] == workload and run["outcome"] == "ack" and run["samples"] for run in completed):
-            issues.append(f"missing completed typed workload evidence for {workload}")
-    clicks = sorted((run for run in completed if run["kind"] == "click_spam" and run["outcome"] == "ack"), key=lambda run: run["sequence"])
-    if len(clicks) < 2:
-        issues.append("sequential-click evidence needs at least two completed real run IDs")
-    else:
-        for previous, current in zip(clicks, clicks[1:]):
+    for requirement in requirements:
+        successful = [
+            run for run in completed
+            if run["kind"] == requirement.kind and run["outcome"] == "ack" and
+            run["samples"] and run["owner"] == requirement.owner
+        ]
+        if len(successful) < requirement.minimum_successes:
+            issues.append(
+                "missing completed typed workload evidence for "
+                f"{requirement.kind}: need {requirement.minimum_successes}, "
+                f"have {len(successful)}"
+            )
+            continue
+        if not requirement.ordered_sequence:
+            continue
+        ordered = sorted(successful, key=lambda run: run["sequence"])
+        for previous, current in zip(ordered, ordered[1:]):
             if current["sequence"] != previous["sequence"] + 1 or current["previous"] != previous["id"]:
                 issues.append("sequential-click run IDs are not an ordered real sequence")
                 break
@@ -799,7 +900,10 @@ def _load_hardware_manifest(path: Path, build: BuildEvidence, policy: PresetPoli
             raise EvidenceError("manifest was not created by the repository capture workflow")
         if provenance.get("tool_sha256") != _sha256(CAPTURE_TOOL):
             raise EvidenceError("capture tool provenance does not match this repository")
-        expected_command = ["pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset", "-u", data["probe_id"]]
+        expected_command = [
+            "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+            "-u", data["probe_id"], "--up-channel-id", "0",
+        ]
         if provenance.get("rtt_command") != expected_command or provenance.get("tty_wrapper") != "script":
             raise EvidenceError("capture did not use the required pyOCD RTT pre-reset TTY workflow")
         started, ended = _parse_time(provenance.get("started_at_utc")), _parse_time(provenance.get("ended_at_utc"))

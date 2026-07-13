@@ -315,6 +315,7 @@ int gateway_command_observability_prepare(
     if (!terminal) {
         snapshot->event = *event;
         snapshot->valid = true;
+        snapshot->enqueue_pending = true;
         return 0;
     }
 
@@ -351,10 +352,7 @@ void gateway_command_observability_note_enqueue(
             terminal->valid = false;
             return;
         }
-        if (state->lost_event_count < UINT16_MAX) {
-            state->lost_event_count++;
-        }
-        terminal->event.lost_event_count = state->lost_event_count;
+        /* A transient transport refusal leaves terminal custody here. */
         return;
     }
     for (size_t i = 0u; i < GATEWAY_COMMAND_EVENT_MAX_TRACKED; i++) {
@@ -363,13 +361,7 @@ void gateway_command_observability_note_enqueue(
         if (!snapshot->valid || snapshot->event.event_seq != event_seq) {
             continue;
         }
-        if (enqueue_result >= 0) {
-            return;
-        }
-        if (state->lost_event_count < UINT16_MAX) {
-            state->lost_event_count++;
-        }
-        snapshot->event.lost_event_count = state->lost_event_count;
+        snapshot->enqueue_pending = enqueue_result < 0;
         return;
     }
 }
@@ -406,6 +398,26 @@ bool gateway_command_observability_reconnect_snapshot(
     }
     snapshot = &state->snapshots[(size_t)kind - 1u];
     if (!snapshot->valid) {
+        return false;
+    }
+    *event = snapshot->event;
+    event->flags |= GATEWAY_COMMAND_EVENT_FLAG_REPLAY |
+                    GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT;
+    return true;
+}
+
+bool gateway_command_observability_pending_snapshot(
+    const struct gateway_command_observability_state *state,
+    enum gateway_command_event_kind kind,
+    struct gateway_command_event *event)
+{
+    const struct gateway_command_event_snapshot *snapshot;
+
+    if (state == NULL || event == NULL || !kind_valid(kind)) {
+        return false;
+    }
+    snapshot = &state->snapshots[(size_t)kind - 1u];
+    if (!snapshot->valid || !snapshot->enqueue_pending) {
         return false;
     }
     *event = snapshot->event;

@@ -6,7 +6,17 @@
 #include <string.h>
 
 _Static_assert(sizeof(struct survey_pair) == 24u,
-               "survey pair layout must retain compact gateway storage");
+               "survey pair public layout changed");
+_Static_assert(PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +
+                   SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *
+                       (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN) <=
+                   UWB_MESH_MAX_PAYLOAD_LEN,
+               "maximum survey report must fit one mesh payload");
+
+static int survey_plan_pairs_into_gateway_context(
+    struct survey_gateway_context *context,
+    const struct survey_reachability_report *reports,
+    size_t report_count);
 
 bool survey_sample_count_valid(uint16_t sample_count)
 {
@@ -740,13 +750,9 @@ int survey_gateway_plan_pairs(struct survey_gateway_context *context)
         report_count++;
     }
 
-    ret = survey_plan_pairs_from_reachability(context->survey_id,
-                                              reports,
-                                              report_count,
-                                              context->sample_count,
-                                              context->pairs,
-                                              SURVEY_GATEWAY_MAX_PAIRS,
-                                              &context->pair_count);
+    ret = survey_plan_pairs_into_gateway_context(context,
+                                                 reports,
+                                                 report_count);
     if (ret != PROTO_OK) {
         context->pairs_planned = false;
         context->pair_count = 0u;
@@ -759,8 +765,9 @@ int survey_gateway_plan_pairs(struct survey_gateway_context *context)
     return PROTO_OK;
 }
 
-int survey_gateway_next_pair(struct survey_gateway_context *context,
-                             struct survey_pair *pair)
+int survey_gateway_pair_at(const struct survey_gateway_context *context,
+                           size_t pair_index,
+                           struct survey_pair *pair)
 {
     if (context == NULL || pair == NULL) {
         return PROTO_ERR_ARG;
@@ -768,11 +775,31 @@ int survey_gateway_next_pair(struct survey_gateway_context *context,
     if (!context->pairs_planned) {
         return PROTO_ERR_STALE;
     }
-    if (context->next_pair_index >= context->pair_count) {
+    if (pair_index >= context->pair_count) {
         return PROTO_ERR_NOT_FOUND;
     }
 
-    *pair = context->pairs[context->next_pair_index];
+    *pair = (struct survey_pair) {
+        .survey_id = context->survey_id,
+        .initiator_id = context->pairs[pair_index].initiator_id,
+        .responder_id = context->pairs[pair_index].responder_id,
+        .sample_count = context->sample_count,
+    };
+    return PROTO_OK;
+}
+
+int survey_gateway_next_pair(struct survey_gateway_context *context,
+                             struct survey_pair *pair)
+{
+    int ret;
+
+    if (context == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_gateway_pair_at(context, context->next_pair_index, pair);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     context->next_pair_index++;
     return PROTO_OK;
 }
@@ -1285,6 +1312,18 @@ struct survey_pair_candidate {
     bool mutual;
 };
 
+struct survey_connect_candidate {
+    struct survey_pair_candidate pair;
+    size_t report_index;
+    bool valid;
+};
+
+struct survey_pair_plan_output {
+    struct survey_pair *full_pairs;
+    struct survey_gateway_pair_entry *gateway_pairs;
+    size_t pair_cap;
+};
+
 _Static_assert(SURVEY_GATEWAY_MAX_PAIRS >=
                (SURVEY_GATEWAY_MAX_REPORTS * SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) / 2u,
                "survey pair storage must hold the bounded topology");
@@ -1318,19 +1357,222 @@ static bool survey_candidate_precedes(const struct survey_pair_candidate *left,
            ordered[right->peer_index]->anchor_id;
 }
 
-int survey_plan_pairs_from_reachability(uint32_t survey_id,
-                                        const struct survey_reachability_report *reports,
-                                        size_t report_count,
-                                        uint16_t sample_count,
-                                        struct survey_pair *pairs,
-                                        size_t pair_cap,
-                                        size_t *pair_count)
+static bool survey_pair_candidate_build(
+    const struct survey_reachability_report *const *ordered,
+    size_t report_index,
+    size_t peer_index,
+    struct survey_pair_candidate *candidate)
+{
+    const struct survey_reachability_entry *forward =
+        survey_report_find_peer(ordered[report_index],
+                                ordered[peer_index]->anchor_id);
+    const struct survey_reachability_entry *reverse =
+        survey_report_find_peer(ordered[peer_index],
+                                ordered[report_index]->anchor_id);
+
+    if (candidate == NULL || (forward == NULL && reverse == NULL)) {
+        return false;
+    }
+    candidate->peer_index = peer_index;
+    candidate->mutual = forward != NULL && reverse != NULL;
+    if (candidate->mutual) {
+        candidate->quality = forward->quality < reverse->quality ?
+                             forward->quality : reverse->quality;
+        candidate->rssi_dbm = forward->rssi_dbm < reverse->rssi_dbm ?
+                              forward->rssi_dbm : reverse->rssi_dbm;
+    } else if (forward != NULL) {
+        candidate->quality = forward->quality;
+        candidate->rssi_dbm = forward->rssi_dbm;
+    } else {
+        candidate->quality = reverse->quality;
+        candidate->rssi_dbm = reverse->rssi_dbm;
+    }
+    return true;
+}
+
+static size_t survey_component_root(size_t *parents, size_t index)
+{
+    size_t root = index;
+
+    while (parents[root] != root) {
+        root = parents[root];
+    }
+    while (parents[index] != index) {
+        size_t next = parents[index];
+
+        parents[index] = root;
+        index = next;
+    }
+    return root;
+}
+
+static bool survey_connect_candidate_precedes(
+    const struct survey_connect_candidate *left,
+    const struct survey_connect_candidate *right,
+    const uint8_t *degree,
+    const struct survey_reachability_report *const *ordered)
+{
+    const uint8_t left_max = degree[left->report_index] >
+        degree[left->pair.peer_index] ? degree[left->report_index] :
+                                       degree[left->pair.peer_index];
+    const uint8_t right_max = degree[right->report_index] >
+        degree[right->pair.peer_index] ? degree[right->report_index] :
+                                        degree[right->pair.peer_index];
+    const uint8_t left_sum = degree[left->report_index] +
+        degree[left->pair.peer_index];
+    const uint8_t right_sum = degree[right->report_index] +
+        degree[right->pair.peer_index];
+
+    if (!right->valid) {
+        return true;
+    }
+    if (left_max != right_max) {
+        return left_max < right_max;
+    }
+    if (left_sum != right_sum) {
+        return left_sum < right_sum;
+    }
+    if (survey_candidate_precedes(&left->pair, &right->pair, ordered)) {
+        return true;
+    }
+    if (survey_candidate_precedes(&right->pair, &left->pair, ordered)) {
+        return false;
+    }
+    return ordered[left->report_index]->anchor_id <
+           ordered[right->report_index]->anchor_id;
+}
+
+static int survey_append_planned_pair(
+    uint32_t survey_id,
+    uint16_t sample_count,
+    const struct survey_reachability_report *const *ordered,
+    size_t report_index,
+    size_t peer_index,
+    struct survey_pair_plan_output *output,
+    size_t *count,
+    uint8_t *degree)
+{
+    const uint64_t initiator_id = ordered[report_index]->anchor_id;
+    const uint64_t responder_id = ordered[peer_index]->anchor_id;
+
+    if (*count >= output->pair_cap) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    if (output->full_pairs != NULL) {
+        output->full_pairs[*count] = (struct survey_pair) {
+            .survey_id = survey_id,
+            .initiator_id = initiator_id,
+            .responder_id = responder_id,
+            .sample_count = sample_count,
+        };
+    } else {
+        output->gateway_pairs[*count] = (struct survey_gateway_pair_entry) {
+            .initiator_id = initiator_id,
+            .responder_id = responder_id,
+        };
+    }
+    degree[report_index]++;
+    degree[peer_index]++;
+    (*count)++;
+    return PROTO_OK;
+}
+
+static bool survey_pair_already_planned(
+    const struct survey_pair_plan_output *output,
+    size_t count,
+    uint64_t first_id,
+    uint64_t second_id)
+{
+    for (size_t i = 0u; i < count; i++) {
+        const uint64_t initiator_id = output->full_pairs != NULL ?
+            output->full_pairs[i].initiator_id :
+            output->gateway_pairs[i].initiator_id;
+        const uint64_t responder_id = output->full_pairs != NULL ?
+            output->full_pairs[i].responder_id :
+            output->gateway_pairs[i].responder_id;
+
+        if (initiator_id == first_id && responder_id == second_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int survey_connect_report_graph(
+    uint32_t survey_id,
+    uint16_t sample_count,
+    const struct survey_reachability_report *const *ordered,
+    size_t report_count,
+    struct survey_pair_plan_output *output,
+    size_t *count,
+    uint8_t *degree)
+{
+    size_t parents[SURVEY_GATEWAY_MAX_REPORTS];
+
+    if (report_count > 1u && output->pair_cap < report_count - 1u) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    for (size_t i = 0u; i < report_count; i++) {
+        parents[i] = i;
+    }
+    for (size_t edge = 0u; edge + 1u < report_count; edge++) {
+        struct survey_connect_candidate best = {0};
+
+        for (size_t i = 0u; i < report_count; i++) {
+            if (degree[i] >= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) {
+                continue;
+            }
+            for (size_t j = i + 1u; j < report_count; j++) {
+                struct survey_connect_candidate candidate = {
+                    .report_index = i,
+                    .valid = true,
+                };
+
+                if (degree[j] >= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR ||
+                    survey_component_root(parents, i) ==
+                        survey_component_root(parents, j) ||
+                    !survey_pair_candidate_build(ordered, i, j,
+                                                 &candidate.pair)) {
+                    continue;
+                }
+                if (survey_connect_candidate_precedes(&candidate, &best,
+                                                      degree, ordered)) {
+                    best = candidate;
+                }
+            }
+        }
+        if (!best.valid) {
+            return PROTO_ERR_NOT_FOUND;
+        }
+        int ret = survey_append_planned_pair(
+            survey_id, sample_count, ordered, best.report_index,
+            best.pair.peer_index, output, count, degree);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        size_t first_root = survey_component_root(parents, best.report_index);
+        size_t second_root = survey_component_root(parents,
+                                                   best.pair.peer_index);
+
+        parents[second_root] = first_root;
+    }
+    return PROTO_OK;
+}
+
+static int survey_plan_pairs_from_reachability_into(
+    uint32_t survey_id,
+    const struct survey_reachability_report *reports,
+    size_t report_count,
+    uint16_t sample_count,
+    struct survey_pair_plan_output *output,
+    size_t *pair_count)
 {
     const struct survey_reachability_report *ordered[SURVEY_GATEWAY_MAX_REPORTS];
     uint8_t degree[SURVEY_GATEWAY_MAX_REPORTS] = {0};
     size_t count = 0u;
 
-    if (reports == NULL || pairs == NULL || pair_count == NULL) {
+    if (reports == NULL || output == NULL || pair_count == NULL ||
+        (output->full_pairs == NULL) == (output->gateway_pairs == NULL)) {
         return PROTO_ERR_ARG;
     }
     if (survey_id == 0u || !survey_sample_count_valid(sample_count)) {
@@ -1340,6 +1582,7 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
         return PROTO_ERR_NO_SPACE;
     }
 
+    *pair_count = 0u;
     for (size_t i = 0u; i < report_count; i++) {
         const struct survey_reachability_report *report = &reports[i];
 
@@ -1373,33 +1616,22 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
         ordered[j] = value;
     }
 
+    int ret = survey_connect_report_graph(survey_id, sample_count, ordered,
+                                          report_count, output,
+                                          &count, degree);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
     for (size_t i = 0u; i < report_count; i++) {
         struct survey_pair_candidate candidates[SURVEY_GATEWAY_MAX_REPORTS];
         size_t candidate_count = 0u;
 
         for (size_t j = i + 1u; j < report_count; j++) {
-            const struct survey_reachability_entry *forward =
-                survey_report_find_peer(ordered[i], ordered[j]->anchor_id);
-            const struct survey_reachability_entry *reverse =
-                survey_report_find_peer(ordered[j], ordered[i]->anchor_id);
             struct survey_pair_candidate candidate;
 
-            if (forward == NULL && reverse == NULL) {
+            if (!survey_pair_candidate_build(ordered, i, j, &candidate)) {
                 continue;
-            }
-            candidate.peer_index = j;
-            candidate.mutual = forward != NULL && reverse != NULL;
-            if (candidate.mutual) {
-                candidate.quality = forward->quality < reverse->quality ?
-                                    forward->quality : reverse->quality;
-                candidate.rssi_dbm = forward->rssi_dbm < reverse->rssi_dbm ?
-                                     forward->rssi_dbm : reverse->rssi_dbm;
-            } else if (forward != NULL) {
-                candidate.quality = forward->quality;
-                candidate.rssi_dbm = forward->rssi_dbm;
-            } else {
-                candidate.quality = reverse->quality;
-                candidate.rssi_dbm = reverse->rssi_dbm;
             }
 
             size_t insert = candidate_count;
@@ -1421,21 +1653,61 @@ int survey_plan_pairs_from_reachability(uint32_t survey_id,
             if (degree[peer_index] >= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) {
                 continue;
             }
-            if (count >= pair_cap) {
-                return PROTO_ERR_NO_SPACE;
+            if (survey_pair_already_planned(output, count,
+                                            ordered[i]->anchor_id,
+                                            ordered[peer_index]->anchor_id)) {
+                continue;
             }
-            pairs[count].survey_id = survey_id;
-            pairs[count].initiator_id = ordered[i]->anchor_id;
-            pairs[count].responder_id = ordered[peer_index]->anchor_id;
-            pairs[count].sample_count = sample_count;
-            degree[i]++;
-            degree[peer_index]++;
-            count++;
+            ret = survey_append_planned_pair(
+                survey_id, sample_count, ordered, i, peer_index, output,
+                &count, degree);
+            if (ret != PROTO_OK) {
+                return ret;
+            }
         }
     }
 
     *pair_count = count;
     return PROTO_OK;
+}
+
+int survey_plan_pairs_from_reachability(uint32_t survey_id,
+                                        const struct survey_reachability_report *reports,
+                                        size_t report_count,
+                                        uint16_t sample_count,
+                                        struct survey_pair *pairs,
+                                        size_t pair_cap,
+                                        size_t *pair_count)
+{
+    struct survey_pair_plan_output output = {
+        .full_pairs = pairs,
+        .pair_cap = pair_cap,
+    };
+
+    return survey_plan_pairs_from_reachability_into(survey_id,
+                                                    reports,
+                                                    report_count,
+                                                    sample_count,
+                                                    &output,
+                                                    pair_count);
+}
+
+static int survey_plan_pairs_into_gateway_context(
+    struct survey_gateway_context *context,
+    const struct survey_reachability_report *reports,
+    size_t report_count)
+{
+    struct survey_pair_plan_output output = {
+        .gateway_pairs = context->pairs,
+        .pair_cap = SURVEY_GATEWAY_MAX_PAIRS,
+    };
+
+    return survey_plan_pairs_from_reachability_into(context->survey_id,
+                                                    reports,
+                                                    report_count,
+                                                    context->sample_count,
+                                                    &output,
+                                                    &context->pair_count);
 }
 
 int survey_append_reach_request_tlvs(uint8_t *payload,

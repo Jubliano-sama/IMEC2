@@ -1,4 +1,5 @@
 #include "app_gateway_command_observability.h"
+#include "app_gateway_survey_observability.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -282,17 +283,228 @@ static void test_ble_disconnect_backpressure_and_reconnect_snapshot(void)
     event.reason = GATEWAY_COMMAND_EVENT_REASON_TIMEOUT;
     emit(&scenario, &event, true, -ENOTCONN);
     assert(gateway_command_observability_pending_terminal(&scenario.state, &replay));
-    assert(replay.lost_event_count == 1u);
+    assert(replay.lost_event_count == 0u);
     gateway_command_observability_note_enqueue(&scenario.state,
                                                replay.event_seq,
                                                -ENOSPC);
     assert(gateway_command_observability_pending_terminal(&scenario.state, &replay));
-    assert(replay.lost_event_count == 2u);
+    assert(replay.lost_event_count == 0u);
     gateway_command_observability_note_enqueue(&scenario.state,
                                                replay.event_seq,
                                                0);
     gateway_command_observability_mark_sent(&scenario.state, replay.event_seq);
     assert(!gateway_command_observability_pending_terminal(&scenario.state, &replay));
+}
+
+static void test_progress_backpressure_coalesces_without_irreversible_loss(void)
+{
+    struct scenario scenario = {.correlation_id = 60u, .gateway_sequence = 600u};
+    struct gateway_command_event event;
+    struct gateway_command_event replay;
+
+    gateway_command_observability_init(&scenario.state);
+    for (uint16_t progress = 1u; progress <= 50u; progress++) {
+        event = event_for(&scenario,
+                          GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+                          GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+        event.anchor_id = UINT64_C(0x1000) + progress;
+        event.progress_count = progress;
+        assert(gateway_command_observability_prepare(&scenario.state,
+                                                     &event, false) == 0);
+        gateway_command_observability_note_enqueue(&scenario.state,
+                                                   event.event_seq,
+                                                   progress < 50u ? -EAGAIN :
+                                                                    -ENOTCONN);
+    }
+    assert(gateway_command_observability_pending_snapshot(
+        &scenario.state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
+    assert(replay.progress_count == 50u);
+    assert(replay.anchor_id == UINT64_C(0x1032));
+    assert(replay.lost_event_count == 0u);
+    gateway_command_observability_note_enqueue(&scenario.state,
+                                               replay.event_seq, 1);
+    assert(!gateway_command_observability_pending_snapshot(
+        &scenario.state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
+}
+
+#define MODEL_QUEUE_DEPTH 3u
+#define MODEL_FRAME_LEN (GATEWAY_COMMAND_EVENT_WIRE_LEN + 40u)
+
+struct flow_model {
+    uint16_t queued_bytes[MODEL_QUEUE_DEPTH];
+    uint8_t queue_count;
+    uint16_t head_offset;
+    uint32_t accepted;
+    uint32_t sent;
+    uint32_t transient_refusals;
+    uint32_t notify_retries;
+    bool ccc;
+    bool connected;
+    bool credit;
+};
+
+static bool flow_model_accept(struct flow_model *model)
+{
+    if (!model->connected || !model->ccc ||
+        model->queue_count >= MODEL_QUEUE_DEPTH) {
+        model->transient_refusals++;
+        return false;
+    }
+    model->queued_bytes[model->queue_count++] = MODEL_FRAME_LEN;
+    model->accepted++;
+    return true;
+}
+
+static void flow_model_step(struct flow_model *model,
+                            uint16_t mtu,
+                            bool transient_notify_failure)
+{
+    uint16_t chunk;
+
+    if (!model->connected || !model->ccc || model->queue_count == 0u ||
+        !model->credit) {
+        return;
+    }
+    if (transient_notify_failure) {
+        model->notify_retries++;
+        return;
+    }
+    assert(mtu >= 23u);
+    chunk = (uint16_t)(mtu - 3u);
+    if (chunk > model->queued_bytes[0] - model->head_offset) {
+        chunk = (uint16_t)(model->queued_bytes[0] - model->head_offset);
+    }
+    model->head_offset += chunk;
+    if (model->head_offset == model->queued_bytes[0]) {
+        for (uint8_t i = 1u; i < model->queue_count; i++) {
+            model->queued_bytes[i - 1u] = model->queued_bytes[i];
+        }
+        model->queue_count--;
+        model->head_offset = 0u;
+        model->sent++;
+    }
+}
+
+static void test_50_anchor_1225_pair_flow_control_sweep(void)
+{
+    const uint32_t report_events = 50u + 2u;
+    const uint32_t pair_events = 2u * 1225u;
+    const uint32_t total_events = 2u + report_events + pair_events + 1u;
+
+    for (uint32_t seed = 0u; seed < 64u; seed++) {
+        struct flow_model model = {
+            .ccc = true,
+            .connected = true,
+            .credit = true,
+        };
+        uint32_t produced = 0u;
+
+        for (uint32_t tick = 0u; tick < 500000u && model.sent < total_events;
+             tick++) {
+            uint32_t phase = tick + seed * 17u;
+
+            model.connected = (phase % 211u) >= 9u;
+            model.ccc = model.connected && (phase % 173u) >= 7u;
+            model.credit = (phase % 13u) != 0u;
+
+            /* A producer may advance only after the next progress record has custody. */
+            if (produced < total_events && flow_model_accept(&model)) {
+                produced++;
+            }
+            flow_model_step(&model,
+                            (phase % 5u) == 0u ? 23u : 247u,
+                            (phase % 29u) == 0u);
+        }
+        assert(produced == total_events);
+        assert(model.sent == total_events);
+        assert(model.queue_count == 0u);
+        assert(model.transient_refusals > 0u);
+        assert(model.notify_retries > 0u);
+    }
+}
+
+struct survey_emit_fixture {
+    struct gateway_command_event events[64];
+    size_t count;
+    bool blocked;
+};
+
+static int survey_emit(struct gateway_command_event *event,
+                       bool terminal,
+                       void *ctx)
+{
+    struct survey_emit_fixture *fixture = ctx;
+
+    assert(!terminal);
+    if (fixture->blocked) {
+        return -EAGAIN;
+    }
+    assert(fixture->count < sizeof(fixture->events) / sizeof(fixture->events[0]));
+    fixture->events[fixture->count++] = *event;
+    return 0;
+}
+
+static void test_survey_progress_reconstructs_50_reports_and_gates_boundaries(void)
+{
+    struct app_gateway_survey_observability_state state;
+    struct survey_emit_fixture fixture = {0};
+    const struct app_gateway_survey_observability_ops ops = {
+        .emit_if_available = survey_emit,
+        .ctx = &fixture,
+    };
+    struct survey_gateway_context survey = {
+        .survey_id = 77u,
+        .report_count = SURVEY_GATEWAY_MAX_REPORTS,
+        .pair_count = SURVEY_GATEWAY_MAX_PAIRS,
+    };
+    struct gateway_command_event base = {
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        .command_id = CMD_SURVEY_REACHABILITY,
+        .gateway_sequence = 77u,
+    };
+    struct gateway_command_event pair = base;
+
+    for (size_t i = 0u; i < survey.report_count; i++) {
+        survey.reports[i].valid = true;
+        survey.reports[i].anchor_id = UINT64_C(0x8000) + i;
+        survey.reports[i].reverse_next_hop_id = UINT64_C(0x9000) + i;
+    }
+    app_gateway_survey_observability_reset(&state);
+    fixture.blocked = true;
+    assert(app_gateway_survey_observability_emit_collection_next(
+        &state, &ops, &survey, &base, 3u) == -EAGAIN);
+    assert(state.report_cursor == 0u);
+    assert(fixture.count == 0u);
+
+    fixture.blocked = false;
+    while (app_gateway_survey_observability_emit_collection_next(
+               &state, &ops, &survey, &base, 3u) == 0) {
+    }
+    assert(fixture.count == SURVEY_GATEWAY_MAX_REPORTS + 2u);
+    for (size_t i = 0u; i < SURVEY_GATEWAY_MAX_REPORTS; i++) {
+        assert(fixture.events[i].stage ==
+               GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+        assert(fixture.events[i].anchor_id == UINT64_C(0x8000) + i);
+        assert(fixture.events[i].progress_count == i + 1u);
+    }
+    assert(fixture.events[50].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE);
+    assert(fixture.events[51].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY);
+
+    pair.stage = GATEWAY_COMMAND_EVENT_STAGE_PAIR_SUCCESS;
+    pair.pair_initiator_id = 1u;
+    pair.pair_responder_id = 2u;
+    fixture.blocked = true;
+    assert(app_gateway_survey_observability_submit_boundary(
+        &state, &ops, &pair) == -EAGAIN);
+    assert(state.boundary_pending);
+    assert(app_gateway_survey_observability_submit_boundary(
+        &state, &ops, &pair) == -EBUSY);
+    fixture.blocked = false;
+    assert(app_gateway_survey_observability_flush_boundary(&state, &ops) == 1);
+    assert(!state.boundary_pending);
+    assert(fixture.count == SURVEY_GATEWAY_MAX_REPORTS + 3u);
 }
 
 int main(void)
@@ -303,6 +515,9 @@ int main(void)
     test_pair_success_failure_and_terminal_counts();
     test_mixed_survey_failures_and_zero_pair_success();
     test_ble_disconnect_backpressure_and_reconnect_snapshot();
+    test_progress_backpressure_coalesces_without_irreversible_loss();
+    test_50_anchor_1225_pair_flow_control_sweep();
+    test_survey_progress_reconstructs_50_reports_and_gates_boundaries();
     puts("gateway command observability integration scenarios passed");
     return 0;
 }

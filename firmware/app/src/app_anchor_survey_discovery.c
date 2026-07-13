@@ -6,6 +6,8 @@
 #include "app_mesh_local_delivery.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
+#include "app_node_comm.h"
+#include "app_stack_workload_diag.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
 #include "mesh.h"
@@ -160,6 +162,8 @@ void app_anchor_survey_delivery_gateway_confirmed(const struct proto_packet *pac
     if (app_mesh_local_delivery_note_ack(delivery, packet) < 0) {
         LOG_ERR("survey delivery ACK journal commit failed");
     } else {
+        app_stack_workload_diag_anchor_survey_sample(packet, 0u, 0u);
+        app_stack_workload_diag_anchor_survey_release(packet, 0, 0u, 0u);
         LOG_INF("survey delivery gateway ACK committed");
     }
     SURVEY_DELIVERY_UNLOCK();
@@ -237,6 +241,9 @@ static int prepare_discovery_report(
     SURVEY_DELIVERY_LOCK();
     ret = app_mesh_local_delivery_stage(delivery, &outbound, survey_id);
     SURVEY_DELIVERY_UNLOCK();
+    if (ret == 0) {
+        app_stack_workload_diag_anchor_survey_admit(&outbound.packet, 1u, 1u);
+    }
     return ret;
 }
 
@@ -291,6 +298,8 @@ int app_anchor_survey_discovery_retry_report(void)
         LOG_ERR("survey discovery report delivery exhausted: survey=%u seq=%u",
                 outbound.packet.session_id, outbound.packet.seq);
         SURVEY_DELIVERY_UNLOCK();
+        app_stack_workload_diag_anchor_survey_release(&outbound.packet,
+                                                       -ETIMEDOUT, 0u, 0u);
         return -ETIMEDOUT;
     }
     if (mesh_relay_tx_active(&mesh_runtime) || anchor_uwb_window_active()) {
@@ -317,6 +326,8 @@ int app_anchor_survey_discovery_retry_report(void)
         LOG_ERR("survey discovery report delivery exhausted: survey=%u seq=%u",
                 outbound.packet.session_id, outbound.packet.seq);
         SURVEY_DELIVERY_UNLOCK();
+        app_stack_workload_diag_anchor_survey_release(&outbound.packet,
+                                                       -ETIMEDOUT, 0u, 0u);
         return -ETIMEDOUT;
     }
     SURVEY_DELIVERY_UNLOCK();
@@ -359,9 +370,9 @@ int app_anchor_survey_discovery_retry_report(void)
     outbound = *app_mesh_local_delivery_outbound(delivery);
     SURVEY_DELIVERY_UNLOCK();
 
-    ret = mesh_start_owned_tracked_tx(&outbound,
-                                      "survey-discovery-report",
-                                      &rf_sent);
+    ret = app_node_comm_start_owned_delivery(&outbound,
+                                             "survey-discovery-report",
+                                             &rf_sent);
 
     SURVEY_DELIVERY_LOCK();
     if (!app_mesh_local_delivery_active(delivery)) {
@@ -387,6 +398,7 @@ int app_anchor_survey_discovery_retry_report(void)
         return persist_ret;
     }
     if (rf_sent) {
+        app_stack_workload_diag_anchor_survey_sample(&outbound.packet, 1u, 1u);
         LOG_INF("survey discovery report RF attempt started: survey=%u seq=%u remaining=%u",
                 outbound.packet.session_id, outbound.packet.seq,
                 attempts_remaining);

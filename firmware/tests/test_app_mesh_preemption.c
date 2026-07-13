@@ -44,6 +44,101 @@ struct preempt_fixture {
     int cancel_active_ret;
 };
 
+struct queue_remove_fixture {
+    struct mesh_outbound entries[5];
+    uint8_t count;
+    uint8_t get_calls;
+    uint8_t put_calls;
+    uint8_t fail_get_call;
+    uint8_t fail_put_call;
+    bool fill_on_put_failure;
+    bool recovery_valid;
+    struct mesh_outbound recovery;
+};
+
+static uint32_t queue_remove_count(void *ctx)
+{
+    return ((struct queue_remove_fixture *)ctx)->count;
+}
+
+static int queue_remove_get(struct mesh_outbound *outbound, void *ctx)
+{
+    struct queue_remove_fixture *fixture = ctx;
+
+    fixture->get_calls++;
+    if (fixture->fail_get_call == fixture->get_calls) {
+        return -EIO;
+    }
+    if (fixture->count == 0u) {
+        return -ENOENT;
+    }
+    *outbound = fixture->entries[0];
+    memmove(&fixture->entries[0], &fixture->entries[1],
+            (fixture->count - 1u) * sizeof(fixture->entries[0]));
+    fixture->count--;
+    return 0;
+}
+
+static int queue_remove_put(const struct mesh_outbound *outbound, void *ctx)
+{
+    struct queue_remove_fixture *fixture = ctx;
+
+    fixture->put_calls++;
+    if (fixture->fail_put_call == fixture->put_calls) {
+        if (fixture->fill_on_put_failure) {
+            assert(fixture->count < 5u);
+            fixture->entries[fixture->count++].packet.seq = 99u;
+        }
+        return -ENOSPC;
+    }
+    assert(fixture->count < 5u);
+    fixture->entries[fixture->count++] = *outbound;
+    return 0;
+}
+
+static int queue_remove_recover(const struct mesh_outbound *outbound, void *ctx)
+{
+    struct queue_remove_fixture *fixture = ctx;
+
+    if (fixture->recovery_valid) {
+        return -ENOSPC;
+    }
+    fixture->recovery = *outbound;
+    fixture->recovery_valid = true;
+    return 0;
+}
+
+static bool queue_remove_matches(const struct mesh_outbound *candidate,
+                                 const struct mesh_outbound *target,
+                                 void *ctx)
+{
+    (void)ctx;
+    return candidate->packet.seq == target->packet.seq;
+}
+
+static struct app_mesh_queue_remove_ops queue_remove_ops(
+    struct queue_remove_fixture *fixture)
+{
+    return (struct app_mesh_queue_remove_ops) {
+        .count = queue_remove_count,
+        .get = queue_remove_get,
+        .put = queue_remove_put,
+        .recover = queue_remove_recover,
+        .matches = queue_remove_matches,
+        .ctx = fixture,
+    };
+}
+
+static struct queue_remove_fixture queue_remove_fixture(void)
+{
+    struct queue_remove_fixture fixture = {.count = 4u};
+
+    for (uint8_t i = 0u; i < fixture.count; i++) {
+        fixture.entries[i].packet.seq = (uint8_t)(i + 1u);
+    }
+    return fixture;
+}
+
 static int save_outbox(void *ctx)
 {
     struct preempt_fixture *fixture = ctx;
@@ -353,6 +448,80 @@ static void test_durable_handoff_survives_restart_after_commit(void)
     assert_one_real_owner(&fixture, &result);
 }
 
+static void test_queue_remove_rotates_once_and_preserves_relative_order(void)
+{
+    struct queue_remove_fixture fixture = queue_remove_fixture();
+    struct app_mesh_queue_remove_ops ops = queue_remove_ops(&fixture);
+    struct mesh_outbound target = {.packet.seq = 2u};
+    struct mesh_outbound scratch;
+    bool removed = false;
+
+    assert(app_mesh_queue_remove_first(&ops, &target, &scratch, &removed) == 0);
+    assert(removed);
+    assert(fixture.count == 3u);
+    assert(fixture.get_calls == 4u);
+    assert(fixture.put_calls == 3u);
+    assert(fixture.entries[0].packet.seq == 1u);
+    assert(fixture.entries[1].packet.seq == 3u);
+    assert(fixture.entries[2].packet.seq == 4u);
+}
+
+static void test_queue_remove_absent_target_preserves_order(void)
+{
+    struct queue_remove_fixture fixture = queue_remove_fixture();
+    struct app_mesh_queue_remove_ops ops = queue_remove_ops(&fixture);
+    struct mesh_outbound target = {.packet.seq = 9u};
+    struct mesh_outbound scratch;
+    bool removed = true;
+
+    assert(app_mesh_queue_remove_first(&ops, &target, &scratch, &removed) ==
+           -ENOENT);
+    assert(!removed);
+    assert(fixture.count == 4u);
+    for (uint8_t i = 0u; i < fixture.count; i++) {
+        assert(fixture.entries[i].packet.seq == i + 1u);
+    }
+}
+
+static void test_queue_remove_reports_get_and_put_failures(void)
+{
+    struct queue_remove_fixture get_failure = queue_remove_fixture();
+    struct queue_remove_fixture put_failure = queue_remove_fixture();
+    struct mesh_outbound target = {.packet.seq = 4u};
+    struct mesh_outbound scratch;
+    bool removed = true;
+
+    get_failure.fail_get_call = 2u;
+    {
+        struct app_mesh_queue_remove_ops ops = queue_remove_ops(&get_failure);
+
+        assert(app_mesh_queue_remove_first(&ops, &target, &scratch, &removed) ==
+               -EIO);
+        assert(!removed);
+        assert(get_failure.get_calls == 2u);
+    }
+
+    removed = true;
+    put_failure.fail_put_call = 1u;
+    put_failure.fill_on_put_failure = true;
+    {
+        struct app_mesh_queue_remove_ops ops = queue_remove_ops(&put_failure);
+
+        assert(app_mesh_queue_remove_first(&ops, &target, &scratch, &removed) ==
+               -ENOSPC);
+        assert(!removed);
+        assert(put_failure.get_calls == 1u);
+        assert(put_failure.put_calls == 1u);
+        assert(put_failure.recovery_valid);
+        assert(put_failure.recovery.packet.seq == 1u);
+        assert(put_failure.count == 4u);
+        assert(put_failure.entries[0].packet.seq == 2u);
+        assert(put_failure.entries[1].packet.seq == 3u);
+        assert(put_failure.entries[2].packet.seq == 4u);
+        assert(put_failure.entries[3].packet.seq == 99u);
+    }
+}
+
 int main(void)
 {
     test_fallible_preparation_preserves_active_custody();
@@ -360,5 +529,8 @@ int main(void)
     test_failed_cancel_and_rollback_keeps_recovery_journal_authoritative();
     test_reset_recovery_has_one_logical_owner_at_every_handoff_phase();
     test_durable_handoff_survives_restart_after_commit();
+    test_queue_remove_rotates_once_and_preserves_relative_order();
+    test_queue_remove_absent_target_preserves_order();
+    test_queue_remove_reports_get_and_put_failures();
     return 0;
 }

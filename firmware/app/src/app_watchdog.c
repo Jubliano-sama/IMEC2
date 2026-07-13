@@ -1,7 +1,10 @@
 #include "app_watchdog.h"
 
+#include "app_board.h"
 #include "app_config.h"
+#include "watchdog_adoption.h"
 
+#include <hal/nrf_wdt.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/hwinfo.h>
@@ -30,8 +33,11 @@ static atomic_t radio_progress_ms;
 static atomic_t feeding_stopped;
 static uint32_t startup_grace_until_ms;
 static bool stale_reported;
-static int watchdog_channel = -1;
+static int8_t zephyr_watchdog_channel = -1;
+static uint8_t inherited_reload_request_mask;
 static struct app_watchdog_health watchdog_health;
+
+static void watchdog_timer_handler(struct k_timer *timer);
 
 static uint32_t lease_age_ms(uint32_t now_ms, atomic_t *lease)
 {
@@ -54,6 +60,49 @@ static void system_progress_work_handler(struct k_work *work)
                             K_MSEC(APP_WATCHDOG_CHECK_MS));
 }
 
+static uint8_t enabled_reload_request_mask(void)
+{
+    uint8_t mask = 0u;
+    uint8_t index;
+
+    for (index = 0u; index < WATCHDOG_ADOPTION_MAX_RELOAD_REQUESTS; index++) {
+        if (nrf_wdt_reload_request_enable_check(
+                NRF_WDT0, (nrf_wdt_rr_register_t)index)) {
+            mask |= (uint8_t)(UINT32_C(1) << index);
+        }
+    }
+    return mask;
+}
+
+static void feed_inherited_reload_request(uint8_t reload_request, void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    nrf_wdt_reload_request_set(
+        NRF_WDT0, (nrf_wdt_rr_register_t)reload_request);
+}
+
+static uint8_t feed_inherited_watchdog(bool feeding_allowed)
+{
+    return watchdog_adoption_feed_mask(
+        inherited_reload_request_mask,
+        WATCHDOG_ADOPTION_MAX_RELOAD_REQUESTS,
+        feeding_allowed,
+        feed_inherited_reload_request,
+        NULL);
+}
+
+static void start_watchdog_health_monitor(void)
+{
+    k_work_init_delayable(&system_progress_work,
+                          system_progress_work_handler);
+    k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
+    (void)k_work_reschedule(&system_progress_work, K_NO_WAIT);
+    k_timer_start(&watchdog_timer,
+                  K_MSEC(APP_WATCHDOG_CHECK_MS),
+                  K_MSEC(APP_WATCHDOG_CHECK_MS));
+}
+
 static void watchdog_timer_handler(struct k_timer *timer)
 {
     uint32_t now_ms = k_uptime_get_32();
@@ -64,7 +113,9 @@ static void watchdog_timer_handler(struct k_timer *timer)
 
     ARG_UNUSED(timer);
 
-    if (atomic_get(&feeding_stopped) != 0 || watchdog_channel < 0) {
+    if (atomic_get(&feeding_stopped) != 0 ||
+        (zephyr_watchdog_channel < 0 &&
+         inherited_reload_request_mask == 0u)) {
         return;
     }
     system_age_ms = lease_age_ms(now_ms, &system_progress_ms);
@@ -100,8 +151,14 @@ static void watchdog_timer_handler(struct k_timer *timer)
                 radio_age_ms);
         stale_reported = false;
     }
-    if (wdt_feed(watchdog_device, watchdog_channel) == 0 &&
-        watchdog_health.feeds < UINT32_MAX) {
+    if (inherited_reload_request_mask != 0u) {
+        if (feed_inherited_watchdog(true) == 0u) {
+            return;
+        }
+    } else if (wdt_feed(watchdog_device, zephyr_watchdog_channel) != 0) {
+        return;
+    }
+    if (watchdog_health.feeds < UINT32_MAX) {
         watchdog_health.feeds++;
     }
 }
@@ -116,40 +173,88 @@ int app_watchdog_init(void)
         .callback = NULL,
         .flags = WDT_FLAG_RESET_SOC,
     };
+    struct watchdog_adoption_plan adoption;
     uint32_t now_ms = k_uptime_get_32();
+    uint32_t inherited_crv;
+    uint8_t enabled_mask;
+    bool hardware_running;
     int ret;
 
     memset(&watchdog_health, 0, sizeof(watchdog_health));
     (void)hwinfo_get_reset_cause(&watchdog_health.reset_cause);
+    (void)hwinfo_clear_reset_cause();
     atomic_set(&system_progress_ms, (atomic_val_t)now_ms);
     atomic_set(&radio_progress_ms, (atomic_val_t)now_ms);
     atomic_clear(&feeding_stopped);
     stale_reported = false;
     startup_grace_until_ms = now_ms + APP_WATCHDOG_STARTUP_GRACE_MS;
+    zephyr_watchdog_channel = -1;
+    inherited_reload_request_mask = 0u;
+
+    hardware_running = nrf_wdt_started_check(NRF_WDT0);
+    enabled_mask = enabled_reload_request_mask();
+    ret = watchdog_adoption_plan(hardware_running,
+                                 enabled_mask,
+                                 WATCHDOG_ADOPTION_MAX_RELOAD_REQUESTS,
+                                 &adoption);
+    if (ret < 0) {
+        watchdog_health.init_error = ret;
+        status_debug_printf("DBG_WATCHDOG_BOOT mode=invalid running=%u rr=0x%02x count=0 immediate=0 reset=0x%08x err=%d\n",
+                            hardware_running ? 1u : 0u,
+                            (unsigned int)enabled_mask,
+                            watchdog_health.reset_cause,
+                            ret);
+        return ret;
+    }
+    if (adoption.mode == WATCHDOG_ADOPTION_INHERITED) {
+        inherited_reload_request_mask =
+            (uint8_t)adoption.reload_request_mask;
+        inherited_crv = nrf_wdt_reload_value_get(NRF_WDT0);
+        if (feed_inherited_watchdog(true) !=
+            adoption.reload_request_count) {
+            watchdog_health.init_error = -EIO;
+            inherited_reload_request_mask = 0u;
+            return -EIO;
+        }
+        watchdog_health.feeds = 1u;
+        start_watchdog_health_monitor();
+        status_debug_printf("DBG_WATCHDOG_BOOT mode=inherited rr=0x%02x count=%u immediate=1 crv=%u reset=0x%08x err=0\n",
+                            (unsigned int)inherited_reload_request_mask,
+                            (unsigned int)adoption.reload_request_count,
+                            inherited_crv,
+                            watchdog_health.reset_cause);
+        LOG_INF("inherited hardware watchdog adopted: rr_mask=0x%02x rr_count=%u crv=%u lease_ms=%u reset_cause=0x%08x",
+                (unsigned int)inherited_reload_request_mask,
+                (unsigned int)adoption.reload_request_count,
+                inherited_crv,
+                APP_WATCHDOG_PROGRESS_LEASE_MS,
+                watchdog_health.reset_cause);
+        return 0;
+    }
 
     if (watchdog_device == NULL || !device_is_ready(watchdog_device)) {
         watchdog_health.init_error = -ENODEV;
         return -ENODEV;
     }
-    watchdog_channel = wdt_install_timeout(watchdog_device, &timeout);
-    if (watchdog_channel < 0) {
-        watchdog_health.init_error = watchdog_channel;
-        return watchdog_channel;
+    ret = wdt_install_timeout(watchdog_device, &timeout);
+    if (ret < 0) {
+        watchdog_health.init_error = ret;
+        return ret;
     }
+    zephyr_watchdog_channel = (int8_t)ret;
     ret = wdt_setup(watchdog_device, WDT_OPT_PAUSE_HALTED_BY_DBG);
     if (ret < 0) {
         watchdog_health.init_error = ret;
-        watchdog_channel = -1;
+        zephyr_watchdog_channel = -1;
         return ret;
     }
 
-    k_work_init_delayable(&system_progress_work,
-                          system_progress_work_handler);
-    k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
-    (void)k_work_reschedule(&system_progress_work, K_NO_WAIT);
-    k_timer_start(&watchdog_timer,
-                  K_MSEC(APP_WATCHDOG_CHECK_MS),
-                  K_MSEC(APP_WATCHDOG_CHECK_MS));
+    start_watchdog_health_monitor();
+    status_debug_printf("DBG_WATCHDOG_BOOT mode=fresh rr=0x%02x count=1 immediate=0 crv=%u reset=0x%08x err=0\n",
+                        (unsigned int)(UINT32_C(1) <<
+                                       (uint8_t)zephyr_watchdog_channel),
+                        nrf_wdt_reload_value_get(NRF_WDT0),
+                        watchdog_health.reset_cause);
     LOG_INF("hardware watchdog active: timeout_ms=%u lease_ms=%u reset_cause=0x%08x",
             APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
             APP_WATCHDOG_PROGRESS_LEASE_MS,

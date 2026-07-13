@@ -1,4 +1,6 @@
 #include "app_mesh_c5_priority.h"
+#include "gateway_command.h"
+#include "survey.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -195,6 +197,61 @@ static void test_control_wake_captures_survey_discovery_like_enumeration(void)
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
+static void test_control_wake_captures_targeted_survey_pair_prepare(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t local_anchor_id = 0x3333333333333301ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    const uint64_t wrong_anchor_id = 0x1111111111111101ull;
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_SURVEY_PAIR_PREPARE,
+        .src_id = gateway_id,
+        .dst_id = local_anchor_id,
+        .previous_hop_id = gateway_id,
+        .target_id = gateway_id,
+        .local_id = local_anchor_id,
+        .control_origin_id = gateway_id,
+        .control_followup = true,
+    };
+
+    /* Direct delivery: this anchor is the final survey-pair target. */
+    assert(app_mesh_c5_route_capture_relevant(&state));
+
+    /* Relayed delivery keeps the gateway source and local final destination. */
+    state.previous_hop_id = relay_anchor_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+
+    /* A relay-owned wake contact still carries the gateway's control origin. */
+    state.target_id = relay_anchor_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.src_id = relay_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.src_id = gateway_id;
+    state.target_id = gateway_id;
+    state.previous_hop_id = gateway_id;
+
+    state.control_followup = false;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.control_followup = true;
+
+    state.dst_id = wrong_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.dst_id = MESH_BROADCAST_ID;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.dst_id = local_anchor_id;
+
+    state.src_id = local_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.src_id = gateway_id;
+
+    state.previous_hop_id = local_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = gateway_id;
+
+    state.msg_type = MSG_SURVEY_PAIR_RESULT;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+}
+
 static void test_route_reply_capture_requires_exact_discovery_identity(void)
 {
     struct app_mesh_c5_route_capture_state route_reply = {
@@ -275,6 +332,9 @@ static void test_channel5_control_phr_policy(void)
     assert(app_mesh_c5_control_uses_extended_phr(MSG_SURVEY_DISCOVERY_START,
                                                  117u,
                                                  125u));
+    assert(app_mesh_c5_control_uses_extended_phr(MSG_SURVEY_PAIR_PREPARE,
+                                                 91u,
+                                                 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 146u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 95u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY, 95u, 125u));
@@ -290,6 +350,61 @@ static void test_channel5_control_phr_policy(void)
     assert(!app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY_ACK,
                                                   95u,
                                                   125u));
+}
+
+static void test_gateway_control_origin_ttl_matches_command_profile(void)
+{
+    uint8_t origin_ttl = 0u;
+
+    assert(app_mesh_c5_gateway_control_origin_ttl(
+        MSG_SURVEY_PAIR_PREPARE, CMD_VENDOR_BASE, &origin_ttl));
+    assert(origin_ttl == SURVEY_DEFAULT_TTL);
+    assert(app_mesh_c5_gateway_control_origin_ttl(
+        MSG_SURVEY_DISCOVERY_START, CMD_VENDOR_BASE, &origin_ttl));
+    assert(origin_ttl == SURVEY_DEFAULT_TTL);
+
+    assert(app_mesh_c5_gateway_control_origin_ttl(
+        MSG_COMMAND, CMD_SURVEY_START_PAIR, &origin_ttl));
+    assert(origin_ttl == MESH_DEFAULT_TTL);
+    assert(app_mesh_c5_gateway_control_origin_ttl(
+        MSG_COMMAND, CMD_SURVEY_ABORT, &origin_ttl));
+    assert(origin_ttl == MESH_DEFAULT_TTL);
+    assert(app_mesh_c5_gateway_control_origin_ttl(
+        MSG_COMMAND, CMD_ASSIGN_DISCOVERY_SLOTS, &origin_ttl));
+    assert(origin_ttl == FLOOD_EPOCH_GLOBAL_TTL);
+
+    assert(!app_mesh_c5_gateway_control_origin_ttl(
+        MSG_SURVEY_PAIR_RESULT, CMD_VENDOR_BASE, &origin_ttl));
+    assert(!app_mesh_c5_gateway_control_origin_ttl(
+        MSG_COMMAND, CMD_VENDOR_BASE, NULL));
+}
+
+static void test_gateway_control_followup_tx_rx_phr_symmetry(void)
+{
+    static const uint8_t control_types[] = {
+        MSG_COMMAND,
+        MSG_SURVEY_DISCOVERY_START,
+        MSG_SURVEY_PAIR_PREPARE,
+    };
+    static const size_t frame_lengths[] = {91u, 124u, 125u, 126u};
+    const uint8_t wake_claim_flags =
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    const bool receiver_uses_extended_phr =
+        app_mesh_c5_wake_followup_uses_extended_phr(wake_claim_flags);
+
+    assert(receiver_uses_extended_phr);
+    for (size_t type = 0u;
+         type < sizeof(control_types) / sizeof(control_types[0]);
+         type++) {
+        for (size_t length = 0u;
+             length < sizeof(frame_lengths) / sizeof(frame_lengths[0]);
+             length++) {
+            assert(app_mesh_c5_control_uses_extended_phr(
+                       control_types[type], frame_lengths[length], 125u) ==
+                   receiver_uses_extended_phr);
+        }
+    }
 }
 
 static void test_wake_claim_click_priority_policy(void)
@@ -433,9 +548,12 @@ int main(void)
     test_route_reply_and_event_control_capture_rules();
     test_control_wake_captures_gateway_broadcast_command();
     test_control_wake_captures_survey_discovery_like_enumeration();
+    test_control_wake_captures_targeted_survey_pair_prepare();
     test_route_reply_capture_requires_exact_discovery_identity();
     test_event_accept_reservation_covers_bounded_realign();
     test_channel5_control_phr_policy();
+    test_gateway_control_origin_ttl_matches_command_profile();
+    test_gateway_control_followup_tx_rx_phr_symmetry();
     test_wake_claim_click_priority_policy();
     test_connected_gap_stays_armed_until_deadline_or_click();
     test_route_adv_delay_targets_requester_reply_window();

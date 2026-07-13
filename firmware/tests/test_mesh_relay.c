@@ -4656,6 +4656,8 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
 
     assert(mesh_relay_build_gateway_route_adv(&gateway, 77u, 1000u, &adv) == PROTO_OK);
     assert(adv.packet.msg_type == MSG_GATEWAY_ROUTE_ADV);
+    assert(adv.payload_len == MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN);
+    assert(adv.packet.payload_len == MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN);
     assert(adv.packet.src_id == GATEWAY);
     assert(adv.packet.dst_id == MESH_BROADCAST_ID);
     assert(adv.packet.session_id == 77u);
@@ -4825,6 +4827,27 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
     selected = route_selected(&anchor_b.upstream);
     assert(selected != NULL);
     assert(selected->next_hop_id == ANCHOR_A);
+}
+
+static void test_gateway_route_advertisement_snapshot_rebuild_is_exact(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_gateway_route_adv_snapshot snapshot;
+    struct mesh_outbound first;
+    struct mesh_outbound rebuilt;
+
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY, GATEWAY, 9u);
+    assert(mesh_relay_capture_gateway_route_adv_snapshot(
+               &gateway, 0x12345678u, 998u, &snapshot) == PROTO_OK);
+    assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+               &gateway, &snapshot, &first) == PROTO_OK);
+
+    gateway.upstream.current_epoch++;
+    assert(mesh_relay_build_gateway_route_adv_from_snapshot(
+               &gateway, &snapshot, &rebuilt) == PROTO_OK);
+    assert(memcmp(&first, &rebuilt, sizeof(first)) == 0);
+    assert(first.payload_len == MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN);
 }
 
 static void test_gateway_route_advertisement_reports_busy_capacity(void)
@@ -8349,6 +8372,7 @@ int main(void)
     test_route_request_expires_stale_channel9_before_capacity_check();
     test_parent_relay_rejects_unrelated_child_route_request_while_connected();
     test_gateway_route_advertisement_seeds_and_floods_parent_candidates();
+    test_gateway_route_advertisement_snapshot_rebuild_is_exact();
     test_gateway_route_advertisement_reports_busy_capacity();
     test_route_discovery_ready_resets_attempt_budget();
     test_retry_and_route_discovery_backoff_apply_jitter();

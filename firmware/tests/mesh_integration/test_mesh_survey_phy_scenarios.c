@@ -1,6 +1,8 @@
 #include "mesh_sim.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_gateway_command_priority.h"
+#include "gateway_command.h"
+#include "mesh.h"
 #include "protocol.h"
 #include "survey.h"
 #include "uwb.h"
@@ -9,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define GATEWAY_ID UINT64_C(0xa001000000000001)
 #define ANCHOR_ID UINT64_C(0xa002000000000001)
@@ -16,6 +19,8 @@
 #define SURVEY_ID UINT32_C(0x50665006)
 #define ROUTE_EPOCH UINT32_C(7)
 #define TX_START_US UINT64_C(10000)
+#define CHANNEL5_STANDARD_FRAME_MAX_LEN 125u
+#define PHY_HOP_GAP_US UINT64_C(1000)
 
 static unsigned int failures;
 
@@ -121,6 +126,156 @@ static enum mesh_sim_phy survey_start_rx_phy(void)
         MESH_SIM_PHY_CHANNEL5_MESH_CONTROL : MESH_SIM_PHY_CHANNEL5_WAKE;
 }
 
+static bool survey_result_has_action(const struct mesh_relay_result *result,
+                                     enum mesh_relay_action action)
+{
+    return result != NULL && (result->actions & action) != 0u;
+}
+
+static bool model_exact_airtime_hop(struct mesh_sim_world *world,
+                                    uint8_t sender,
+                                    uint8_t receiver,
+                                    uint64_t *at_us,
+                                    uint8_t channel,
+                                    enum mesh_sim_phy tx_phy,
+                                    enum mesh_sim_phy rx_phy,
+                                    const uint8_t *frame,
+                                    size_t frame_len,
+                                    uint8_t msg_type,
+                                    bool expect_decode)
+{
+    size_t receptions_before;
+    uint16_t transmission = UINT16_MAX;
+    uint64_t arrival_start_us;
+    uint64_t arrival_end_us;
+    int ret;
+
+    if (world == NULL || at_us == NULL || frame == NULL || frame_len == 0u) {
+        CHECK(false, "exact-airtime hop received invalid arguments");
+        return false;
+    }
+    receptions_before = world->reception_count;
+    ret = mesh_sim_schedule_raw_tx(world, sender, *at_us, channel, tx_phy,
+                                   frame, frame_len, false, &transmission);
+    if (ret != MESH_SIM_OK) {
+        CHECK(false, "exact-airtime TX scheduling failed");
+        return false;
+    }
+    world->transmissions[transmission].protocol_msg_type = msg_type;
+    arrival_start_us = *at_us + world->propagation_us[sender][receiver];
+    arrival_end_us = world->transmissions[transmission].end_us +
+                     world->propagation_us[sender][receiver];
+    ret = mesh_sim_schedule_rx(world, receiver, arrival_start_us,
+                               arrival_end_us, channel, rx_phy, NULL);
+    if (ret != MESH_SIM_OK) {
+        CHECK(false, "exact-airtime RX scheduling failed");
+        return false;
+    }
+    ret = mesh_sim_run_until(world, arrival_end_us + 1u);
+    if (ret != MESH_SIM_OK) {
+        CHECK(false, "exact-airtime PHY simulation failed");
+        return false;
+    }
+    *at_us = arrival_end_us + PHY_HOP_GAP_US;
+
+    if (expect_decode) {
+        if (world->reception_count != receptions_before + 1u ||
+            world->receptions[receptions_before].outcome !=
+                MESH_SIM_RX_DECODED) {
+            CHECK(false, "fully contained matching-PHY frame did not decode");
+            return false;
+        }
+    } else if (world->reception_count != receptions_before) {
+        CHECK(false, "PHR-mismatched frame reached receiver decode");
+        return false;
+    }
+    return true;
+}
+
+static bool model_control_wake_claim(struct mesh_sim_world *world,
+                                     uint8_t sender,
+                                     uint8_t receiver,
+                                     uint64_t sender_id,
+                                     uint64_t *at_us,
+                                     uint32_t event_id)
+{
+    const struct uwb_wake_claim_frame claim = {
+        .network_id = UINT32_C(0x494d4543),
+        .clicker_id = sender_id,
+        .click_event_id = event_id,
+        .attempt_index = 1u,
+        .priority_id = sender_id,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .wake_train_ends_in_ms = 5u,
+        .discovery_starts_in_ms = 5u,
+        .claimed_duration_ms = 20u,
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .nonce = UINT64_C(0x0102030405060708),
+        .flags = FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                 FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+    };
+    uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    size_t frame_len = 0u;
+
+    if (uwb_encode_wake_claim(&claim, frame, sizeof(frame), &frame_len) !=
+        PROTO_OK) {
+        CHECK(false, "control wake-claim encoding failed");
+        return false;
+    }
+    return model_exact_airtime_hop(world, sender, receiver, at_us,
+                                    UWB_CHANNEL_WAKE_CONTACT,
+                                    MESH_SIM_PHY_CHANNEL5_WAKE,
+                                    MESH_SIM_PHY_CHANNEL5_WAKE,
+                                    frame, frame_len, MSG_UWB_WAKE_CLAIM, true);
+}
+
+static bool model_pair_prepare_control_hop(
+    struct mesh_sim_world *world,
+    uint8_t sender,
+    uint8_t receiver,
+    uint64_t sender_id,
+    uint64_t *at_us,
+    const struct mesh_outbound *control,
+    size_t modeled_frame_len,
+    bool force_standard_phr,
+    bool expect_decode)
+{
+    uint8_t frame[PACKET_EXT_MAX_LEN] = {0};
+    size_t encoded_len = 0u;
+    enum mesh_sim_phy tx_phy;
+    enum mesh_sim_phy rx_phy;
+
+    if (!model_control_wake_claim(world, sender, receiver, sender_id, at_us,
+                                  control->packet.seq)) {
+        return false;
+    }
+    if (proto_packet_encode(&control->packet, control->payload, frame,
+                            sizeof(frame), &encoded_len) != PROTO_OK ||
+        encoded_len > modeled_frame_len ||
+        modeled_frame_len > sizeof(frame)) {
+        CHECK(false, "pair-prepare modeled frame length is invalid");
+        return false;
+    }
+    memset(frame + encoded_len, 0xa5, modeled_frame_len - encoded_len);
+    tx_phy = force_standard_phr ? MESH_SIM_PHY_CHANNEL5_WAKE :
+        (app_mesh_c5_control_uses_extended_phr(
+             control->packet.msg_type, modeled_frame_len,
+             CHANNEL5_STANDARD_FRAME_MAX_LEN) ?
+             MESH_SIM_PHY_CHANNEL5_MESH_CONTROL :
+             MESH_SIM_PHY_CHANNEL5_WAKE);
+    rx_phy = app_mesh_c5_wake_followup_uses_extended_phr(
+                 FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                 FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY) ?
+        MESH_SIM_PHY_CHANNEL5_MESH_CONTROL : MESH_SIM_PHY_CHANNEL5_WAKE;
+
+    return model_exact_airtime_hop(world, sender, receiver, at_us,
+                                    UWB_CHANNEL_WAKE_CONTACT, tx_phy, rx_phy,
+                                    frame, modeled_frame_len,
+                                    MSG_SURVEY_PAIR_PREPARE, expect_decode);
+}
+
 static void run_survey_start_phy_case(bool mutate_tx_to_standard_wake,
                                       uint32_t rx_end_trim_us,
                                       bool expect_decode,
@@ -211,6 +366,282 @@ static void run_survey_start_phy_case(bool mutate_tx_to_standard_wake,
     }
 }
 
+static int build_pair_prepare_control(struct mesh_outbound *control,
+                                      uint64_t target_id,
+                                      uint64_t next_hop_id,
+                                      uint16_t seq)
+{
+    const struct survey_pair pair = {
+        .initiator_id = target_id,
+        .responder_id = ANCHOR_2_ID,
+        .survey_id = SURVEY_ID,
+        .sample_count = 3u,
+    };
+    size_t payload_len = 0u;
+    int ret;
+
+    if (control == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(control, 0, sizeof(*control));
+    ret = survey_append_pair_tlvs(control->payload, sizeof(control->payload),
+                                  &payload_len, &pair);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_init_pair_prepare_packet(&control->packet, &pair, GATEWAY_ID,
+                                          seq, (uint8_t)payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    control->packet.dst_id = target_id;
+    control->payload_len = (uint16_t)payload_len;
+    control->next_hop_id = next_hop_id;
+    control->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    return PROTO_OK;
+}
+
+static bool model_command_result_hop(struct mesh_sim_world *world,
+                                     uint8_t sender,
+                                     uint8_t receiver,
+                                     uint64_t *at_us,
+                                     const struct mesh_outbound *result)
+{
+    uint8_t frame[PACKET_EXT_MAX_LEN] = {0};
+    size_t frame_len = 0u;
+
+    if (result == NULL ||
+        proto_packet_encode(&result->packet, result->payload, frame,
+                            sizeof(frame), &frame_len) != PROTO_OK) {
+        CHECK(false, "0x21 command-result frame encoding failed");
+        return false;
+    }
+    return model_exact_airtime_hop(world, sender, receiver, at_us,
+                                    UWB_CHANNEL_MESH_PAYLOAD,
+                                    MESH_SIM_PHY_CHANNEL9_MESH,
+                                    MESH_SIM_PHY_CHANNEL9_MESH,
+                                    frame, frame_len, MSG_COMMAND_RESULT, true);
+}
+
+static bool relay_receive_outbound(struct mesh_relay *receiver,
+                                   const struct mesh_outbound *outbound,
+                                   uint64_t previous_hop_id,
+                                   uint32_t now_ms,
+                                   struct mesh_relay_result *result)
+{
+    if (mesh_relay_handle_rx_with_random(receiver, &outbound->packet,
+                                         outbound->payload,
+                                         outbound->payload_len,
+                                         previous_hop_id, 100u, now_ms,
+                                         now_ms ^ outbound->packet.seq,
+                                         result) != PROTO_OK) {
+        CHECK(false, "decoded survey control/result was rejected by relay");
+        return false;
+    }
+    return true;
+}
+
+static void run_pair_prepare_hardware_case(bool relayed,
+                                           size_t modeled_frame_len,
+                                           bool force_standard_phr)
+{
+    static struct mesh_sim_world world;
+    const uint64_t relay_id = ANCHOR_2_ID;
+    const uint64_t target_id = ANCHOR_ID;
+    struct mesh_outbound control;
+    struct mesh_outbound result_out = {0};
+    struct mesh_relay_result relay_result;
+    const struct route_candidate *selected;
+    struct gateway_command_pending pending = {0};
+    uint8_t result_payload[16] = {0};
+    size_t result_payload_len = 0u;
+    uint8_t gateway = UINT8_MAX;
+    uint8_t relay = UINT8_MAX;
+    uint8_t target = UINT8_MAX;
+    uint8_t first_hop;
+    uint64_t previous_hop_id = GATEWAY_ID;
+    uint64_t at_us = TX_START_US;
+    uint16_t seq = (uint16_t)(modeled_frame_len +
+                              (relayed ? 1000u : 0u) +
+                              (force_standard_phr ? 2000u : 0u));
+    bool expect_control_decode = !force_standard_phr;
+
+    mesh_sim_init(&world, (uint32_t)seq ^ UINT32_C(0x52c50000));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK,
+          "pair-control gateway setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, relay_id,
+                            GATEWAY_ID, ROUTE_EPOCH, &relay) == MESH_SIM_OK,
+          "pair-control relay setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, target_id,
+                            GATEWAY_ID, ROUTE_EPOCH, &target) == MESH_SIM_OK,
+          "pair-control target setup failed");
+    first_hop = relayed ? relay : target;
+    CHECK(mesh_sim_set_link(&world, gateway, first_hop, 100u, 0u) ==
+              MESH_SIM_OK,
+          "pair-control first-hop link setup failed");
+    if (relayed) {
+        CHECK(mesh_sim_set_link(&world, relay, target, 100u, 0u) ==
+                  MESH_SIM_OK,
+              "pair-control relay-target link setup failed");
+        CHECK(mesh_sim_install_route(&world, relay, gateway, 1u,
+                                     ROUTE_EPOCH) == MESH_SIM_OK,
+              "pair-control relay upstream route setup failed");
+        CHECK(mesh_sim_install_downlink(&world, relay, target_id, target, 1u,
+                                        ROUTE_EPOCH) == MESH_SIM_OK,
+              "pair-control relay downlink setup failed");
+    }
+    CHECK(mesh_sim_install_downlink(&world, gateway, target_id, first_hop,
+                                    relayed ? 2u : 1u,
+                                    ROUTE_EPOCH) == MESH_SIM_OK,
+          "pair-control gateway downlink setup failed");
+    CHECK(build_pair_prepare_control(&control, target_id,
+                                     relayed ? relay_id : target_id,
+                                     seq) == PROTO_OK,
+          "pair-control 0x52 packet setup failed");
+    CHECK(control.packet.msg_type == MSG_SURVEY_PAIR_PREPARE,
+          "pair-control scenario is not exercising 0x52");
+    CHECK(gateway_command_pending_start(&pending, &control.packet,
+                                        CMD_SURVEY_PREPARE_PAIR, 0u,
+                                        GATEWAY_COMMAND_RESULT_TIMEOUT_MS) ==
+              PROTO_OK,
+          "pair-control pending waiter setup failed");
+
+    if (!model_pair_prepare_control_hop(
+            &world, gateway, first_hop, GATEWAY_ID, &at_us, &control,
+            modeled_frame_len, force_standard_phr, expect_control_decode)) {
+        return;
+    }
+    if (!expect_control_decode) {
+        CHECK(pending.active,
+              "wrong-PHR 0x52 unexpectedly completed its pending waiter");
+        return;
+    }
+
+    if (!relay_receive_outbound(&world.roles[first_hop].relay, &control,
+                                previous_hop_id, (uint32_t)(at_us / 1000u),
+                                &relay_result)) {
+        return;
+    }
+    if (relayed) {
+        CHECK(survey_result_has_action(&relay_result,
+                                       MESH_RELAY_ACTION_FORWARD),
+              "decoded multihop 0x52 did not enter relay forwarding");
+        control = relay_result.forward;
+        control.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+        previous_hop_id = relay_id;
+        if (!model_pair_prepare_control_hop(
+                &world, relay, target, relay_id, &at_us, &control,
+                modeled_frame_len, false, true) ||
+            !relay_receive_outbound(&world.roles[target].relay, &control,
+                                    previous_hop_id,
+                                    (uint32_t)(at_us / 1000u),
+                                    &relay_result)) {
+            return;
+        }
+    }
+    CHECK(survey_result_has_action(&relay_result,
+                                   MESH_RELAY_ACTION_DELIVER_LOCAL),
+          "matching-PHR 0x52 did not reach target local delivery");
+    CHECK(route_selected(&world.roles[target].relay.upstream) == NULL,
+          "pair-control target unexpectedly had a preseeded upstream route");
+    CHECK(!world.roles[target].relay.route_discovery.active,
+          "pair-control target started route discovery before local delivery");
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &world.roles[target].relay, &control.packet,
+              previous_hop_id, 100u, SURVEY_DEFAULT_TTL,
+              (uint32_t)(at_us / 1000u)) == PROTO_OK,
+          "accepted 0x52 did not seed its physical reverse first hop");
+    selected = route_selected(&world.roles[target].relay.upstream);
+    CHECK(selected != NULL,
+          "accepted 0x52 left the command result without an upstream route");
+    CHECK(selected->next_hop_id == previous_hop_id,
+          "accepted 0x52 seeded a route through the wrong physical sender");
+    CHECK(selected->hop_count == (relayed ? 1u : 0u),
+          "accepted 0x52 derived the wrong reverse hop count");
+    CHECK(!world.roles[target].relay.route_discovery.active,
+          "accepted 0x52 unnecessarily started route discovery");
+
+    CHECK(mesh_append_command_result(result_payload, sizeof(result_payload),
+                                     &result_payload_len,
+                                     CMD_SURVEY_PREPARE_PAIR,
+                                     COMMAND_OK, 0u) == PROTO_OK,
+          "0x21 result payload setup failed");
+    CHECK(mesh_init_command_result(&result_out.packet, target_id, GATEWAY_ID,
+                                   SURVEY_ID, seq,
+                                   (uint8_t)result_payload_len,
+                                   false) == PROTO_OK,
+          "0x21 result packet setup failed");
+    memcpy(result_out.payload, result_payload, result_payload_len);
+    CHECK(mesh_relay_start_tx(&world.roles[target].relay,
+                              &result_out.packet,
+                              result_payload,
+                              result_payload_len,
+                              (uint32_t)(at_us / 1000u),
+                              &result_out) == PROTO_OK,
+          "accepted 0x52 could not immediately start its 0x21 result");
+    CHECK(result_out.next_hop_id == previous_hop_id,
+          "0x21 result did not use the reverse first hop from accepted 0x52");
+    CHECK(!world.roles[target].relay.route_discovery.active,
+          "0x21 result triggered route discovery despite its reverse route");
+    result_out.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    CHECK(result_out.packet.msg_type == MSG_COMMAND_RESULT,
+          "pair-control result is not 0x21");
+
+    if (!model_command_result_hop(&world, target,
+                                  relayed ? relay : gateway,
+                                  &at_us, &result_out)) {
+        return;
+    }
+    if (relayed) {
+        if (!relay_receive_outbound(&world.roles[relay].relay, &result_out,
+                                    target_id, (uint32_t)(at_us / 1000u),
+                                    &relay_result)) {
+            return;
+        }
+        CHECK(survey_result_has_action(&relay_result,
+                                       MESH_RELAY_ACTION_FORWARD),
+              "multihop 0x21 did not enter relay forwarding");
+        result_out = relay_result.forward;
+        result_out.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+        if (!model_command_result_hop(&world, relay, gateway, &at_us,
+                                      &result_out)) {
+            return;
+        }
+    }
+    if (!relay_receive_outbound(&world.roles[gateway].relay, &result_out,
+                                relayed ? relay_id : target_id,
+                                (uint32_t)(at_us / 1000u), &relay_result)) {
+        return;
+    }
+    CHECK(survey_result_has_action(&relay_result,
+                                   MESH_RELAY_ACTION_DELIVER_LOCAL),
+          "physically delivered 0x21 did not reach gateway local delivery");
+    CHECK(gateway_command_pending_complete_result(&pending,
+                                                   &result_out.packet),
+          "physically delivered 0x21 did not complete pending 0x52");
+    CHECK(!pending.active,
+          "completed pair-control waiter remained active");
+}
+
+static void test_pair_prepare_phr_and_complete_airtime_sweep(void)
+{
+    static const size_t frame_lengths[] = {91u, 124u, 125u, 126u};
+
+    for (size_t relayed = 0u; relayed < 2u; relayed++) {
+        for (size_t length = 0u;
+             length < sizeof(frame_lengths) / sizeof(frame_lengths[0]);
+             length++) {
+            run_pair_prepare_hardware_case(relayed != 0u,
+                                           frame_lengths[length], false);
+            if (frame_lengths[length] <= CHANNEL5_STANDARD_FRAME_MAX_LEN) {
+                run_pair_prepare_hardware_case(relayed != 0u,
+                                               frame_lengths[length], true);
+            }
+        }
+    }
+}
+
 static void test_two_anchor_survey_lifecycle(void)
 {
     static const struct survey_discovery_config config = {
@@ -223,6 +654,7 @@ static void test_two_anchor_survey_lifecycle(void)
     static struct survey_gateway_context gateway_context;
     struct survey_gateway_auto_context auto_context;
     struct survey_gateway_auto_action action;
+    struct survey_pair planned_pair;
     struct survey_discovery_attempt_schedule schedules[2];
     struct proto_packet start_packet;
     struct proto_packet report_packets[2];
@@ -409,9 +841,12 @@ static void test_two_anchor_survey_lifecycle(void)
     }
     CHECK(survey_gateway_plan_pairs(&gateway_context) == PROTO_OK &&
               gateway_context.report_count == 2u &&
-              gateway_context.pair_count == 1u &&
-              gateway_context.pairs[0].sample_count == 3u,
+              gateway_context.pair_count == 1u,
           "two mutual reports did not plan exactly one survey pair");
+    CHECK(survey_gateway_pair_at(&gateway_context, 0u, &planned_pair) ==
+              PROTO_OK && planned_pair.survey_id == SURVEY_ID &&
+              planned_pair.sample_count == 3u,
+          "planned survey pair did not reconstruct context-wide fields");
 
     CHECK(survey_gateway_auto_begin(&auto_context) == PROTO_OK,
           "survey auto context setup failed");
@@ -421,8 +856,7 @@ static void test_two_anchor_survey_lifecycle(void)
         uint64_t expected_target =
             expected_stages[i] == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR ||
                     expected_stages[i] == SURVEY_GATEWAY_AUTO_START_INITIATOR ?
-                gateway_context.pairs[0].initiator_id :
-                gateway_context.pairs[0].responder_id;
+                planned_pair.initiator_id : planned_pair.responder_id;
 
         CHECK(survey_gateway_auto_next_action(&auto_context, &gateway_context,
                                                &action) == PROTO_OK &&
@@ -448,6 +882,7 @@ int main(void)
     run_survey_start_phy_case(false, 0u, true, true);
     run_survey_start_phy_case(false, 1u, false, true);
     run_survey_start_phy_case(true, 0u, false, false);
+    test_pair_prepare_phr_and_complete_airtime_sweep();
     test_two_anchor_survey_lifecycle();
 
     if (failures != 0u) {

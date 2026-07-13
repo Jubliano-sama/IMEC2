@@ -106,7 +106,7 @@ static void test_terminal_is_retained_across_backpressure_until_sent(void)
     gateway_command_observability_note_enqueue(&state, terminal.event_seq, -ENOTCONN);
     assert(gateway_command_observability_pending_terminal(&state, &replay));
     assert(replay.event_seq == terminal.event_seq);
-    assert(replay.lost_event_count == 1u);
+    assert(replay.lost_event_count == 0u);
     assert((replay.flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u);
     assert((replay.flags & GATEWAY_COMMAND_EVENT_FLAG_REPLAY) != 0u);
 
@@ -117,7 +117,7 @@ static void test_terminal_is_retained_across_backpressure_until_sent(void)
         &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION, &replay));
 }
 
-static void test_active_snapshot_survives_disconnect_and_reports_loss(void)
+static void test_active_snapshot_survives_disconnect_without_false_loss(void)
 {
     struct gateway_command_observability_state state;
     struct gateway_command_event progress = sample_event(
@@ -134,7 +134,9 @@ static void test_active_snapshot_survives_disconnect_and_reports_loss(void)
         &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
     assert(replay.correlation_id == 321u);
     assert(replay.attempt == 2u);
-    assert(replay.lost_event_count == 1u);
+    assert(replay.lost_event_count == 0u);
+    assert(gateway_command_observability_pending_snapshot(
+        &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
     assert((replay.flags & GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT) != 0u);
 }
 
@@ -286,7 +288,7 @@ int main(void)
     test_fixed_record_round_trip();
     test_parser_rejects_unknown_and_malformed_records();
     test_terminal_is_retained_across_backpressure_until_sent();
-    test_active_snapshot_survives_disconnect_and_reports_loss();
+    test_active_snapshot_survives_disconnect_without_false_loss();
     test_sequential_and_concurrent_correlations_stay_distinct();
     test_two_unsent_sequential_terminals_do_not_overwrite();
     test_survey_terminal_failure_reason_is_specific_and_deterministic();

@@ -20,6 +20,7 @@
 #define ANCHOR_BASE UINT64_C(0xa002000000010000)
 #define ROUTE_EPOCH 17u
 #define ROUTE_ADV_SEQ UINT32_C(0x48494101)
+#define PAIR_SURVEY_ID UINT32_C(0x07130071)
 #define RADIO_GUARD_US UINT64_C(500)
 
 static int failures;
@@ -36,6 +37,21 @@ static bool has_action(const struct mesh_relay_result *result,
                        enum mesh_relay_action action)
 {
     return result != NULL && (result->actions & action) != 0u;
+}
+
+static size_t upstream_candidate_count(const struct mesh_relay *relay)
+{
+    size_t count = 0u;
+
+    if (relay == NULL) {
+        return 0u;
+    }
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        if (relay->upstream.candidates[i].valid) {
+            count++;
+        }
+    }
+    return count;
 }
 
 static int schedule_phy_only_outbound(struct mesh_sim_world *world,
@@ -65,7 +81,7 @@ static int schedule_phy_only_outbound(struct mesh_sim_world *world,
 
 static void test_here_i_am_direct_scale_matrix(void)
 {
-    static const size_t counts[] = {2u, 6u, 16u, 32u, 50u};
+    static const size_t counts[] = {2u, 6u, 16u, 20u, 32u, 50u};
 
     for (size_t c = 0u; c < sizeof(counts) / sizeof(counts[0]); c++) {
         struct mesh_relay gateway;
@@ -102,6 +118,172 @@ static void test_here_i_am_direct_scale_matrix(void)
             CHECK(!has_action(&result,
                               MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
         }
+    }
+}
+
+static void test_here_i_am_20_direct_50_mixed_hop_radio_scale(void)
+{
+    enum {
+        DIRECT_ANCHORS = 20,
+        SECOND_HOP_ANCHORS = 20,
+        THIRD_HOP_ANCHORS = 10,
+        TOTAL_ANCHORS = DIRECT_ANCHORS + SECOND_HOP_ANCHORS +
+                        THIRD_HOP_ANCHORS,
+    };
+    static struct mesh_sim_world world;
+    static struct mesh_outbound forwards[TOTAL_ANCHORS];
+    bool decoded[TOTAL_ANCHORS] = {0};
+    uint8_t node_indices[TOTAL_ANCHORS];
+    uint8_t gateway_index;
+    struct mesh_outbound gateway_adv;
+    uint64_t gateway_tx_start_us = UINT64_C(10000);
+    uint64_t next_tx_start_us;
+    uint32_t airtime_us;
+    uint32_t tx_stride_us;
+    uint16_t tx_index;
+
+    _Static_assert(TOTAL_ANCHORS + 1u <= MESH_SIM_MAX_ROLES,
+                   "Here-I-Am scale exceeds simulator role capacity");
+
+    mesh_sim_init(&world, UINT32_C(0x48494152));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+              GATEWAY_ID, ROUTE_EPOCH, &gateway_index) == MESH_SIM_OK);
+    for (size_t i = 0u; i < TOTAL_ANCHORS; i++) {
+        CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                  ANCHOR_BASE + i, GATEWAY_ID, ROUTE_EPOCH,
+                  &node_indices[i]) == MESH_SIM_OK);
+    }
+    CHECK(mesh_relay_build_gateway_route_adv(
+              &world.roles[gateway_index].relay, ROUTE_ADV_SEQ,
+              1000u, &gateway_adv) == PROTO_OK);
+    airtime_us = mesh_sim_frame_duration_us(
+        MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+        PACKET_HEADER_LEN + gateway_adv.payload_len + PACKET_CRC_LEN);
+    CHECK(airtime_us > 0u);
+    tx_stride_us = airtime_us + (uint32_t)(2u * RADIO_GUARD_US) + 1000u;
+
+    for (size_t i = 0u; i < TOTAL_ANCHORS; i++) {
+        size_t parent_anchor;
+        uint8_t parent_index;
+        uint64_t parent_id;
+        const struct mesh_outbound *incoming;
+        struct mesh_relay_result result;
+        const struct route_candidate *selected;
+        uint8_t expected_hops;
+
+        if (i < DIRECT_ANCHORS) {
+            parent_index = gateway_index;
+            parent_id = GATEWAY_ID;
+            incoming = &gateway_adv;
+            expected_hops = 1u;
+        } else if (i < DIRECT_ANCHORS + SECOND_HOP_ANCHORS) {
+            parent_anchor = i - DIRECT_ANCHORS;
+            parent_index = node_indices[parent_anchor];
+            parent_id = ANCHOR_BASE + parent_anchor;
+            incoming = &forwards[parent_anchor];
+            expected_hops = 2u;
+        } else {
+            parent_anchor = DIRECT_ANCHORS +
+                            (i - DIRECT_ANCHORS - SECOND_HOP_ANCHORS);
+            parent_index = node_indices[parent_anchor];
+            parent_id = ANCHOR_BASE + parent_anchor;
+            incoming = &forwards[parent_anchor];
+            expected_hops = 3u;
+        }
+
+        CHECK(mesh_sim_set_link(&world, parent_index, node_indices[i],
+                  90u, 0u) == MESH_SIM_OK);
+        CHECK(mesh_relay_handle_rx_with_random(
+                  &world.roles[node_indices[i]].relay,
+                  &incoming->packet, incoming->payload, incoming->payload_len,
+                  parent_id, 90u, 1010u + (uint32_t)i,
+                  UINT32_C(0x9e3779b9) * (uint32_t)(i + 1u),
+                  &result) == PROTO_OK);
+        CHECK(result.status == PROTO_OK);
+        CHECK(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+        selected = route_selected(&world.roles[node_indices[i]].relay.upstream);
+        CHECK(selected != NULL);
+        CHECK(selected->next_hop_id == parent_id);
+        CHECK(selected->route_epoch == ROUTE_EPOCH);
+        CHECK(selected->hop_count + 1u == expected_hops);
+        CHECK(result.gateway_route_adv.packet.ttl ==
+              FLOOD_EPOCH_GLOBAL_TTL - expected_hops);
+        for (uint8_t timing = 0u; timing < MESH_RELAY_EVENT_TIMINGS; timing++) {
+            CHECK(!world.roles[node_indices[i]].relay.event_timings[timing].valid);
+        }
+        forwards[i] = result.gateway_route_adv;
+    }
+
+    for (size_t i = 0u; i < DIRECT_ANCHORS; i++) {
+        uint16_t rx_index;
+
+        CHECK(mesh_sim_schedule_rx(&world, node_indices[i],
+                  gateway_tx_start_us - RADIO_GUARD_US,
+                  gateway_tx_start_us + airtime_us + RADIO_GUARD_US,
+                  UWB_CHANNEL_WAKE_CONTACT,
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                  &rx_index) == MESH_SIM_OK);
+    }
+    CHECK(schedule_phy_only_outbound(&world, gateway_index,
+              gateway_tx_start_us, &gateway_adv, &tx_index) == MESH_SIM_OK);
+
+    next_tx_start_us = gateway_tx_start_us + tx_stride_us;
+    for (size_t i = DIRECT_ANCHORS;
+         i < DIRECT_ANCHORS + SECOND_HOP_ANCHORS; i++) {
+        size_t parent_anchor = i - DIRECT_ANCHORS;
+        uint16_t rx_index;
+
+        CHECK(mesh_sim_schedule_rx(&world, node_indices[i],
+                  next_tx_start_us - RADIO_GUARD_US,
+                  next_tx_start_us + airtime_us + RADIO_GUARD_US,
+                  UWB_CHANNEL_WAKE_CONTACT,
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                  &rx_index) == MESH_SIM_OK);
+        CHECK(schedule_phy_only_outbound(&world, node_indices[parent_anchor],
+                  next_tx_start_us, &forwards[parent_anchor],
+                  &tx_index) == MESH_SIM_OK);
+        next_tx_start_us += tx_stride_us;
+    }
+    for (size_t i = DIRECT_ANCHORS + SECOND_HOP_ANCHORS;
+         i < TOTAL_ANCHORS; i++) {
+        size_t parent_anchor = DIRECT_ANCHORS +
+                               (i - DIRECT_ANCHORS - SECOND_HOP_ANCHORS);
+        uint16_t rx_index;
+
+        CHECK(mesh_sim_schedule_rx(&world, node_indices[i],
+                  next_tx_start_us - RADIO_GUARD_US,
+                  next_tx_start_us + airtime_us + RADIO_GUARD_US,
+                  UWB_CHANNEL_WAKE_CONTACT,
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                  &rx_index) == MESH_SIM_OK);
+        CHECK(schedule_phy_only_outbound(&world, node_indices[parent_anchor],
+                  next_tx_start_us, &forwards[parent_anchor],
+                  &tx_index) == MESH_SIM_OK);
+        next_tx_start_us += tx_stride_us;
+    }
+
+    CHECK(mesh_sim_run(&world) == MESH_SIM_OK);
+    CHECK(world.transmission_count == 1u + SECOND_HOP_ANCHORS +
+                                      THIRD_HOP_ANCHORS);
+    CHECK(world.reception_count == TOTAL_ANCHORS);
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        const struct mesh_sim_reception *rx = &world.receptions[i];
+        size_t receiver = (size_t)(rx->receiver_id - ANCHOR_BASE);
+        uint64_t expected_source;
+
+        CHECK(world.receptions[i].outcome == MESH_SIM_RX_DECODED);
+        CHECK(receiver < TOTAL_ANCHORS);
+        CHECK(!decoded[receiver]);
+        decoded[receiver] = true;
+        if (receiver < DIRECT_ANCHORS) {
+            expected_source = GATEWAY_ID;
+        } else if (receiver < DIRECT_ANCHORS + SECOND_HOP_ANCHORS) {
+            expected_source = ANCHOR_BASE + receiver - DIRECT_ANCHORS;
+        } else {
+            expected_source = ANCHOR_BASE + DIRECT_ANCHORS +
+                              receiver - DIRECT_ANCHORS - SECOND_HOP_ANCHORS;
+        }
+        CHECK(rx->source_id == expected_source);
     }
 }
 
@@ -286,7 +468,7 @@ static int build_survey_pair_control(struct mesh_outbound *out,
                                      uint16_t seq)
 {
     const struct survey_pair pair = {
-        .survey_id = UINT32_C(0x07130071),
+        .survey_id = PAIR_SURVEY_ID,
         .initiator_id = target_id,
         .responder_id = target_id + UINT64_C(0x1000),
         .sample_count = 3u,
@@ -337,6 +519,238 @@ static int build_survey_pair_control(struct mesh_outbound *out,
     out->next_hop_id = next_hop_id;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     return PROTO_OK;
+}
+
+static void test_gateway_control_reverse_route_contract(void)
+{
+    const uint64_t target_id = ANCHOR_BASE + UINT64_C(0x500);
+    const uint64_t relay_id = ANCHOR_BASE + UINT64_C(0x501);
+    const uint64_t alternate_id = ANCHOR_BASE + UINT64_C(0x502);
+    const struct survey_discovery_config discovery = {
+        .survey_id = PAIR_SURVEY_ID,
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+    };
+    struct mesh_relay anchor;
+    struct mesh_relay gateway;
+    struct mesh_outbound prepare;
+    struct mesh_outbound command;
+    struct proto_packet discovery_start;
+    struct route_candidate better;
+    struct route_table unchanged;
+    const struct route_candidate *selected;
+
+    CHECK(build_survey_pair_control(&prepare, CMD_SURVEY_PREPARE_PAIR,
+                                     target_id, target_id, 81u) == PROTO_OK);
+    CHECK(build_survey_pair_control(&command, CMD_SURVEY_START_PAIR,
+                                     target_id, target_id, 82u) == PROTO_OK);
+    CHECK(survey_init_discovery_start_packet(&discovery_start, GATEWAY_ID,
+                                              &discovery, 83u, 0u) == PROTO_OK);
+
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    target_id, GATEWAY_ID, ROUTE_EPOCH);
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, GATEWAY_ID, 87u,
+              SURVEY_DEFAULT_TTL, 1000u) == PROTO_OK);
+    selected = route_selected(&anchor.upstream);
+    CHECK(selected != NULL);
+    CHECK(selected->next_hop_id == GATEWAY_ID);
+    CHECK(selected->gateway_id == GATEWAY_ID);
+    CHECK(selected->hop_count == 0u);
+    CHECK(selected->link_quality == 87u);
+    CHECK(selected->route_epoch == ROUTE_EPOCH);
+    CHECK(selected->last_seen_ms == 1000u);
+    CHECK(upstream_candidate_count(&anchor) == 1u);
+
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, GATEWAY_ID, 96u,
+              SURVEY_DEFAULT_TTL, 1010u) == PROTO_OK);
+    selected = route_selected(&anchor.upstream);
+    CHECK(selected != NULL && selected->next_hop_id == GATEWAY_ID);
+    CHECK(selected->link_quality == 96u);
+    CHECK(selected->last_seen_ms == 1010u);
+    CHECK(upstream_candidate_count(&anchor) == 1u);
+
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    target_id, GATEWAY_ID, ROUTE_EPOCH);
+    command.packet.ttl = MESH_DEFAULT_TTL - 1u;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &command.packet, relay_id, 78u,
+              MESH_DEFAULT_TTL, 1020u) == PROTO_OK);
+    selected = route_selected(&anchor.upstream);
+    CHECK(selected != NULL && selected->next_hop_id == relay_id);
+    CHECK(selected->hop_count == 1u);
+    CHECK(selected->link_quality == 78u);
+
+    command.packet.dst_id = MESH_BROADCAST_ID;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &command.packet, relay_id, 79u,
+              MESH_DEFAULT_TTL, 1030u) == PROTO_OK);
+    selected = route_selected(&anchor.upstream);
+    CHECK(selected != NULL && selected->next_hop_id == relay_id);
+    CHECK(selected->hop_count == 1u && selected->link_quality == 79u);
+
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    target_id, GATEWAY_ID, ROUTE_EPOCH);
+    discovery_start.ttl = SURVEY_DEFAULT_TTL - 2u;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &discovery_start, relay_id, 73u,
+              SURVEY_DEFAULT_TTL, 1040u) == PROTO_OK);
+    selected = route_selected(&anchor.upstream);
+    CHECK(selected != NULL && selected->next_hop_id == relay_id);
+    CHECK(selected->hop_count == 2u);
+
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    target_id, GATEWAY_ID, ROUTE_EPOCH);
+    better = (struct route_candidate) {
+        .next_hop_id = alternate_id,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = ROUTE_EPOCH,
+        .last_seen_ms = 900u,
+        .last_success_ms = 850u,
+        .hop_count = 0u,
+        .link_quality = 60u,
+        .channel9_timing_valid = true,
+        .valid = true,
+    };
+    CHECK(route_upsert_candidate(&anchor.upstream, &better) == PROTO_OK);
+    prepare.packet.ttl = SURVEY_DEFAULT_TTL - 2u;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 100u,
+              SURVEY_DEFAULT_TTL, 1050u) == PROTO_OK);
+    selected = route_selected(&anchor.upstream);
+    CHECK(selected != NULL && selected->next_hop_id == alternate_id);
+    CHECK(upstream_candidate_count(&anchor) == 2u);
+    CHECK(anchor.upstream.candidates[0].channel9_timing_valid);
+
+    unchanged = anchor.upstream;
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH);
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &gateway, &prepare.packet, relay_id, 90u,
+              SURVEY_DEFAULT_TTL, 1060u) != PROTO_OK);
+    CHECK(route_selected(&gateway.upstream) == NULL);
+
+    prepare.packet.src_id = alternate_id;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 90u,
+              SURVEY_DEFAULT_TTL, 1061u) != PROTO_OK);
+    CHECK(memcmp(&anchor.upstream, &unchanged, sizeof(unchanged)) == 0);
+    prepare.packet.src_id = GATEWAY_ID;
+
+    prepare.packet.dst_id = alternate_id;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 90u,
+              SURVEY_DEFAULT_TTL, 1062u) != PROTO_OK);
+    CHECK(memcmp(&anchor.upstream, &unchanged, sizeof(unchanged)) == 0);
+    prepare.packet.dst_id = target_id;
+
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, MESH_BROADCAST_ID, 90u,
+              SURVEY_DEFAULT_TTL, 1063u) != PROTO_OK);
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, target_id, 90u,
+              SURVEY_DEFAULT_TTL, 1064u) != PROTO_OK);
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 101u,
+              SURVEY_DEFAULT_TTL, 1065u) != PROTO_OK);
+    CHECK(memcmp(&anchor.upstream, &unchanged, sizeof(unchanged)) == 0);
+
+    prepare.packet.ttl = 0u;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 90u,
+              SURVEY_DEFAULT_TTL, 1066u) != PROTO_OK);
+    prepare.packet.ttl = SURVEY_DEFAULT_TTL + 1u;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 90u,
+              SURVEY_DEFAULT_TTL, 1067u) != PROTO_OK);
+    prepare.packet.ttl = SURVEY_DEFAULT_TTL;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, relay_id, 90u,
+              SURVEY_DEFAULT_TTL, 1068u) != PROTO_OK);
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, GATEWAY_ID, 90u,
+              0u, 1069u) != PROTO_OK);
+    CHECK(memcmp(&anchor.upstream, &unchanged, sizeof(unchanged)) == 0);
+
+    prepare.packet.msg_type = MSG_COMMAND_RESULT;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, GATEWAY_ID, 90u,
+              SURVEY_DEFAULT_TTL, 1070u) != PROTO_OK);
+    prepare.packet.msg_type = MSG_SURVEY_PAIR_PREPARE;
+    prepare.packet.dst_id = MESH_BROADCAST_ID;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, GATEWAY_ID, 90u,
+              SURVEY_DEFAULT_TTL, 1071u) != PROTO_OK);
+    CHECK(memcmp(&anchor.upstream, &unchanged, sizeof(unchanged)) == 0);
+
+    mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                    target_id, GATEWAY_ID, 0u);
+    prepare.packet.dst_id = target_id;
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &anchor, &prepare.packet, GATEWAY_ID, 90u,
+              SURVEY_DEFAULT_TTL, 1072u) != PROTO_OK);
+    CHECK(route_selected(&anchor.upstream) == NULL);
+}
+
+static void test_gateway_control_reverse_route_fifty_anchor_reply_sweep(void)
+{
+    enum {
+        DIRECT_ANCHORS = 20,
+        TOTAL_ANCHORS = 50,
+    };
+
+    for (size_t i = 0u; i < TOTAL_ANCHORS; i++) {
+        const uint64_t target_id = ANCHOR_BASE + UINT64_C(0x600) + i;
+        const uint8_t gateway_hops = i < DIRECT_ANCHORS ? 0u :
+            (uint8_t)(1u + ((i - DIRECT_ANCHORS) % 3u));
+        const uint64_t previous_hop_id = gateway_hops == 0u ? GATEWAY_ID :
+            ANCHOR_BASE + UINT64_C(0x1000) + i;
+        struct mesh_relay anchor;
+        struct mesh_outbound prepare;
+        struct mesh_outbound result;
+        struct proto_packet result_packet;
+        const struct route_candidate *selected;
+        uint8_t result_payload[16] = {0};
+        size_t result_payload_len = 0u;
+
+        mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
+                        target_id, GATEWAY_ID, ROUTE_EPOCH);
+        CHECK(build_survey_pair_control(&prepare, CMD_SURVEY_PREPARE_PAIR,
+                                         target_id, previous_hop_id,
+                                         (uint16_t)(200u + i)) == PROTO_OK);
+        prepare.packet.ttl = (uint8_t)(SURVEY_DEFAULT_TTL - gateway_hops);
+        CHECK(route_selected(&anchor.upstream) == NULL);
+        CHECK(!anchor.route_discovery.active);
+        CHECK(mesh_relay_note_gateway_control_reverse_route(
+                  &anchor, &prepare.packet, previous_hop_id,
+                  (uint8_t)(70u + (i % 31u)), SURVEY_DEFAULT_TTL,
+                  2000u + (uint32_t)i) == PROTO_OK);
+        selected = route_selected(&anchor.upstream);
+        CHECK(selected != NULL);
+        CHECK(selected->next_hop_id == previous_hop_id);
+        CHECK(selected->hop_count == gateway_hops);
+        CHECK(!anchor.route_discovery.active);
+
+        CHECK(mesh_append_command_result(result_payload,
+                                          sizeof(result_payload),
+                                          &result_payload_len,
+                                          CMD_SURVEY_PREPARE_PAIR,
+                                          COMMAND_OK, 0u) == PROTO_OK);
+        CHECK(mesh_init_command_result(&result_packet, target_id, GATEWAY_ID,
+                                        PAIR_SURVEY_ID,
+                                        (uint16_t)(200u + i),
+                                        (uint8_t)result_payload_len,
+                                        false) == PROTO_OK);
+        CHECK(mesh_relay_start_tx(&anchor, &result_packet, result_payload,
+                                   result_payload_len,
+                                   2100u + (uint32_t)i,
+                                   &result) == PROTO_OK);
+        CHECK(result.packet.msg_type == MSG_COMMAND_RESULT);
+        CHECK(result.next_hop_id == previous_hop_id);
+        CHECK(!anchor.route_discovery.active);
+    }
 }
 
 struct host_fixture {
@@ -507,7 +921,7 @@ static void test_gateway_control_click_and_busy_deferral(void)
         CHECK(app_mesh_flood_send_bounded(&controls[i], &ops, &result) ==
               -EAGAIN);
         CHECK(result.sent_count == 0u &&
-              result.busy_skip_count == app_mesh_flood_repeat_limit());
+              result.busy_skip_count == 1u);
         ctx.busy = false;
         CHECK(app_mesh_flood_send_bounded(&controls[i], &ops, &result) == 0);
         CHECK(result.sent_count == app_mesh_flood_repeat_limit());
@@ -521,6 +935,8 @@ static void run_survey_pair_control_case(enum command_id command_id,
     const uint64_t relay_id = ANCHOR_BASE + 300u;
     const uint64_t target_id = ANCHOR_BASE + 301u;
     struct mesh_outbound control;
+    struct survey_gateway_context survey_context;
+    struct survey_gateway_reverse_hint reverse_hint = {0};
     struct gateway_command_pending pending = {0};
     struct flood_ctx first = {
         .now_ms = 1000u,
@@ -565,11 +981,37 @@ static void run_survey_pair_control_case(enum command_id command_id,
     relay = &world.roles[relay_index].relay;
     target = &world.roles[target_index].relay;
 
+    CHECK(mesh_relay_find_downlink(gateway, target_id) == NULL);
+    CHECK(survey_gateway_begin(&survey_context,
+                               PAIR_SURVEY_ID,
+                               3u) == PROTO_OK);
+    reverse_hint.target_id = target_id;
+    reverse_hint.next_hop_id = relayed ? relay_id : target_id;
+    reverse_hint.quality = 90u;
+    reverse_hint.valid = true;
+    CHECK(survey_gateway_note_reach_report_with_reverse_hint(
+              &survey_context,
+              PAIR_SURVEY_ID,
+              target_id,
+              NULL,
+              0u,
+              &reverse_hint) == PROTO_OK);
+
+    /* Simulate a reset or route loss: only the accepted survey hint survives. */
+    memset(gateway->downlinks, 0, sizeof(gateway->downlinks));
+    CHECK(mesh_relay_select_next_hop(gateway,
+                                     target_id,
+                                     &selected_next_hop) ==
+          PROTO_ERR_NOT_FOUND);
+    memset(&reverse_hint, 0, sizeof(reverse_hint));
+    CHECK(survey_gateway_reverse_hint_for_target(&survey_context,
+                                                  target_id,
+                                                  &reverse_hint) == PROTO_OK);
     CHECK(mesh_relay_note_gateway_survey_reverse_route(
               gateway,
-              target_id,
-              relayed ? relay_id : target_id,
-              90u,
+              reverse_hint.target_id,
+              reverse_hint.next_hop_id,
+              reverse_hint.quality,
               900u) == PROTO_OK);
     CHECK(mesh_relay_select_next_hop(gateway,
                                      target_id,
@@ -608,6 +1050,20 @@ static void run_survey_pair_control_case(enum command_id command_id,
     first.receiver = relayed ? relay : target;
     first.pending = &pending;
     first.previous_hop_id = GATEWAY_ID;
+    first.click_active = true;
+    CHECK(app_mesh_flood_send_bounded(&control,
+                                       &first_ops,
+                                       &flood_result) == -EAGAIN);
+    CHECK(flood_result.sent_count == 0u &&
+          flood_result.deferred_count == 1u);
+    first.click_active = false;
+    first.busy = true;
+    CHECK(app_mesh_flood_send_bounded(&control,
+                                       &first_ops,
+                                       &flood_result) == -EAGAIN);
+    CHECK(flood_result.sent_count == 0u &&
+          flood_result.busy_skip_count == 1u);
+    first.busy = false;
     CHECK(app_mesh_flood_send_bounded(&control,
                                        &first_ops,
                                        &flood_result) == 0);
@@ -826,13 +1282,16 @@ int main(void)
 {
     test_here_i_am_production_helper_composition();
     test_here_i_am_direct_scale_matrix();
+    test_here_i_am_20_direct_50_mixed_hop_radio_scale();
     test_here_i_am_ttl_and_epoch_fail_closed();
+    test_gateway_control_reverse_route_contract();
+    test_gateway_control_reverse_route_fifty_anchor_reply_sweep();
     test_gateway_control_click_and_busy_deferral();
     test_survey_pair_control_bounded_flood_lane();
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {
-        puts("mesh gateway control stress scenarios: PASS here-i-am=direct/ttl8/radio survey-control=direct/relay");
+        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/ttl8/radio survey-control=direct/relay");
     }
     return failures == 0 ? 0 : 1;
 }

@@ -7,16 +7,57 @@ static bool flood_deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
     return (int32_t)(now_ms - deadline_ms) >= 0;
 }
 
-static uint16_t flood_remaining_delay_ms(uint32_t now_ms, uint32_t deadline_ms)
+static uint32_t flood_age_add(uint32_t age_ms, uint32_t elapsed_ms)
 {
-    uint32_t delay_ms;
+    return UINT32_MAX - age_ms < elapsed_ms ? UINT32_MAX :
+           age_ms + elapsed_ms;
+}
 
-    if (flood_deadline_reached(now_ms, deadline_ms)) {
-        return 0u;
+static void flood_count_saturating_increment(uint8_t *count)
+{
+    if (*count < UINT8_MAX) {
+        (*count)++;
     }
+}
 
-    delay_ms = deadline_ms - now_ms;
-    return delay_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)delay_ms;
+static bool flood_progress_timed_out(
+    const struct app_mesh_flood_progress *progress,
+    uint32_t now_ms)
+{
+    return progress->absolute_deadline_valid &&
+           flood_deadline_reached(now_ms, progress->absolute_deadline_ms);
+}
+
+static uint32_t flood_clamp_due_to_deadline(
+    const struct app_mesh_flood_progress *progress,
+    uint32_t due_ms)
+{
+    if (progress->absolute_deadline_valid &&
+        flood_deadline_reached(due_ms, progress->absolute_deadline_ms)) {
+        return progress->absolute_deadline_ms;
+    }
+    return due_ms;
+}
+
+static int flood_prepare_attempt(const struct mesh_outbound *base,
+                                 uint32_t age_origin_ms,
+                                 uint32_t now_ms,
+                                 struct mesh_outbound *attempt)
+{
+    uint32_t elapsed_ms = now_ms - age_origin_ms;
+    int ret;
+
+    *attempt = *base;
+    attempt->packet.message_age_ms = flood_age_add(
+        base->packet.message_age_ms, elapsed_ms);
+    ret = mesh_outbound_set_flood_packet_age_ms(
+        attempt, attempt->packet.message_age_ms);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+        return -EBADMSG;
+    }
+    /* The lower radio sender may account for a final bounded handoff delay. */
+    attempt->queued_at_ms = now_ms;
+    return 0;
 }
 
 uint8_t app_mesh_flood_repeat_limit(void)
@@ -70,115 +111,196 @@ static bool flood_destination_valid(const struct mesh_outbound *out)
     return broadcast || targeted_command;
 }
 
+static bool flood_args_valid(const struct mesh_outbound *out,
+                             const struct app_mesh_flood_ops *ops)
+{
+    return out != NULL && ops != NULL &&
+           ops->now_ms != NULL &&
+           ops->sleep_until_ms != NULL &&
+           ops->defer_active != NULL &&
+           ops->c5_quiet != NULL &&
+           ops->random_u32 != NULL &&
+           ops->send != NULL &&
+           flood_destination_valid(out) &&
+           out->radio_channel != UWB_CHANNEL_MESH_PAYLOAD &&
+           out->packet.msg_type != MSG_ROUTE_REQ &&
+           FLOOD_RELAY_REPEAT_MS != 0u;
+}
+
+int app_mesh_flood_send_bounded_resume(
+    const struct mesh_outbound *out,
+    const struct app_mesh_flood_ops *ops,
+    struct app_mesh_flood_progress *progress,
+    struct app_mesh_flood_result *result)
+{
+    struct mesh_outbound attempt_tx;
+    uint8_t repeat_limit;
+    int send_ret;
+
+    if (!flood_args_valid(out, ops) || progress == NULL) {
+        return -EINVAL;
+    }
+
+    repeat_limit = app_mesh_flood_repeat_limit();
+    if (!progress->initialized) {
+        progress->due_ms = out->earliest_tx_ms != 0u ?
+                           out->earliest_tx_ms : ops->now_ms(ops->ctx);
+        progress->age_origin_ms = out->queued_at_ms != 0u ?
+                                  out->queued_at_ms : progress->due_ms;
+        progress->absolute_deadline_ms = ops->absolute_deadline_ms;
+        progress->absolute_deadline_valid = ops->absolute_deadline_valid;
+        progress->result.first_due_ms = progress->due_ms;
+        progress->initialized = true;
+    }
+    if (progress->complete) {
+        if (result != NULL) {
+            *result = progress->result;
+        }
+        return progress->result.sent_count > 0u ? 0 : -EAGAIN;
+    }
+    if (flood_progress_timed_out(progress, ops->now_ms(ops->ctx))) {
+        if (result != NULL) {
+            *result = progress->result;
+        }
+        return -ETIMEDOUT;
+    }
+
+    while (progress->next_opportunity < repeat_limit) {
+        progress->result.last_due_ms = progress->due_ms;
+        if (ops->defer_active(ops->ctx)) {
+            flood_count_saturating_increment(
+                &progress->result.deferred_count);
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -EAGAIN;
+        }
+        if (!flood_deadline_reached(ops->now_ms(ops->ctx), progress->due_ms)) {
+            if (progress->absolute_deadline_valid &&
+                flood_deadline_reached(progress->due_ms,
+                                       progress->absolute_deadline_ms)) {
+                ops->sleep_until_ms(progress->absolute_deadline_ms,
+                                    ops->ctx);
+                if (result != NULL) {
+                    *result = progress->result;
+                }
+                return -ETIMEDOUT;
+            }
+            ops->sleep_until_ms(progress->due_ms, ops->ctx);
+        }
+        if (flood_progress_timed_out(progress, ops->now_ms(ops->ctx))) {
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -ETIMEDOUT;
+        }
+        if (ops->defer_active(ops->ctx)) {
+            flood_count_saturating_increment(
+                &progress->result.deferred_count);
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -EAGAIN;
+        }
+        if (!ops->c5_quiet(C5_POLITE_SNIFF_MS, ops->ctx)) {
+            flood_count_saturating_increment(
+                &progress->result.busy_skip_count);
+            progress->due_ms = flood_clamp_due_to_deadline(
+                progress, ops->now_ms(ops->ctx) +
+                    app_mesh_flood_backoff_ms(progress->backoff_index,
+                                              ops->random_u32(ops->ctx)));
+            if (progress->backoff_index < UINT8_MAX) {
+                progress->backoff_index++;
+            }
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -EAGAIN;
+        }
+
+        send_ret = flood_prepare_attempt(
+            out, progress->age_origin_ms, ops->now_ms(ops->ctx), &attempt_tx);
+        if (send_ret < 0) {
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return send_ret;
+        }
+        if (ops->defer_active(ops->ctx)) {
+            flood_count_saturating_increment(
+                &progress->result.deferred_count);
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -EAGAIN;
+        }
+        if (flood_progress_timed_out(progress, ops->now_ms(ops->ctx))) {
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -ETIMEDOUT;
+        }
+        send_ret = ops->send(&attempt_tx, ops->ctx);
+        if (send_ret == 0) {
+            progress->next_opportunity++;
+            flood_count_saturating_increment(&progress->result.sent_count);
+            progress->backoff_index = 0u;
+            progress->due_ms = flood_clamp_due_to_deadline(
+                progress,
+                ops->now_ms(ops->ctx) + FLOOD_RELAY_REPEAT_MS);
+            continue;
+        }
+        if (send_ret == -EBUSY || send_ret == -EAGAIN) {
+            flood_count_saturating_increment(
+                &progress->result.busy_skip_count);
+            progress->due_ms = flood_clamp_due_to_deadline(
+                progress, ops->now_ms(ops->ctx) +
+                    app_mesh_flood_backoff_ms(progress->backoff_index,
+                                              ops->random_u32(ops->ctx)));
+            if (progress->backoff_index < UINT8_MAX) {
+                progress->backoff_index++;
+            }
+            if (result != NULL) {
+                *result = progress->result;
+            }
+            return -EAGAIN;
+        }
+        if (result != NULL) {
+            *result = progress->result;
+        }
+        return send_ret;
+    }
+
+    progress->complete = true;
+    if (result != NULL) {
+        *result = progress->result;
+    }
+    if (progress->result.sent_count > 0u) {
+        return 0;
+    }
+    return -EAGAIN;
+}
+
+void app_mesh_flood_progress_rebase(struct app_mesh_flood_progress *progress,
+                                    uint32_t paused_ms)
+{
+    if (progress == NULL || !progress->initialized || progress->complete) {
+        return;
+    }
+    /* Wrap is intentional: all scheduled intervals are below INT32_MAX. */
+    progress->due_ms += paused_ms;
+}
+
 int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
                                 const struct app_mesh_flood_ops *ops,
                                 struct app_mesh_flood_result *result)
 {
-    struct app_mesh_flood_result local_result = {0};
-    struct mesh_outbound tx;
-    uint32_t first_due_ms;
-    uint32_t due_ms;
-    uint32_t route_reply_rx_open_ms = 0u;
-    uint16_t route_reply_rx_delay_ms = 0u;
-    uint8_t repeat_limit;
-    uint8_t backoff_index = 0u;
-    bool update_route_reply_rx_eta;
-    int last_send_ret = 0;
+    struct app_mesh_flood_progress progress = {0};
+    int ret = app_mesh_flood_send_bounded_resume(out, ops, &progress, result);
 
-    if (out == NULL || ops == NULL ||
-        ops->now_ms == NULL ||
-        ops->sleep_until_ms == NULL ||
-        ops->defer_active == NULL ||
-        ops->c5_quiet == NULL ||
-        ops->random_u32 == NULL ||
-        ops->send == NULL ||
-        !flood_destination_valid(out) ||
-        out->radio_channel == UWB_CHANNEL_MESH_PAYLOAD ||
-        out->packet.msg_type == MSG_ROUTE_REQ ||
-        FLOOD_RELAY_REPEAT_MS == 0u) {
-        return -EINVAL;
-    }
-
-    first_due_ms = out->earliest_tx_ms != 0u ? out->earliest_tx_ms : ops->now_ms(ops->ctx);
-    due_ms = first_due_ms;
-    local_result.first_due_ms = first_due_ms;
-    repeat_limit = app_mesh_flood_repeat_limit();
-    update_route_reply_rx_eta = false;
-    if (update_route_reply_rx_eta) {
-        route_reply_rx_open_ms = first_due_ms + route_reply_rx_delay_ms;
-    }
-
-    for (uint8_t repeat = 0u; repeat < repeat_limit; repeat++) {
-        local_result.last_due_ms = due_ms;
-        if (ops->defer_active(ops->ctx)) {
-            local_result.deferred_count++;
-            if (result != NULL) {
-                *result = local_result;
-            }
-            return local_result.sent_count > 0u ? 0 : -EAGAIN;
-        }
-        if (!flood_deadline_reached(ops->now_ms(ops->ctx), due_ms)) {
-            ops->sleep_until_ms(due_ms, ops->ctx);
-        }
-        if (ops->defer_active(ops->ctx)) {
-            local_result.deferred_count++;
-            if (result != NULL) {
-                *result = local_result;
-            }
-            return local_result.sent_count > 0u ? 0 : -EAGAIN;
-        }
-        if (!ops->c5_quiet(C5_POLITE_SNIFF_MS, ops->ctx)) {
-            local_result.busy_skip_count++;
-            if (repeat + 1u < repeat_limit) {
-                due_ms = ops->now_ms(ops->ctx) +
-                         app_mesh_flood_backoff_ms(backoff_index,
-                                                   ops->random_u32(ops->ctx));
-                if (backoff_index < UINT8_MAX) {
-                    backoff_index++;
-                }
-            }
-            continue;
-        }
-
-        if (update_route_reply_rx_eta) {
-            tx = *out;
-            (void)mesh_route_request_set_reply_rx_delay_ms(
-                &tx,
-                flood_remaining_delay_ms(ops->now_ms(ops->ctx),
-                                         route_reply_rx_open_ms));
-            last_send_ret = ops->send(&tx, ops->ctx);
-        } else {
-            last_send_ret = ops->send(out, ops->ctx);
-        }
-        if (last_send_ret == 0) {
-            local_result.sent_count++;
-            backoff_index = 0u;
-            due_ms = ops->now_ms(ops->ctx) + FLOOD_RELAY_REPEAT_MS;
-            continue;
-        }
-        if (last_send_ret == -EBUSY || last_send_ret == -EAGAIN) {
-            local_result.busy_skip_count++;
-            if (repeat + 1u < repeat_limit) {
-                due_ms = ops->now_ms(ops->ctx) +
-                         app_mesh_flood_backoff_ms(backoff_index,
-                                                   ops->random_u32(ops->ctx));
-                if (backoff_index < UINT8_MAX) {
-                    backoff_index++;
-                }
-            }
-            continue;
-        }
-        if (result != NULL) {
-            *result = local_result;
-        }
-        return last_send_ret;
-    }
-
-    if (result != NULL) {
-        *result = local_result;
-    }
-    if (local_result.sent_count > 0u) {
+    /* Preserve the legacy one-shot contract for existing flood callers. */
+    if (ret == -EAGAIN && progress.result.sent_count > 0u) {
         return 0;
     }
-    return last_send_ret < 0 ? last_send_ret : -EAGAIN;
+    return ret;
 }

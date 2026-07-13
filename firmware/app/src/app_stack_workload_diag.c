@@ -4,6 +4,8 @@
 
 #include "app_stack_diag.h"
 
+#include <zephyr/kernel.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -21,6 +23,19 @@ struct stack_workload_diag_run {
 };
 
 static struct stack_workload_diag_run stack_workload_diag_runs[STACK_WORKLOAD_DIAG_MAX_RUNS];
+K_MUTEX_DEFINE(stack_workload_diag_mutex);
+
+#if defined(CONFIG_IMEC_STACK_WORKLOAD_DIAG_TEST_HOOKS)
+void app_stack_workload_diag_test_lock_attempt(void);
+#endif
+
+static void stack_workload_diag_lock(void)
+{
+#if defined(CONFIG_IMEC_STACK_WORKLOAD_DIAG_TEST_HOOKS)
+    app_stack_workload_diag_test_lock_attempt();
+#endif
+    k_mutex_lock(&stack_workload_diag_mutex, K_FOREVER);
+}
 
 static bool packet_matches(const struct proto_packet *left,
                            const struct proto_packet *right)
@@ -57,7 +72,7 @@ static struct app_stack_diag_state stack_workload_diag_state(
     return state;
 }
 
-static struct stack_workload_diag_run *stack_workload_diag_find(
+static struct stack_workload_diag_run *stack_workload_diag_find_locked(
     enum app_stack_diag_workload workload,
     const struct proto_packet *packet)
 {
@@ -72,15 +87,17 @@ static struct stack_workload_diag_run *stack_workload_diag_find(
     return NULL;
 }
 
-static void stack_workload_diag_admit(enum app_stack_diag_workload workload,
-                                      enum app_stack_diag_owner owner,
-                                      const struct proto_packet *packet,
-                                      const struct app_stack_workload_diag_pressure *pressure)
+static void stack_workload_diag_admit_locked(
+    enum app_stack_diag_workload workload,
+    enum app_stack_diag_owner owner,
+    const struct proto_packet *packet,
+    const struct app_stack_workload_diag_pressure *pressure)
 {
     struct stack_workload_diag_run *slot = NULL;
     struct app_stack_diag_state state;
 
-    if (packet == NULL || stack_workload_diag_find(workload, packet) != NULL) {
+    if (packet == NULL ||
+        stack_workload_diag_find_locked(workload, packet) != NULL) {
         return;
     }
     for (size_t index = 0u; index < STACK_WORKLOAD_DIAG_MAX_RUNS; index++) {
@@ -99,42 +116,76 @@ static void stack_workload_diag_admit(enum app_stack_diag_workload workload,
     if (slot->run_id == 0u) {
         return;
     }
-    if (slot->run_id == 0u) {
-        return;
-    }
     slot->packet = *packet;
     slot->workload = workload;
     slot->active = true;
 }
 
-static void stack_workload_diag_sample(enum app_stack_diag_workload workload,
-                                       const struct proto_packet *packet,
-                                       const struct app_stack_workload_diag_pressure *pressure)
+static void stack_workload_diag_sample_locked(
+    enum app_stack_diag_workload workload,
+    const struct proto_packet *packet,
+    const struct app_stack_workload_diag_pressure *pressure)
 {
-    struct stack_workload_diag_run *run = stack_workload_diag_find(workload, packet);
+    struct stack_workload_diag_run *run =
+        stack_workload_diag_find_locked(workload, packet);
     struct app_stack_diag_state state;
 
     if (run == NULL) {
         return;
     }
     state = stack_workload_diag_state(packet, pressure);
-    app_stack_diag_sample(run->run_id, &state);
+    (void)app_stack_diag_sample(run->run_id, &state);
 }
 
-static void stack_workload_diag_release(enum app_stack_diag_workload workload,
-                                        const struct proto_packet *packet,
-                                        enum app_stack_diag_terminal_outcome outcome,
-                                        const struct app_stack_workload_diag_pressure *pressure)
+static void stack_workload_diag_release_locked(
+    enum app_stack_diag_workload workload,
+    const struct proto_packet *packet,
+    enum app_stack_diag_terminal_outcome outcome,
+    const struct app_stack_workload_diag_pressure *pressure)
 {
-    struct stack_workload_diag_run *run = stack_workload_diag_find(workload, packet);
+    struct stack_workload_diag_run *run =
+        stack_workload_diag_find_locked(workload, packet);
     struct app_stack_diag_state state;
 
     if (run == NULL) {
         return;
     }
     state = stack_workload_diag_state(packet, pressure);
-    app_stack_diag_run_end(run->run_id, outcome, &state);
-    memset(run, 0, sizeof(*run));
+    if (app_stack_diag_run_end(run->run_id, outcome, &state) == 0) {
+        memset(run, 0, sizeof(*run));
+    }
+}
+
+static void stack_workload_diag_admit(
+    enum app_stack_diag_workload workload,
+    enum app_stack_diag_owner owner,
+    const struct proto_packet *packet,
+    const struct app_stack_workload_diag_pressure *pressure)
+{
+    stack_workload_diag_lock();
+    stack_workload_diag_admit_locked(workload, owner, packet, pressure);
+    k_mutex_unlock(&stack_workload_diag_mutex);
+}
+
+static void stack_workload_diag_sample(
+    enum app_stack_diag_workload workload,
+    const struct proto_packet *packet,
+    const struct app_stack_workload_diag_pressure *pressure)
+{
+    stack_workload_diag_lock();
+    stack_workload_diag_sample_locked(workload, packet, pressure);
+    k_mutex_unlock(&stack_workload_diag_mutex);
+}
+
+static void stack_workload_diag_release(
+    enum app_stack_diag_workload workload,
+    const struct proto_packet *packet,
+    enum app_stack_diag_terminal_outcome outcome,
+    const struct app_stack_workload_diag_pressure *pressure)
+{
+    stack_workload_diag_lock();
+    stack_workload_diag_release_locked(workload, packet, outcome, pressure);
+    k_mutex_unlock(&stack_workload_diag_mutex);
 }
 
 #define DEFINE_WORKLOAD_DIAG(prefix, kind, owner) \
@@ -159,6 +210,35 @@ DEFINE_WORKLOAD_DIAG(relay, APP_STACK_DIAG_WORKLOAD_RELAY_RETRY,
                      APP_STACK_DIAG_OWNER_MESH_ROUTE)
 DEFINE_WORKLOAD_DIAG(ble, APP_STACK_DIAG_WORKLOAD_BLE_BACKPRESSURE,
                      APP_STACK_DIAG_OWNER_BT_RX)
+DEFINE_WORKLOAD_DIAG(click_activity, APP_STACK_DIAG_WORKLOAD_CLICK_ACTIVITY,
+                     APP_STACK_DIAG_OWNER_CLICKER_ACTION)
+DEFINE_WORKLOAD_DIAG(anchor_survey,
+                     APP_STACK_DIAG_WORKLOAD_ANCHOR_SURVEY_REPORT,
+                     APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN)
+DEFINE_WORKLOAD_DIAG(gateway_control,
+                     APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL,
+                     APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE)
+
+void app_stack_workload_diag_gateway_report_cycle(
+    const struct proto_packet *packet,
+    uint16_t queue_depth,
+    uint16_t custody_depth)
+{
+    const struct app_stack_workload_diag_pressure pressure = {
+        queue_depth, custody_depth, 0u, 0u, 0u,
+    };
+
+    stack_workload_diag_lock();
+    stack_workload_diag_admit_locked(
+        APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS,
+        APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE, packet, &pressure);
+    stack_workload_diag_sample_locked(
+        APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS, packet, &pressure);
+    stack_workload_diag_release_locked(
+        APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS, packet,
+        APP_STACK_DIAG_TERMINAL_ACK, &pressure);
+    k_mutex_unlock(&stack_workload_diag_mutex);
+}
 
 void app_stack_workload_diag_ble_release_all(int result,
                                              uint16_t queue_depth,
@@ -177,14 +257,16 @@ void app_stack_workload_diag_ble_release_all_with_pressure(
     enum app_stack_diag_terminal_outcome outcome,
     const struct app_stack_workload_diag_pressure *pressure)
 {
+    stack_workload_diag_lock();
     for (size_t index = 0u; index < STACK_WORKLOAD_DIAG_MAX_RUNS; index++) {
         struct stack_workload_diag_run *run = &stack_workload_diag_runs[index];
 
         if (run->active && run->workload == APP_STACK_DIAG_WORKLOAD_BLE_BACKPRESSURE) {
-            stack_workload_diag_release(run->workload, &run->packet,
-                                        outcome, pressure);
+            stack_workload_diag_release_locked(run->workload, &run->packet,
+                                               outcome, pressure);
         }
     }
+    k_mutex_unlock(&stack_workload_diag_mutex);
 }
 
 void app_stack_workload_diag_ble_admit_with_pressure(

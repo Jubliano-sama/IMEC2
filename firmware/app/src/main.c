@@ -9,6 +9,7 @@
 #include "app_mesh_report.h"
 #include "app_mesh_direct_probe_diag.h"
 #include "app_mesh_test.h"
+#include "app_node_comm.h"
 #include "app_state.h"
 #include "app_stack_diag.h"
 #include "app_wake_train_politeness.h"
@@ -234,7 +235,7 @@ int main(void)
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
         .run_stage0_hardware_self_test = high_debug_stage0_hardware_self_test,
 #endif
-        .send_mesh_outbound = mesh_send_outbound,
+        .send_mesh_outbound = app_node_comm_send,
 #if defined(CONFIG_IMEC_ML_CLICKER)
         .ml_discovery_slot_count_override = ml_clicker_discovery_slot_count_override,
         .ml_cache_note_discovery_reply = ml_clicker_cache_note_discovery_reply,
@@ -347,7 +348,16 @@ int main(void)
     app_high_debug_start(!clicker_systemon_retained_idle_enabled());
 #endif
 
-    (void)app_mesh_report_init(app_anchor_mesh_report_callbacks());
+    ret = app_node_comm_init(app_anchor_mesh_report_callbacks());
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_NODE_COMM_BOOT stage=init ret=%d running=%u uptime=%u\n",
+                        ret,
+                        app_node_comm_policy_running() ? 1u : 0u,
+                        k_uptime_get_32());
+#endif
+    if (ret < 0) {
+        LOG_ERR("node communication initialization failed: %d", ret);
+    }
     (void)app_mesh_test_init();
     gateway_command_result_tracking_init();
     (void)app_anchor_init();
@@ -495,12 +505,30 @@ int main(void)
         if (ret < 0) {
             return 0;
         }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+        status_debug_printf("DBG_GATEWAY_BOOT stage=ble_begin uptime=%u\n",
+                            k_uptime_get_32());
+#endif
         ret = gateway_ble_init();
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+        status_debug_printf("DBG_GATEWAY_BOOT stage=ble_done ret=%d uptime=%u\n",
+                            ret,
+                            k_uptime_get_32());
+#endif
         if (ret < 0) {
             LOG_ERR("gateway BLE PC link unavailable: %d", ret);
         }
-        mesh_gateway_route_adv_start();
+        app_node_comm_start_route_refresh();
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+        status_debug_printf("DBG_GATEWAY_BOOT stage=ch9_begin uptime=%u\n",
+                            k_uptime_get_32());
+#endif
         ret = mesh_start_uwb_rx("gateway startup");
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+        status_debug_printf("DBG_GATEWAY_BOOT stage=ch9_done ret=%d uptime=%u\n",
+                            ret,
+                            k_uptime_get_32());
+#endif
         if (ret < 0) {
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
         }

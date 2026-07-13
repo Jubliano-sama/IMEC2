@@ -1,6 +1,7 @@
 #include "app_config.h"
 #include "app_board.h"
 #include "app_state.h"
+#include "stack_diag_transport.h"
 #include "uwb.h"
 
 #include <zephyr/device.h>
@@ -18,6 +19,7 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <string.h>
 
 LOG_MODULE_REGISTER(app_board, LOG_LEVEL_DBG);
 
@@ -77,6 +79,52 @@ static bool status0_power_blink_work_ready;
 static bool status_power_indicator_enabled;
 static bool status0_power_red_on;
 static uint32_t status0_ch5_rx_hold_until_ms;
+
+#if defined(CONFIG_USE_SEGGER_RTT)
+#if defined(CONFIG_SEGGER_RTT_CUSTOM_LOCKING)
+extern struct k_mutex rtt_term_mutex;
+#define status_debug_rtt_mutex rtt_term_mutex
+#else
+K_MUTEX_DEFINE(status_debug_rtt_mutex);
+#endif
+
+#if defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
+static struct stack_diag_transport status_stack_diag_transport;
+
+static uint32_t status_stack_diag_now_ms(void *context)
+{
+    ARG_UNUSED(context);
+    return k_uptime_get_32();
+}
+
+static unsigned status_stack_diag_available(void *context)
+{
+    ARG_UNUSED(context);
+    return SEGGER_RTT_GetAvailWriteSpace(0);
+}
+
+static unsigned status_stack_diag_write(void *context,
+                                        const char *data,
+                                        size_t length)
+{
+    ARG_UNUSED(context);
+    return SEGGER_RTT_Write(0, data, (unsigned)length);
+}
+
+static void status_stack_diag_wait_ms(void *context, uint32_t delay_ms)
+{
+    ARG_UNUSED(context);
+    k_sleep(K_MSEC(delay_ms));
+}
+
+static const struct stack_diag_transport_ops status_stack_diag_ops = {
+    .now_ms = status_stack_diag_now_ms,
+    .available = status_stack_diag_available,
+    .write = status_stack_diag_write,
+    .wait_ms = status_stack_diag_wait_ms,
+};
+#endif
+#endif
 
 #define BATTERY_ADC_DISABLE_RETRY_COUNT 3u
 #define BATTERY_ADC_DISABLE_RETRY_DELAY_US 100u
@@ -440,17 +488,25 @@ static void status_debug_unknown_channel_pulse(uint8_t uwb_channel)
     }
 }
 
-static void debug_rtt_write(const char *text)
+static void debug_rtt_write_bytes(const char *text, size_t length)
 {
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        ARG_UNUSED(text);
+#if defined(CONFIG_USE_SEGGER_RTT)
+    if (k_mutex_lock(&status_debug_rtt_mutex, K_NO_WAIT) != 0) {
         return;
     }
-#if defined(CONFIG_USE_SEGGER_RTT)
-    (void)SEGGER_RTT_WriteString(0, text);
+    (void)SEGGER_RTT_Write(0, text, (unsigned)length);
+    k_mutex_unlock(&status_debug_rtt_mutex);
 #else
     ARG_UNUSED(text);
+    ARG_UNUSED(length);
 #endif
+}
+
+static void debug_rtt_write(const char *text)
+{
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && text != NULL) {
+        debug_rtt_write_bytes(text, strlen(text));
+    }
 }
 
 void status_debug_note(const char *text)
@@ -481,10 +537,62 @@ void status_debug_printf(const char *fmt, ...)
         return;
     }
 
-    len = MIN((size_t)ret, sizeof(line) - 1u);
-    (void)SEGGER_RTT_Write(0, line, len);
+    if ((size_t)ret >= sizeof(line)) {
+        len = sizeof(line) - 1u;
+        line[len - 1u] = '\n';
+    } else {
+        len = (size_t)ret;
+        if (line[len - 1u] != '\n') {
+            if (len < sizeof(line) - 1u) {
+                line[len++] = '\n';
+            } else {
+                line[len - 1u] = '\n';
+            }
+        }
+    }
+    debug_rtt_write_bytes(line, len);
 #else
     ARG_UNUSED(fmt);
+#endif
+}
+
+int status_stack_diag_transaction_begin(void)
+{
+#if defined(CONFIG_USE_SEGGER_RTT) && defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
+    int ret;
+
+    if (k_is_in_isr()) {
+        return -EWOULDBLOCK;
+    }
+    k_mutex_lock(&status_debug_rtt_mutex, K_FOREVER);
+    ret = stack_diag_transport_begin(&status_stack_diag_transport,
+                                     &status_stack_diag_ops);
+    if (ret < 0) {
+        k_mutex_unlock(&status_debug_rtt_mutex);
+    }
+    return ret;
+#else
+    return -ENOTSUP;
+#endif
+}
+
+int status_stack_diag_note(const char *text)
+{
+#if defined(CONFIG_USE_SEGGER_RTT) && defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
+    return stack_diag_transport_write(&status_stack_diag_transport,
+                                      &status_stack_diag_ops, text);
+#else
+    ARG_UNUSED(text);
+    return -ENOTSUP;
+#endif
+}
+
+void status_stack_diag_transaction_end(void)
+{
+#if defined(CONFIG_USE_SEGGER_RTT) && defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
+    stack_diag_transport_end(&status_stack_diag_transport,
+                             &status_stack_diag_ops);
+    k_mutex_unlock(&status_debug_rtt_mutex);
 #endif
 }
 

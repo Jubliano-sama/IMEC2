@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "app_high_debug.h"
 #include "app_radio_low_power_policy.h"
+#include "app_stack_workload_diag.h"
 #include "app_state.h"
 #include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
@@ -1198,6 +1199,7 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         struct uwb_range_step step;
         struct dwm3000_range_request range_request;
         struct dwm3000_range_result range_result;
+        struct proto_packet click_activity_packet = {0};
         int64_t target_us;
         int64_t remaining_ms;
         uint32_t slot_timeout_ms = CLICK_UWB_TIMEOUT_MS;
@@ -1258,6 +1260,11 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                               UWB_SCHEDULE_GUARD_MS);
         range_request.timeout_ms = MIN(slot_timeout_ms,
                                        (uint32_t)(remaining_ms - CLICK_REPORT_BUILD_GUARD_MS));
+        click_activity_packet.src_id = range_request.initiator_id;
+        click_activity_packet.dst_id = range_request.responder_id;
+        click_activity_packet.session_id = range_request.session_id;
+        click_activity_packet.seq = range_request.seq;
+        click_activity_packet.msg_type = MSG_UWB_POLL;
 
         ret = radio_guard_uwb_start("clicker scheduled UWB range");
         if (ret < 0) {
@@ -1309,6 +1316,8 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
             clicker_callbacks.ml_enter_range_quiet();
         }
 #endif
+        app_stack_workload_diag_click_activity_admit(&click_activity_packet,
+                                                      1u, 0u);
         ret = dwm3000_driver_range_initiator(&range_request, &range_result);
         clicker_release_scheduled_range_radio();
         radio_guard_uwb_stop();
@@ -1317,6 +1326,14 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
             clicker_callbacks.ml_exit_range_quiet();
         }
 #endif
+        app_stack_workload_diag_click_activity_sample(
+            &click_activity_packet, 1u,
+            range_result.exchange_started ? 1u : 0u);
+        app_stack_workload_diag_click_activity_release(
+            &click_activity_packet,
+            ret == 0 && range_result.exchange_started &&
+                range_result.status == RANGE_OK ? 0 : -EIO,
+            0u, 0u);
 
         if (!range_result.exchange_started) {
             enum range_status status = range_result.status;

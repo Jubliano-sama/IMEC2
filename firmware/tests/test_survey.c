@@ -1073,6 +1073,7 @@ static void test_generated_complete_reachability_counts_for_one_to_six_anchors(v
 static void test_gateway_context_collects_reports_and_sequences_pairs(void)
 {
     struct survey_gateway_context context;
+    struct survey_pair pair = {0};
     const struct survey_reachability_entry a_entries[] = {
         {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
         {.peer_id = 0x3333000000000003ull, .rssi_dbm = -64, .quality = 78u},
@@ -1084,7 +1085,6 @@ static void test_gateway_context_collects_reports_and_sequences_pairs(void)
     const struct survey_reachability_entry c_entries[] = {
         {.peer_id = 0x1111000000000001ull, .rssi_dbm = -63, .quality = 79u},
     };
-    struct survey_pair pair = {0};
 
     assert(survey_gateway_begin(&context, 0xAABBCCDDu, 5u) == PROTO_OK);
     assert(survey_gateway_note_reach_report(&context,
@@ -1145,7 +1145,6 @@ static void test_gateway_context_preserves_first_duplicate_report_and_hint(void)
         .valid = true,
     };
     struct survey_gateway_reverse_hint stored_hint = {0};
-    struct survey_pair pair = {0};
 
     assert(survey_gateway_begin(&context, 0xAABBCCDDu, 2u) == PROTO_OK);
     assert(survey_gateway_note_reach_report_with_reverse_hint(
@@ -1183,12 +1182,8 @@ static void test_gateway_context_preserves_first_duplicate_report_and_hint(void)
                                                   &stored_hint) == PROTO_OK);
     assert(stored_hint.next_hop_id == first_hint.next_hop_id);
     assert(stored_hint.quality == first_hint.quality);
-    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
-    assert(context.pair_count == 1u);
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
-    assert(pair.initiator_id == 0x1111000000000001ull);
-    assert(pair.responder_id == 0x2222000000000002ull);
-    assert(pair.sample_count == 2u);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_ERR_NOT_FOUND);
+    assert(context.pair_count == 0u);
 }
 
 static void test_gateway_context_rejects_stale_or_oversized_reports(void)
@@ -1208,9 +1203,18 @@ static void test_gateway_context_rejects_stale_or_oversized_reports(void)
                                             0x1111000000000001ull,
                                             entries,
                                             1u) == PROTO_ERR_STALE);
+    assert(survey_gateway_note_reach_report(
+               &context,
+               0xAABBCCDDu,
+               0x1111000000000001ull,
+               entries,
+               SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) == PROTO_OK);
+    assert(context.report_count == 1u);
+    assert(context.reports[0].entry_count ==
+           SURVEY_GATEWAY_MAX_PEERS_PER_REPORT);
     assert(survey_gateway_note_reach_report(&context,
                                             0xAABBCCDDu,
-                                            0x1111000000000001ull,
+                                            0x9999000000000009ull,
                                             entries,
                                             sizeof(entries) / sizeof(entries[0])) == PROTO_ERR_NO_SPACE);
     entries[0].peer_id = 0x1111000000000001ull;
@@ -1407,8 +1411,12 @@ static void test_pair_planner_reaches_six_degree_ceiling_for_50_anchors(void)
         entries[ANCHOR_COUNT][SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR];
     struct survey_reachability_report reports[ANCHOR_COUNT];
     struct survey_pair pairs[SURVEY_GATEWAY_MAX_PAIRS] = {0};
+    struct survey_gateway_context context;
     uint8_t degree[ANCHOR_COUNT] = {0};
     size_t pair_count = 0u;
+
+    _Static_assert(sizeof(context.pairs[0]) == 16u,
+                   "gateway context must retain endpoint-only pairs");
 
     for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
         size_t entry_index = 0u;
@@ -1435,6 +1443,16 @@ static void test_pair_planner_reaches_six_degree_ceiling_for_50_anchors(void)
         reports[i].entry_count = entry_index;
     }
 
+    assert(survey_gateway_begin(&context, 0x1234u, 1u) == PROTO_OK);
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        assert(survey_gateway_note_reach_report(&context,
+                                                0x1234u,
+                                                reports[i].anchor_id,
+                                                reports[i].entries,
+                                                reports[i].entry_count) ==
+               PROTO_OK);
+    }
+
     assert(survey_plan_pairs_from_reachability(0x1234u,
                                                reports,
                                                ANCHOR_COUNT,
@@ -1443,11 +1461,19 @@ static void test_pair_planner_reaches_six_degree_ceiling_for_50_anchors(void)
                                                SURVEY_GATEWAY_MAX_PAIRS,
                                                &pair_count) == PROTO_OK);
     assert(pair_count == SURVEY_GATEWAY_MAX_PAIRS);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(context.pair_count == pair_count);
 
     for (size_t i = 0u; i < pair_count; i++) {
+        struct survey_pair context_pair = {0};
         const size_t initiator = (size_t)(pairs[i].initiator_id - 0x1000u);
         const size_t responder = (size_t)(pairs[i].responder_id - 0x1000u);
 
+        assert(survey_gateway_pair_at(&context, i, &context_pair) == PROTO_OK);
+        assert(context_pair.survey_id == pairs[i].survey_id);
+        assert(context_pair.initiator_id == pairs[i].initiator_id);
+        assert(context_pair.responder_id == pairs[i].responder_id);
+        assert(context_pair.sample_count == pairs[i].sample_count);
         assert(initiator < ANCHOR_COUNT);
         assert(responder < ANCHOR_COUNT);
         degree[initiator]++;
@@ -1456,6 +1482,19 @@ static void test_pair_planner_reaches_six_degree_ceiling_for_50_anchors(void)
     for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
         assert(degree[i] == SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR);
     }
+    assert(survey_gateway_pair_at(&context, pair_count, &pairs[0]) ==
+           PROTO_ERR_NOT_FOUND);
+    for (size_t i = 0u; i < pair_count; i++) {
+        struct survey_pair next = {0};
+
+        assert(survey_gateway_next_pair(&context, &next) == PROTO_OK);
+        assert(next.survey_id == pairs[i].survey_id);
+        assert(next.initiator_id == pairs[i].initiator_id);
+        assert(next.responder_id == pairs[i].responder_id);
+        assert(next.sample_count == pairs[i].sample_count);
+    }
+    assert(survey_gateway_next_pair(&context, &pairs[0]) ==
+           PROTO_ERR_NOT_FOUND);
 }
 
 static void test_gateway_auto_sequences_prepare_and_start_actions(void)
@@ -1677,6 +1716,35 @@ static void test_reachability_plan_rejects_invalid_graph_or_capacity(void)
                                                pairs,
                                                sizeof(pairs) / sizeof(pairs[0]),
                                                &pair_count) == PROTO_ERR_MALFORMED);
+
+    {
+        enum { STAR_REPORT_COUNT = SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR + 2u };
+        struct survey_reachability_entry star_entries[STAR_REPORT_COUNT - 1u];
+        struct survey_reachability_report star_reports[STAR_REPORT_COUNT] = {0};
+        struct survey_pair star_pairs[STAR_REPORT_COUNT - 1u] = {0};
+
+        star_reports[0].anchor_id = UINT64_C(0xa700000000000001);
+        for (size_t i = 1u; i < STAR_REPORT_COUNT; i++) {
+            star_entries[i - 1u] = (struct survey_reachability_entry) {
+                .peer_id = star_reports[0].anchor_id,
+                .rssi_dbm = -60,
+                .quality = 80u,
+            };
+            star_reports[i].anchor_id = star_reports[0].anchor_id + i;
+            star_reports[i].entries = &star_entries[i - 1u];
+            star_reports[i].entry_count = 1u;
+        }
+        pair_count = 99u;
+        assert(survey_plan_pairs_from_reachability(
+                   0xAABBCCDDu,
+                   star_reports,
+                   STAR_REPORT_COUNT,
+                   5u,
+                   star_pairs,
+                   sizeof(star_pairs) / sizeof(star_pairs[0]),
+                   &pair_count) == PROTO_ERR_NOT_FOUND);
+        assert(pair_count == 0u);
+    }
 }
 
 static void test_result_packet_is_diagnostic_not_click(void)

@@ -1,0 +1,1040 @@
+#include "node_comm.h"
+
+#include <assert.h>
+#include <errno.h>
+#include <stdint.h>
+#include <string.h>
+
+#define SWEEP_STEPS 20000u
+#define SWEEP_MAX_HANDLES (SWEEP_STEPS + NODE_COMM_MAX_REQUESTS + 1u)
+
+static uint32_t sweep_random(uint32_t *state)
+{
+    *state = (*state * UINT32_C(1664525)) + UINT32_C(1013904223);
+    return *state;
+}
+
+static void assert_internal_invariants(const struct node_comm *comm)
+{
+    size_t leased = 0u;
+
+    for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
+        const struct node_comm_request_slot *slot = &comm->slots[i];
+
+        if (slot->state == NODE_COMM_SLOT_FREE) {
+            continue;
+        }
+        assert(slot->handle != 0u);
+        assert(slot->request.profile >= NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD);
+        assert(slot->request.profile < NODE_COMM_PROFILE_COUNT);
+        assert(slot->max_attempts > 0u);
+        assert(slot->attempts_started <= slot->max_attempts);
+        if (slot->state == NODE_COMM_SLOT_LEASED) {
+            leased++;
+            assert(slot->lease_generation != 0u);
+        }
+        if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+            assert(slot->terminal.handle == slot->handle);
+            assert(slot->terminal.reason <= NODE_COMM_TERMINAL_CANCELLED);
+        }
+        for (size_t j = i + 1u; j < NODE_COMM_MAX_REQUESTS; j++) {
+            if (comm->slots[j].state != NODE_COMM_SLOT_FREE) {
+                assert(comm->slots[j].handle != slot->handle);
+            }
+        }
+    }
+    assert(leased <= 1u);
+    assert(leased == (node_comm_lease_active(comm) ? 1u : 0u));
+    if (comm->control.pause_lease_active) {
+        assert(comm->control.pause_lease.owner != 0u);
+        assert(comm->control.pause_lease.generation != 0u);
+        assert(comm->control.state == NODE_COMM_QUIESCING ||
+               comm->control.state == NODE_COMM_PAUSED ||
+               comm->control.state == NODE_COMM_RESUMING);
+    } else {
+        assert(comm->control.state == NODE_COMM_STOPPED ||
+               comm->control.state == NODE_COMM_RUNNING);
+    }
+}
+
+static struct node_comm_request request_with(uint32_t token,
+                                             enum node_comm_delivery_profile profile,
+                                             uint64_t deadline_ms)
+{
+    return (struct node_comm_request) {
+        .profile = profile,
+        .absolute_deadline_ms = deadline_ms,
+        .client_token = token,
+    };
+}
+
+static void init_running(struct node_comm *comm, uint64_t now_ms)
+{
+    node_comm_init(comm);
+    assert(node_comm_state(comm) == NODE_COMM_STOPPED);
+    assert(node_comm_start(comm, now_ms) == 0);
+    assert(node_comm_state(comm) == NODE_COMM_RUNNING);
+}
+
+static uint32_t submit_request(struct node_comm *comm,
+                               const struct node_comm_request *request,
+                               uint64_t now_ms)
+{
+    uint32_t handle = 0u;
+
+    assert(node_comm_submit(comm, request, now_ms, &handle) == 0);
+    assert(handle != 0u);
+    return handle;
+}
+
+static struct node_comm_terminal_event take_terminal(struct node_comm *comm)
+{
+    struct node_comm_terminal_event event;
+
+    memset(&event, 0, sizeof(event));
+    assert(node_comm_take_terminal_event(comm, &event));
+    return event;
+}
+
+static void test_lifecycle_requires_every_transition(void)
+{
+    struct node_comm comm;
+    struct node_comm_pause_lease pause_lease = {0};
+    struct node_comm_request request = request_with(
+        1u, NODE_COMM_PROFILE_BEST_EFFORT, 0u);
+    uint32_t handle;
+
+    node_comm_init(&comm);
+    assert(node_comm_lifecycle_generation(&comm) == 0u);
+    assert(node_comm_request_pause(&comm, 1u, 100u, 0u,
+                                   &pause_lease) == -EINVAL);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 0u) == -ESTALE);
+    assert(node_comm_begin_resume(&comm, &pause_lease, 0u) == -ESTALE);
+    assert(node_comm_note_resumed(&comm, &pause_lease, 0u) == -ESTALE);
+    assert(node_comm_submit(&comm, &request, 0u, &handle) == -ESHUTDOWN);
+
+    assert(node_comm_start(&comm, 10u) == 0);
+    assert(node_comm_lifecycle_generation(&comm) == 1u);
+    assert(node_comm_start(&comm, 10u) == -EINVAL);
+    assert(node_comm_request_pause(&comm, 1u, 100u, 10u,
+                                   &pause_lease) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_QUIESCING);
+    assert(node_comm_lifecycle_generation(&comm) == 2u);
+    assert(node_comm_begin_resume(&comm, &pause_lease, 11u) == -EINVAL);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 12u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_PAUSED);
+    assert(node_comm_submit(&comm, &request, 12u, &handle) == -ESHUTDOWN);
+    assert(node_comm_begin_resume(&comm, &pause_lease, 20u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_RESUMING);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 20u) == -EINVAL);
+    assert(node_comm_note_resumed(&comm, &pause_lease, 20u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_RUNNING);
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_PRESERVE_QUEUED, 30u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_STOPPED);
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_PRESERVE_QUEUED, 31u) ==
+           -EALREADY);
+    assert(node_comm_start(&comm, 40u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_RUNNING);
+    assert(node_comm_lifecycle_generation(&comm) == 7u);
+}
+
+static void test_quiesce_waits_for_generation_checked_lease(void)
+{
+    struct node_comm comm;
+    struct node_comm_pause_lease pause_lease;
+    struct node_comm_request request = request_with(
+        2u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_lease lease;
+    uint8_t attempts;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_request_pause(&comm, 2u, 100u, 0u,
+                                   &pause_lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1u) == 0);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 1u) == -EBUSY);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 1u) == 0);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 1u) == 0);
+    assert(node_comm_begin_resume(&comm, &pause_lease, 2u) == 0);
+    assert(node_comm_note_resumed(&comm, &pause_lease, 2u) == 0);
+    assert(node_comm_acquire(&comm, 1501u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 1502u, &lease) == 0);
+}
+
+static void test_blocked_pre_rf_opportunities_never_consume_attempts(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        3u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_lease leases[5];
+    uint8_t attempts;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &request, 0u);
+    for (uint64_t i = 0u; i < 4u; i++) {
+        uint64_t now_ms = i * 10u;
+
+        assert(node_comm_acquire(&comm, now_ms, &leases[i]) == 0);
+        assert(leases[i].attempt_number == 1u);
+        assert(node_comm_lease_defer_pre_rf(&comm, &leases[i],
+                                            now_ms + 10u, now_ms) == 0);
+        assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+        assert(attempts == 0u);
+        if (i > 0u) {
+            assert(leases[i].generation != leases[i - 1u].generation);
+            assert(node_comm_lease_note_rf_started(&comm, &leases[i - 1u],
+                                                   now_ms) == -ESTALE);
+        }
+    }
+    assert(node_comm_acquire(&comm, 40u, &leases[4]) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &leases[4], 40u) == 0);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+}
+
+static void test_retry_backoff_and_attempt_exhaustion(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        4u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 10u) == 0);
+    assert(node_comm_acquire(&comm, 1509u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 1510u, &lease) == 0);
+    assert(lease.attempt_number == 2u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1510u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 1520u) == 0);
+    assert(node_comm_acquire(&comm, 4519u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 4520u, &lease) == 0);
+    assert(lease.attempt_number == 3u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 4520u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 4530u) == 0);
+    assert(node_comm_acquire(&comm, 10529u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 10530u, &lease) == 0);
+    assert(lease.attempt_number == 4u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 10530u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 10540u) == 0);
+    event = take_terminal(&comm);
+    assert(event.handle == handle);
+    assert(event.reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+    assert(event.attempts_started == 4u);
+    assert(!node_comm_take_terminal_event(&comm, &event));
+}
+
+static void test_pause_rebases_retry_but_not_absolute_deadline(void)
+{
+    struct node_comm comm;
+    struct node_comm_pause_lease pause_lease;
+    struct node_comm_request retrying = request_with(
+        5u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_request expiring = request_with(
+        6u, NODE_COMM_PROFILE_BEST_EFFORT, 150u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t retry_handle;
+    uint32_t expire_handle;
+
+    init_running(&comm, 0u);
+    retry_handle = submit_request(&comm, &retrying, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(lease.handle == retry_handle);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 10u) == 0);
+    expire_handle = submit_request(&comm, &expiring, 20u);
+    assert(node_comm_request_pause(&comm, 3u, 1000u, 20u,
+                                   &pause_lease) == 0);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 20u) == 0);
+    assert(node_comm_service(&comm, 149u) == 0u);
+    assert(node_comm_service(&comm, 150u) == 1u);
+    event = take_terminal(&comm);
+    assert(event.handle == expire_handle);
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+
+    assert(node_comm_begin_resume(&comm, &pause_lease, 220u) == 0);
+    assert(node_comm_note_resumed(&comm, &pause_lease, 220u) == 0);
+    assert(node_comm_acquire(&comm, 1709u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 1710u, &lease) == 0);
+    assert(lease.handle == retry_handle);
+}
+
+static void test_preserving_stop_invalidates_leases_and_rebases_retry(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        7u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_lease first;
+    struct node_comm_lease second;
+    uint8_t attempts;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &first) == 0);
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_PRESERVE_QUEUED, 10u) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &first, 10u) == -ESTALE);
+    assert(node_comm_start(&comm, 100u) == 0);
+    assert(node_comm_acquire(&comm, 100u, &second) == 0);
+    assert(second.handle == handle);
+    assert(second.generation != first.generation);
+    assert(second.attempt_number == 1u);
+    assert(node_comm_lease_note_rf_started(&comm, &second, 100u) == 0);
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_PRESERVE_QUEUED, 110u) == 0);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+    assert(node_comm_start(&comm, 210u) == 0);
+    assert(node_comm_acquire(&comm, 1709u, &first) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 1710u, &first) == 0);
+    assert(first.attempt_number == 2u);
+}
+
+static void test_stop_cancel_emits_one_terminal_per_request(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        8u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_terminal_event events[3];
+    uint32_t handles[3];
+
+    init_running(&comm, 0u);
+    for (size_t i = 0u; i < 3u; i++) {
+        request.client_token = (uint32_t)(8u + i);
+        handles[i] = submit_request(&comm, &request, 0u);
+    }
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_CANCEL_ALL, 1u) == 0);
+    for (size_t i = 0u; i < 3u; i++) {
+        events[i] = take_terminal(&comm);
+        assert(events[i].handle == handles[i]);
+        assert(events[i].reason == NODE_COMM_TERMINAL_CANCELLED);
+    }
+    assert(!node_comm_take_terminal_event(&comm, &events[0]));
+}
+
+static void test_priority_then_fifo_selection(void)
+{
+    struct node_comm comm;
+    struct node_comm_request low = request_with(
+        11u, NODE_COMM_PROFILE_BEST_EFFORT, 0u);
+    struct node_comm_request high_a = request_with(
+        12u, NODE_COMM_PROFILE_CONTROL_RESPONSE, 0u);
+    struct node_comm_request high_b = request_with(
+        13u, NODE_COMM_PROFILE_CONTROL_RESPONSE, 0u);
+    struct node_comm_lease lease;
+    uint32_t low_handle;
+    uint32_t high_a_handle;
+    uint32_t high_b_handle;
+
+    init_running(&comm, 0u);
+    low_handle = submit_request(&comm, &low, 0u);
+    high_a_handle = submit_request(&comm, &high_a, 1u);
+    high_b_handle = submit_request(&comm, &high_b, 2u);
+    assert(node_comm_acquire(&comm, 2u, &lease) == 0);
+    assert(lease.handle == high_a_handle);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 2u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 2u) == 0);
+    assert(node_comm_acquire(&comm, 2u, &lease) == 0);
+    assert(lease.handle == high_b_handle);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 2u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 2u) == 0);
+    assert(node_comm_acquire(&comm, 2u, &lease) == 0);
+    assert(lease.handle == low_handle);
+}
+
+static void test_terminal_is_exactly_once_and_late_lease_is_stale(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        14u, NODE_COMM_PROFILE_BEST_EFFORT, 0u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 1u) ==
+           -EPROTO);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 1u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 1u) == -ESTALE);
+    assert(node_comm_cancel(&comm, handle, 1u) == -EALREADY);
+    event = take_terminal(&comm);
+    assert(event.handle == handle);
+    assert(event.client_token == 14u);
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(!node_comm_take_terminal_event(&comm, &event));
+    assert(node_comm_cancel(&comm, handle, 2u) == -ENOENT);
+}
+
+static void test_targeted_terminal_poll_leaves_other_clients_queued(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        140u, NODE_COMM_PROFILE_BEST_EFFORT, 0u);
+    struct node_comm_terminal_event event;
+    uint32_t first;
+    uint32_t second;
+
+    init_running(&comm, 0u);
+    first = submit_request(&comm, &request, 0u);
+    request.client_token = 141u;
+    second = submit_request(&comm, &request, 0u);
+    assert(node_comm_cancel(&comm, first, 1u) == 0);
+    assert(node_comm_cancel(&comm, second, 1u) == 0);
+
+    assert(!node_comm_take_terminal_event_for(&comm, 0u, &event));
+    assert(!node_comm_take_terminal_event_for(&comm, UINT32_MAX, &event));
+    assert(node_comm_take_terminal_event_for(&comm, second, &event));
+    assert(event.handle == second);
+    assert(event.client_token == 141u);
+    assert(node_comm_pending_count(&comm) == 1u);
+    assert(node_comm_take_terminal_event_for(&comm, first, &event));
+    assert(event.handle == first);
+    assert(event.client_token == 140u);
+    assert(!node_comm_take_terminal_event_for(&comm, first, &event));
+    assert(node_comm_pending_count(&comm) == 0u);
+}
+
+static void test_next_service_due_tracks_ready_retry_and_deadline(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        142u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 1000u);
+    struct node_comm_lease lease;
+    struct node_comm_pause_lease pause;
+    uint64_t due_ms = UINT64_MAX;
+
+    init_running(&comm, 100u);
+    (void)submit_request(&comm, &request, 100u);
+    assert(node_comm_next_service_due_ms(&comm, 100u, &due_ms));
+    assert(due_ms == 100u);
+    assert(node_comm_acquire(&comm, 100u, &lease) == 0);
+    assert(node_comm_next_service_due_ms(&comm, 100u, &due_ms));
+    assert(due_ms == 1000u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 100u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 100u) == 0);
+    assert(node_comm_next_service_due_ms(&comm, 100u, &due_ms));
+    assert(due_ms == 1000u);
+
+    assert(node_comm_request_pause(&comm, 142u, 100u, 101u, &pause) == 0);
+    assert(!node_comm_next_service_due_ms(&comm, 101u, &due_ms));
+}
+
+static void test_inflight_attempt_can_finish_while_quiescing(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        143u, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 1000u);
+    struct node_comm_lease delivery;
+    struct node_comm_pause_lease pause;
+
+    init_running(&comm, 0u);
+    (void)submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &delivery) == 0);
+    assert(node_comm_request_pause(&comm, 143u, 100u, 0u, &pause) == 0);
+    assert(node_comm_note_quiesced(&comm, &pause, 1u) == -EBUSY);
+    assert(node_comm_lease_note_rf_started(&comm, &delivery, 1u) == 0);
+    assert(node_comm_lease_complete(&comm, &delivery,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 1u) == 0);
+    assert(node_comm_note_quiesced(&comm, &pause, 1u) == 0);
+}
+
+static void test_bounded_control_flood_runs_four_successful_rf_opportunities(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        144u, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 1000u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t handle;
+    uint64_t now_ms = 0u;
+    uint64_t due_ms = 0u;
+
+    init_running(&comm, now_ms);
+    handle = submit_request(&comm, &request, now_ms);
+    for (uint8_t attempt = 1u; attempt <= 4u; attempt++) {
+        assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
+        assert(lease.handle == handle);
+        assert(lease.attempt_number == attempt);
+        assert(node_comm_lease_note_rf_started(&comm, &lease, now_ms) == 0);
+        assert(node_comm_lease_complete(&comm, &lease,
+                                        NODE_COMM_DELIVERY_SUCCEEDED,
+                                        now_ms) == 0);
+        if (attempt < 4u) {
+            assert(!node_comm_take_terminal_event_for(&comm, handle, &event));
+            assert(node_comm_next_service_due_ms(&comm, now_ms, &due_ms));
+            assert(due_ms == now_ms + 40u);
+            assert(node_comm_acquire(&comm, due_ms - 1u, &lease) == -EAGAIN);
+            now_ms = due_ms;
+        }
+    }
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 4u);
+}
+
+static uint32_t collision_sweep_seed(uint32_t scenario, uint32_t node)
+{
+    uint32_t seed = (scenario + 1u) * UINT32_C(0x9e3779b9) ^
+                    (node + 1u) * UINT32_C(0x85ebca6b);
+
+    seed ^= seed >> 16;
+    seed *= UINT32_C(0x7feb352d);
+    seed ^= seed >> 15;
+    return seed == 0u ? node + 1u : seed;
+}
+
+static void test_twenty_independent_nodes_diversify_destructive_collisions(void)
+{
+    enum {
+        NODE_COUNT = 20,
+        SCENARIO_COUNT = 256,
+    };
+    struct node_comm comms[NODE_COUNT];
+    uint32_t handles[NODE_COUNT];
+    bool terminal[NODE_COUNT];
+
+    for (uint32_t scenario = 0u; scenario < SCENARIO_COUNT; scenario++) {
+        size_t terminal_count = 0u;
+        size_t delivered_count = 0u;
+
+        memset(terminal, 0, sizeof(terminal));
+        for (uint32_t node = 0u; node < NODE_COUNT; node++) {
+            struct node_comm_request request = request_with(
+                node + 1u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 60000u);
+            struct node_comm_lease lease;
+
+            request.retry_jitter_seed = collision_sweep_seed(scenario, node);
+            init_running(&comms[node], 0u);
+            handles[node] = submit_request(&comms[node], &request, 0u);
+            assert(node_comm_acquire(&comms[node], 0u, &lease) == 0);
+            assert(node_comm_lease_note_rf_started(&comms[node],
+                                                   &lease, 0u) == 0);
+            assert(node_comm_lease_complete(&comms[node], &lease,
+                                            NODE_COMM_DELIVERY_RETRY,
+                                            0u) == 0);
+        }
+
+        while (terminal_count < NODE_COUNT) {
+            uint64_t next_due_ms = UINT64_MAX;
+            size_t contenders = 0u;
+
+            for (uint32_t node = 0u; node < NODE_COUNT; node++) {
+                uint64_t due_ms;
+
+                if (!terminal[node] &&
+                    node_comm_next_service_due_ms(&comms[node], 0u,
+                                                  &due_ms) &&
+                    due_ms < next_due_ms) {
+                    next_due_ms = due_ms;
+                }
+            }
+            assert(next_due_ms != UINT64_MAX);
+            for (uint32_t node = 0u; node < NODE_COUNT; node++) {
+                uint64_t due_ms;
+
+                if (!terminal[node] &&
+                    node_comm_next_service_due_ms(&comms[node], 0u,
+                                                  &due_ms) &&
+                    due_ms == next_due_ms) {
+                    contenders++;
+                }
+            }
+            assert(contenders > 0u);
+
+            for (uint32_t node = 0u; node < NODE_COUNT; node++) {
+                struct node_comm_terminal_event event;
+                struct node_comm_lease lease;
+                uint64_t due_ms;
+
+                if (terminal[node] ||
+                    !node_comm_next_service_due_ms(&comms[node], 0u,
+                                                   &due_ms) ||
+                    due_ms != next_due_ms) {
+                    continue;
+                }
+                assert(node_comm_acquire(&comms[node], next_due_ms,
+                                         &lease) == 0);
+                assert(node_comm_lease_note_rf_started(&comms[node],
+                                                       &lease,
+                                                       next_due_ms) == 0);
+                assert(node_comm_lease_complete(
+                    &comms[node],
+                    &lease,
+                    contenders == 1u ? NODE_COMM_DELIVERY_SUCCEEDED :
+                                       NODE_COMM_DELIVERY_RETRY,
+                    next_due_ms) == 0);
+                if (node_comm_take_terminal_event_for(&comms[node],
+                                                      handles[node],
+                                                      &event)) {
+                    terminal[node] = true;
+                    terminal_count++;
+                    if (event.reason == NODE_COMM_TERMINAL_DELIVERED) {
+                        delivered_count++;
+                    }
+                }
+            }
+        }
+        assert(delivered_count == NODE_COUNT);
+    }
+}
+
+static void test_deadline_invalidates_active_lease(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        15u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 50u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+
+    init_running(&comm, 0u);
+    (void)submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 10u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 10u) == 0);
+    assert(node_comm_service(&comm, 50u) == 1u);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 50u) == -ESTALE);
+    event = take_terminal(&comm);
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.attempts_started == 1u);
+}
+
+static void test_capacity_includes_unconsumed_terminal_events(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        16u, NODE_COMM_PROFILE_BEST_EFFORT, 0u);
+    struct node_comm_terminal_event event;
+    uint32_t handles[NODE_COMM_MAX_REQUESTS];
+    uint32_t extra;
+
+    init_running(&comm, 0u);
+    for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
+        handles[i] = submit_request(&comm, &request, 0u);
+    }
+    assert(node_comm_pending_count(&comm) == NODE_COMM_MAX_REQUESTS);
+    assert(node_comm_submit(&comm, &request, 0u, &extra) == -ENOSPC);
+    assert(node_comm_cancel(&comm, handles[0], 0u) == 0);
+    assert(node_comm_submit(&comm, &request, 0u, &extra) == -ENOSPC);
+    event = take_terminal(&comm);
+    assert(event.handle == handles[0]);
+    assert(node_comm_submit(&comm, &request, 0u, &extra) == 0);
+}
+
+static void test_invalid_requests_and_retry_without_rf_fail_closed(void)
+{
+    struct node_comm comm;
+    struct node_comm_request invalid = request_with(
+        17u, NODE_COMM_PROFILE_COUNT, 0u);
+    struct node_comm_request expired = request_with(
+        18u, NODE_COMM_PROFILE_BEST_EFFORT, 10u);
+    struct node_comm_request valid = request_with(
+        19u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_lease lease;
+    uint32_t handle;
+
+    init_running(&comm, 10u);
+    assert(node_comm_submit(&comm, &invalid, 10u, &handle) == -EINVAL);
+    assert(node_comm_submit(&comm, &expired, 10u, &handle) == -ETIMEDOUT);
+    (void)submit_request(&comm, &valid, 10u);
+    assert(node_comm_acquire(&comm, 10u, &lease) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 10u) == -EPROTO);
+    assert(node_comm_lease_defer_pre_rf(&comm, &lease, 10u, 10u) == 0);
+}
+
+static void test_pause_lease_owner_generation_and_expiry(void)
+{
+    struct node_comm comm;
+    struct node_comm_pause_lease first;
+    struct node_comm_pause_lease second;
+    struct node_comm_pause_lease wrong;
+    struct node_comm_pause_lease recovery;
+
+    init_running(&comm, 0u);
+    assert(node_comm_request_pause(&comm, 0u, 100u, 0u, &first) == -EINVAL);
+    assert(node_comm_request_pause(&comm, 21u, 0u, 0u, &first) == -EINVAL);
+    assert(node_comm_request_pause(&comm, 21u, 100u, 0u, &first) == 0);
+    wrong = first;
+    wrong.owner++;
+    assert(node_comm_note_quiesced(&comm, &wrong, 1u) == -ESTALE);
+    wrong = first;
+    wrong.generation++;
+    assert(node_comm_note_quiesced(&comm, &wrong, 1u) == -ESTALE);
+    assert(node_comm_state(&comm) == NODE_COMM_QUIESCING);
+    assert(node_comm_note_quiesced(&comm, &first, 10u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_PAUSED);
+    assert(node_comm_begin_resume(&comm, &wrong, 20u) == -ESTALE);
+    assert(node_comm_state(&comm) == NODE_COMM_PAUSED);
+
+    assert(node_comm_service(&comm, 99u) == 0u);
+    assert(node_comm_state(&comm) == NODE_COMM_PAUSED);
+    assert(node_comm_service(&comm, 100u) == 0u);
+    assert(node_comm_state(&comm) == NODE_COMM_RESUMING);
+    assert(node_comm_note_resumed(&comm, &first, 100u) == -ESTALE);
+    assert(node_comm_pause_recovery_lease(&comm, &recovery));
+    assert(recovery.generation != first.generation);
+    assert(node_comm_note_resumed(&comm, &recovery, 100u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_RUNNING);
+
+    assert(node_comm_request_pause(&comm, 21u, 100u, 110u, &second) == 0);
+    assert(second.generation != first.generation);
+    assert(node_comm_note_quiesced(&comm, &first, 111u) == -ESTALE);
+    assert(node_comm_note_quiesced(&comm, &second, 111u) == 0);
+    assert(node_comm_begin_resume(&comm, &second, 112u) == 0);
+    assert(node_comm_note_resumed(&comm, &first, 112u) == -ESTALE);
+    assert(node_comm_note_resumed(&comm, &second, 112u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_RUNNING);
+}
+
+static void test_pause_expiry_while_quiescing_requires_forced_reclaim(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        40u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_lease delivery_lease;
+    struct node_comm_pause_lease caller_lease;
+    struct node_comm_pause_lease recovery_lease;
+
+    init_running(&comm, 0u);
+    (void)submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &delivery_lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &delivery_lease, 0u) == 0);
+    assert(node_comm_request_pause(&comm, 41u, 10u, 0u,
+                                   &caller_lease) == 0);
+    assert(node_comm_service(&comm, 10u) == 0u);
+    assert(node_comm_state(&comm) == NODE_COMM_RESUMING);
+    assert(node_comm_note_quiesced(&comm, &caller_lease, 10u) == -ESTALE);
+    assert(node_comm_pause_recovery_lease(&comm, &recovery_lease));
+    assert(node_comm_note_resumed(&comm, &recovery_lease, 10u) == -EBUSY);
+    assert(node_comm_lease_complete(&comm, &delivery_lease,
+                                    NODE_COMM_DELIVERY_FAILED, 10u) == 0);
+    assert(node_comm_note_resumed(&comm, &recovery_lease, 10u) == 0);
+    assert(node_comm_state(&comm) == NODE_COMM_RUNNING);
+}
+
+static void test_pause_then_preserving_stop_rebases_only_retry_timer(void)
+{
+    struct node_comm comm;
+    struct node_comm_pause_lease pause_lease;
+    struct node_comm_request retrying = request_with(
+        20u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_request expiring = request_with(
+        21u, NODE_COMM_PROFILE_BEST_EFFORT, 300u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t retry_handle;
+    uint32_t expire_handle;
+
+    init_running(&comm, 0u);
+    retry_handle = submit_request(&comm, &retrying, 0u);
+    expire_handle = submit_request(&comm, &expiring, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(lease.handle == retry_handle);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 10u) == 0);
+    assert(node_comm_request_pause(&comm, 22u, 1000u, 20u,
+                                   &pause_lease) == 0);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 20u) == 0);
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_PRESERVE_QUEUED, 220u) == 0);
+    assert(node_comm_start(&comm, 420u) == 0);
+    event = take_terminal(&comm);
+    assert(event.handle == expire_handle);
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(node_comm_acquire(&comm, 1909u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 1910u, &lease) == 0);
+    assert(lease.handle == retry_handle);
+}
+
+static void test_stop_during_resuming_does_not_rebase_retry_twice(void)
+{
+    struct node_comm comm;
+    struct node_comm_pause_lease pause_lease;
+    struct node_comm_request retrying = request_with(
+        23u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
+    struct node_comm_lease lease;
+
+    init_running(&comm, 0u);
+    (void)submit_request(&comm, &retrying, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_RETRY, 10u) == 0);
+    assert(node_comm_request_pause(&comm, 24u, 1000u, 20u,
+                                   &pause_lease) == 0);
+    assert(node_comm_note_quiesced(&comm, &pause_lease, 20u) == 0);
+    assert(node_comm_begin_resume(&comm, &pause_lease, 220u) == 0);
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_PRESERVE_QUEUED, 230u) == 0);
+    assert(node_comm_start(&comm, 430u) == 0);
+    assert(node_comm_acquire(&comm, 1909u, &lease) == -EAGAIN);
+    assert(node_comm_acquire(&comm, 1910u, &lease) == 0);
+}
+
+static void test_all_delivery_profiles_have_fixed_priority_order(void)
+{
+    struct node_comm comm;
+    const enum node_comm_delivery_profile profiles[] = {
+        NODE_COMM_PROFILE_BEST_EFFORT,
+        NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_CONTROL_RESPONSE,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+    };
+    const enum node_comm_delivery_profile expected[] = {
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        NODE_COMM_PROFILE_CONTROL_RESPONSE,
+        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_BEST_EFFORT,
+    };
+    struct node_comm_lease lease;
+    uint32_t handles[NODE_COMM_PROFILE_COUNT];
+
+    init_running(&comm, 0u);
+    for (size_t i = 0u; i < NODE_COMM_PROFILE_COUNT; i++) {
+        struct node_comm_request request = request_with(
+            (uint32_t)(30u + i), profiles[i], 0u);
+
+        handles[profiles[i]] = submit_request(&comm, &request, 0u);
+    }
+    for (size_t i = 0u; i < NODE_COMM_PROFILE_COUNT; i++) {
+        assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+        assert(lease.handle == handles[expected[i]]);
+        assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+        assert(node_comm_lease_complete(&comm, &lease,
+                                        NODE_COMM_DELIVERY_SUCCEEDED, 0u) == 0);
+    }
+}
+
+static void test_deterministic_state_and_request_sweep(void)
+{
+    static bool terminal_seen[SWEEP_MAX_HANDLES];
+    struct node_comm comm;
+    struct node_comm_lease delivery_lease = {0};
+    struct node_comm_pause_lease pause_lease = {0};
+    uint32_t random_state = UINT32_C(0x9e3779b9);
+    uint64_t now_ms = 0u;
+    size_t accepted_count = 0u;
+    size_t terminal_count = 0u;
+
+    memset(terminal_seen, 0, sizeof(terminal_seen));
+    init_running(&comm, now_ms);
+    for (size_t step = 0u; step < SWEEP_STEPS; step++) {
+        uint32_t random_value = sweep_random(&random_state);
+
+        now_ms += random_value % 7u;
+        (void)node_comm_service(&comm, now_ms);
+        if (!node_comm_lease_active(&comm)) {
+            memset(&delivery_lease, 0, sizeof(delivery_lease));
+        }
+        if (!comm.control.pause_lease_active) {
+            memset(&pause_lease, 0, sizeof(pause_lease));
+        } else if (comm.control.pause_recovery_required) {
+            assert(node_comm_pause_recovery_lease(&comm, &pause_lease));
+        }
+
+        switch (comm.control.state) {
+        case NODE_COMM_STOPPED:
+            assert(node_comm_start(&comm, now_ms) == 0);
+            break;
+        case NODE_COMM_RUNNING:
+            switch ((random_value >> 4) % 7u) {
+            case 0u: {
+                struct node_comm_request request = request_with(
+                    (uint32_t)step,
+                    (enum node_comm_delivery_profile)
+                        ((random_value >> 12) % NODE_COMM_PROFILE_COUNT),
+                    (random_value & 1u) != 0u ?
+                        now_ms + 1u + ((random_value >> 20) % 500u) : 0u);
+                uint32_t handle;
+                int ret = node_comm_submit(&comm, &request, now_ms, &handle);
+
+                assert(ret == 0 || ret == -ENOSPC);
+                if (ret == 0) {
+                    accepted_count++;
+                    assert(handle < SWEEP_MAX_HANDLES);
+                }
+                break;
+            }
+            case 1u:
+                if (!node_comm_lease_active(&comm)) {
+                    int ret = node_comm_acquire(&comm, now_ms, &delivery_lease);
+                    assert(ret == 0 || ret == -EAGAIN);
+                }
+                break;
+            case 2u:
+                if (node_comm_lease_active(&comm)) {
+                    if ((random_value & 1u) != 0u) {
+                        int ret = node_comm_lease_note_rf_started(
+                            &comm, &delivery_lease, now_ms);
+                        assert(ret == 0 || ret == -EALREADY);
+                    } else {
+                        int ret = node_comm_lease_defer_pre_rf(
+                            &comm, &delivery_lease,
+                            now_ms + (random_value % 20u), now_ms);
+                        assert(ret == 0 || ret == -EALREADY);
+                        if (ret == -EALREADY) {
+                            assert(node_comm_lease_complete(
+                                       &comm, &delivery_lease,
+                                       NODE_COMM_DELIVERY_FAILED, now_ms) == 0);
+                        }
+                    }
+                }
+                break;
+            case 3u:
+                if (node_comm_lease_active(&comm)) {
+                    if ((random_value & 1u) != 0u) {
+                        int rf_ret = node_comm_lease_note_rf_started(
+                            &comm, &delivery_lease, now_ms);
+                        assert(rf_ret == 0 || rf_ret == -EALREADY);
+                    }
+                    {
+                        int ret = node_comm_lease_complete(
+                            &comm, &delivery_lease,
+                            (enum node_comm_delivery_outcome)
+                                ((random_value >> 8) % 3u),
+                            now_ms);
+                        assert(ret == 0 || ret == -EPROTO);
+                        if (ret == -EPROTO) {
+                            assert(node_comm_lease_defer_pre_rf(
+                                       &comm, &delivery_lease, now_ms, now_ms) == 0);
+                        }
+                    }
+                }
+                break;
+            case 4u:
+                if (!comm.control.pause_lease_active) {
+                    assert(node_comm_request_pause(
+                               &comm, 100u + (uint32_t)step,
+                               10u + (random_value % 200u), now_ms,
+                               &pause_lease) == 0);
+                }
+                break;
+            case 5u:
+                assert(node_comm_stop(
+                           &comm,
+                           (random_value & 1u) != 0u ?
+                               NODE_COMM_STOP_PRESERVE_QUEUED :
+                               NODE_COMM_STOP_CANCEL_ALL,
+                           now_ms) == 0);
+                break;
+            default:
+                break;
+            }
+            break;
+        case NODE_COMM_QUIESCING:
+            if (node_comm_lease_active(&comm)) {
+                int ret = node_comm_lease_defer_pre_rf(
+                    &comm, &delivery_lease, now_ms, now_ms);
+                assert(ret == 0 || ret == -EALREADY);
+                if (ret == -EALREADY) {
+                    assert(node_comm_lease_complete(
+                               &comm, &delivery_lease,
+                               NODE_COMM_DELIVERY_FAILED, now_ms) == 0);
+                }
+            } else {
+                int ret = node_comm_note_quiesced(&comm, &pause_lease, now_ms);
+                assert(ret == 0 || ret == -ETIMEDOUT);
+            }
+            break;
+        case NODE_COMM_PAUSED: {
+            int ret = node_comm_begin_resume(&comm, &pause_lease, now_ms);
+            assert(ret == 0 || ret == -ETIMEDOUT);
+            break;
+        }
+        case NODE_COMM_RESUMING: {
+            int ret = node_comm_note_resumed(&comm, &pause_lease, now_ms);
+            assert(ret == 0 || ret == -ETIMEDOUT || ret == -EBUSY);
+            if (ret == -EBUSY) {
+                assert(node_comm_lease_complete(
+                           &comm, &delivery_lease,
+                           NODE_COMM_DELIVERY_FAILED, now_ms) == 0);
+            }
+            break;
+        }
+        default:
+            assert(false);
+        }
+
+        if ((random_value % 3u) == 0u) {
+            struct node_comm_terminal_event event;
+
+            while (node_comm_take_terminal_event(&comm, &event)) {
+                assert(event.handle < SWEEP_MAX_HANDLES);
+                assert(!terminal_seen[event.handle]);
+                terminal_seen[event.handle] = true;
+                terminal_count++;
+            }
+        }
+        assert_internal_invariants(&comm);
+    }
+
+    if (comm.control.state == NODE_COMM_STOPPED) {
+        assert(node_comm_start(&comm, now_ms) == 0);
+    }
+    assert(node_comm_stop(&comm, NODE_COMM_STOP_CANCEL_ALL, now_ms) == 0);
+    {
+        struct node_comm_terminal_event event;
+
+        while (node_comm_take_terminal_event(&comm, &event)) {
+            assert(event.handle < SWEEP_MAX_HANDLES);
+            assert(!terminal_seen[event.handle]);
+            terminal_seen[event.handle] = true;
+            terminal_count++;
+        }
+    }
+    assert(terminal_count == accepted_count);
+    assert(node_comm_pending_count(&comm) == 0u);
+}
+
+int main(void)
+{
+    test_lifecycle_requires_every_transition();
+    test_quiesce_waits_for_generation_checked_lease();
+    test_blocked_pre_rf_opportunities_never_consume_attempts();
+    test_retry_backoff_and_attempt_exhaustion();
+    test_pause_rebases_retry_but_not_absolute_deadline();
+    test_preserving_stop_invalidates_leases_and_rebases_retry();
+    test_stop_cancel_emits_one_terminal_per_request();
+    test_priority_then_fifo_selection();
+    test_terminal_is_exactly_once_and_late_lease_is_stale();
+    test_targeted_terminal_poll_leaves_other_clients_queued();
+    test_next_service_due_tracks_ready_retry_and_deadline();
+    test_inflight_attempt_can_finish_while_quiescing();
+    test_bounded_control_flood_runs_four_successful_rf_opportunities();
+    test_twenty_independent_nodes_diversify_destructive_collisions();
+    test_deadline_invalidates_active_lease();
+    test_capacity_includes_unconsumed_terminal_events();
+    test_invalid_requests_and_retry_without_rf_fail_closed();
+    test_pause_lease_owner_generation_and_expiry();
+    test_pause_expiry_while_quiescing_requires_forced_reclaim();
+    test_pause_then_preserving_stop_rebases_only_retry_timer();
+    test_stop_during_resuming_does_not_rebase_retry_twice();
+    test_all_delivery_profiles_have_fixed_priority_order();
+    test_deterministic_state_and_request_sweep();
+    return 0;
+}

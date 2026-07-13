@@ -29,8 +29,8 @@ struct app_mesh_ch9_tx_ack_result {
 };
 
 struct app_mesh_ch9_tx_retry_entry {
-    struct mesh_outbound outbound;
-    bool acked;
+    struct mesh_outbound *outbound;
+    bool *acked;
 };
 
 struct app_mesh_ch9_tx_retry_ops {

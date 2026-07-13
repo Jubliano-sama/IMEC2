@@ -59,7 +59,10 @@ def _probe_is_visible(probe_id: str) -> None:
 
 
 def _run_rtt(probe_id: str, transcript: Path, duration_seconds: int) -> tuple[datetime, datetime]:
-    rtt_command = ["pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset", "-u", probe_id]
+    rtt_command = [
+        "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+        "-u", probe_id, "--up-channel-id", "0",
+    ]
     command = [
         "script", "-q", "-f", "-c",
         shlex.join(["timeout", "--foreground", "--signal=INT", str(duration_seconds), *rtt_command]),
@@ -96,7 +99,10 @@ def capture(build_dir: Path, probe_id: str, output_dir: Path, duration_seconds: 
         "tool": verifier.CAPTURE_TOOL_RELATIVE,
         "tool_sha256": verifier._sha256(Path(__file__)),
         "workflow": verifier.CAPTURE_WORKFLOW,
-        "rtt_command": ["pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset", "-u", probe_id],
+        "rtt_command": [
+            "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+            "-u", probe_id, "--up-channel-id", "0",
+        ],
         "tty_wrapper": "script",
         "started_at_utc": _utc_text(started),
         "ended_at_utc": _utc_text(ended),

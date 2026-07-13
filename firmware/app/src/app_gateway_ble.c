@@ -147,15 +147,17 @@ static void gateway_observability_flush(bool include_snapshots)
             &gateway_command_observability_state, &event)) {
         (void)gateway_observability_enqueue_prepared(&event);
     }
-    if (!include_snapshots) {
-        return;
-    }
     for (enum gateway_command_event_kind kind =
              GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION;
          kind <= GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH;
          kind++) {
-        if (gateway_command_observability_reconnect_snapshot(
-                &gateway_command_observability_state, kind, &event)) {
+        bool available = include_snapshots ?
+            gateway_command_observability_reconnect_snapshot(
+                &gateway_command_observability_state, kind, &event) :
+            gateway_command_observability_pending_snapshot(
+                &gateway_command_observability_state, kind, &event);
+
+        if (available) {
             (void)gateway_observability_enqueue_prepared(&event);
         }
     }
@@ -390,6 +392,17 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
     return -ENOTSUP;
 }
 
+int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+                                          enum command_id command_id,
+                                          uint32_t timeout_ms)
+{
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(timeout_ms);
+
+    return -ENOTSUP;
+}
+
 void gateway_clear_pending_command_result(const struct proto_packet *command)
 {
     ARG_UNUSED(command);
@@ -533,7 +546,6 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
                               uint32_t received_at_ms)
 {
     k_spinlock_key_t key;
-    uint16_t queue_depth;
     bool ready;
     int ret;
 
@@ -553,22 +565,7 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
                                             received_at_ms,
                                             k_uptime_get_32(),
                                             ready);
-    queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
     k_spin_unlock(&gateway_ble_stream_lock, key);
-    if (ret > 0 && !ready) {
-        const struct app_stack_workload_diag_pressure pressure = {
-            .queue_depth = queue_depth,
-            .custody_depth = queue_depth,
-            .credit_available = 0u,
-            .retry_depth = 0u,
-            .drain_depth = queue_depth,
-        };
-
-        /* This ingress is called from mesh RX/system work, never BT RX. */
-        app_stack_workload_diag_ble_admit_with_pressure(
-            packet, APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE, &pressure);
-        app_stack_workload_diag_ble_sample_with_pressure(packet, &pressure);
-    }
     if (ret > 0) {
         gateway_ble_schedule_stream_drain();
     }
@@ -1216,6 +1213,7 @@ void gateway_note_command_result(const struct proto_packet *packet,
 {
     struct proto_packet command;
     enum command_id pending_command_id;
+    bool survey_transaction_result;
     enum command_status status = COMMAND_INTERNAL_ERROR;
     uint8_t reason = 0u;
     int ret;
@@ -1236,8 +1234,30 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                    received_radio_channel,
                                    current_channel9_plan);
 
+    survey_transaction_result = gateway_survey_auto_preflight_result(
+        packet, payload, payload_len);
+
     if (!app_mesh_gateway_command_flow_result_matches(
             &gateway_command_pending_state.command, packet)) {
+        if (survey_transaction_result) {
+            LOG_DBG("gateway survey duplicate/late result reconciled: src=0x%016llx session=%u seq=%u",
+                    packet == NULL ? 0ull :
+                    (unsigned long long)packet->src_id,
+                    packet == NULL ? 0u : packet->session_id,
+                    packet == NULL ? 0u : packet->seq);
+        }
+        return;
+    }
+    if ((gateway_command_pending_state.command_id ==
+             CMD_SURVEY_PREPARE_PAIR ||
+         gateway_command_pending_state.command_id ==
+             CMD_SURVEY_START_PAIR) &&
+        !survey_transaction_result) {
+        LOG_WRN("gateway survey result identity rejected while wait remains active: src=0x%016llx session=%u seq=%u",
+                packet == NULL ? 0ull :
+                (unsigned long long)packet->src_id,
+                packet == NULL ? 0u : packet->session_id,
+                packet == NULL ? 0u : packet->seq);
         return;
     }
 
@@ -1293,8 +1313,19 @@ void gateway_note_command_result_bundle(const struct proto_packet *packet,
 int gateway_begin_command_result_wait(const struct proto_packet *command,
                                       enum command_id command_id)
 {
+    return gateway_begin_command_result_wait_for(
+        command, command_id, GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
+}
+
+int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+                                          enum command_id command_id,
+                                          uint32_t timeout_ms)
+{
     int ret;
 
+    if (timeout_ms == 0u) {
+        return -EINVAL;
+    }
     if (gateway_collection_state.collection_open) {
         return -EBUSY;
     }
@@ -1303,13 +1334,13 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
                                         command,
                                         command_id,
                                         k_uptime_get_32(),
-                                        GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
+                                        timeout_ms);
     if (ret != PROTO_OK) {
         return ret == PROTO_ERR_MALFORMED ? -EBUSY : mesh_errno_from_proto(ret);
     }
 
     (void)k_work_reschedule(&gateway_command_result_timeout_work,
-                            K_MSEC(GATEWAY_COMMAND_RESULT_TIMEOUT_MS));
+                            K_MSEC(timeout_ms));
     return 0;
 }
 
@@ -1372,6 +1403,16 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
 {
     ARG_UNUSED(command);
     ARG_UNUSED(command_id);
+    return -ENOTSUP;
+}
+
+int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+                                          enum command_id command_id,
+                                          uint32_t timeout_ms)
+{
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(timeout_ms);
     return -ENOTSUP;
 }
 
@@ -1541,6 +1582,13 @@ static void gateway_ble_schedule_recovery(const char *reason)
         gateway_ble_recovery_round++;
     }
     (void)k_work_reschedule(&gateway_ble_recovery_work, K_MSEC(delay_ms));
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_GATEWAY_BLE event=recovery round=%u delay_ms=%u reason=%s uptime=%u\n",
+                        gateway_ble_recovery_round,
+                        delay_ms,
+                        reason == NULL ? "unknown" : reason,
+                        k_uptime_get_32());
+#endif
     LOG_WRN("gateway BLE recovery scheduled: reason=%s round=%u delay_ms=%u",
             reason == NULL ? "unknown" : reason,
             gateway_ble_recovery_round,
@@ -1899,8 +1947,36 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     key = k_spin_lock(&gateway_ble_tx_lock);
-    if (gateway_ble_tx_in_flight || gateway_ble_conn == NULL ||
-        gateway_ble_uwb_quiet_active() || !gateway_ble_tx_select_frame_locked()) {
+    if (gateway_ble_tx_in_flight) {
+        struct proto_packet blocked_packet;
+        uint16_t queue_depth;
+        int packet_ret;
+        k_spinlock_key_t stream_key = k_spin_lock(&gateway_ble_stream_lock);
+
+        queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
+        packet_ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                                    &blocked_packet);
+        k_spin_unlock(&gateway_ble_stream_lock, stream_key);
+        k_spin_unlock(&gateway_ble_tx_lock, key);
+        if (packet_ret == 0 && queue_depth > 0u) {
+            const struct app_stack_workload_diag_pressure pressure = {
+                .queue_depth = queue_depth,
+                .custody_depth = queue_depth,
+                .credit_available = 0u,
+                .retry_depth = gateway_ble_notify_failure_count,
+                .drain_depth = queue_depth,
+            };
+
+            app_stack_workload_diag_ble_admit_with_pressure(
+                &blocked_packet, APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE,
+                &pressure);
+            app_stack_workload_diag_ble_sample_with_pressure(&blocked_packet,
+                                                             &pressure);
+        }
+        return;
+    }
+    if (gateway_ble_conn == NULL || gateway_ble_uwb_quiet_active() ||
+        !gateway_ble_tx_select_frame_locked()) {
         k_spin_unlock(&gateway_ble_tx_lock, key);
         return;
     }
@@ -1968,6 +2044,9 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
     ret = bt_gatt_notify_cb(conn, &params);
     if (ret < 0) {
         bool disconnect = false;
+        struct proto_packet blocked_packet;
+        uint16_t queue_depth;
+        int packet_ret;
 
         key = k_spin_lock(&gateway_ble_tx_lock);
         if (gateway_ble_tx_in_flight && generation == gateway_ble_tx_generation) {
@@ -1979,6 +2058,26 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
         }
         disconnect = gateway_ble_notify_failure_count >= 8u;
         k_spin_unlock(&gateway_ble_tx_lock, key);
+        key = k_spin_lock(&gateway_ble_stream_lock);
+        queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
+        packet_ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                                    &blocked_packet);
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        if (packet_ret == 0) {
+            const struct app_stack_workload_diag_pressure pressure = {
+                .queue_depth = queue_depth,
+                .custody_depth = queue_depth,
+                .credit_available = 0u,
+                .retry_depth = gateway_ble_notify_failure_count,
+                .drain_depth = queue_depth,
+            };
+
+            app_stack_workload_diag_ble_admit_with_pressure(
+                &blocked_packet, APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE,
+                &pressure);
+            app_stack_workload_diag_ble_sample_with_pressure(&blocked_packet,
+                                                             &pressure);
+        }
         if (disconnect) {
             LOG_WRN("gateway BLE notifications repeatedly failed; resetting connection: ret=%d failures=%u",
                     ret,
@@ -1986,6 +2085,33 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
             (void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         } else {
             gateway_ble_schedule_stream_retry();
+        }
+    } else if (source == GATEWAY_BLE_TX_STREAM) {
+        struct proto_packet inflight_packet;
+        uint16_t queue_depth;
+        int packet_ret;
+
+        key = k_spin_lock(&gateway_ble_stream_lock);
+        queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
+        packet_ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                                    &inflight_packet);
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        if (packet_ret == 0) {
+            const struct app_stack_workload_diag_pressure pressure = {
+                .queue_depth = queue_depth,
+                .custody_depth = queue_depth,
+                .credit_available = 0u,
+                .retry_depth = gateway_ble_notify_failure_count,
+                .drain_depth = queue_depth,
+            };
+
+            /* A successful async submit consumes the controller credit until
+             * gateway_ble_tx_complete() returns it. */
+            app_stack_workload_diag_ble_admit_with_pressure(
+                &inflight_packet, APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE,
+                &pressure);
+            app_stack_workload_diag_ble_sample_with_pressure(&inflight_packet,
+                                                             &pressure);
         }
     }
     bt_conn_unref(conn);
@@ -1998,6 +2124,11 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     if (!gateway_ble_transport_enabled()) {
         return;
     }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_GATEWAY_BLE event=connected err=%u uptime=%u\n",
+                        err,
+                        k_uptime_get_32());
+#endif
     if (err != 0u) {
         LOG_WRN("gateway BLE connection failed: err=0x%02x", err);
         gateway_ble_schedule_recovery("connection-failed");
@@ -2035,6 +2166,11 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
     if (!gateway_ble_transport_enabled()) {
         return;
     }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_GATEWAY_BLE event=disconnected reason=%u uptime=%u\n",
+                        reason,
+                        k_uptime_get_32());
+#endif
     key = k_spin_lock(&gateway_ble_tx_lock);
     if (gateway_ble_conn != conn) {
         k_spin_unlock(&gateway_ble_tx_lock, key);
@@ -2177,6 +2313,11 @@ int gateway_ble_init(void)
 {
     int ret;
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_GATEWAY_BLE stage=entry enabled=%u uptime=%u\n",
+                        gateway_ble_transport_enabled() ? 1u : 0u,
+                        k_uptime_get_32());
+#endif
     if (!gateway_ble_transport_enabled()) {
         return 0;
     }
@@ -2196,20 +2337,32 @@ int gateway_ble_init(void)
     gateway_ble_notify_failure_count = 0u;
 
     ret = bt_enable(NULL);
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_GATEWAY_BLE stage=bt_enable ret=%d uptime=%u\n",
+                        ret,
+                        k_uptime_get_32());
+#endif
     LOG_INF("gateway BLE bt_enable completed: ret=%d", ret);
     if (ret != 0 && ret != -EALREADY) {
         LOG_ERR("gateway BLE init failed; recovery remains active: %d", ret);
         gateway_ble_schedule_recovery("initial-bt-enable");
-        return 0;
+        return ret;
     }
     gateway_ble_stack_ready = true;
     gateway_ble_log_identities();
 
     ret = gateway_ble_start_advertising();
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf("DBG_GATEWAY_BLE stage=adv_start ret=%d active=%u quiet=%u uptime=%u\n",
+                        ret,
+                        gateway_ble_advertising_active ? 1u : 0u,
+                        gateway_ble_uwb_quiet_active() ? 1u : 0u,
+                        k_uptime_get_32());
+#endif
     if (ret < 0) {
         LOG_ERR("gateway BLE advertising failed; recovery remains active: %d", ret);
         gateway_ble_schedule_recovery("initial-advertising");
-        return 0;
+        return ret;
     }
 
     LOG_INF("gateway BLE PC link advertising as %s", GATEWAY_BLE_DEVICE_NAME);
@@ -2365,9 +2518,7 @@ int gateway_observe_command_event_if_available(
         return -EINVAL;
     }
     tx_key = k_spin_lock(&gateway_ble_tx_lock);
-    if (!gateway_ble_stream_ready() || gateway_ble_tx_in_flight ||
-        gateway_ble_tx_source != GATEWAY_BLE_TX_NONE ||
-        gateway_ble_direct_tx_count != 0u) {
+    if (!gateway_ble_stream_ready()) {
         k_spin_unlock(&gateway_ble_tx_lock, tx_key);
         return -EAGAIN;
     }
@@ -2381,14 +2532,6 @@ int gateway_observe_command_event_if_available(
         k_spin_unlock(&gateway_ble_tx_lock, tx_key);
         return -EAGAIN;
     }
-    for (uint8_t i = 0u; i < gateway_ble_stream_state.count; i++) {
-        if (gateway_ble_stream_state.items[i].priority == 0u) {
-            k_spin_unlock(&gateway_ble_stream_lock, stream_key);
-            k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-            return -EAGAIN;
-        }
-    }
-
     ret = gateway_command_observability_prepare(
         &gateway_command_observability_state, event, terminal);
     if (ret == 0) {
@@ -2423,6 +2566,37 @@ int gateway_observe_command_event_if_available(
     ARG_UNUSED(event);
     ARG_UNUSED(terminal);
     ARG_UNUSED(ctx);
+    return -EAGAIN;
+#endif
+}
+
+int gateway_observe_command_acceptance_if_available(
+    struct gateway_command_event *queued)
+{
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || queued == NULL) {
+        return -EINVAL;
+    }
+    /* QUEUED is the coalesced externally visible proof of ACCEPTED custody. */
+    ret = gateway_observe_command_event_if_available(queued, false, NULL);
+    if (ret == 0) {
+        return 0;
+    }
+    if (ret != -EAGAIN) {
+        return ret;
+    }
+    ret = gateway_command_observability_prepare(
+        &gateway_command_observability_state, queued, false);
+    if (ret < 0) {
+        return ret;
+    }
+    gateway_command_observability_note_enqueue(
+        &gateway_command_observability_state, queued->event_seq, -EAGAIN);
+    return 0;
+#else
+    ARG_UNUSED(queued);
     return -EAGAIN;
 #endif
 }

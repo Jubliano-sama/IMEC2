@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(firmware_native C)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -20,15 +22,21 @@ add_library(core
     src/uwb_ble_courtesy.c
     src/uwb_session.c
     src/mesh.c
+    src/node_comm.c
+    src/node_transaction.c
+    src/watchdog_adoption.c
     src/mesh_preemption.c
     src/mesh_runtime.c
     src/mesh_relay.c
     src/report.c
     src/serial_frame.c
+    src/stack_diag_transport.c
     src/stack_budget.c
     src/status.c
     src/route.c
     src/survey.c
+    src/survey_gateway_transaction.c
+    src/survey_pair_lease.c
 )
 
 target_include_directories(core PUBLIC include)
@@ -47,6 +55,73 @@ add_test(NAME protocol COMMAND test_protocol)
 add_executable(test_discovery_assignment tests/test_discovery_assignment.c)
 target_link_libraries(test_discovery_assignment PRIVATE core)
 add_test(NAME discovery_assignment COMMAND test_discovery_assignment)
+
+add_executable(test_node_comm tests/test_node_comm.c)
+target_link_libraries(test_node_comm PRIVATE core)
+add_test(NAME node_comm COMMAND test_node_comm)
+set_tests_properties(node_comm
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication")
+
+add_executable(test_node_transaction tests/test_node_transaction.c)
+target_link_libraries(test_node_transaction PRIVATE core)
+add_test(NAME node_transaction COMMAND test_node_transaction)
+set_tests_properties(node_transaction
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication")
+
+add_executable(test_survey_pair_lease tests/test_survey_pair_lease.c)
+target_link_libraries(test_survey_pair_lease PRIVATE core)
+add_test(NAME survey_pair_lease COMMAND test_survey_pair_lease)
+set_tests_properties(survey_pair_lease
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey")
+
+add_executable(test_survey_gateway_transaction
+    tests/test_survey_gateway_transaction.c)
+target_link_libraries(test_survey_gateway_transaction PRIVATE core)
+add_test(NAME survey_gateway_transaction
+    COMMAND test_survey_gateway_transaction)
+set_tests_properties(survey_gateway_transaction
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication")
+
+add_executable(test_watchdog_adoption tests/test_watchdog_adoption.c)
+target_link_libraries(test_watchdog_adoption PRIVATE core)
+add_test(NAME watchdog_adoption COMMAND test_watchdog_adoption)
+set_tests_properties(watchdog_adoption
+    PROPERTIES LABELS "mesh_integration;hardware_models;watchdog")
+
+add_executable(test_stack_diag_transport tests/test_stack_diag_transport.c)
+target_link_libraries(test_stack_diag_transport PRIVATE core)
+add_test(NAME stack_diag_transport COMMAND test_stack_diag_transport)
+set_tests_properties(stack_diag_transport PROPERTIES
+    LABELS "mesh_integration;hardware_models;stack_evidence;communication")
+
+add_executable(test_app_node_comm_adapter
+    tests/test_app_node_comm_adapter.c
+    app/src/app_node_comm.c
+    app/src/app_node_comm_sync.c)
+target_include_directories(test_app_node_comm_adapter PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src)
+target_link_libraries(test_app_node_comm_adapter PRIVATE core Threads::Threads)
+add_test(NAME app_node_comm_adapter COMMAND test_app_node_comm_adapter)
+
+add_executable(test_app_node_comm_gateway_route_refresh
+    tests/test_app_node_comm_gateway_route_refresh.c
+    app/src/app_node_comm_sync.c
+    app/src/app_node_comm_gateway_route_refresh.c
+    app/src/app_mesh_flood.c
+)
+target_include_directories(test_app_node_comm_gateway_route_refresh PRIVATE
+    app/src
+    tests/mesh_integration/zephyr_shim
+)
+target_link_libraries(test_app_node_comm_gateway_route_refresh PRIVATE
+    core Threads::Threads)
+add_test(NAME app_node_comm_gateway_route_refresh
+    COMMAND test_app_node_comm_gateway_route_refresh)
+set_tests_properties(app_node_comm_gateway_route_refresh PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;route_refresh")
+set_tests_properties(app_node_comm_adapter
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication")
 
 add_executable(test_device_identity tests/test_device_identity.c)
 target_link_libraries(test_device_identity PRIVATE core)
@@ -140,15 +215,39 @@ add_test(NAME assignment_publisher_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_publisher_source_invariants.py)
 set_tests_properties(assignment_publisher_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;gateway_command;enumeration")
+add_test(NAME node_comm_source_boundary
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_source_boundary.py)
+set_tests_properties(node_comm_source_boundary
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication")
+add_test(NAME route_refresh_source_boundary
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_route_refresh_source_boundary.py)
+set_tests_properties(route_refresh_source_boundary
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;gateway_command;route;static_analysis")
+add_test(NAME node_comm_protocol_callers
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_protocol_callers.py)
+set_tests_properties(node_comm_protocol_callers
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;survey;enumeration")
 
 add_executable(test_app_stack_workload_diag
     tests/test_app_stack_workload_diag.c
     app/src/app_stack_workload_diag.c
 )
-target_compile_definitions(test_app_stack_workload_diag PRIVATE CONFIG_IMEC_STACK_DIAGNOSTICS=1)
-target_include_directories(test_app_stack_workload_diag PRIVATE app/src)
-target_link_libraries(test_app_stack_workload_diag PRIVATE core)
+target_compile_definitions(test_app_stack_workload_diag PRIVATE
+    CONFIG_IMEC_STACK_DIAGNOSTICS=1
+    CONFIG_IMEC_STACK_WORKLOAD_DIAG_TEST_HOOKS=1
+    _XOPEN_SOURCE=700
+)
+target_include_directories(test_app_stack_workload_diag PRIVATE
+    app/src
+    tests/mesh_integration/zephyr_shim
+)
+target_link_libraries(test_app_stack_workload_diag PRIVATE core Threads::Threads)
 add_test(NAME app_stack_workload_diag COMMAND test_app_stack_workload_diag)
+set_tests_properties(app_stack_workload_diag PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;stack_evidence")
 
 add_executable(test_app_stack_workload_diag_disabled
     tests/test_app_stack_workload_diag_disabled.c
@@ -157,6 +256,43 @@ add_executable(test_app_stack_workload_diag_disabled
 target_include_directories(test_app_stack_workload_diag_disabled PRIVATE app/src)
 target_link_libraries(test_app_stack_workload_diag_disabled PRIVATE core)
 add_test(NAME app_stack_workload_diag_disabled COMMAND test_app_stack_workload_diag_disabled)
+
+add_executable(test_app_stack_diag_record
+    tests/test_app_stack_diag_record.c
+    app/src/app_stack_diag_record.c
+)
+target_include_directories(test_app_stack_diag_record PRIVATE app/src)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_app_stack_diag_record PRIVATE
+        -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME app_stack_diag_record COMMAND test_app_stack_diag_record)
+add_executable(test_app_stack_diag_commit
+    tests/test_app_stack_diag_commit.c
+    app/src/app_stack_diag_record.c
+)
+target_include_directories(test_app_stack_diag_commit PRIVATE
+    app/src
+    tests/mesh_integration/zephyr_shim
+)
+target_link_libraries(test_app_stack_diag_commit PRIVATE Threads::Threads)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_app_stack_diag_commit PRIVATE
+        -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME app_stack_diag_commit COMMAND test_app_stack_diag_commit)
+set_tests_properties(app_stack_diag_commit PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;stack_evidence")
+add_test(NAME stack_diag_emission_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_stack_diag_emission_invariants.py)
+set_tests_properties(stack_diag_emission_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;deployment")
+add_test(NAME gateway_observability_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_observability_source_invariants.py)
+set_tests_properties(gateway_observability_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;ble;survey;static_analysis")
 
 add_executable(test_app_mesh_smoke_fast
     tests/test_app_mesh_smoke_fast.c
@@ -370,6 +506,12 @@ add_test(NAME survey_delivery_source_invariants
 set_tests_properties(survey_delivery_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence")
 
+add_test(NAME dwm3000_receive_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_dwm3000_receive_source_invariants.py)
+set_tests_properties(dwm3000_receive_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;timing;watchdog")
+
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)
@@ -440,6 +582,11 @@ add_test(NAME capture_stack_evidence
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_capture_stack_evidence.py)
 set_tests_properties(capture_stack_evidence PROPERTIES LABELS "hardware_models")
+
+add_test(NAME provision_mesh_anchor
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_provision_mesh_anchor.py)
+set_tests_properties(provision_mesh_anchor PROPERTIES LABELS "hardware_models")
 
 add_test(NAME mesh_deployment_policy
     COMMAND ${Python3_EXECUTABLE}
@@ -676,6 +823,7 @@ add_executable(test_mesh_app_arbitration_scenarios
 add_executable(test_gateway_command_observability_scenarios
     tests/mesh_integration/test_gateway_command_observability_scenarios.c
     app/src/app_gateway_command_observability.c
+    app/src/app_gateway_survey_observability.c
 )
 target_include_directories(test_gateway_command_observability_scenarios PRIVATE app/src)
 target_link_libraries(test_gateway_command_observability_scenarios PRIVATE core)
@@ -701,6 +849,21 @@ add_test(NAME mesh_watchdog_lease_scenarios
     COMMAND test_mesh_watchdog_lease_scenarios)
 set_tests_properties(mesh_watchdog_lease_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;watchdog")
+
+add_executable(test_watchdog_adoption_scenarios
+    tests/mesh_integration/test_watchdog_adoption_scenarios.c
+)
+target_link_libraries(test_watchdog_adoption_scenarios PRIVATE core)
+add_test(NAME watchdog_adoption_scenarios
+    COMMAND test_watchdog_adoption_scenarios)
+set_tests_properties(watchdog_adoption_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;watchdog;boot")
+
+add_test(NAME watchdog_adoption_source
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_watchdog_adoption_source.py)
+set_tests_properties(watchdog_adoption_source
+    PROPERTIES LABELS "mesh_integration;hardware_models;watchdog;static_analysis")
 
 add_executable(test_mesh_sim_trace_scheduler
     tests/mesh_integration/test_mesh_sim_trace_scheduler.c

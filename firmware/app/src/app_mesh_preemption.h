@@ -58,9 +58,25 @@ struct app_mesh_click_preempt_result {
     int cancel_active_tx_ret;
 };
 
+struct app_mesh_queue_remove_ops {
+    uint32_t (*count)(void *ctx);
+    int (*get)(struct mesh_outbound *outbound, void *ctx);
+    int (*put)(const struct mesh_outbound *outbound, void *ctx);
+    int (*recover)(const struct mesh_outbound *outbound, void *ctx);
+    bool (*matches)(const struct mesh_outbound *candidate,
+                    const struct mesh_outbound *target,
+                    void *ctx);
+    void *ctx;
+};
+
 int app_mesh_apply_click_preempt_plan(
     const struct mesh_click_preempt_plan *plan,
     const struct app_mesh_click_preempt_ops *ops,
     struct app_mesh_click_preempt_result *result);
+int app_mesh_queue_remove_first(
+    const struct app_mesh_queue_remove_ops *ops,
+    const struct mesh_outbound *target,
+    struct mesh_outbound *scratch,
+    bool *removed_out);
 
 #endif

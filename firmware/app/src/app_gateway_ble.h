@@ -46,6 +46,8 @@ int gateway_observe_command_event_if_available(
     struct gateway_command_event *event,
     bool terminal,
     void *ctx);
+int gateway_observe_command_acceptance_if_available(
+    struct gateway_command_event *queued);
 uint16_t gateway_next_command_seq(void);
 void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_id command_id,
@@ -53,6 +55,9 @@ void gateway_emit_host_command_result(const struct proto_packet *command,
                                       uint8_t reason);
 int gateway_begin_command_result_wait(const struct proto_packet *command,
                                       enum command_id command_id);
+int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+                                          enum command_id command_id,
+                                          uint32_t timeout_ms);
 void gateway_clear_pending_command_result(const struct proto_packet *command);
 int gateway_begin_command_collection(const struct gateway_command_options *options);
 void gateway_clear_command_collection(const struct gateway_command_options *options);

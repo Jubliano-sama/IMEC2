@@ -66,6 +66,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "CONFIG_INIT_STACKS": policy.init_stacks,
             "CONFIG_HW_STACK_PROTECTION": policy.hw_stack_protection,
             "CONFIG_MPU_STACK_GUARD": policy.mpu_stack_guard,
+            "CONFIG_ARM_MPU_REGION_MIN_ALIGN_AND_SIZE": 32,
+            "CONFIG_STACK_ALIGN_DOUBLE_WORD": True,
             "CONFIG_THREAD_STACK_INFO": policy.thread_stack_info,
             "CONFIG_STACK_SENTINEL": policy.stack_sentinel,
             "CONFIG_LOG_PROCESS_THREAD": bool(policy.log_processor_bytes),
@@ -78,6 +80,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             config.update({
                 "CONFIG_BT_HCI_TX_STACK_SIZE": policy.bt_hci_tx_bytes,
                 "CONFIG_BT_RX_STACK_SIZE": policy.bt_rx_bytes,
+                "CONFIG_BT_RECV_WORKQ_BT": True,
                 "CONFIG_BT_LONG_WQ": True,
                 "CONFIG_BT_LONG_WQ_STACK_SIZE": 1300,
                 "CONFIG_MPSL": True,
@@ -127,15 +130,32 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         src, dst, session, seq, msg_type = identity
         lines = [f"DBG_STACK_SAMPLE_BEGIN epoch=1 run={run} sample={sample} kind={kind} owner={owner} queue=2 custody=1 credit=1 retry=0 drain=2 src={src} dst={dst} session={session} seq={seq} type={msg_type} uptime={sample * 10}", f"DBG_STACK_ISR_CONFIG size={policy.isr_bytes} run={run} sample={sample}"]
         for name, size in required.items():
-            service = name in {"logging", "BT HCI TX", "BT RX", "BT LW WQ", "MPSL Work", "idle"}
+            service = name in {"logging", "BT RX", "BT RX WQ", "BT LW WQ", "MPSL Work", "idle"}
             free = verifier._required_free(size, service) + 8
             lines.append(f"DBG_STACK name={name} tid=0x1 used={size - free} free={free} size={size} ret=0 run={run} sample={sample}")
         lines.append(f"DBG_STACK_SAMPLE_END run={run} sample={sample}")
         return "\n".join(lines)
 
     def _typed_log(self, policy: object, build: object, workloads: list[str] | None = None) -> Path:
-        required = workloads or ["click_spam", "click_spam", "cir_handling", "relay_retry", "ble_backpressure"]
-        owners = {"click_spam": "clicker_action", "cir_handling": "anchor_uwb_scan", "relay_retry": "mesh_route", "ble_backpressure": "shared_min"}
+        workload_policy = verifier.load_workload_policy(POLICY_PATH)
+        if workloads is None:
+            required = [
+                requirement.kind
+                for requirement in workload_policy[policy.preset]
+                for _ in range(requirement.minimum_successes)
+            ]
+        else:
+            required = workloads
+        owners = {
+            "click_spam": "clicker_action",
+            "cir_handling": "anchor_uwb_scan",
+            "relay_retry": "mesh_route",
+            "ble_backpressure": "system_workqueue",
+            "click_activity": "clicker_action",
+            "anchor_survey_report": "anchor_uwb_scan",
+            "gateway_report_ingress": "system_workqueue",
+            "gateway_priority_control": "system_workqueue",
+        }
         lines = [f"DBG_STACK_BOOT preset={policy.preset} build={build.build_identity} epoch=1 uptime=1"]
         entries = []
         previous_click = 0
@@ -176,7 +196,10 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                 "tool": verifier.CAPTURE_TOOL_RELATIVE,
                 "tool_sha256": hashlib.sha256(verifier.CAPTURE_TOOL.read_bytes()).hexdigest(),
                 "workflow": verifier.CAPTURE_WORKFLOW,
-                "rtt_command": ["pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset", "-u", "TEST-PROBE"],
+                "rtt_command": [
+                    "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+                    "-u", "TEST-PROBE", "--up-channel-id", "0",
+                ],
                 "tty_wrapper": "script",
                 "started_at_utc": started.isoformat().replace("+00:00", "Z"),
                 "ended_at_utc": ended.isoformat().replace("+00:00", "Z"),
@@ -197,8 +220,46 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
     def test_policy_covers_exact_deployable_presets_and_static_builds(self) -> None:
         self.assertEqual(verifier.DEPLOYABLE_PRESETS, {key for key, value in self.policies.items() if value.deployable})
+        workload_policy = verifier.load_workload_policy(POLICY_PATH)
+        self.assertEqual(verifier.DEPLOYABLE_PRESETS, set(workload_policy))
+        self.assertEqual(
+            ["click_activity"],
+            [item.kind for item in workload_policy["mesh_clicker"]],
+        )
+        self.assertEqual(
+            ["anchor_survey_report"],
+            [item.kind for item in workload_policy["mesh_anchor"]],
+        )
+        self.assertEqual(
+            ["gateway_report_ingress", "gateway_priority_control", "ble_backpressure"],
+            [item.kind for item in workload_policy["mesh_gateway"]],
+        )
         builds = [verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit) for policy in self.policies.values()]
         self.assertEqual([], [(build.preset, build.issues) for build in builds if build.issues])
+
+    def test_workload_policy_parser_fails_closed(self) -> None:
+        text = POLICY_PATH.read_text(encoding="utf-8")
+        missing_gateway = self.root / "missing-gateway.h"
+        missing_gateway.write_text(
+            "\n".join(
+                line for line in text.splitlines()
+                if 'X("mesh_gateway"' not in line
+            ) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(verifier.EvidenceError,
+                                    "workload policy misses mesh_gateway"):
+            verifier.load_workload_policy(missing_gateway)
+
+        unknown_owner = self.root / "unknown-owner.h"
+        unknown_owner.write_text(
+            text.replace('"clicker_action", 1u, false',
+                         '"invented_thread", 1u, false', 1),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(verifier.EvidenceError,
+                                    "unknown owner invented_thread"):
+            verifier.load_workload_policy(unknown_owner)
 
     def test_missing_usage_and_inadequate_ram_fail(self) -> None:
         policy = self.policies["mesh_anchor"]
@@ -238,6 +299,47 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         missing_graph = verifier.verify_build(self._write_build(policy, include_cgraph=False), self.policies, self.frame_limit)
         self.assertTrue(any("missing compiler call graph" in issue for issue in missing_graph.issues), missing_graph.issues)
 
+    def test_gcc_clone_suffixes_are_canonicalized_without_overmatching(self) -> None:
+        cases = {
+            "worker.constprop": "worker",
+            "worker.constprop.7": "worker",
+            "worker.isra": "worker",
+            "worker.isra.2": "worker",
+            "worker.part": "worker",
+            "worker.part.0": "worker",
+            "worker.part.0.constprop.isra": "worker",
+            "worker.constpropagation": "worker.constpropagation",
+            "worker.israel": "worker.israel",
+            "worker.partition": "worker.partition",
+            "worker.constprop.extra": "worker.constprop.extra",
+            "worker.part.0.extra": "worker.part.0.extra",
+        }
+
+        for function, expected in cases.items():
+            with self.subTest(function=function):
+                self.assertEqual(expected, verifier._canonical_function(function))
+
+    def test_bare_clone_suffix_stack_usage_is_linked_and_attributed(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        function = "anchor_uwb_scan_work_handler"
+        build = self._write_build(
+            policy, source_name="app_anchor.c", function=function
+        )
+        usage = build / "CMakeFiles" / "app.dir" / "src" / "app_anchor.c.su"
+        source = self.root / "app_anchor.c"
+        usage.write_text(
+            f"{source}:1:1:{function}.constprop\t64\tstatic\n",
+            encoding="utf-8",
+        )
+
+        evidence = verifier.verify_build(
+            build, self.policies, self.frame_limit
+        )
+
+        self.assertEqual([], evidence.issues)
+        self.assertEqual(1, evidence.linked_usage_count)
+        self.assertEqual(1, evidence.attributed_usage_count)
+
     def test_anchor_capture_requires_survey_owner_queue_with_exact_stack(self) -> None:
         policy = self.policies["mesh_anchor"]
         build = verifier.BuildEvidence(self.root, preset="mesh_anchor")
@@ -258,6 +360,37 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         issues = verifier._check_sample_rows(rows, policy, build)
         self.assertTrue(any("anchor_uwb_scan differs" in issue for issue in issues),
                         issues)
+
+    def test_gateway_runtime_model_uses_only_live_exact_workqueues(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        self.assertEqual([], build.issues)
+        required = verifier._required_threads(build, policy)
+
+        self.assertNotIn("main", required)
+        self.assertNotIn("BT HCI TX", required)
+        self.assertNotIn("BT RX", required)
+        self.assertEqual(1088, required["BT RX WQ"])
+        self.assertEqual(1344, required["BT LW WQ"])
+
+        rows = {
+            name: (size - verifier._required_free(size, name in {
+                "logging", "BT RX WQ", "BT LW WQ", "MPSL Work", "idle",
+            }), verifier._required_free(size, name in {
+                "logging", "BT RX WQ", "BT LW WQ", "MPSL Work", "idle",
+            }), size)
+            for name, size in required.items()
+        }
+        rows["BT RX WQ"] = (828, 260, 1088)
+        self.assertEqual([], verifier._check_sample_rows(rows, policy, build))
+        rows["BT RX WQ"] = (828, 196, 1024)
+        issues = verifier._check_sample_rows(rows, policy, build)
+        self.assertTrue(any("BT RX WQ differs" in issue for issue in issues),
+                        issues)
+        self.assertTrue(any("free space below policy for BT RX WQ" in issue
+                            for issue in issues), issues)
 
     def test_ambiguous_root_reachability_is_charged_to_every_root(self) -> None:
         policy = self.policies["mesh_clicker"]
@@ -483,6 +616,142 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertEqual([], issues)
         self.assertEqual([], captures[0].issues)
 
+        log = self.root / json.loads(manifest.read_text(encoding="utf-8"))["transcript"]["path"]
+        self.assertGreater(max(map(len, log.read_text(encoding="utf-8").splitlines())), 128)
+
+    def test_capture_provenance_requires_explicit_typed_rtt_channel(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        manifest = self._manifest(policy, build)
+        self._replace_manifest(
+            manifest,
+            lambda data: data["provenance"]["rtt_command"].__delitem__(
+                slice(-2, None)
+            ),
+            bind=True,
+        )
+        captures, _ = verifier.verify_hardware(
+            [manifest], [build], self.policies, True, {policy.preset}
+        )
+        self.assertTrue(
+            any("required pyOCD RTT" in issue for issue in captures[0].issues),
+            captures[0].issues,
+        )
+
+    def test_rejects_concatenated_and_log_interleaved_typed_records(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        valid = self._typed_log(policy, build).read_text(encoding="utf-8")
+        concatenated = valid.replace(
+            " uptime=1\n", " uptime=1DBG_LED_SELFTEST\n", 1
+        )
+        _, issues = verifier.parse_typed_transcript(concatenated, policy, build)
+        self.assertTrue(any("invalid uptime" in issue for issue in issues), issues)
+
+        interleaved = valid.replace(
+            "DBG_STACK_SAMPLE_BEGIN ",
+            "<dbg> unrelated logger prefix DBG_STACK_SAMPLE_BEGIN ",
+            1,
+        )
+        _, issues = verifier.parse_typed_transcript(interleaved, policy, build)
+        self.assertTrue(
+            any("outside its typed sample" in issue or "missing completed" in issue
+                for issue in issues),
+            issues,
+        )
+
+    def test_rejects_every_missing_sample_commit_record(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        valid_lines = self._typed_log(policy, build).read_text(
+            encoding="utf-8"
+        ).splitlines()
+        sample_begin = next(
+            index for index, line in enumerate(valid_lines)
+            if line.startswith("DBG_STACK_SAMPLE_BEGIN ")
+        )
+        sample_end = next(
+            index for index in range(sample_begin, len(valid_lines))
+            if valid_lines[index].startswith("DBG_STACK_SAMPLE_END ")
+        )
+
+        for missing in range(sample_begin, sample_end + 1):
+            with self.subTest(missing_record=valid_lines[missing].split(" ", 1)[0]):
+                damaged = "\n".join(
+                    valid_lines[:missing] + valid_lines[missing + 1:]
+                ) + "\n"
+                _, issues = verifier.parse_typed_transcript(
+                    damaged, policy, build
+                )
+                self.assertTrue(issues)
+
+    def test_every_deployable_preset_accepts_its_real_role_workloads(self) -> None:
+        for preset in sorted(verifier.DEPLOYABLE_PRESETS):
+            with self.subTest(preset=preset):
+                policy = self.policies[preset]
+                build = verifier.verify_build(
+                    self._write_build(policy), self.policies, self.frame_limit
+                )
+                log = self._typed_log(policy, build)
+                sample_count, issues = verifier.parse_typed_transcript(
+                    log.read_text(encoding="utf-8"), policy, build
+                )
+                expected = sum(
+                    item.minimum_successes
+                    for item in verifier.load_workload_policy(POLICY_PATH)[preset]
+                )
+                self.assertEqual(expected, sample_count)
+                self.assertEqual([], issues)
+
+    def test_preset_workload_cannot_be_satisfied_by_wrong_owner_or_role(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        log = self._typed_log(policy, build)
+        forged = log.read_text(encoding="utf-8").replace(
+            "kind=gateway_report_ingress owner=system_workqueue",
+            "kind=gateway_report_ingress owner=bt_rx",
+        )
+        _, issues = verifier.parse_typed_transcript(forged, policy, build)
+        self.assertTrue(any("owner differs" in issue for issue in issues), issues)
+
+        other_role = self._typed_log(policy, build, ["anchor_survey_report"])
+        _, issues = verifier.parse_typed_transcript(
+            other_role.read_text(encoding="utf-8"), policy, build
+        )
+        self.assertTrue(any("gateway_report_ingress" in issue for issue in issues),
+                        issues)
+
+    def test_required_workloads_have_genuine_role_call_sites(self) -> None:
+        clicker = (REPO_ROOT / "firmware" / "app" / "src" /
+                   "app_clicker.c").read_text(encoding="utf-8")
+        anchor = (REPO_ROOT / "firmware" / "app" / "src" /
+                  "app_anchor_survey_discovery.c").read_text(encoding="utf-8")
+        gateway = (REPO_ROOT / "firmware" / "app" / "src" /
+                   "app_anchor.c").read_text(encoding="utf-8")
+        ble = (REPO_ROOT / "firmware" / "app" / "src" /
+               "app_gateway_ble.c").read_text(encoding="utf-8")
+
+        self.assertIn("dwm3000_driver_range_initiator", clicker)
+        self.assertIn("app_stack_workload_diag_click_activity_sample", clicker)
+        self.assertIn("app_mesh_local_delivery_stage", anchor)
+        self.assertIn("app_stack_workload_diag_anchor_survey_admit", anchor)
+        self.assertIn("app_stack_workload_diag_anchor_survey_sample", anchor)
+        self.assertIn("app_stack_workload_diag_anchor_survey_release", anchor)
+        self.assertIn("survey_gateway_note_reach_report_with_reverse_hint", gateway)
+        self.assertIn("app_stack_workload_diag_gateway_report_cycle", gateway)
+        self.assertIn("app_node_comm_send_control_flood", gateway)
+        self.assertIn("app_stack_workload_diag_gateway_control_sample", gateway)
+        self.assertIn("app_stack_workload_diag_ble_admit_with_pressure", ble)
+        self.assertIn("app_stack_workload_diag_ble_terminal_with_pressure", ble)
+
     def test_rejects_self_attestation_marker_fabrication_missing_samples_and_replay(self) -> None:
         policy = self.policies["mesh_clicker"]
         build = verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit)
@@ -495,10 +764,10 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         manifest = self._manifest(policy, build, marker_log)
         captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
         self.assertTrue(any("target-reported" in issue or "missing completed" in issue for issue in captures[0].issues))
-        missing_log = self._typed_log(policy, build, ["click_spam", "click_spam", "cir_handling", "relay_retry"])
+        missing_log = self._typed_log(policy, build, ["relay_retry"])
         manifest = self._manifest(policy, build, missing_log)
         captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
-        self.assertTrue(any("ble_backpressure" in issue for issue in captures[0].issues))
+        self.assertTrue(any("click_activity" in issue for issue in captures[0].issues))
         valid = self._manifest(policy, build)
         data = json.loads(valid.read_text(encoding="utf-8"))
         captures, _ = verifier.verify_hardware([valid], [build], self.policies, True, {policy.preset}, {data["capture_id"]})
@@ -507,7 +776,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
     def test_rejects_forged_retained_click_identity_and_run_reuse(self) -> None:
         policy = self.policies["mesh_clicker"]
         build = verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit)
-        log = self._typed_log(policy, build)
+        log = self._typed_log(policy, build,
+                              ["click_spam", "click_spam", "click_activity"])
         forged = log.read_text(encoding="utf-8").replace(
             "DBG_STACK_RUN_BEGIN epoch=1 run=2 kind=click_spam owner=clicker_action queue=2 custody=1 credit=1 retry=0 drain=2 src=102 dst=200 session=302 seq=402 type=34 sequence=2 previous=1",
             "DBG_STACK_RUN_BEGIN epoch=1 run=2 kind=click_spam owner=clicker_action queue=2 custody=1 credit=1 retry=0 drain=2 src=101 dst=200 session=301 seq=401 type=33 sequence=2 previous=1",
@@ -516,7 +786,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         _, issues = verifier.parse_typed_transcript(log.read_text(encoding="utf-8"), policy, build)
         self.assertTrue(any("identity" in issue for issue in issues), issues)
 
-        log = self._typed_log(policy, build)
+        log = self._typed_log(policy, build,
+                              ["click_spam", "click_spam", "click_activity"])
         reused = log.read_text(encoding="utf-8").replace(
             "DBG_STACK_RUN_BEGIN epoch=1 run=2", "DBG_STACK_RUN_BEGIN epoch=1 run=1", 1)
         log.write_text(reused, encoding="utf-8")

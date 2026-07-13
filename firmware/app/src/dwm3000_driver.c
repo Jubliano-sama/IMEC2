@@ -481,6 +481,7 @@ static bool radio_awake;
 static bool radio_restored_from_sleep;
 static enum dwm3000_phy_mode active_phy_mode;
 static struct dwm3000_rx_debug_snapshot last_rx_debug;
+static uint32_t last_rx_finfo_register;
 static struct dwm3000_driver_stats driver_stats;
 
 static void clear_all_events(void);
@@ -1719,7 +1720,11 @@ static void read_rx_diagnostics(int8_t *rsl_dbm,
 
 static uint16_t read_rx_frame(uint8_t *buffer, size_t buffer_len)
 {
-    uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_BIT_MASK;
+    uint32_t rx_finfo = dwt_read32bitreg(RX_FINFO_ID);
+    uint32_t frame_len;
+
+    last_rx_finfo_register = rx_finfo;
+    frame_len = rx_finfo & RX_FINFO_RXFLEN_BIT_MASK;
 
     if (take_port_error("read-rx-frame-length") < 0) {
         return 0u;
@@ -3292,6 +3297,7 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
     if (allow_receive_abort) {
         atomic_set(&receive_abort_enabled, 1);
     }
+    last_rx_finfo_register = 0u;
     ret = receive_frame(timeout_ms,
                         &status,
                         rx_buffer,
@@ -3313,7 +3319,9 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
 
         last_rx_debug = (struct dwm3000_rx_debug_snapshot) {
             .status = status,
-            .rx_finfo = dwt_read32bitreg(RX_FINFO_ID),
+            /* Successful frame extraction already read RX_FINFO. Do not add
+             * an unbounded diagnostic SPI transaction after timeout/error. */
+            .rx_finfo = ret == 0 ? last_rx_finfo_register : 0u,
             .sfd_timeout = effective_sfd_timeout(config),
             .phy_mode = (uint8_t)active_phy_mode,
             .channel = config->chan,

@@ -21,9 +21,30 @@ extern "C" {
  */
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
 #define SURVEY_DEFAULT_TTL 4u
+#define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
+#define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS 30000u
+#define SURVEY_PAIR_PREPARED_LEASE_MS 240000u
+#if SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS > 2147483647u
+#error "Survey pair control timeout must fit wrap-safe signed time arithmetic"
+#endif
+#if SURVEY_PAIR_PREPARED_LEASE_MS > 2147483647u
+#error "Survey pair prepared lease must fit wrap-safe signed time arithmetic"
+#endif
+#if SURVEY_PAIR_PREPARED_LEASE_MS <                                      \
+    ((2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS) +                     \
+     SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS)
+#error "Survey pair prepared lease cannot cover bounded prepare/start control"
+#endif
 #define SURVEY_REACHABILITY_ENTRY_LEN 10u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
-#define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 8u
+#define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 12u
+#define SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN                              \
+    (PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +           \
+     SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *                              \
+         (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN))
+#if SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN > PACKET_MAX_PAYLOAD_LEN
+#error "Maximum survey reachability report exceeds the standard packet payload"
+#endif
 #define SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR 6u
 #define SURVEY_GATEWAY_MAX_PAIRS \
     ((SURVEY_GATEWAY_MAX_REPORTS * SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) / 2u)
@@ -46,7 +67,11 @@ struct survey_reachability_entry {
     uint64_t peer_id;
     int8_t rssi_dbm;
     uint8_t quality;
-};
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct survey_reachability_entry) ==
+                   SURVEY_REACHABILITY_ENTRY_LEN,
+               "survey reachability storage must not carry alignment padding");
 
 struct survey_pair {
     uint64_t initiator_id;
@@ -130,11 +155,19 @@ struct survey_gateway_report_slot {
     bool valid;
 };
 
+struct survey_gateway_pair_entry {
+    uint64_t initiator_id;
+    uint64_t responder_id;
+};
+
+_Static_assert(sizeof(struct survey_gateway_pair_entry) == 16u,
+               "gateway survey pair storage must contain endpoints only");
+
 struct survey_gateway_context {
     uint32_t survey_id;
     uint16_t sample_count;
     struct survey_gateway_report_slot reports[SURVEY_GATEWAY_MAX_REPORTS];
-    struct survey_pair pairs[SURVEY_GATEWAY_MAX_PAIRS];
+    struct survey_gateway_pair_entry pairs[SURVEY_GATEWAY_MAX_PAIRS];
     size_t report_count;
     size_t pair_count;
     size_t next_pair_index;
@@ -234,6 +267,9 @@ int survey_gateway_reverse_hint_for_target(
     uint64_t target_id,
     struct survey_gateway_reverse_hint *reverse_hint);
 int survey_gateway_plan_pairs(struct survey_gateway_context *context);
+int survey_gateway_pair_at(const struct survey_gateway_context *context,
+                           size_t pair_index,
+                           struct survey_pair *pair);
 int survey_gateway_next_pair(struct survey_gateway_context *context,
                              struct survey_pair *pair);
 int survey_gateway_auto_begin(struct survey_gateway_auto_context *context);
@@ -282,6 +318,11 @@ int survey_extract_ml_anchor_pair_request_tlvs(
 int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair);
+/*
+ * Builds one connected, degree-bounded graph before adding preferred extra
+ * pairs. Returns PROTO_ERR_NOT_FOUND when the reported reachability graph
+ * cannot be connected without exceeding the per-anchor degree ceiling.
+ */
 int survey_plan_pairs_from_reachability(uint32_t survey_id,
                                         const struct survey_reachability_report *reports,
                                         size_t report_count,

@@ -161,9 +161,14 @@ static uint8_t retry_queue_used(void *ctx)
 static void test_unacked_retry_retains_ownership_until_queue_admits(void)
 {
     struct retry_queue_fixture queue = {.used = 1u};
+    struct mesh_outbound outbound[2] = {
+        gateway_bound_outbound(TRANSMITTER_ID),
+        gateway_bound_outbound(TRANSMITTER_ID),
+    };
+    bool acked[2] = {false, false};
     struct app_mesh_ch9_tx_retry_entry entries[2] = {
-        {.outbound = gateway_bound_outbound(TRANSMITTER_ID)},
-        {.outbound = gateway_bound_outbound(TRANSMITTER_ID)},
+        {.outbound = &outbound[0], .acked = &acked[0]},
+        {.outbound = &outbound[1], .acked = &acked[1]},
     };
     const struct app_mesh_ch9_tx_retry_ops ops = {
         .put = retry_queue_put,
@@ -173,7 +178,7 @@ static void test_unacked_retry_retains_ownership_until_queue_admits(void)
     };
     struct app_mesh_ch9_tx_retry_result result;
 
-    entries[1].outbound.packet.seq++;
+    outbound[1].packet.seq++;
     assert(app_mesh_ch9_tx_requeue_unacked(entries,
                                            2u,
                                            100u,
@@ -182,7 +187,7 @@ static void test_unacked_retry_retains_ownership_until_queue_admits(void)
     assert(result.requeued == 0u);
     assert(result.retained == 2u);
     assert(result.dropped == 0u);
-    assert(!entries[0].acked && !entries[1].acked);
+    assert(!acked[0] && !acked[1]);
 
     queue.used = 0u;
     assert(app_mesh_ch9_tx_requeue_unacked(entries,
@@ -192,7 +197,7 @@ static void test_unacked_retry_retains_ownership_until_queue_admits(void)
                                            &result) == PROTO_OK);
     assert(result.requeued == 1u);
     assert(result.retained == 1u);
-    assert(entries[0].acked && !entries[1].acked);
+    assert(acked[0] && !acked[1]);
     assert(queue.item.packet.seq == SENT_SEQ_TEST);
 
     queue.used = 0u;
@@ -204,7 +209,7 @@ static void test_unacked_retry_retains_ownership_until_queue_admits(void)
                                            &result) == PROTO_OK);
     assert(result.requeued == 1u);
     assert(result.retained == 0u);
-    assert(entries[0].acked && entries[1].acked);
+    assert(acked[0] && acked[1]);
     assert(queue.item.packet.seq == SENT_SEQ_TEST + 1u);
 }
 

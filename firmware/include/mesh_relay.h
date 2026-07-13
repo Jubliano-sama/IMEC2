@@ -43,6 +43,11 @@ extern "C" {
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS 4200u
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
+#define MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN \
+    (PROTO_TLV_U64_ENCODED_LEN + \
+     (5u * PROTO_TLV_U32_ENCODED_LEN) + \
+     (5u * PROTO_TLV_U16_ENCODED_LEN) + \
+     (4u * PROTO_TLV_U8_ENCODED_LEN))
 #define C5_POLITE_SNIFF_MS 20u
 #define C5_POLITE_BACKOFF_MIN_MS 20u
 #define C5_POLITE_BACKOFF_MAX_MS 1600u
@@ -241,6 +246,16 @@ struct mesh_outbound {
     uint8_t flood_retry_count;
 };
 
+struct mesh_gateway_route_adv_snapshot {
+    uint32_t gateway_route_seq;
+    uint32_t queued_at_ms;
+    uint16_t gateway_epoch;
+    uint16_t packet_seq;
+    uint16_t capacity_validity_interval_ms;
+    uint8_t gateway_capacity_state;
+    bool valid;
+};
+
 struct mesh_downlink_entry {
     uint64_t target_id;
     uint64_t next_hop_id;
@@ -434,6 +449,19 @@ int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
                                                  uint64_t next_hop_id,
                                                  uint8_t quality,
                                                  uint32_t now_ms);
+/*
+ * An accepted gateway-originated channel-5 control frame proves a fresh
+ * reverse first hop for the immediate response. origin_ttl is the TTL used by
+ * the gateway before any relay forwarded the frame; the stored upstream hop
+ * count is derived from the received packet TTL.
+ */
+int mesh_relay_note_gateway_control_reverse_route(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    uint64_t previous_hop_id,
+    uint8_t link_quality,
+    uint8_t origin_ttl,
+    uint32_t now_ms);
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
@@ -500,6 +528,15 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
                                        uint32_t gateway_route_seq,
                                        uint32_t now_ms,
                                        struct mesh_outbound *out);
+int mesh_relay_capture_gateway_route_adv_snapshot(
+    struct mesh_relay *relay,
+    uint32_t gateway_route_seq,
+    uint32_t now_ms,
+    struct mesh_gateway_route_adv_snapshot *snapshot);
+int mesh_relay_build_gateway_route_adv_from_snapshot(
+    const struct mesh_relay *relay,
+    const struct mesh_gateway_route_adv_snapshot *snapshot,
+    struct mesh_outbound *out);
 int mesh_relay_prepare_route_request(struct mesh_relay *relay,
                                      uint64_t target_id,
                                      uint32_t now_ms,

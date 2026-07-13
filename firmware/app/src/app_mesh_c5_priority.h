@@ -24,6 +24,7 @@ struct app_mesh_c5_route_capture_state {
     uint64_t previous_hop_id;
     uint64_t target_id;
     uint64_t local_id;
+    uint64_t control_origin_id;
     uint32_t expected_session_id;
     uint32_t expected_flood_epoch_id;
     uint16_t expected_reply_nonce;
@@ -76,6 +77,9 @@ bool app_mesh_c5_route_capture_requires_inline_timing_install(
     uint8_t msg_type,
     bool timing_negotiation_active);
 bool app_mesh_c5_route_capture_requires_post_rx_response(uint8_t msg_type);
+bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
+                                            uint16_t command_id,
+                                            uint8_t *origin_ttl);
 bool app_mesh_c5_event_accept_reservation(
     const struct mesh_event_timing *accepted,
     uint16_t realign_slop_ms,

@@ -26,6 +26,7 @@ uint32_t anchor_uwb_scan_interval_ms = ANCHOR_UWB_SCAN_INTERVAL_MS;
 uint16_t mesh_event_control_seq;
 static const char *uwb_rf_owner_reason;
 static uint32_t uwb_rf_owner_since_ms;
+static bool uwb_rf_admission_paused;
 static struct k_spinlock anchor_discovery_assignment_lock;
 static struct app_discovery_assignment_policy anchor_discovery_assignment_policy;
 static uint8_t anchor_discovery_assignment_slot;
@@ -169,6 +170,10 @@ int radio_guard_uwb_start(const char *reason)
     uint32_t now_ms = k_uptime_get_32();
 
     key = k_spin_lock(&uwb_rf_lock);
+    if (uwb_rf_admission_paused) {
+        k_spin_unlock(&uwb_rf_lock, key);
+        return -ESHUTDOWN;
+    }
     already_active = uwb_rf_active;
     if (!already_active) {
         uwb_rf_active = true;
@@ -216,6 +221,33 @@ bool radio_guard_uwb_busy(void)
     busy = uwb_rf_active;
     k_spin_unlock(&uwb_rf_lock, key);
     return busy;
+}
+
+void radio_guard_uwb_admission_pause(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&uwb_rf_lock);
+
+    uwb_rf_admission_paused = true;
+    k_spin_unlock(&uwb_rf_lock, key);
+}
+
+void radio_guard_uwb_admission_resume(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&uwb_rf_lock);
+
+    uwb_rf_admission_paused = false;
+    k_spin_unlock(&uwb_rf_lock, key);
+}
+
+bool radio_guard_uwb_admission_paused(void)
+{
+    k_spinlock_key_t key;
+    bool paused;
+
+    key = k_spin_lock(&uwb_rf_lock);
+    paused = uwb_rf_admission_paused;
+    k_spin_unlock(&uwb_rf_lock, key);
+    return paused;
 }
 
 bool anchor_uwb_window_active(void)

@@ -341,6 +341,11 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
+# The hardware facade freezes at most two concurrent control deliveries. Keep
+# the pure/native scheduler's wider stress-test capacity without paying for
+# twelve unreachable request slots in every constrained firmware image.
+target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=2)
+
 if(FIRMWARE_ROLE STREQUAL "clicker")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=1)
 elseif(FIRMWARE_ROLE STREQUAL "anchor")
@@ -359,6 +364,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_ble_stream.c
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
+    src/app_gateway_survey_observability.c
     src/app_gateway_collection_eack.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
@@ -370,6 +376,9 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_coordinator_runtime.c
     src/app_mesh_command_orchestrator.c
     src/app_mesh_arbitration_zephyr.c
+    src/app_node_comm_gateway_control.c
+    src/app_node_comm_sync.c
+    src/app_node_comm_gateway_route_refresh.c
     src/app_gateway_command_ingress.c
     src/app_gateway_command_lifecycle.c
     src/app_mesh_gateway_command_flow.c
@@ -391,13 +400,22 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_gateway_ack_policy.c
     src/app_mesh_result_handoff.c
     src/app_wake_train_politeness.c
+    src/app_node_comm.c
     src/app_mesh_report.c
+    src/app_stack_diag_record.c
     src/app_stack_diag.c
     src/app_stack_workload_diag.c
     src/app_anchor.c
     src/app_anchor_survey_discovery.c
     src/app_high_debug.c
     src/app_watchdog.c
+)
+
+target_sources(app PRIVATE
+    ../src/node_comm.c
+    ../src/node_transaction.c
+    ../src/stack_diag_transport.c
+    ../src/watchdog_adoption.c
 )
 
 if(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
@@ -437,6 +455,8 @@ else()
         ../src/status.c
         ../src/route.c
         ../src/survey.c
+        ../src/survey_gateway_transaction.c
+        ../src/survey_pair_lease.c
     )
 endif()
 

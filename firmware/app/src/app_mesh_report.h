@@ -15,6 +15,7 @@
 
 struct k_work_delayable;
 struct app_mesh_command_orchestrator;
+struct app_node_comm_route_refresh_event;
 
 struct uwb_range_schedule_frame;
 
@@ -71,6 +72,19 @@ struct app_mesh_report_callbacks {
     void (*anchor_survey_delivery_transport_released)(
         const struct proto_packet *packet,
         bool preempted);
+    void (*gateway_route_refresh_event)(
+        const struct app_node_comm_route_refresh_event *event);
+};
+
+struct app_mesh_outbound_view {
+    const struct proto_packet *packet;
+    const uint8_t *payload;
+    uint16_t payload_len;
+    uint8_t radio_channel;
+    uint64_t next_hop_id;
+    uint32_t queued_at_ms;
+    uint32_t earliest_tx_ms;
+    uint8_t flood_retry_count;
 };
 
 enum mesh_c5_control_send_mode {
@@ -97,6 +111,9 @@ void build_uwb_schedule_report_if_relevant(
 uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity);
 void mesh_stop_role_scan(void);
 void mesh_restart_role_scan(void);
+int mesh_transport_pause_preserving_queued(void);
+bool mesh_transport_quiesced(void);
+void mesh_transport_resume(void);
 int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 int mesh_send_c5_control(const struct mesh_outbound *out,
                          uint8_t purpose,
@@ -106,6 +123,14 @@ int mesh_send_c5_flood(const struct mesh_outbound *out,
                        uint8_t purpose,
                        const char *reason,
                        bool *sent_now);
+int mesh_try_send_c5_flood(const struct mesh_outbound *out,
+                           uint8_t purpose,
+                           const char *reason,
+                           bool *sent_now);
+int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
+                                uint8_t purpose,
+                                const char *reason,
+                                bool *sent_now);
 int mesh_send_gateway_command_flood(
     const struct app_mesh_command_orchestrator *orchestrator,
     const char *reason,
@@ -157,10 +182,6 @@ uint32_t mesh_rx_pending_count(void);
 bool mesh_rx_response_active(void);
 bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
 bool mesh_anchor_connected_radio_active(void);
-void mesh_gateway_route_adv_start(void);
-void mesh_gateway_route_adv_request(uint32_t delay_ms, const char *reason);
-/* Returns zero when the forced advertisement is queued or rescheduled. */
-int mesh_gateway_route_adv_force_request(uint32_t delay_ms, const char *reason);
 int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms);
 

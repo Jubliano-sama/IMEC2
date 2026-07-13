@@ -71,6 +71,10 @@ struct gateway_route_adv_fields {
     uint8_t flood_retry_count;
 };
 
+_Static_assert(MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN <=
+                   UWB_MESH_MAX_PAYLOAD_LEN,
+               "gateway route advertisement exceeds mesh payload capacity");
+
 struct flood_control_fields {
     uint32_t random_backoff_max_ms;
     uint16_t random_backoff_slot_ms;
@@ -4653,6 +4657,68 @@ int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
     return ret;
 }
 
+int mesh_relay_note_gateway_control_reverse_route(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    uint64_t previous_hop_id,
+    uint8_t link_quality,
+    uint8_t origin_ttl,
+    uint32_t now_ms)
+{
+    struct route_candidate candidate;
+    uint8_t gateway_hop_count;
+    bool destination_valid;
+    int ret;
+
+    if (relay == NULL || packet == NULL ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        !id_is_unicast(relay->local_id) ||
+        !id_is_unicast(relay->gateway_id) ||
+        relay->local_id == relay->gateway_id ||
+        packet->src_id != relay->gateway_id ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        relay->upstream.current_epoch == 0u ||
+        link_quality > 100u ||
+        origin_ttl == 0u || origin_ttl > MESH_NETWORK_MAX_HOPS ||
+        packet->ttl == 0u || packet->ttl > origin_ttl) {
+        return PROTO_ERR_ARG;
+    }
+
+    destination_valid =
+        ((packet->msg_type == MSG_COMMAND ||
+          packet->msg_type == MSG_SURVEY_PAIR_PREPARE) &&
+         packet->dst_id == relay->local_id) ||
+        ((packet->msg_type == MSG_COMMAND ||
+          packet->msg_type == MSG_SURVEY_DISCOVERY_START) &&
+         packet->dst_id == MESH_BROADCAST_ID);
+    if (!destination_valid) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    gateway_hop_count = origin_ttl - packet->ttl;
+    if ((gateway_hop_count == 0u) !=
+        (previous_hop_id == relay->gateway_id)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    candidate = (struct route_candidate) {
+        .next_hop_id = previous_hop_id,
+        .gateway_id = relay->gateway_id,
+        .route_epoch = relay->upstream.current_epoch,
+        .last_seen_ms = now_ms,
+        .hop_count = gateway_hop_count,
+        .link_quality = link_quality,
+        .relay_capacity_state = RELAY_CAP_UNKNOWN,
+        .valid = true,
+    };
+    ret = route_upsert_candidate(&relay->upstream, &candidate);
+    if (ret == PROTO_OK) {
+        mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
+    }
+    return ret;
+}
+
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
 {
     if (relay == NULL) {
@@ -5469,16 +5535,13 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
                                                      now_ms);
 }
 
-int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
-                                       uint32_t gateway_route_seq,
-                                       uint32_t now_ms,
-                                       struct mesh_outbound *out)
+int mesh_relay_capture_gateway_route_adv_snapshot(
+    struct mesh_relay *relay,
+    uint32_t gateway_route_seq,
+    uint32_t now_ms,
+    struct mesh_gateway_route_adv_snapshot *snapshot)
 {
-    struct gateway_route_adv_fields fields;
-    size_t payload_len = 0u;
-    int ret;
-
-    if (relay == NULL || out == NULL ||
+    if (relay == NULL || snapshot == NULL ||
         relay->role != MESH_RELAY_ROLE_GATEWAY ||
         relay->local_id != relay->gateway_id ||
         !id_is_unicast(relay->local_id) ||
@@ -5486,19 +5549,49 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
         return PROTO_ERR_ARG;
     }
 
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->gateway_route_seq = gateway_route_seq;
+    snapshot->queued_at_ms = now_ms;
+    snapshot->gateway_epoch = (uint16_t)relay->upstream.current_epoch;
+    snapshot->packet_seq = relay_next_seq(relay);
+    snapshot->gateway_capacity_state = relay_current_capacity_state(relay);
+    snapshot->capacity_validity_interval_ms =
+        relay_current_capacity_validity_interval_ms(relay);
+    snapshot->valid = true;
+    return PROTO_OK;
+}
+
+int mesh_relay_build_gateway_route_adv_from_snapshot(
+    const struct mesh_relay *relay,
+    const struct mesh_gateway_route_adv_snapshot *snapshot,
+    struct mesh_outbound *out)
+{
+    struct gateway_route_adv_fields fields;
+    size_t payload_len = 0u;
+    int ret;
+
+    if (relay == NULL || snapshot == NULL || out == NULL ||
+        relay->role != MESH_RELAY_ROLE_GATEWAY ||
+        relay->local_id != relay->gateway_id ||
+        !id_is_unicast(relay->local_id) ||
+        !snapshot->valid || snapshot->gateway_route_seq == 0u ||
+        snapshot->gateway_capacity_state > RELAY_CAP_BLACK) {
+        return PROTO_ERR_ARG;
+    }
+
     memset(out, 0, sizeof(*out));
     memset(&fields, 0, sizeof(fields));
     fields.gateway_id = relay->gateway_id;
-    fields.gateway_epoch = (uint16_t)relay->upstream.current_epoch;
-    fields.gateway_route_seq = gateway_route_seq;
+    fields.gateway_epoch = snapshot->gateway_epoch;
+    fields.gateway_route_seq = snapshot->gateway_route_seq;
     fields.hop_count = 0u;
     fields.path_quality_min = 100u;
     fields.route_cost = gateway_route_cost(fields.hop_count, fields.path_quality_min);
-    fields.gateway_capacity_state = relay_current_capacity_state(relay);
+    fields.gateway_capacity_state = snapshot->gateway_capacity_state;
     fields.capacity_validity_interval_ms =
-        relay_current_capacity_validity_interval_ms(relay);
+        snapshot->capacity_validity_interval_ms;
     fields.flood_profile_version = MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION;
-    fields.flood_epoch_id = gateway_route_seq;
+    fields.flood_epoch_id = snapshot->gateway_route_seq;
     fields.slot_seed = gateway_route_adv_slot_seed(fields.gateway_id,
                                                    fields.gateway_route_seq,
                                                    fields.gateway_epoch);
@@ -5519,17 +5612,34 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     out->packet.flags = 0u;
     out->packet.src_id = relay->gateway_id;
     out->packet.dst_id = MESH_BROADCAST_ID;
-    out->packet.session_id = gateway_route_seq;
-    out->packet.seq = relay_next_seq(relay);
+    out->packet.session_id = snapshot->gateway_route_seq;
+    out->packet.seq = snapshot->packet_seq;
     out->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = MESH_BROADCAST_ID;
-    out->queued_at_ms = now_ms;
-    out->earliest_tx_ms = now_ms;
+    out->queued_at_ms = snapshot->queued_at_ms;
+    out->earliest_tx_ms = snapshot->queued_at_ms;
     out->flood_retry_count = fields.flood_retry_count;
     return PROTO_OK;
+}
+
+int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
+                                       uint32_t gateway_route_seq,
+                                       uint32_t now_ms,
+                                       struct mesh_outbound *out)
+{
+    struct mesh_gateway_route_adv_snapshot snapshot;
+    int ret = mesh_relay_capture_gateway_route_adv_snapshot(
+        relay, gateway_route_seq, now_ms, &snapshot);
+
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return mesh_relay_build_gateway_route_adv_from_snapshot(relay,
+                                                            &snapshot,
+                                                            out);
 }
 
 int mesh_relay_prepare_route_request_with_timing_flags(

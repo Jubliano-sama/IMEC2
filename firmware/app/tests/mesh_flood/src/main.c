@@ -121,7 +121,7 @@ ZTEST(mesh_flood, test_waits_for_forward_due_and_repeats_on_schedule)
                            FLOOD_RELAY_REPEAT_MS));
 }
 
-ZTEST(mesh_flood, test_busy_c5_skips_repeats_without_extending_burst)
+ZTEST(mesh_flood, test_busy_c5_preserves_all_real_opportunities)
 {
     struct mesh_outbound flood = make_flood(2000u);
     struct test_ctx ctx = {
@@ -130,13 +130,23 @@ ZTEST(mesh_flood, test_busy_c5_skips_repeats_without_extending_burst)
         .quiet_count = 3u,
     };
     struct app_mesh_flood_ops ops = make_ops(&ctx);
+    struct app_mesh_flood_progress progress = {0};
     struct app_mesh_flood_result result;
 
-    zassert_ok(app_mesh_flood_send_bounded(&flood, &ops, &result));
-    zassert_equal(result.sent_count, app_mesh_flood_repeat_limit() - 2u);
+    zassert_equal(app_mesh_flood_send_bounded_resume(
+                      &flood, &ops, &progress, &result), -EAGAIN);
+    zassert_equal(progress.next_opportunity, 0u);
+    zassert_equal(app_mesh_flood_send_bounded_resume(
+                      &flood, &ops, &progress, &result), -EAGAIN);
+    zassert_equal(progress.next_opportunity, 0u);
+    zassert_ok(app_mesh_flood_send_bounded_resume(
+                   &flood, &ops, &progress, &result));
+    zassert_equal(result.sent_count, app_mesh_flood_repeat_limit());
     zassert_equal(result.busy_skip_count, 2u);
     zassert_equal(ctx.send_at[0], 2060u);
-    zassert_equal(result.last_due_ms, 2100u);
+    zassert_equal(result.last_due_ms,
+                  2060u + ((uint32_t)(app_mesh_flood_repeat_limit() - 1u) *
+                           FLOOD_RELAY_REPEAT_MS));
 }
 
 ZTEST(mesh_flood, test_defers_before_click_service_without_sending)

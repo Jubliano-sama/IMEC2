@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import dataclass, field
 import pathlib
 import sys
 import time
@@ -26,21 +27,483 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     build_here_i_am_command,
     decode_gateway_identity,
 )
-from tools.gateway_gui.command_telemetry import decode_gateway_command_event  # noqa: E402
+from tools.gateway_gui.command_telemetry import (  # noqa: E402
+    GatewayCommandEvent,
+    decode_gateway_command_event,
+)
 from tools.gateway_gui.protocol import COMMAND_STATUS_NAMES  # noqa: E402
 
 
-async def run(args: argparse.Namespace) -> None:
+GATEWAY_COMMAND_KIND_ANCHOR_SURVEY = 2
+GATEWAY_COMMAND_KIND_ANCHOR_ENUMERATION = 1
+GATEWAY_COMMAND_KIND_ROUTE_REFRESH = 3
+GATEWAY_COMMAND_STAGE_FLOOD_ATTEMPT = 4
+GATEWAY_COMMAND_STAGE_BACKOFF = 5
+GATEWAY_COMMAND_STAGE_ANCHOR_REPORT = 6
+GATEWAY_COMMAND_STAGE_ENUMERATION_COMPLETE = 7
+GATEWAY_COMMAND_STAGE_SCHEDULE_READY = 8
+GATEWAY_COMMAND_STAGE_PAIR_START = 9
+GATEWAY_COMMAND_STAGE_PAIR_SUCCESS = 10
+GATEWAY_COMMAND_STAGE_PAIR_FAILURE = 11
+GATEWAY_COMMAND_STAGE_TERMINAL = 12
+CMD_SURVEY_REACHABILITY = 0x0100
+CMD_SURVEY_START_PAIR = 0x0102
+CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
+CMD_FORCE_REDISCOVERY = 0x000C
+DISCOVERY_SLOT_UNAVAILABLE = 0xFF
+ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
+
+
+def _same_event(left: GatewayCommandEvent, right: GatewayCommandEvent) -> bool:
+    """Treat replay/snapshot flag additions as the same retained event."""
+    replay_flags = 0x02 | 0x04
+    return (
+        left == right
+        or (
+            left.flags & ~replay_flags == right.flags & ~replay_flags
+            and left.__class__(
+                **{
+                    **left.__dict__,
+                    "flags": left.flags & ~replay_flags,
+                }
+            )
+            == right.__class__(
+                **{
+                    **right.__dict__,
+                    "flags": right.flags & ~replay_flags,
+                }
+            )
+        )
+    )
+
+
+def _accept_event_sequence(
+    event: GatewayCommandEvent,
+    seen: dict[int, GatewayCommandEvent],
+    errors: list[str],
+) -> bool:
+    prior = seen.get(event.event_sequence)
+    if prior is None:
+        seen[event.event_sequence] = event
+        return True
+    if not _same_event(prior, event):
+        message = f"event sequence {event.event_sequence} changed across replay"
+        if message not in errors:
+            errors.append(message)
+    return False
+
+
+@dataclass
+class RouteRefreshQualification:
+    host_session_id: int
+    host_sequence: int
+    correlation_id: int
+    flood_attempts: set[int] = field(default_factory=set)
+    retries: int = 0
+    terminal_event: GatewayCommandEvent | None = None
+    seen_events: dict[int, GatewayCommandEvent] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
+    def _matches(self, event: GatewayCommandEvent) -> bool:
+        return (
+            event.command_kind == GATEWAY_COMMAND_KIND_ROUTE_REFRESH
+            and event.correlation_id == self.correlation_id
+            and event.host_session_id == self.host_session_id
+            and event.host_sequence == self.host_sequence
+        )
+
+    def _error(self, message: str) -> None:
+        if message not in self.errors:
+            self.errors.append(message)
+
+    def observe(self, event: GatewayCommandEvent) -> bool:
+        if not self._matches(event):
+            return False
+        if not _accept_event_sequence(event, self.seen_events, self.errors):
+            return self.terminal_event is not None
+        if event.command_id != CMD_FORCE_REDISCOVERY:
+            self._error("route-refresh event has the wrong command")
+        if event.lost_event_count != 0:
+            self._error(
+                f"route-refresh event reports {event.lost_event_count} lost events"
+            )
+        if (
+            self.terminal_event is not None
+            and event.stage != GATEWAY_COMMAND_STAGE_TERMINAL
+        ):
+            self._error("route-refresh progress arrived after its terminal event")
+            return True
+        if event.stage == GATEWAY_COMMAND_STAGE_FLOOD_ATTEMPT:
+            if (
+                event.attempt < 1
+                or event.attempt > ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS
+                or event.command_status != 0
+                or event.reason != 0
+            ):
+                self._error("route-refresh flood-attempt event is invalid")
+            else:
+                self.flood_attempts.add(event.attempt)
+        elif event.stage == GATEWAY_COMMAND_STAGE_BACKOFF:
+            if event.attempt < 1 or event.attempt >= ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS:
+                self._error("route-refresh backoff exceeds the local attempt budget")
+            self.retries += 1
+        elif event.stage == GATEWAY_COMMAND_STAGE_TERMINAL:
+            if not event.terminal:
+                self._error("route-refresh terminal event is missing its terminal flag")
+            if not self.flood_attempts:
+                self._error("route-refresh terminal preceded every completed local flood")
+            self.terminal_event = event
+            return True
+        return False
+
+    def validate(self) -> None:
+        terminal = self.terminal_event
+        if not self.flood_attempts:
+            self._error("no completed local route-refresh flood attempt was observed")
+        if terminal is None:
+            self._error("matching route-refresh terminal event was not received")
+        elif (
+            terminal.command_status != 0
+            or terminal.reason != 0
+            or terminal.lost_event_count != 0
+        ):
+            self._error(
+                "route-refresh terminal is not a lossless local flood success "
+                f"(status={terminal.command_status} reason={terminal.reason} "
+                f"lost={terminal.lost_event_count})"
+            )
+        if self.errors:
+            raise RuntimeError(
+                "Here-I-Am local flood qualification failed: " + "; ".join(self.errors)
+            )
+
+
+@dataclass
+class AssignmentQualification:
+    host_session_id: int
+    host_sequence: int
+    correlation_id: int
+    expected_anchors: int
+    require_hop_evidence: bool = False
+    expected_direct_anchors: int | None = None
+    expected_multihop_anchors: int | None = None
+    anchors: set[int] = field(default_factory=set)
+    assigned_slots: dict[int, int] = field(default_factory=dict)
+    hop_paths: dict[int, tuple[int, int]] = field(default_factory=dict)
+    flood_attempts: set[int] = field(default_factory=set)
+    table_attempts: set[int] = field(default_factory=set)
+    collection_complete: bool = False
+    terminal_event: GatewayCommandEvent | None = None
+    retries: int = 0
+    seen_events: dict[int, GatewayCommandEvent] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
+    def _matches(self, event: GatewayCommandEvent) -> bool:
+        return (
+            event.command_kind == GATEWAY_COMMAND_KIND_ANCHOR_ENUMERATION
+            and event.correlation_id == self.correlation_id
+            and event.host_session_id == self.host_session_id
+            and event.host_sequence == self.host_sequence
+        )
+
+    def _error(self, message: str) -> None:
+        if message not in self.errors:
+            self.errors.append(message)
+
+    def observe(self, event: GatewayCommandEvent) -> bool:
+        if not self._matches(event):
+            return False
+        if not _accept_event_sequence(event, self.seen_events, self.errors):
+            return self.terminal_event is not None
+        if event.command_id != CMD_ASSIGN_DISCOVERY_SLOTS:
+            self._error("assignment event has the wrong command")
+        if event.lost_event_count != 0:
+            self._error(f"assignment event reports {event.lost_event_count} lost events")
+        if (
+            self.terminal_event is not None
+            and event.stage != GATEWAY_COMMAND_STAGE_TERMINAL
+        ):
+            self._error("assignment progress arrived after its terminal event")
+            return True
+        if event.stage == GATEWAY_COMMAND_STAGE_FLOOD_ATTEMPT:
+            if event.attempt < 1 or event.command_status != 0 or event.reason != 0:
+                self._error("assignment flood-attempt event is invalid")
+            else:
+                self.flood_attempts.add(event.attempt)
+        elif event.stage == GATEWAY_COMMAND_STAGE_BACKOFF:
+            self.retries += 1
+        elif event.stage == GATEWAY_COMMAND_STAGE_ANCHOR_REPORT:
+            if event.anchor_id == 0 or event.command_status != 0 or event.reason != 0:
+                self._error("assignment anchor event is invalid")
+            else:
+                self.anchors.add(event.anchor_id)
+                if event.discovery_slot != DISCOVERY_SLOT_UNAVAILABLE:
+                    prior = self.assigned_slots.get(event.anchor_id)
+                    if prior is not None and prior != event.discovery_slot:
+                        self._error(
+                            f"anchor 0x{event.anchor_id:016x} changed assigned slot"
+                        )
+                    self.assigned_slots[event.anchor_id] = event.discovery_slot
+                if event.hop_count != 0:
+                    if event.previous_hop_id == 0:
+                        self._error(
+                            f"anchor 0x{event.anchor_id:016x} has hop count without previous hop"
+                        )
+                    self.hop_paths.setdefault(
+                        event.anchor_id, (event.hop_count, event.previous_hop_id)
+                    )
+        elif event.stage == GATEWAY_COMMAND_STAGE_ENUMERATION_COMPLETE:
+            if event.command_status != 0 or event.reason != 0:
+                self._error("assignment collection-complete event is not successful")
+            if event.progress_count != self.expected_anchors:
+                self._error("assignment collection-complete count is not exact")
+            self.collection_complete = True
+        elif event.stage == GATEWAY_COMMAND_STAGE_SCHEDULE_READY:
+            if (
+                event.command_status != 0
+                or event.reason != 0
+                or event.progress_count != self.expected_anchors
+                or event.total_count != self.expected_anchors
+                or event.attempt < 1
+            ):
+                self._error("assignment table-publication event is not exact")
+            else:
+                self.table_attempts.add(event.attempt)
+        elif event.stage == GATEWAY_COMMAND_STAGE_TERMINAL:
+            if not event.terminal:
+                self._error("assignment terminal event is missing its terminal flag")
+            if (
+                len(self.anchors) != self.expected_anchors
+                or len(self.assigned_slots) != self.expected_anchors
+                or not self.collection_complete
+                or not self.table_attempts
+            ):
+                self._error("assignment terminal preceded required lifecycle progress")
+            self.terminal_event = event
+            return True
+        return False
+
+    def validate(self) -> None:
+        terminal = self.terminal_event
+        if len(self.anchors) != self.expected_anchors:
+            self._error(
+                f"expected {self.expected_anchors} unique anchor claims, got {len(self.anchors)}"
+            )
+        if len(self.assigned_slots) != self.expected_anchors:
+            self._error(
+                f"expected {self.expected_anchors} published slot mappings, "
+                f"got {len(self.assigned_slots)}"
+            )
+        if set(self.assigned_slots.values()) != set(range(self.expected_anchors)):
+            self._error("published discovery slots are not unique and contiguous")
+        if not self.collection_complete:
+            self._error("assignment collection-complete event was not received")
+        if not self.table_attempts:
+            self._error("successful assignment table publication was not observed")
+        if self.require_hop_evidence and len(self.hop_paths) != self.expected_anchors:
+            self._error(
+                f"expected hop-path evidence for {self.expected_anchors} anchors, "
+                f"got {len(self.hop_paths)}"
+            )
+        direct_count = sum(1 for hop, _previous in self.hop_paths.values() if hop == 1)
+        multihop_count = sum(1 for hop, _previous in self.hop_paths.values() if hop > 1)
+        if (
+            self.expected_direct_anchors is not None
+            and direct_count != self.expected_direct_anchors
+        ):
+            self._error(
+                f"expected {self.expected_direct_anchors} direct anchors, got {direct_count}"
+            )
+        if (
+            self.expected_multihop_anchors is not None
+            and multihop_count != self.expected_multihop_anchors
+        ):
+            self._error(
+                f"expected {self.expected_multihop_anchors} multihop anchors, "
+                f"got {multihop_count}"
+            )
+        if terminal is None:
+            self._error("matching assignment terminal event was not received")
+        elif (
+            terminal.command_status != 0
+            or terminal.reason != 0
+            or terminal.progress_count != self.expected_anchors
+            or terminal.total_count != self.expected_anchors
+            or terminal.success_count != self.expected_anchors
+            or terminal.failure_count != 0
+            or terminal.lost_event_count != 0
+        ):
+            self._error(
+                "terminal assignment counters do not prove every table ACK completed "
+                f"(status={terminal.command_status} reason={terminal.reason} "
+                f"total={terminal.total_count} success={terminal.success_count} "
+                f"failure={terminal.failure_count} lost={terminal.lost_event_count})"
+            )
+        if self.errors:
+            raise RuntimeError("assignment qualification failed: " + "; ".join(self.errors))
+
+    @property
+    def direct_count(self) -> int:
+        return sum(1 for hop, _previous in self.hop_paths.values() if hop == 1)
+
+    @property
+    def multihop_count(self) -> int:
+        return sum(1 for hop, _previous in self.hop_paths.values() if hop > 1)
+
+
+def _pair(initiator_id: int, responder_id: int) -> tuple[int, int] | None:
+    if initiator_id == 0 or responder_id == 0 or initiator_id == responder_id:
+        return None
+    return tuple(sorted((initiator_id, responder_id)))
+
+
+@dataclass
+class SurveyQualification:
+    host_session_id: int
+    host_sequence: int
+    survey_id: int
+    expected_anchors: int
+    expected_pairs: int
+    anchors: set[int] = field(default_factory=set)
+    pair_starts: set[tuple[int, int]] = field(default_factory=set)
+    pair_successes: set[tuple[int, int]] = field(default_factory=set)
+    schedule_total: int | None = None
+    terminal_event: GatewayCommandEvent | None = None
+    retries: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def _matches(self, event: GatewayCommandEvent) -> bool:
+        return (
+            event.command_kind == GATEWAY_COMMAND_KIND_ANCHOR_SURVEY
+            and event.correlation_id == self.survey_id
+            and event.host_session_id == self.host_session_id
+            and event.host_sequence == self.host_sequence
+        )
+
+    def _error(self, message: str) -> None:
+        if message not in self.errors:
+            self.errors.append(message)
+
+    def observe(self, event: GatewayCommandEvent) -> bool:
+        """Record one correlated event and return true at terminal."""
+        if not self._matches(event):
+            return False
+        if event.lost_event_count != 0:
+            self._error(
+                f"event stage {event.stage} reports {event.lost_event_count} lost events"
+            )
+        if event.stage == 5:
+            self.retries += 1
+        elif event.stage == GATEWAY_COMMAND_STAGE_ANCHOR_REPORT:
+            if event.command_id != CMD_SURVEY_REACHABILITY or event.anchor_id == 0:
+                self._error("anchor-report event has invalid command or anchor identity")
+            elif event.command_status != 0 or event.reason != 0:
+                self._error("anchor-report event is not successful")
+            else:
+                self.anchors.add(event.anchor_id)
+        elif event.stage == GATEWAY_COMMAND_STAGE_SCHEDULE_READY:
+            if event.command_id != CMD_SURVEY_REACHABILITY:
+                self._error("schedule-ready event has the wrong command")
+            if event.command_status != 0 or event.reason != 0:
+                self._error("schedule-ready event is not successful")
+            if self.schedule_total is not None and self.schedule_total != event.total_count:
+                self._error("schedule-ready pair count changed")
+            self.schedule_total = event.total_count
+        elif event.stage in (
+            GATEWAY_COMMAND_STAGE_PAIR_START,
+            GATEWAY_COMMAND_STAGE_PAIR_SUCCESS,
+            GATEWAY_COMMAND_STAGE_PAIR_FAILURE,
+        ):
+            pair = _pair(event.pair_initiator_id, event.pair_responder_id)
+            if event.command_id != CMD_SURVEY_START_PAIR or pair is None:
+                self._error(f"pair event stage {event.stage} has invalid identity")
+            elif event.stage == GATEWAY_COMMAND_STAGE_PAIR_START:
+                if event.command_status != 0 or event.reason != 0:
+                    self._error("pair-start event is not successful")
+                self.pair_starts.add(pair)
+            elif event.stage == GATEWAY_COMMAND_STAGE_PAIR_SUCCESS:
+                if pair not in self.pair_starts:
+                    self._error("pair succeeded before its pair-start event")
+                if event.command_status != 0 or event.reason != 0:
+                    self._error("pair-success event is not successful")
+                self.pair_successes.add(pair)
+            else:
+                self._error("survey emitted a pair-failure event")
+        elif event.stage == GATEWAY_COMMAND_STAGE_TERMINAL:
+            if event.command_id != CMD_SURVEY_REACHABILITY or not event.terminal:
+                self._error("survey terminal event has invalid command or flags")
+            self.terminal_event = event
+            return True
+        return False
+
+    def validate(self) -> None:
+        terminal = self.terminal_event
+        if len(self.anchors) != self.expected_anchors:
+            self._error(
+                f"expected {self.expected_anchors} unique anchors, got {len(self.anchors)}"
+            )
+        if self.schedule_total != self.expected_pairs:
+            self._error(
+                f"expected schedule of {self.expected_pairs} pairs, got {self.schedule_total}"
+            )
+        if len(self.pair_starts) != self.expected_pairs:
+            self._error(
+                f"expected {self.expected_pairs} pair starts, got {len(self.pair_starts)}"
+            )
+        if self.pair_successes != self.pair_starts:
+            self._error("pair-success set does not exactly match the pair-start set")
+        if terminal is None:
+            self._error("matching survey terminal event was not received")
+        elif (
+            terminal.command_status != 0
+            or terminal.reason != 0
+            or terminal.total_count != self.expected_pairs
+            or terminal.success_count != self.expected_pairs
+            or terminal.failure_count != 0
+            or terminal.lost_event_count != 0
+        ):
+            self._error(
+                "terminal survey counters are not an exact lossless success "
+                f"(status={terminal.command_status} reason={terminal.reason} "
+                f"total={terminal.total_count} success={terminal.success_count} "
+                f"failure={terminal.failure_count} lost={terminal.lost_event_count})"
+            )
+        if self.errors:
+            raise RuntimeError("survey qualification failed: " + "; ".join(self.errors))
+
+
+def _new_identity() -> int:
+    identity = int(time.time_ns() & 0xFFFFFFFF) or 1
+    return identity if identity & 0xFFFF else identity + 1
+
+
+def _next_identity(previous: int = 0) -> int:
+    identity = _new_identity()
+    if identity == previous:
+        identity = (identity + 1) & 0xFFFFFFFF
+    return identity or 1
+
+
+Qualification = SurveyQualification | AssignmentQualification | RouteRefreshQualification
+
+
+async def run(args: argparse.Namespace) -> Qualification | None:
     decoder = GatewayReceiveBuffer()
     received = 0
+    decode_errors: list[str] = []
+    disconnect_errors: list[str] = []
+    qualification: Qualification | None = None
+    qualification_done = asyncio.Event()
 
     def on_notify(_sender: object, data: bytearray) -> None:
-        nonlocal received
+        nonlocal received, qualification
         raw = bytes(data)
         print(f"BLE_CHUNK len={len(raw)} hex={raw.hex()}", flush=True)
         result = decoder.feed(raw)
         for error in result.errors:
             print(f"BLE_DECODE_ERROR {error}", flush=True)
+            decode_errors.append(str(error))
+            qualification_done.set()
         for packet in result.packets:
             received += 1
             print(
@@ -50,16 +513,54 @@ async def run(args: argparse.Namespace) -> None:
                 flush=True,
             )
             if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
-                event = decode_gateway_command_event(
-                    packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES)
-                )
+                try:
+                    event = decode_gateway_command_event(
+                        packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES)
+                    )
+                except ValueError as exc:
+                    print(f"BLE_DECODE_ERROR {exc}", flush=True)
+                    decode_errors.append(str(exc))
+                    qualification_done.set()
+                    continue
                 print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
+                if qualification is not None and qualification.observe(event):
+                    qualification_done.set()
 
-    async with BleakClient(args.gateway, timeout=args.connect_timeout) as client:
+    def on_disconnect(_client: object) -> None:
+        if qualification is not None:
+            disconnect_errors.append("gateway disconnected during qualification")
+            qualification_done.set()
+
+    async def await_qualification(
+        current: Qualification,
+        timeout_s: float,
+        label: str,
+    ) -> None:
+        try:
+            await asyncio.wait_for(qualification_done.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"{label} qualification timed out after {timeout_s:.1f}s"
+            ) from exc
+        if decode_errors:
+            raise RuntimeError(
+                f"{label} qualification failed: BLE decode errors: "
+                + "; ".join(decode_errors)
+            )
+        if disconnect_errors:
+            raise RuntimeError(
+                f"{label} qualification failed: " + "; ".join(disconnect_errors)
+            )
+        current.validate()
+
+    async with BleakClient(
+        args.gateway,
+        timeout=args.connect_timeout,
+        disconnected_callback=on_disconnect,
+    ) as client:
         gateway_id = decode_gateway_identity(
             bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
         )
-        await client.start_notify(PACKET_TX_UUID, on_notify)
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
         if characteristic is None:
             raise RuntimeError("gateway packet RX characteristic is unavailable")
@@ -67,14 +568,121 @@ async def run(args: argparse.Namespace) -> None:
             1,
             min(int(characteristic.max_write_without_response_size or 20), 244),
         )
+        strict_mode = (
+            args.require_survey_success
+            or args.require_assignment_success
+            or args.command == "qualify-reachability"
+        )
+        defer_notifications = strict_mode or args.notification_hold_s > 0.0
+        notifications_enabled = False
+        if not defer_notifications:
+            await client.start_notify(PACKET_TX_UUID, on_notify)
+            notifications_enabled = True
+
+        async def enable_notifications() -> None:
+            nonlocal defer_notifications, notifications_enabled
+            if notifications_enabled:
+                return
+            print(
+                "BLE_NOTIFICATIONS_HELD "
+                f"seconds={args.notification_hold_s:.3f}",
+                flush=True,
+            )
+            if args.notification_hold_s > 0.0:
+                await asyncio.sleep(args.notification_hold_s)
+            await client.start_notify(PACKET_TX_UUID, on_notify)
+            notifications_enabled = True
+            defer_notifications = False
+            print("BLE_NOTIFICATIONS_ENABLED", flush=True)
+
+        async def send_command(command_name: str, identity: int, command: object) -> None:
+            print(
+                f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={command_name} "
+                f"session={identity} frame={command.frame.hex()}",
+                flush=True,
+            )
+            for offset in range(0, len(command.frame), chunk_size):
+                await client.write_gatt_char(
+                    characteristic,
+                    command.frame[offset : offset + chunk_size],
+                    response=False,
+                )
+
         if args.command == "monitor":
             print(
                 f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command=monitor",
                 flush=True,
             )
+        elif args.command == "qualify-reachability":
+            route_identity = _next_identity()
+            route_args = {
+                "host_id": args.host_id,
+                "gateway_id": gateway_id,
+                "session_id": route_identity,
+                "seq": route_identity & 0xFFFF,
+            }
+            qualification = RouteRefreshQualification(
+                route_identity,
+                route_identity & 0xFFFF,
+                route_identity,
+            )
+            await send_command(
+                "here-i-am",
+                route_identity,
+                build_here_i_am_command(**route_args),
+            )
+            await enable_notifications()
+            await await_qualification(
+                qualification,
+                args.route_refresh_timeout,
+                "Here-I-Am local flood",
+            )
+            print(
+                "HERE_I_AM_LOCAL_FLOOD_OK "
+                f"attempts={len(qualification.flood_attempts)} "
+                f"retries={qualification.retries} "
+                "delivery_claim=local-broadcast-only",
+                flush=True,
+            )
+
+            assignment_identity = _next_identity(route_identity)
+            assignment_args = {
+                "host_id": args.host_id,
+                "gateway_id": gateway_id,
+                "session_id": assignment_identity,
+                "seq": assignment_identity & 0xFFFF,
+            }
+            qualification_done.clear()
+            qualification = AssignmentQualification(
+                assignment_identity,
+                assignment_identity & 0xFFFF,
+                assignment_identity,
+                args.expected_anchors,
+                require_hop_evidence=True,
+                expected_direct_anchors=args.expected_direct_anchors,
+                expected_multihop_anchors=args.expected_multihop_anchors,
+            )
+            await send_command(
+                "assign-slots",
+                assignment_identity,
+                build_assign_discovery_slots_command(**assignment_args),
+            )
+            await await_qualification(
+                qualification,
+                args.assignment_timeout,
+                "assignment reachability",
+            )
+            print(
+                "HERE_I_AM_REACHABILITY_QUALIFICATION_OK "
+                f"anchors={len(qualification.anchors)} "
+                f"direct={qualification.direct_count} "
+                f"multihop={qualification.multihop_count} "
+                f"retries={qualification.retries}",
+                flush=True,
+            )
         else:
             for index in range(args.repeat):
-                identity = int(time.time_ns() & 0xFFFFFFFF) or 1
+                identity = _next_identity()
                 command_args = {
                     "host_id": args.host_id,
                     "gateway_id": gateway_id,
@@ -85,6 +693,15 @@ async def run(args: argparse.Namespace) -> None:
                     command = build_here_i_am_command(**command_args)
                 elif args.command == "assign-slots":
                     command = build_assign_discovery_slots_command(**command_args)
+                    if args.require_assignment_success:
+                        qualification = AssignmentQualification(
+                            identity,
+                            identity & 0xFFFF,
+                            identity,
+                            args.expected_anchors,
+                            expected_direct_anchors=args.expected_direct_anchors,
+                            expected_multihop_anchors=args.expected_multihop_anchors,
+                        )
                 else:
                     survey_id = args.survey_id or identity
                     command = build_anchor_discovery_command(
@@ -94,22 +711,52 @@ async def run(args: argparse.Namespace) -> None:
                         discovery_slot_count=args.discovery_slots,
                         sample_count=args.samples,
                     )
-                print(
-                    f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={args.command} "
-                    f"index={index + 1}/{args.repeat} session={identity} "
-                    f"frame={command.frame.hex()}",
-                    flush=True,
-                )
-                for offset in range(0, len(command.frame), chunk_size):
-                    await client.write_gatt_char(
-                        characteristic,
-                        command.frame[offset : offset + chunk_size],
-                        response=False,
-                    )
+                    if args.require_survey_success:
+                        qualification = SurveyQualification(
+                            identity,
+                            identity & 0xFFFF,
+                            survey_id,
+                            args.expected_anchors,
+                            args.expected_pairs,
+                        )
+                await send_command(args.command, identity, command)
+                if defer_notifications:
+                    await enable_notifications()
                 if index + 1 < args.repeat:
                     await asyncio.sleep(args.interval)
-        await asyncio.sleep(args.duration)
+        if defer_notifications:
+            await enable_notifications()
+        if isinstance(qualification, SurveyQualification):
+            await await_qualification(qualification, args.duration, "survey")
+            print(
+                "SURVEY_QUALIFICATION_OK "
+                f"survey={qualification.survey_id} "
+                f"anchors={len(qualification.anchors)} "
+                f"pairs={len(qualification.pair_successes)} "
+                f"retries={qualification.retries}",
+                flush=True,
+            )
+        elif (
+            isinstance(qualification, AssignmentQualification)
+            and args.command == "assign-slots"
+        ):
+            await await_qualification(
+                qualification,
+                args.assignment_timeout,
+                "assignment",
+            )
+            print(
+                "ASSIGNMENT_QUALIFICATION_OK "
+                f"anchors={len(qualification.anchors)} "
+                f"direct={qualification.direct_count} "
+                f"multihop={qualification.multihop_count} "
+                f"retries={qualification.retries}",
+                flush=True,
+            )
+        elif args.command != "qualify-reachability":
+            await asyncio.sleep(args.duration)
         print(f"BLE_COMPLETE packets={received}", flush=True)
+    return qualification
 
 
 def main() -> None:
@@ -117,7 +764,13 @@ def main() -> None:
     parser.add_argument("--gateway", required=True)
     parser.add_argument(
         "--command",
-        choices=("here-i-am", "assign-slots", "survey", "monitor"),
+        choices=(
+            "here-i-am",
+            "assign-slots",
+            "qualify-reachability",
+            "survey",
+            "monitor",
+        ),
         required=True,
     )
     parser.add_argument("--host-id", type=lambda value: int(value, 0), default=1)
@@ -129,7 +782,51 @@ def main() -> None:
     parser.add_argument("--survey-duration-ms", type=int, default=1000)
     parser.add_argument("--discovery-slots", type=int, default=6)
     parser.add_argument("--samples", type=int, default=1)
+    parser.add_argument("--notification-hold-s", type=float, default=0.0)
+    parser.add_argument("--require-survey-success", action="store_true")
+    parser.add_argument("--require-assignment-success", action="store_true")
+    parser.add_argument("--expected-anchors", type=int, default=3)
+    parser.add_argument("--expected-pairs", type=int, default=3)
+    parser.add_argument("--expected-direct-anchors", type=int)
+    parser.add_argument("--expected-multihop-anchors", type=int)
+    parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
+    parser.add_argument("--assignment-timeout", type=float, default=100.0)
     args = parser.parse_args()
+    if args.notification_hold_s < 0.0:
+        parser.error("--notification-hold-s must be non-negative")
+    if args.require_survey_success and args.command != "survey":
+        parser.error("--require-survey-success requires --command survey")
+    if args.require_survey_success and args.repeat != 1:
+        parser.error("survey qualification requires --repeat 1")
+    if args.require_survey_success and (
+        args.expected_anchors < 2 or args.expected_pairs < 1
+    ):
+        parser.error("survey qualification requires at least two anchors and one pair")
+    if args.require_assignment_success and args.command != "assign-slots":
+        parser.error("--require-assignment-success requires --command assign-slots")
+    if (
+        args.require_assignment_success or args.command == "qualify-reachability"
+    ) and args.repeat != 1:
+        parser.error("assignment qualification requires --repeat 1")
+    if (
+        args.require_assignment_success or args.command == "qualify-reachability"
+    ) and not 1 <= args.expected_anchors <= 50:
+        parser.error("assignment qualification requires 1..50 expected anchors")
+    if args.route_refresh_timeout <= 0.0 or args.assignment_timeout <= 0.0:
+        parser.error("qualification timeouts must be positive")
+    for value, name in (
+        (args.expected_direct_anchors, "--expected-direct-anchors"),
+        (args.expected_multihop_anchors, "--expected-multihop-anchors"),
+    ):
+        if value is not None and value < 0:
+            parser.error(f"{name} must be non-negative")
+    if (
+        args.expected_direct_anchors is not None
+        and args.expected_multihop_anchors is not None
+        and args.expected_direct_anchors + args.expected_multihop_anchors
+        != args.expected_anchors
+    ):
+        parser.error("direct plus multihop anchors must equal --expected-anchors")
     asyncio.run(run(args))
 
 

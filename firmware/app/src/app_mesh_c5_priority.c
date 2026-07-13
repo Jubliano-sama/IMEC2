@@ -1,4 +1,6 @@
 #include "app_mesh_c5_priority.h"
+#include "gateway_command.h"
+#include "survey.h"
 
 #include <stddef.h>
 
@@ -8,6 +10,20 @@ static bool event_control_type(uint8_t msg_type)
            msg_type == MSG_MESH_EVENT_ACCEPT ||
            msg_type == MSG_MESH_EVENT_UPDATE ||
            msg_type == MSG_MESH_EVENT_END;
+}
+
+static bool targeted_control_followup_type(uint8_t msg_type)
+{
+    return msg_type == MSG_COMMAND ||
+           msg_type == MSG_SURVEY_PAIR_PREPARE;
+}
+
+static bool targeted_control_previous_hop_valid(
+    const struct app_mesh_c5_route_capture_state *state)
+{
+    return state->previous_hop_id != 0u &&
+           state->previous_hop_id != MESH_BROADCAST_ID &&
+           state->previous_hop_id != state->local_id;
 }
 
 bool app_mesh_c5_flood_should_defer(
@@ -47,9 +63,14 @@ bool app_mesh_c5_gateway_route_adv_allowed(bool mesh_route_test_enabled)
 bool app_mesh_c5_route_capture_relevant(
     const struct app_mesh_c5_route_capture_state *state)
 {
+    uint64_t control_origin_id;
+
     if (state == NULL) {
         return false;
     }
+
+    control_origin_id = state->control_origin_id != 0u ?
+        state->control_origin_id : state->target_id;
 
     if (state->msg_type == MSG_ROUTE_REPLY) {
         return state->src_id == state->target_id &&
@@ -81,11 +102,18 @@ bool app_mesh_c5_route_capture_relevant(
     }
 
     if (state->control_followup &&
-        (state->msg_type == MSG_COMMAND ||
-         state->msg_type == MSG_SURVEY_DISCOVERY_START)) {
-        return state->src_id == state->target_id &&
-               state->dst_id == MESH_BROADCAST_ID &&
-               state->previous_hop_id == state->target_id;
+        control_origin_id != MESH_BROADCAST_ID &&
+        state->src_id == control_origin_id) {
+        if (targeted_control_followup_type(state->msg_type) &&
+            state->dst_id == state->local_id) {
+            return targeted_control_previous_hop_valid(state);
+        }
+
+        if (state->msg_type == MSG_COMMAND ||
+            state->msg_type == MSG_SURVEY_DISCOVERY_START) {
+            return state->dst_id == MESH_BROADCAST_ID &&
+                   targeted_control_previous_hop_valid(state);
+        }
     }
 
     return false;
@@ -113,6 +141,35 @@ bool app_mesh_c5_route_capture_requires_inline_timing_install(
 bool app_mesh_c5_route_capture_requires_post_rx_response(uint8_t msg_type)
 {
     return msg_type == MSG_MESH_EVENT_PROPOSE;
+}
+
+bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
+                                            uint16_t command_id,
+                                            uint8_t *origin_ttl)
+{
+    uint8_t ttl;
+
+    if (origin_ttl == NULL) {
+        return false;
+    }
+
+    switch (msg_type) {
+    case MSG_COMMAND:
+        ttl = command_id == CMD_SURVEY_START_PAIR ||
+              command_id == CMD_SURVEY_ABORT ||
+              command_id == CMD_SURVEY_PREPARE_PAIR ?
+              MESH_DEFAULT_TTL : FLOOD_EPOCH_GLOBAL_TTL;
+        break;
+    case MSG_SURVEY_PAIR_PREPARE:
+    case MSG_SURVEY_DISCOVERY_START:
+        ttl = SURVEY_DEFAULT_TTL;
+        break;
+    default:
+        return false;
+    }
+
+    *origin_ttl = ttl;
+    return true;
 }
 
 bool app_mesh_c5_event_accept_reservation(
@@ -172,6 +229,7 @@ bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
 {
     return frame_len > standard_frame_max_len ||
            msg_type == MSG_COMMAND ||
+           msg_type == MSG_SURVEY_PAIR_PREPARE ||
            msg_type == MSG_SURVEY_DISCOVERY_START ||
            msg_type == MSG_ROUTE_REQ ||
            msg_type == MSG_ROUTE_REPLY ||

@@ -24,6 +24,7 @@
 #define WATCHDOG_LEASE_US UINT64_C(30000000)
 #define OLD_DISCOVERY_SLOT_US UINT64_C(1000)
 #define SURVEY_REPLY_OPPORTUNITY_COUNT 4u
+#define SURVEY_PAIR_GRAPH_SWEEP_SEEDS 512u
 
 static unsigned int failures;
 
@@ -38,6 +39,12 @@ static unsigned int failures;
 struct interval {
     uint64_t start_us;
     uint64_t end_us;
+};
+
+struct survey_probe_event {
+    struct interval airtime;
+    uint8_t sender;
+    bool collided;
 };
 
 static bool fully_contained(struct interval frame, struct interval rx)
@@ -617,6 +624,322 @@ static void test_survey_deferred_phase_runtime_invariants(void)
     }
 }
 
+static uint32_t reconstructed_survey_start_ms(
+    const struct survey_discovery_config *config,
+    uint32_t receive_ms,
+    uint32_t message_age_ms)
+{
+    struct survey_discovery_timing timing;
+
+    CHECK(survey_discovery_timing_from_age(config, message_age_ms, &timing) ==
+              PROTO_OK,
+          "survey repeat age was rejected");
+    CHECK(!timing.expired, "fresh survey repeat was treated as expired");
+    return timing.pending ? receive_ms + timing.wait_ms :
+           receive_ms - timing.elapsed_ms;
+}
+
+static void test_survey_repeat_age_convergence_sweep(void)
+{
+    static const uint32_t repeat_delays_ms[] = {0u, 60u, 120u, 180u};
+    const uint32_t origin_ms = UINT32_C(500000);
+    bool zero_age_mutation_diverged = false;
+
+    for (uint8_t anchor_count = 2u; anchor_count <= 50u; anchor_count++) {
+        for (uint32_t seed = 1u; seed <= 32u; seed++) {
+            struct survey_discovery_config config = {
+                .survey_id = UINT32_C(0x50665000) + seed,
+                .start_delay_ms = 2000u,
+                .slot_ms = 40u,
+                .slot_count = 6u,
+            };
+            uint32_t expected_start_ms = origin_ms + config.start_delay_ms;
+            uint32_t expected_deadline_ms = expected_start_ms +
+                survey_discovery_duration_ms(&config);
+
+            for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
+                uint64_t anchor_id = UINT64_C(0xa700000000000001) ^
+                    ((uint64_t)seed << 48) ^
+                    ((uint64_t)(anchor + 1u) *
+                     UINT64_C(0x9e3779b97f4a7c15));
+                uint8_t selected_repeat = (uint8_t)((anchor + seed) %
+                    ARRAY_SIZE(repeat_delays_ms));
+                uint32_t selected_start_ms = 0u;
+
+                for (uint8_t repeat = 0u;
+                     repeat < ARRAY_SIZE(repeat_delays_ms); repeat++) {
+                    uint32_t receive_ms = origin_ms + repeat_delays_ms[repeat];
+                    uint32_t start_ms = reconstructed_survey_start_ms(
+                        &config, receive_ms, repeat_delays_ms[repeat]);
+
+                    CHECK(start_ms == expected_start_ms,
+                          "different 0x54 repeat changed reconstructed survey origin");
+                    CHECK(start_ms + survey_discovery_duration_ms(&config) ==
+                              expected_deadline_ms,
+                          "different 0x54 repeat changed survey deadline");
+                    if (repeat == selected_repeat) {
+                        selected_start_ms = start_ms;
+                    }
+
+                    if (repeat > 0u &&
+                        reconstructed_survey_start_ms(&config, receive_ms, 0u) !=
+                            expected_start_ms) {
+                        zero_age_mutation_diverged = true;
+                    }
+                }
+
+                for (uint8_t opportunity = 0u;
+                     opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                     opportunity++) {
+                    struct survey_discovery_attempt_schedule schedule;
+
+                    CHECK(survey_discovery_schedule_attempt(
+                              &config, anchor_id, opportunity, 0u,
+                              &schedule) == PROTO_OK,
+                          "repeat-skew survey attempt scheduling failed");
+                    CHECK(selected_start_ms + schedule.tx_ms ==
+                              expected_start_ms + schedule.tx_ms,
+                          "repeat selection shifted an absolute survey probe");
+                    CHECK(selected_start_ms + schedule.window_end_ms <=
+                              expected_deadline_ms,
+                          "repeat selection moved a probe beyond the survey horizon");
+                }
+            }
+        }
+    }
+    CHECK(zero_age_mutation_diverged,
+          "zero-age repeated 0x54 mutation did not perturb the sweep");
+}
+
+static bool survey_probe_event_precedes(const struct survey_probe_event *left,
+                                        const struct survey_probe_event *right)
+{
+    return left->airtime.start_us < right->airtime.start_us ||
+           (left->airtime.start_us == right->airtime.start_us &&
+            left->sender < right->sender);
+}
+
+static bool build_survey_probe_reports(
+    uint8_t anchor_count,
+    uint32_t seed,
+    struct survey_reachability_report *reports,
+    struct survey_reachability_entry
+        entries[SURVEY_GATEWAY_MAX_REPORTS][SURVEY_GATEWAY_MAX_PEERS_PER_REPORT])
+{
+    const struct survey_discovery_config config = {
+        .survey_id = UINT32_C(0x50665000) + seed,
+        .start_delay_ms = 2000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+    };
+    const uint64_t anchor_base = UINT64_C(0xa700000000000001) +
+        (uint64_t)seed * UINT64_C(0x10001);
+    const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE, UWB_SURVEY_DISCOVERY_PROBE_LEN);
+    struct survey_probe_event events[
+        SURVEY_GATEWAY_MAX_REPORTS * SURVEY_DISCOVERY_OPPORTUNITY_COUNT];
+    size_t event_count = 0u;
+
+    memset(reports, 0,
+           SURVEY_GATEWAY_MAX_REPORTS * sizeof(reports[0]));
+    memset(entries, 0,
+           SURVEY_GATEWAY_MAX_REPORTS * sizeof(entries[0]));
+    if (airtime_us == 0u) {
+        return false;
+    }
+    for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
+        reports[anchor].anchor_id = anchor_base + anchor;
+        reports[anchor].entries = entries[anchor];
+    }
+    for (uint8_t opportunity = 0u;
+         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT; opportunity++) {
+        const size_t first_event = event_count;
+
+        for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
+            struct survey_discovery_attempt_schedule schedule;
+
+            if (survey_discovery_schedule_attempt(
+                    &config, anchor_base + anchor, opportunity, 0u,
+                    &schedule) != PROTO_OK || schedule.deferred) {
+                return false;
+            }
+            events[event_count] = (struct survey_probe_event) {
+                .airtime = {
+                    .start_us = (uint64_t)schedule.tx_ms * 1000u,
+                    .end_us = (uint64_t)schedule.tx_ms * 1000u + airtime_us,
+                },
+                .sender = anchor,
+            };
+            event_count++;
+        }
+        for (size_t left = first_event; left < event_count; left++) {
+            for (size_t right = left + 1u; right < event_count; right++) {
+                if (events[left].airtime.start_us <
+                        events[right].airtime.end_us &&
+                    events[right].airtime.start_us <
+                        events[left].airtime.end_us) {
+                    events[left].collided = true;
+                    events[right].collided = true;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 1u; i < event_count; i++) {
+        struct survey_probe_event value = events[i];
+        size_t insert = i;
+
+        while (insert > 0u &&
+               survey_probe_event_precedes(&value, &events[insert - 1u])) {
+            events[insert] = events[insert - 1u];
+            insert--;
+        }
+        events[insert] = value;
+    }
+    for (size_t event = 0u; event < event_count; event++) {
+        const uint8_t sender = events[event].sender;
+
+        if (events[event].collided) {
+            continue;
+        }
+        for (uint8_t receiver = 0u; receiver < anchor_count; receiver++) {
+            bool already_seen = false;
+
+            if (receiver == sender) {
+                continue;
+            }
+            for (size_t peer = 0u; peer < reports[receiver].entry_count;
+                 peer++) {
+                already_seen |= entries[receiver][peer].peer_id ==
+                    anchor_base + sender;
+            }
+            if (!already_seen && reports[receiver].entry_count <
+                                     SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
+                entries[receiver][reports[receiver].entry_count++] =
+                    (struct survey_reachability_entry) {
+                        .peer_id = anchor_base + sender,
+                        .rssi_dbm = -60,
+                        .quality = 80u,
+                    };
+            }
+        }
+    }
+    return true;
+}
+
+static bool survey_pair_graph_connected(
+    uint8_t anchor_count,
+    uint64_t anchor_base,
+    const struct survey_pair *pairs,
+    size_t pair_count)
+{
+    bool adjacent[SURVEY_GATEWAY_MAX_REPORTS][SURVEY_GATEWAY_MAX_REPORTS] = {{0}};
+    bool visited[SURVEY_GATEWAY_MAX_REPORTS] = {0};
+    uint8_t degree[SURVEY_GATEWAY_MAX_REPORTS] = {0};
+    uint8_t queue[SURVEY_GATEWAY_MAX_REPORTS];
+    size_t head = 0u;
+    size_t tail = 0u;
+
+    for (size_t pair = 0u; pair < pair_count; pair++) {
+        if (pairs[pair].initiator_id < anchor_base ||
+            pairs[pair].responder_id < anchor_base) {
+            return false;
+        }
+        const size_t first = (size_t)(pairs[pair].initiator_id - anchor_base);
+        const size_t second = (size_t)(pairs[pair].responder_id - anchor_base);
+
+        if (first >= anchor_count || second >= anchor_count || first == second ||
+            adjacent[first][second]) {
+            return false;
+        }
+        adjacent[first][second] = true;
+        adjacent[second][first] = true;
+        degree[first]++;
+        degree[second]++;
+        if (degree[first] > SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR ||
+            degree[second] > SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) {
+            return false;
+        }
+    }
+
+    visited[0] = true;
+    queue[tail++] = 0u;
+    while (head < tail) {
+        const uint8_t current = queue[head++];
+
+        for (uint8_t peer = 0u; peer < anchor_count; peer++) {
+            if (adjacent[current][peer] && !visited[peer]) {
+                visited[peer] = true;
+                queue[tail++] = peer;
+            }
+        }
+    }
+    for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
+        if (!visited[anchor]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_survey_probe_pair_graph_stress_sweep(void)
+{
+    static const uint8_t anchor_counts[] = {2u, 6u, 16u, 20u, 32u, 50u};
+    struct survey_reachability_report reports[SURVEY_GATEWAY_MAX_REPORTS];
+    struct survey_reachability_entry
+        entries[SURVEY_GATEWAY_MAX_REPORTS][SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    struct survey_pair pairs[SURVEY_GATEWAY_MAX_PAIRS];
+
+    for (size_t count_index = 0u; count_index < ARRAY_SIZE(anchor_counts);
+         count_index++) {
+        const uint8_t anchor_count = anchor_counts[count_index];
+        size_t connected = 0u;
+        size_t explicit_unconnectable = 0u;
+        size_t nonempty_reports = 0u;
+        bool model_valid = true;
+
+        for (uint32_t seed = 1u; seed <= SURVEY_PAIR_GRAPH_SWEEP_SEEDS; seed++) {
+            const uint64_t anchor_base = UINT64_C(0xa700000000000001) +
+                (uint64_t)seed * UINT64_C(0x10001);
+            size_t pair_count = 0u;
+            int ret;
+
+            model_valid &= build_survey_probe_reports(anchor_count, seed,
+                                                       reports, entries);
+            if (!model_valid) {
+                break;
+            }
+            bool all_nonempty = true;
+            for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
+                all_nonempty &= reports[anchor].entry_count != 0u;
+            }
+            nonempty_reports += all_nonempty ? 1u : 0u;
+            ret = survey_plan_pairs_from_reachability(
+                UINT32_C(0x50665000) + seed, reports, anchor_count, 1u,
+                pairs, ARRAY_SIZE(pairs), &pair_count);
+            if (ret == PROTO_ERR_NOT_FOUND) {
+                explicit_unconnectable++;
+            } else if (ret == PROTO_OK &&
+                       survey_pair_graph_connected(anchor_count, anchor_base,
+                                                   pairs, pair_count)) {
+                connected++;
+            } else if (ret != PROTO_OK) {
+                model_valid = false;
+                break;
+            }
+        }
+        printf("survey-pair-graph anchors=%u seeds=%u reports=%zu connected=%zu explicit_unconnectable=%zu\n",
+               anchor_count, SURVEY_PAIR_GRAPH_SWEEP_SEEDS, nonempty_reports,
+               connected, explicit_unconnectable);
+        CHECK(model_valid, "survey pair-graph model failed internally");
+        CHECK(nonempty_reports == SURVEY_PAIR_GRAPH_SWEEP_SEEDS,
+              "collision retries left an anchor without reportable peers");
+        CHECK(connected == SURVEY_PAIR_GRAPH_SWEEP_SEEDS &&
+                  explicit_unconnectable == 0u,
+              "connectable survey reports produced a disconnected pair graph");
+    }
+}
+
 static void test_claim_phase_sweep(void)
 {
     static const int32_t drifts[] = {
@@ -648,6 +971,8 @@ int main(void)
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
     test_fixed_survey_retry_deadlock_is_reproduced();
     test_survey_deferred_phase_runtime_invariants();
+    test_survey_repeat_age_convergence_sweep();
+    test_survey_probe_pair_graph_stress_sweep();
     test_multi_anchor_claim_and_range_schedule_invariants();
 
     if (failures != 0u) {

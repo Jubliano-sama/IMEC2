@@ -1350,24 +1350,27 @@ static int test_survey_pairing_ceiling(void)
             ret, context.report_count, context.pair_count,
             SURVEY_GATEWAY_MAX_PAIRS);
     for (size_t i = 0u; i < context.pair_count; i++) {
-        const struct survey_pair *pair = &context.pairs[i];
+        struct survey_pair pair;
         size_t initiator;
         size_t responder;
 
-        REQUIRE(pair->initiator_id >= ANCHOR_ID_BASE &&
-                pair->initiator_id < ANCHOR_ID_BASE + ANCHOR_COUNT &&
-                pair->responder_id >= ANCHOR_ID_BASE &&
-                pair->responder_id < ANCHOR_ID_BASE + ANCHOR_COUNT &&
-                pair->survey_id == SURVEY_ID && pair->sample_count == 1u,
+        ret = survey_gateway_pair_at(&context, i, &pair);
+        REQUIRE(ret == PROTO_OK,
+                "survey pair reconstruction index=%zu ret=%d", i, ret);
+        REQUIRE(pair.initiator_id >= ANCHOR_ID_BASE &&
+                pair.initiator_id < ANCHOR_ID_BASE + ANCHOR_COUNT &&
+                pair.responder_id >= ANCHOR_ID_BASE &&
+                pair.responder_id < ANCHOR_ID_BASE + ANCHOR_COUNT &&
+                pair.survey_id == SURVEY_ID && pair.sample_count == 1u,
                 "survey pair index=%zu ids=0x%016" PRIx64 "/0x%016" PRIx64,
-                i, pair->initiator_id, pair->responder_id);
-        initiator = (size_t)(pair->initiator_id - ANCHOR_ID_BASE);
-        responder = (size_t)(pair->responder_id - ANCHOR_ID_BASE);
+                i, pair.initiator_id, pair.responder_id);
+        initiator = (size_t)(pair.initiator_id - ANCHOR_ID_BASE);
+        responder = (size_t)(pair.responder_id - ANCHOR_ID_BASE);
         degree[initiator]++;
         degree[responder]++;
         for (size_t j = 0u; j < i; j++) {
-            REQUIRE(!(context.pairs[j].initiator_id == pair->initiator_id &&
-                      context.pairs[j].responder_id == pair->responder_id),
+            REQUIRE(!(context.pairs[j].initiator_id == pair.initiator_id &&
+                      context.pairs[j].responder_id == pair.responder_id),
                     "duplicate survey pair index=%zu previous=%zu", i, j);
         }
     }

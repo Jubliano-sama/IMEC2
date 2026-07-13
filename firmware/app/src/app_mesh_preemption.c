@@ -197,3 +197,41 @@ int app_mesh_apply_click_preempt_plan(
     }
     return 0;
 }
+
+int app_mesh_queue_remove_first(
+    const struct app_mesh_queue_remove_ops *ops,
+    const struct mesh_outbound *target,
+    struct mesh_outbound *scratch,
+    bool *removed_out)
+{
+    uint32_t initial_count;
+    bool removed = false;
+
+    if (ops == NULL || target == NULL || scratch == NULL ||
+        removed_out == NULL || ops->count == NULL || ops->get == NULL ||
+        ops->put == NULL || ops->recover == NULL || ops->matches == NULL) {
+        return -EINVAL;
+    }
+    initial_count = ops->count(ops->ctx);
+    for (uint32_t i = 0u; i < initial_count; i++) {
+        int ret = ops->get(scratch, ops->ctx);
+
+        if (ret != 0) {
+            *removed_out = removed;
+            return ret;
+        }
+        if (!removed && ops->matches(scratch, target, ops->ctx)) {
+            removed = true;
+            continue;
+        }
+        ret = ops->put(scratch, ops->ctx);
+        if (ret != 0) {
+            int recover_ret = ops->recover(scratch, ops->ctx);
+
+            *removed_out = removed;
+            return recover_ret == 0 ? ret : recover_ret;
+        }
+    }
+    *removed_out = removed;
+    return removed ? 0 : -ENOENT;
+}

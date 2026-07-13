@@ -44,6 +44,20 @@ assert "anchor_ids[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES]" in PUBLISHER
 assert "slots[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES]" in PUBLISHER
 assert "APP_GATEWAY_ASSIGNMENT_PUBLISHER_RAM_BUDGET_BYTES" in PUBLISHER
 
+hop_report = function_body(ANCHOR, "anchor_discovery_gateway_hop_count")
+assert "route_selected(&mesh_runtime.upstream)" in hop_report
+assert re.search(
+    r"selected\s*==\s*NULL\s*\|\|\s*selected->hop_count\s*==\s*UINT8_MAX",
+    hop_report,
+)
+assert re.search(r"return\s+0u\s*;", hop_report)
+assert re.search(r"return\s+selected->hop_count\s*\+\s*1u\s*;", hop_report)
+
+schedule = function_body(ANCHOR, "anchor_schedule_discovery_response")
+retry = function_body(ANCHOR, "anchor_discovery_claim_work_handler")
+assert "anchor_discovery_gateway_hop_count()" in schedule
+assert "anchor_discovery_gateway_hop_count()" in retry
+
 publish = function_body(ANCHOR, "gateway_discovery_assignment_publish_table")
 assert "app_gateway_assignment_publisher_stage_batch(" in publish
 assert "app_gateway_assignment_publisher_stage_table_ready(" in publish
@@ -52,8 +66,9 @@ assert "gateway_observe_command_event(&event, false)" not in publish
 admit = function_body(BLE, "gateway_observe_command_event_if_available")
 prepare = admit.index("gateway_command_observability_prepare(")
 assert admit.index("gateway_ble_stream_state.count >=") < prepare
-assert admit.index("gateway_ble_tx_in_flight") < prepare
-assert admit.index("items[i].priority == 0u") < prepare
+assert "!gateway_ble_stream_ready()" in admit
+assert "gateway_ble_tx_in_flight" not in admit
+assert "items[i].priority == 0u" not in admit
 assert "retain_until_sent = true" in admit
 
 observe = function_body(BLE, "gateway_observe_command_event")

@@ -72,24 +72,21 @@ gateway assigns it with `CMD_ASSIGN_DISCOVERY_SLOTS`, and an unassigned anchor
 does not answer normal click discovery until that assignment is persisted.
 
 ```sh
-.venv/bin/python firmware/scripts/capture_stack_evidence.py \
-  --build-dir build/mesh-clicker \
-  --probe-id <probe-id> \
-  --output-dir logs/stack-evidence
-
 .venv/bin/python firmware/scripts/flash_verified_mesh.py \
   --build-dir build/mesh-clicker \
-  --hardware-manifest logs/stack-evidence/mesh-clicker-<capture-id>.json \
-  --probe-id <probe-id>
+  --probe-id <probe-id> \
+  --output-dir logs/stack-evidence \
+  --duration-seconds 300
 ```
 
-The capture command is a non-deployment qualification step against a target
-already carrying the exact artifact. It runs the fixed TTY-backed pyOCD
-pre-reset RTT workflow, validates target-reported boot/build identity and typed
-real-workload samples, and produces schema-3 local provenance. The final
-wrapper fixes the probe selection and flash speed at 4 MHz, rejects direct
-policy/frequency overrides, and consumes the capture once. This is not
-cryptographic probe attestation; see `AGENTS.md` for its local-trust limits.
+The wrapper backs up the complete internal flash, stages the candidate without
+reset, checks the complete programmed image, runs the fixed TTY-backed pyOCD
+RTT qualification capture, and either promotes the candidate or verifies a
+byte-for-byte rollback. It fixes the probe and 4 MHz flash rate, journals every
+destructive phase, requires preset-specific real workloads, and consumes a
+successful capture once. This is not cryptographic probe attestation; the
+qualification and provisioning scripts are the executable source of truth for
+their accepted arguments and local checks.
 
 **See AGENTS.md for the full list of presets**, including traffic generators, ML collection builds, and legacy regression roles. Always state and verify the exact preset before flashing.
 

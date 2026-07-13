@@ -23,6 +23,10 @@ header length `40`). The stream header's payload length and CRC cover the event
 payload. A command event is always one fixed 78-byte payload and is never split
 into multiple logical records. GATT may deliver the stream record in transport
 chunks; the GUI must buffer until `40 + payload_length` bytes are present.
+Stack qualification records BLE pressure only after an asynchronous notify has
+actually consumed controller credit or a notify submit transiently fails; CCC
+being disabled by itself is transport unavailability, not credit-pressure
+evidence.
 
 Terminal command events have BLE queue priority `0`, equal to click records and
 higher than normal results, surveys, diagnostics, and status. A terminal event
@@ -37,10 +41,14 @@ could not enter that queue are retained separately, matching the gateway's
 two-command host ingress bound. This prevents a later same-kind command from
 overwriting an unsent terminal from the preceding command.
 
-Every event has a monotonically increasing `event_seq`. `lost_event_count` is
-cumulative and increments when an event cannot enter the BLE queue. A sequence
-gap or a larger loss count means intermediate progress was missed. The GUI must
-use the terminal event, not the absence of an error event, to decide success.
+Every event has a monotonically increasing `event_seq`. Temporary CCC-off,
+disconnect, queue pressure, exhausted notification credit, or a transient GATT
+submit failure is backpressure and does not increment `lost_event_count`.
+Progress snapshots remain pending and may coalesce to the latest safe state;
+terminal records remain separately retained. A sequence gap accompanied by a
+larger loss count means an event was irreversibly lost, rather than merely
+delayed. The GUI must use the terminal event, not the absence of an error event,
+to decide success.
 
 The bounded assignment-table publication batch is retained before command-event
 creation. It admits one slot mapping at a time only when BLE notification credit
@@ -51,6 +59,13 @@ semantic event pending without consuming `event_seq` or incrementing
 batch; it does not append another set of mappings. Stage 7, stage 8, and the
 terminal event remain behind every slot mapping in that batch, including across
 reconnect. Click and already-pending terminal records retain BLE priority.
+
+Survey report progress is reconstructed after collection from the gateway's
+retained table of at most 50 accepted reports, so a full BLE queue while reports
+arrive cannot erase anchor membership. Pair-start and pair-result progress is
+admitted one pair at a time. If telemetry has no custody capacity, orchestration
+pauses at the next between-pair boundary while command state and radio deadlines
+already in flight remain unchanged; it never allocates a 1225-event pair log.
 
 ## Event Payload V1
 
@@ -169,8 +184,13 @@ runtime result accounting is capped at 16 samples per pair. Compile-time guards
 bind these capacities and keep the discovery table publisher below a 4 KiB
 local-frame budget.
 
-Event creation never changes command admission, channel-5 priority, radio
-timing, retries, or survey decisions. A failed BLE enqueue updates bounded loss
-state and does not block or fail the mesh command. A capacity refusal before
-creation of a retained assignment publication event is backpressure rather than
-a failed enqueue, so it leaves that event pending and does not update loss state.
+Accepted and queued command progress obtains either BLE-queue custody or the
+single retained progress-snapshot custody before command dispatch can proceed.
+The retained admission snapshot is stage 2 (`QUEUED`), which is also proof that
+stage 1 (`ACCEPTED`) occurred; stage 1 may therefore be coalesced rather than
+emitted as a separate record when bounded transport storage is under pressure.
+Event flow control never changes channel-5 priority, an already-started radio
+deadline, retries, or survey decisions. Pair orchestration pauses only at a safe
+between-pair boundary. Temporary transport refusal leaves the event pending and
+does not update loss state; only exhausted bounded semantic storage can report
+irreversible loss.
