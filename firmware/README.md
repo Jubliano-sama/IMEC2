@@ -79,11 +79,13 @@ does not answer normal click discovery until that assignment is persisted.
   --duration-seconds 300
 ```
 
-The wrapper backs up the complete internal flash, stages the candidate without
-reset, checks the complete programmed image, runs the fixed TTY-backed pyOCD
-RTT qualification capture, and either promotes the candidate or verifies a
-byte-for-byte rollback. It fixes the probe and 4 MHz flash rate, journals every
-destructive phase, requires preset-specific real workloads, and consumes a
+The wrapper snapshots the complete internal flash so it can check the exact
+sector-erase result, stages the candidate without reset, checks the programmed
+image, and runs the fixed TTY-backed pyOCD RTT qualification capture. A failed
+or interrupted qualification leaves the flashed image in place for bench
+debugging; it reports the evidence failure and never restores the previous
+firmware automatically. It fixes the probe and 4 MHz flash rate, journals local
+capture bookkeeping, requires preset-specific real workloads, and consumes a
 successful capture once. This is not cryptographic probe attestation; the
 qualification and provisioning scripts are the executable source of truth for
 their accepted arguments and local checks.

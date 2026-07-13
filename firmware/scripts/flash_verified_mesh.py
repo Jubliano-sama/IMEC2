@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transactionally qualify and deploy production-candidate mesh firmware."""
+"""Flash and qualify production-candidate mesh firmware in place."""
 
 from __future__ import annotations
 
@@ -222,34 +222,6 @@ def _read_target_flash(probe_id: str, destination: Path, *, reset_after: bool = 
     return _sha256(destination)
 
 
-def _flash_binary_no_reset(probe_id: str, binary: Path) -> None:
-    command = [
-        str(PYOCD_EXECUTABLE), "flash", "--no-config", "-t", TARGET_NAME, "-u", probe_id,
-        "-f", str(FLASH_FREQUENCY_HZ), "-M", "halt", "--format", "bin",
-        "--base-address", f"0x{TARGET_FLASH_ADDRESS:x}", "--no-reset", str(binary),
-    ]
-    result = _run(command, capture_output=True)
-    combined = f"{result.stdout}\n{result.stderr}"
-    if result.returncode or re.search(r"(?:^|\n)\s*(?:Error|Traceback)\b", combined, re.IGNORECASE):
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise TransactionError(f"pyOCD binary restore failed with exit status {result.returncode}: {detail}")
-
-
-def _restore_target(probe_id: str, backup: Path, expected_sha256: str,
-                    transaction_directory: Path) -> None:
-    if not backup.is_file() or backup.stat().st_size != TARGET_FLASH_SIZE:
-        raise TransactionError("transaction backup is missing or has the wrong size")
-    if _sha256(backup) != expected_sha256:
-        raise TransactionError("transaction backup SHA-256 does not match its journal")
-    _flash_binary_no_reset(probe_id, backup)
-    restored = transaction_directory / "restored-readback.bin"
-    restored_sha256 = _read_target_flash(probe_id, restored)
-    restored.unlink(missing_ok=True)
-    if restored_sha256 != expected_sha256:
-        raise TransactionError("restored target flash SHA-256 does not match the backup")
-    _commander(probe_id, "reset")
-
-
 def _expected_staged_image(backup: Path, hex_path: Path) -> bytes:
     original = backup.read_bytes()
     if len(original) != TARGET_FLASH_SIZE:
@@ -406,49 +378,12 @@ def _recover_interrupted_transaction(probe_id: str) -> None:
     data = _load_journal(probe_id)
     if data is None:
         return
-    backup = Path(str(data["backup_path"]))
-    transaction_directory = backup.parent
     _probe_is_visible(probe_id)
-
-    capture_id = data.get("capture_id")
-    staged_sha256 = data.get("staged_flash_sha256")
-    deployment_record = data.get("deployment_record")
-    record_sha256 = data.get("deployment_record_sha256")
-    promoted = False
-    expected_record = {
-        "capture_id": capture_id,
-        "preset": data.get("preset"),
-        "probe_id": probe_id,
-        "staged_flash_sha256": staged_sha256,
-        "code_sector_map_sha256": _sector_hash_map_sha256(data.get("code_sector_sha256", {}))
-        if isinstance(data.get("code_sector_sha256"), dict) else None,
-        "transaction_id": str(data["transaction_id"]),
-    }
-    if (data.get("state") in {"promotion_intent", "committed"}
-            and isinstance(capture_id, str) and isinstance(staged_sha256, str)
-            and isinstance(deployment_record, dict) and isinstance(record_sha256, str)
-            and deployment_record == expected_record
-            and _record_sha256(deployment_record) == record_sha256):
-        try:
-            promoted = deployment_record in _ledger_records()
-        except TransactionError:
-            promoted = False
-    if promoted:
-        _durable_sync(CAPTURE_LEDGER)
-        current = transaction_directory / "recovery-current.bin"
-        _read_target_flash(probe_id, current)
-        code_sector_sha256 = data.get("code_sector_sha256")
-        sectors_match = (
-            isinstance(code_sector_sha256, dict)
-            and _code_sectors_match(current, code_sector_sha256)
-        )
-        current.unlink(missing_ok=True)
-        if sectors_match:
-            _commander(probe_id, "reset")
-            _cleanup_transaction(data)
-            return
-
-    _restore_target(probe_id, backup, str(data["backup_sha256"]), transaction_directory)
+    # Qualification is observational: an interrupted or rejected candidate is
+    # deliberately left on the target so the same image can be debugged and
+    # iterated.  The journal protects local capture/ledger bookkeeping only;
+    # it is never an instruction to restore the previous firmware.
+    _commander(probe_id, "reset")
     _cleanup_transaction(data)
 
 
@@ -677,15 +612,17 @@ def _deploy(build: verifier.BuildEvidence, build_dir: Path, probe_id: str,
         _cleanup_transaction(data)
     except BaseException as exc:
         # BaseException represents abrupt process loss in tests; the durable
-        # journal must survive so the next invocation performs recovery.
+        # journal survives so the next invocation can reset the retained image
+        # and discard incomplete local bookkeeping without restoring firmware.
         if not isinstance(exc, Exception):
             raise
         try:
-            _recover_interrupted_transaction(probe_id)
-        except Exception as rollback_error:
+            _commander(probe_id, "reset")
+            _cleanup_transaction(data)
+        except Exception as cleanup_error:
             raise TransactionError(
-                f"deployment failed and recovery remains pending: {rollback_error}"
-            ) from rollback_error
+                f"deployment failed and local transaction cleanup remains pending: {cleanup_error}"
+            ) from cleanup_error
         raise
 
 

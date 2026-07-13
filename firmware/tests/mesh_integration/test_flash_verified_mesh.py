@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transactional deployment regressions with a complete mocked target."""
+"""In-place deployment regressions with a complete mocked target."""
 
 from __future__ import annotations
 
@@ -364,11 +364,11 @@ class VerifiedFlashTests(unittest.TestCase):
         with self.assertRaisesRegex(flash.TransactionError, "outside"):
             flash._expected_staged_image(original, outside)
 
-    def test_stage_readback_and_artifact_freeze_fail_before_capture(self) -> None:
+    def test_stage_readback_and_artifact_freeze_fail_in_place_before_capture(self) -> None:
         build, _ = self._valid()
         self.target.fail_once("west_corrupt")
         self.assertEqual(1, flash.main(self._args(build)))
-        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(b"\x00" * flash.TARGET_FLASH_SIZE, self.target.target)
         self.assertFalse(any(len(call) > 1 and call[1] == str(self.capture) for call in self.target.calls))
 
         self._reset_transaction_state()
@@ -379,10 +379,10 @@ class VerifiedFlashTests(unittest.TestCase):
 
         self.target.before_west = mutate_candidate
         self.assertEqual(1, flash.main(self._args(build)))
-        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(self.target.candidate, self.target.target)
         self.assertFalse(any(len(call) > 1 and call[1] == str(self.capture) for call in self.target.calls))
 
-    def test_every_runtime_failure_rolls_back_and_verifies_original_flash(self) -> None:
+    def test_every_runtime_failure_leaves_the_staged_image_in_place(self) -> None:
         build, manifest = self._valid()
         scenarios = ("west", "staged_read", "capture", "ledger")
         for scenario in scenarios:
@@ -397,14 +397,11 @@ class VerifiedFlashTests(unittest.TestCase):
                     context = mock.patch.object(flash, "_checkpoint", side_effect=lambda _: None)
                 with context:
                     self.assertEqual(1, flash.main(self._args(build)))
-                self.assertEqual(self.target.original, self.target.target)
+                self.assertEqual(self.target.candidate, self.target.target)
                 self.assertFalse(self.journal.exists())
                 self.assertFalse(self.ledger.exists())
 
-        restore = next(call for call in self.target.calls if call[:2] == [str(self.pyocd), "flash"])
-        self.assertIn("--no-config", restore)
-        self.assertIn("--no-reset", restore)
-        self.assertEqual("4000000", restore[restore.index("-f") + 1])
+        self.assertFalse(any(call[:2] == [str(self.pyocd), "flash"] for call in self.target.calls))
 
         self._reset_transaction_state()
         data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -412,7 +409,7 @@ class VerifiedFlashTests(unittest.TestCase):
         data["capture_id"] = flash.verifier._capture_id(data)
         manifest.write_text(json.dumps(data), encoding="utf-8")
         self.assertEqual(1, flash.main(self._args(build)))
-        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(self.target.candidate, self.target.target)
         self.assertFalse(self.journal.exists())
 
     def test_append_then_fsync_error_is_reconciled_as_durable_promotion(self) -> None:
@@ -447,14 +444,14 @@ class VerifiedFlashTests(unittest.TestCase):
         self.assertFalse(self.journal.exists())
         self.assertEqual(1, len(flash._ledger_records()))
 
-    def test_crash_recovery_rolls_back_or_completes_durable_promotion(self) -> None:
+    def test_crash_recovery_keeps_whatever_image_reached_the_target(self) -> None:
         build, _ = self._valid()
-        rollback_points = (
-            "journal_durable", "staging_durable", "candidate_staged",
-            "staged_hash_durable", "promotion_intent_durable",
+        prestage_points = ("journal_durable", "staging_durable")
+        staged_points = (
+            "candidate_staged", "staged_hash_durable", "promotion_intent_durable",
+            "promotion_ledger_durable", "commit_durable",
         )
-        promotion_points = ("promotion_ledger_durable", "commit_durable")
-        for checkpoint in rollback_points + promotion_points:
+        for checkpoint in prestage_points + staged_points:
             with self.subTest(checkpoint=checkpoint):
                 self._reset_transaction_state()
 
@@ -467,28 +464,22 @@ class VerifiedFlashTests(unittest.TestCase):
                         flash.main(self._args(build))
                 self.assertTrue(self.journal.exists())
                 flash._recover_interrupted_transaction("TEST-PROBE")
-                expected = self.target.original if checkpoint in rollback_points else self.target.candidate
+                expected = self.target.original if checkpoint in prestage_points else self.target.candidate
                 self.assertEqual(expected, self.target.target)
                 self.assertFalse(self.journal.exists())
-                if checkpoint in promotion_points:
+                if checkpoint in {"promotion_ledger_durable", "commit_durable"}:
                     self.assertEqual(1, len(flash._ledger_records()))
                 else:
                     self.assertFalse(self.ledger.exists())
 
-    def test_failed_restore_stays_journaled_until_verified_recovery(self) -> None:
+    def test_failed_qualification_keeps_candidate_and_cleans_journal(self) -> None:
         build, _ = self._valid()
         self.target.fail_once("capture")
-        self.target.corrupt_restore = True
         self.assertEqual(1, flash.main(self._args(build)))
-        self.assertTrue(self.journal.exists())
-        self.assertNotEqual(self.target.original, self.target.target)
-
-        self.target.corrupt_restore = False
-        flash._recover_interrupted_transaction("TEST-PROBE")
-        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(self.target.candidate, self.target.target)
         self.assertFalse(self.journal.exists())
 
-    def test_malformed_ledger_at_promotion_intent_forces_rollback(self) -> None:
+    def test_malformed_ledger_at_promotion_intent_keeps_candidate(self) -> None:
         build, _ = self._valid()
 
         def crash(name: str) -> None:
@@ -502,7 +493,7 @@ class VerifiedFlashTests(unittest.TestCase):
         self.ledger.parent.mkdir(parents=True, exist_ok=True)
         self.ledger.write_text('{"capture_id":', encoding="utf-8")
         flash._recover_interrupted_transaction("TEST-PROBE")
-        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(self.target.candidate, self.target.target)
         self.assertFalse(self.journal.exists())
 
     def test_persisted_transaction_recovers_before_later_candidate_validation(self) -> None:
@@ -519,7 +510,7 @@ class VerifiedFlashTests(unittest.TestCase):
 
         (build / "CMakeFiles" / "app.dir" / "src" / "main.c.su").unlink()
         self.assertEqual(1, flash.main(self._args(build)))
-        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(self.target.candidate, self.target.target)
         self.assertFalse(self.journal.exists())
 
     def test_corrupt_journal_and_ledger_fail_closed_without_target_writes(self) -> None:
