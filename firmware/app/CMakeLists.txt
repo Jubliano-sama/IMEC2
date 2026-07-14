@@ -341,10 +341,10 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
-# The hardware facade freezes at most two concurrent control deliveries. Keep
+# The hardware facade freezes at most four concurrent control deliveries. Keep
 # the pure/native scheduler's wider stress-test capacity without paying for
-# twelve unreachable request slots in every constrained firmware image.
-target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=2)
+# unreachable request slots in every constrained firmware image.
+target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=4)
 
 if(FIRMWARE_ROLE STREQUAL "clicker")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=1)
@@ -402,11 +402,15 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_wake_train_politeness.c
     src/app_node_comm.c
     src/app_mesh_report.c
+    src/app_mesh_report_encode.c
     src/app_stack_diag_record.c
     src/app_stack_diag.c
     src/app_stack_workload_diag.c
     src/app_anchor.c
+    src/app_anchor_command_completion.c
+    src/app_anchor_ranging.c
     src/app_anchor_survey_discovery.c
+    src/app_anchor_survey_runtime.c
     src/app_high_debug.c
     src/app_watchdog.c
 )
@@ -450,6 +454,7 @@ else()
         ../src/mesh.c
         ../src/mesh_preemption.c
         ../src/mesh_relay.c
+        ../src/mesh_relay_channel9.c
         ../src/report.c
         ../src/serial_frame.c
         ../src/status.c

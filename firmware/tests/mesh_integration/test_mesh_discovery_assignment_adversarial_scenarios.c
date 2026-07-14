@@ -554,6 +554,69 @@ static bool test_conflicts_capacity_and_late_claim(void)
     return true;
 }
 
+static bool test_explicit_budget_preserves_randomized_table_retries(void)
+{
+    const uint32_t command_budget_ms = 60000u;
+    const uint32_t natural_window_ms =
+        discovery_assignment_collection_window_ms(
+            MAX_ANCHORS, DISCOVERY_ASSIGNMENT_MAX_HOPS);
+    uint32_t remaining_ms = 24000u;
+    uint32_t previous_min_backoff = 0u;
+    uint8_t round_limit = gateway_command_budget_retry_limit(
+        true, command_budget_ms, MAX_ROUNDS);
+
+    CHECK(round_limit == 3u, "unexpected explicit round limit=%u", round_limit);
+    CHECK(app_discovery_assignment_claim_round_limit(
+              true, round_limit, MAX_ROUNDS) == round_limit,
+          "explicit budget discarded claim retries");
+    CHECK(discovery_assignment_retry_backoff_ms(0u, 0u) <
+              discovery_assignment_retry_backoff_ms(1u, 0u),
+          "claim retry backoff is not exponential");
+    CHECK(discovery_assignment_retry_backoff_ms(0u, 0u) !=
+              discovery_assignment_retry_backoff_ms(0u, 73u),
+          "claim retry backoff is not randomized");
+    for (uint8_t round = 1u; round <= round_limit; round++) {
+        uint8_t windows_remaining =
+            app_discovery_assignment_table_windows_remaining(
+                round, round_limit);
+        uint32_t window_ms = gateway_command_budget_window_ms(
+            true, remaining_ms, windows_remaining, natural_window_ms);
+
+        CHECK(windows_remaining == (uint8_t)(round_limit - round + 1u),
+              "lost table window round=%u remaining=%u",
+              round, windows_remaining);
+        CHECK(window_ms != 0u && window_ms <= natural_window_ms &&
+                  window_ms <= remaining_ms &&
+                  (round == round_limit || window_ms < remaining_ms),
+              "invalid table window round=%u window=%u remaining=%u",
+              round, window_ms, remaining_ms);
+        remaining_ms -= window_ms;
+        if (round < round_limit) {
+            uint32_t min_backoff = discovery_assignment_retry_backoff_ms(
+                round - 1u, 0u);
+            uint32_t jittered_backoff = discovery_assignment_retry_backoff_ms(
+                round - 1u, min_backoff / 2u);
+
+            CHECK(jittered_backoff > min_backoff,
+                  "table retry lacks jitter round=%u min=%u jittered=%u",
+                  round, min_backoff, jittered_backoff);
+            CHECK(previous_min_backoff == 0u ||
+                      min_backoff == previous_min_backoff * 2u,
+                  "table retry is not exponential round=%u previous=%u now=%u",
+                  round, previous_min_backoff, min_backoff);
+            CHECK(app_discovery_assignment_table_retry_backoff_required(
+                      true, 1u, round, round_limit),
+                  "missing ACK skipped backoff round=%u", round);
+            remaining_ms -= jittered_backoff;
+            previous_min_backoff = min_backoff;
+        }
+    }
+    CHECK(!app_discovery_assignment_table_retry_backoff_required(
+              true, 1u, round_limit, round_limit),
+          "terminal table round scheduled an extra retry");
+    return true;
+}
+
 int main(void)
 {
     static const size_t counts[] = {2u, 6u, 16u, 32u, 50u};
@@ -564,6 +627,9 @@ int main(void)
         }
     }
     if (!test_conflicts_capacity_and_late_claim()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_explicit_budget_preserves_randomized_table_retries()) {
         return EXIT_FAILURE;
     }
     printf("PASS discovery_assignment_adversarial counts=2,6,16,32,50 "

@@ -361,6 +361,60 @@ static void test_one_shot_continuous_busy_returns_boundedly(void)
     assert(ctx.send_count == 0u);
 }
 
+static void test_scheduler_owned_opportunity_sends_exactly_once(void)
+{
+    struct mesh_outbound gateway_adv = {
+        .packet = {
+            .msg_type = MSG_GATEWAY_ROUTE_ADV,
+            .src_id = TEST_GATEWAY,
+            .dst_id = MESH_BROADCAST_ID,
+            .session_id = 6u,
+            .seq = 6u,
+        },
+        .next_hop_id = MESH_BROADCAST_ID,
+        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .earliest_tx_ms = 1000u,
+    };
+    struct app_mesh_flood_result result = {0};
+    struct flood_test_ctx ctx = {
+        .now_ms = 900u,
+        .defer_active = true,
+    };
+    const struct app_mesh_flood_ops ops = {
+        .now_ms = test_now_ms,
+        .sleep_until_ms = test_sleep_until_ms,
+        .defer_active = test_defer_active,
+        .c5_quiet = test_c5_quiet,
+        .random_u32 = test_random_u32,
+        .send = test_send,
+        .ctx = &ctx,
+    };
+
+    assert(app_mesh_flood_send_opportunity(
+               &gateway_adv, &ops, &result) == -EAGAIN);
+    assert(result.sent_count == 0u);
+    assert(ctx.quiet_count == 0u);
+    assert(ctx.send_count == 0u);
+
+    ctx.defer_active = false;
+    ctx.quiet_busy_remaining = 1u;
+    assert(app_mesh_flood_send_opportunity(
+               &gateway_adv, &ops, &result) == -EAGAIN);
+    assert(result.sent_count == 0u);
+    assert(result.busy_skip_count == 1u);
+    assert(ctx.send_count == 0u);
+
+    for (uint8_t opportunity = 0u;
+         opportunity < app_mesh_flood_repeat_limit();
+         opportunity++) {
+        memset(&result, 0, sizeof(result));
+        assert(app_mesh_flood_send_opportunity(
+                   &gateway_adv, &ops, &result) == 0);
+        assert(result.sent_count == 1u);
+    }
+    assert(ctx.send_count == app_mesh_flood_repeat_limit());
+}
+
 static void test_resumable_continuous_busy_times_out_across_rollover(void)
 {
     const uint32_t start_ms = UINT32_MAX - 30u;
@@ -417,6 +471,7 @@ int main(void)
     test_pause_after_quiet_check_prevents_send();
     test_pre_rf_blocks_preserve_four_real_opportunities();
     test_one_shot_continuous_busy_returns_boundedly();
+    test_scheduler_owned_opportunity_sends_exactly_once();
     test_resumable_continuous_busy_times_out_across_rollover();
     return 0;
 }

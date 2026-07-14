@@ -20,7 +20,7 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .max_attempts = 4u,
         .successful_attempts_required = 4u,
         .retry_backoff_shift_cap = 3u,
-        .priority = 240u,
+        .priority = 255u,
     },
     [NODE_COMM_PROFILE_RELIABLE_UPLINK] = {
         .retry_delay_ms = 1500u,
@@ -31,12 +31,20 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .priority = 120u,
     },
     [NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK] = {
-        .retry_delay_ms = 2000u,
+        .retry_delay_ms = 50u,
+        .success_repeat_delay_ms = 0u,
+        .max_attempts = 16u,
+        .successful_attempts_required = 1u,
+        .retry_backoff_shift_cap = 3u,
+        .priority = 210u,
+    },
+    [NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE] = {
+        .retry_delay_ms = 200u,
         .success_repeat_delay_ms = 0u,
         .max_attempts = 4u,
         .successful_attempts_required = 1u,
-        .retry_backoff_shift_cap = 2u,
-        .priority = 160u,
+        .retry_backoff_shift_cap = 3u,
+        .priority = 220u,
     },
     [NODE_COMM_PROFILE_CONTROL_RESPONSE] = {
         .retry_delay_ms = 200u,
@@ -44,7 +52,7 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .max_attempts = 4u,
         .successful_attempts_required = 1u,
         .retry_backoff_shift_cap = 3u,
-        .priority = 220u,
+        .priority = 250u,
     },
     [NODE_COMM_PROFILE_BEST_EFFORT] = {
         .retry_delay_ms = 0u,
@@ -293,22 +301,25 @@ bool node_comm_lifecycle_service(struct node_comm_lifecycle *lifecycle,
     return true;
 }
 
-static uint64_t retry_delay_ms(const struct node_comm_request_slot *slot)
+static uint64_t retry_backoff_ms(uint32_t base_delay_ms,
+                                 uint8_t backoff_shift_cap,
+                                 uint32_t retry_jitter_seed,
+                                 uint16_t retry_round)
 {
-    uint8_t shift = slot->attempts_started == 0u ? 0u :
-                    (uint8_t)(slot->attempts_started - 1u);
-    uint64_t delay = slot->retry_delay_ms;
+    uint16_t shift = retry_round == 0u ? 0u :
+                     (uint16_t)(retry_round - 1u);
+    uint64_t delay = base_delay_ms;
 
-    if (shift > slot->retry_backoff_shift_cap) {
-        shift = slot->retry_backoff_shift_cap;
+    if (shift > backoff_shift_cap) {
+        shift = backoff_shift_cap;
     }
-    for (uint8_t i = 0u; i < shift; i++) {
+    for (uint16_t i = 0u; i < shift; i++) {
         delay = add_saturating_u64(delay, delay);
     }
-    if (slot->request.retry_jitter_seed != 0u && delay != 0u &&
+    if (retry_jitter_seed != 0u && delay != 0u &&
         delay != UINT64_MAX) {
-        uint32_t mixed = slot->request.retry_jitter_seed ^
-                         ((uint32_t)slot->attempts_started * UINT32_C(0x9e3779b9));
+        uint32_t mixed = retry_jitter_seed ^
+                         ((uint32_t)retry_round * UINT32_C(0x9e3779b9));
         uint64_t half = delay / 2u;
         uint64_t width = delay == UINT64_MAX ? UINT64_MAX : delay + 1u;
 
@@ -320,6 +331,46 @@ static uint64_t retry_delay_ms(const struct node_comm_request_slot *slot)
         delay = delay - half + ((uint64_t)mixed % width);
     }
     return delay;
+}
+
+static uint64_t retry_delay_ms(const struct node_comm_request_slot *slot)
+{
+    return retry_backoff_ms(slot->retry_delay_ms,
+                            slot->retry_backoff_shift_cap,
+                            slot->request.retry_jitter_seed,
+                            slot->retry_rounds);
+}
+
+static void schedule_retry(struct node_comm_request_slot *slot,
+                           uint64_t now_ms)
+{
+    if (slot->retry_rounds < UINT16_MAX) {
+        slot->retry_rounds++;
+    }
+    slot->retry_due_ms = add_saturating_u64(now_ms, retry_delay_ms(slot));
+    slot->state = NODE_COMM_SLOT_WAIT_RETRY;
+}
+
+int node_comm_retry_backoff_ms(enum node_comm_delivery_profile profile,
+                               uint32_t retry_jitter_seed,
+                               uint16_t retry_round,
+                               uint32_t *delay_ms_out)
+{
+    uint64_t delay_ms;
+
+    if (profile >= NODE_COMM_PROFILE_COUNT || retry_jitter_seed == 0u ||
+        retry_round == 0u || delay_ms_out == NULL) {
+        return -EINVAL;
+    }
+    delay_ms = retry_backoff_ms(profile_policies[profile].retry_delay_ms,
+                                profile_policies[profile].retry_backoff_shift_cap,
+                                retry_jitter_seed,
+                                retry_round);
+    if (delay_ms > UINT32_MAX) {
+        return -EOVERFLOW;
+    }
+    *delay_ms_out = (uint32_t)delay_ms;
+    return 0;
 }
 
 static bool deadline_expired(const struct node_comm_request_slot *slot,
@@ -675,9 +726,7 @@ int node_comm_stop(struct node_comm *comm,
                     terminalize(comm, slot,
                                 NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
                 } else {
-                    slot->state = NODE_COMM_SLOT_WAIT_RETRY;
-                    slot->retry_due_ms = add_saturating_u64(
-                        now_ms, retry_delay_ms(slot));
+                    schedule_retry(slot, now_ms);
                 }
             } else {
                 slot->state = NODE_COMM_SLOT_READY;
@@ -839,6 +888,27 @@ int node_comm_lease_defer_pre_rf(struct node_comm *comm,
     return 0;
 }
 
+int node_comm_lease_defer_pre_rf_retry(
+    struct node_comm *comm,
+    const struct node_comm_lease *lease,
+    uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    (void)node_comm_service(comm, now_ms);
+    ret = validate_lease(comm, lease, &slot);
+    if (ret < 0) {
+        return ret;
+    }
+    if (slot->rf_started) {
+        return -EALREADY;
+    }
+    invalidate_lease(comm, slot);
+    schedule_retry(slot, now_ms);
+    return 0;
+}
+
 int node_comm_lease_complete(struct node_comm *comm,
                              const struct node_comm_lease *lease,
                              enum node_comm_delivery_outcome outcome,
@@ -884,8 +954,55 @@ int node_comm_lease_complete(struct node_comm *comm,
         return 0;
     }
     invalidate_lease(comm, slot);
-    slot->retry_due_ms = add_saturating_u64(now_ms, retry_delay_ms(slot));
-    slot->state = NODE_COMM_SLOT_WAIT_RETRY;
+    schedule_retry(slot, now_ms);
+    return 0;
+}
+
+int node_comm_lease_await_confirmation(struct node_comm *comm,
+                                       const struct node_comm_lease *lease,
+                                       uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    (void)node_comm_service(comm, now_ms);
+    ret = validate_lease(comm, lease, &slot);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!slot->rf_started) {
+        return -EPROTO;
+    }
+    invalidate_lease(comm, slot);
+    slot->state = NODE_COMM_SLOT_WAIT_CONFIRMATION;
+    return 0;
+}
+
+int node_comm_confirm_delivery(struct node_comm *comm,
+                               uint32_t handle,
+                               uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+
+    if (comm == NULL || handle == 0u) {
+        return -EINVAL;
+    }
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+        return -EALREADY;
+    }
+    if (slot->state == NODE_COMM_SLOT_LEASED && slot->rf_started) {
+        /* A synchronous backend confirmation will be committed at lease exit. */
+        return -EINPROGRESS;
+    }
+    if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+        return -EAGAIN;
+    }
+    terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED);
     return 0;
 }
 
@@ -950,6 +1067,11 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
             slot_due_ms = now_ms;
         } else if (slot->state == NODE_COMM_SLOT_WAIT_RETRY) {
             slot_due_ms = slot->retry_due_ms;
+        } else if (slot->state == NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+            if (slot->request.absolute_deadline_ms == 0u) {
+                continue;
+            }
+            slot_due_ms = slot->request.absolute_deadline_ms;
         } else if (slot->state != NODE_COMM_SLOT_LEASED) {
             continue;
         }

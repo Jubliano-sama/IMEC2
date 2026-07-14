@@ -516,6 +516,7 @@ static void test_discovery_timing_uses_packet_age(void)
         .slot_count = 50u,
     };
     struct survey_discovery_timing timing = {0};
+    uint32_t start_at_ms = 0u;
 
     assert(survey_discovery_timing_from_age(&config, 500u, &timing) == PROTO_OK);
     assert(timing.pending);
@@ -524,6 +525,14 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(timing.wait_ms == 1500u);
     assert(timing.elapsed_ms == 0u);
     assert(timing.duration_ms == 17120u);
+    assert(survey_discovery_start_at_ms(&timing, 1000u, &start_at_ms) ==
+           PROTO_OK);
+    assert(start_at_ms == 2500u);
+
+    assert(survey_discovery_timing_from_age(&config, 800u, &timing) == PROTO_OK);
+    assert(survey_discovery_start_at_ms(&timing, 1300u, &start_at_ms) ==
+           PROTO_OK);
+    assert(start_at_ms == 2500u);
 
     assert(survey_discovery_timing_from_age(&config, 2123u, &timing) == PROTO_OK);
     assert(!timing.pending);
@@ -531,6 +540,9 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(!timing.expired);
     assert(timing.wait_ms == 0u);
     assert(timing.elapsed_ms == 123u);
+    assert(survey_discovery_start_at_ms(&timing, 2623u, &start_at_ms) ==
+           PROTO_OK);
+    assert(start_at_ms == 2500u);
 
     assert(survey_discovery_timing_from_age(&config, 10560u, &timing) == PROTO_OK);
     assert(!timing.pending);
@@ -542,6 +554,8 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(!timing.active);
     assert(timing.expired);
     assert(timing.elapsed_ms == 17120u);
+    assert(survey_discovery_start_at_ms(&timing, 19620u, &start_at_ms) ==
+           PROTO_ERR_ARG);
 }
 
 static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
@@ -720,6 +734,11 @@ static void test_reach_report_tlv_parser_round_trips_entries(void)
 
 static void test_reach_report_tlv_parser_accepts_empty_peer_list(void)
 {
+    const uint32_t expected_survey_id = 0xAABBCCDDu;
+    const uint64_t expected_anchor_id = 0x9999888877776666ull;
+    const uint64_t expected_gateway_id = 0x8888777766665555ull;
+    struct survey_gateway_context gateway = {0};
+    struct proto_packet packet = {0};
     uint8_t payload[32];
     size_t payload_len = 0u;
     uint32_t survey_id = 0u;
@@ -729,8 +748,8 @@ static void test_reach_report_tlv_parser_accepts_empty_peer_list(void)
     assert(survey_append_reach_report_tlvs(payload,
                                            sizeof(payload),
                                            &payload_len,
-                                           0xAABBCCDDu,
-                                           0x9999888877776666ull,
+                                           expected_survey_id,
+                                           expected_anchor_id,
                                            NULL,
                                            0u) == PROTO_OK);
     assert(survey_extract_reach_report_tlvs(payload,
@@ -740,9 +759,37 @@ static void test_reach_report_tlv_parser_accepts_empty_peer_list(void)
                                             NULL,
                                             0u,
                                             &entry_count) == PROTO_OK);
-    assert(survey_id == 0xAABBCCDDu);
-    assert(anchor_id == 0x9999888877776666ull);
+    assert(survey_id == expected_survey_id);
+    assert(anchor_id == expected_anchor_id);
     assert(entry_count == 0u);
+
+    assert(payload_len <= UINT8_MAX);
+    assert(survey_init_discovery_report_packet(&packet,
+                                               expected_anchor_id,
+                                               expected_gateway_id,
+                                               expected_survey_id,
+                                               77u,
+                                               (uint8_t)payload_len) == PROTO_OK);
+    assert(packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT);
+    assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
+    assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
+    assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
+    assert(packet.src_id == expected_anchor_id);
+    assert(packet.dst_id == expected_gateway_id);
+    assert(packet.session_id == expected_survey_id);
+    assert(packet.seq == 77u);
+    assert(packet.payload_len == payload_len);
+
+    assert(survey_gateway_begin(&gateway, expected_survey_id, 1u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(&gateway,
+                                            survey_id,
+                                            anchor_id,
+                                            NULL,
+                                            entry_count) == PROTO_OK);
+    assert(gateway.report_count == 1u);
+    assert(gateway.reports[0].valid);
+    assert(gateway.reports[0].anchor_id == expected_anchor_id);
+    assert(gateway.reports[0].entry_count == 0u);
 }
 
 static void test_reach_report_tlv_parser_rejects_invalid_entries(void)

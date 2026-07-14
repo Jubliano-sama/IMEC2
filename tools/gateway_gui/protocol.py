@@ -92,6 +92,7 @@ TLV_UWB_RAW_TIMESTAMPS = 0x53
 TLV_UWB_RX_DIAG_BYTES = 0x54
 TLV_ATTEMPT_INDEX = 0xA9
 TLV_DETECTION_SOURCE = 0xAA
+TLV_COMMAND_BUDGET_MS = 0xAB
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -364,6 +365,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     0x18: TlvSpec("RANGE_FLAGS", _scalar(1)),
     0x19: TlvSpec("LED_PATTERN_ID", _scalar(1)),
     TLV_DURATION_MS: TlvSpec("DURATION_MS", _scalar(4)),
+    TLV_COMMAND_BUDGET_MS: TlvSpec("COMMAND_BUDGET_MS", _scalar(4)),
     0x1B: TlvSpec("RETRY_COUNT", _scalar(1)),
     0x1C: TlvSpec("FW_VERSION"),
     0x1D: TlvSpec("UPTIME_MS", _scalar(4)),
@@ -1069,6 +1071,7 @@ def build_anchor_discovery_command(
     duration_ms: int,
     discovery_slot_count: int = 6,
     sample_count: int = 1,
+    command_budget_ms: int | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1084,6 +1087,8 @@ def build_anchor_discovery_command(
         raise ValueError("discovery slot count must be in 1..50")
     if not 1 <= sample_count <= 1000:
         raise ValueError("sample count must be in 1..1000")
+    if command_budget_ms is not None and not 1000 <= command_budget_ms <= 600000:
+        raise ValueError("command budget must be in 1000..600000 ms")
 
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_REACHABILITY.to_bytes(2, "little"))
@@ -1091,6 +1096,8 @@ def build_anchor_discovery_command(
     append_tlv(payload, TLV_DURATION_MS, duration_ms.to_bytes(4, "little"))
     append_tlv(payload, TLV_SAMPLE_COUNT, sample_count.to_bytes(2, "little"))
     append_tlv(payload, TLV_DISCOVERY_SLOT_COUNT, bytes((discovery_slot_count,)))
+    if command_budget_ms is not None:
+        append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     return _build_command_frame(
         label="Anchor survey discovery",
         command_id=CMD_SURVEY_REACHABILITY,
@@ -1108,6 +1115,7 @@ def build_here_i_am_command(
     gateway_id: int,
     session_id: int,
     seq: int,
+    command_budget_ms: int | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1115,8 +1123,12 @@ def build_here_i_am_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
+    if command_budget_ms is not None and not 1000 <= command_budget_ms <= 600000:
+        raise ValueError("command budget must be in 1000..600000 ms")
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_FORCE_REDISCOVERY.to_bytes(2, "little"))
+    if command_budget_ms is not None:
+        append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     return _build_command_frame(
         label="Here I Am route refresh",
         command_id=CMD_FORCE_REDISCOVERY,
@@ -1134,6 +1146,7 @@ def build_assign_discovery_slots_command(
     gateway_id: int,
     session_id: int,
     seq: int,
+    command_budget_ms: int | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1141,8 +1154,12 @@ def build_assign_discovery_slots_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
+    if command_budget_ms is not None and not 1000 <= command_budget_ms <= 600000:
+        raise ValueError("command budget must be in 1000..600000 ms")
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little"))
+    if command_budget_ms is not None:
+        append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     return _build_command_frame(
         label="Assign discovery slots",
         command_id=CMD_ASSIGN_DISCOVERY_SLOTS,

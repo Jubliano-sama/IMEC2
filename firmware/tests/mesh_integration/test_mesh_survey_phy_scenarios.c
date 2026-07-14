@@ -366,6 +366,117 @@ static void run_survey_start_phy_case(bool mutate_tx_to_standard_wake,
     }
 }
 
+static bool run_pair_start_skew_phy_case(const uint8_t *poll,
+                                         size_t poll_len,
+                                         uint32_t start_skew_ms)
+{
+    static struct mesh_sim_world world;
+    uint8_t initiator = UINT8_MAX;
+    uint8_t responder = UINT8_MAX;
+    uint16_t window = UINT16_MAX;
+    uint16_t transmission = UINT16_MAX;
+    uint32_t airtime_us;
+    uint64_t poll_start_us;
+    uint64_t poll_end_us;
+    uint64_t responder_end_us;
+
+    mesh_sim_init(&world, UINT32_C(0x52c50000) ^ start_skew_ms);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &initiator) == MESH_SIM_OK,
+          "pair-skew initiator setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_2_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &responder) == MESH_SIM_OK,
+          "pair-skew responder setup failed");
+    CHECK(mesh_sim_set_link(&world, initiator, responder, 100u, 0u) ==
+              MESH_SIM_OK,
+          "pair-skew anchor link setup failed");
+
+    airtime_us = mesh_sim_frame_duration_us(MESH_SIM_PHY_CHANNEL5_RANGE,
+                                             poll_len);
+    poll_start_us = TX_START_US + (uint64_t)start_skew_ms * 1000u;
+    poll_end_us = poll_start_us + airtime_us;
+    responder_end_us = TX_START_US +
+        (uint64_t)SURVEY_PAIR_RESPONDER_WINDOW_MS * 1000u;
+    CHECK(mesh_sim_schedule_rx(&world, responder, TX_START_US,
+                               responder_end_us, UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_RANGE, &window) ==
+              MESH_SIM_OK,
+          "pair-skew responder RX scheduling failed");
+    CHECK(mesh_sim_schedule_raw_tx(&world, initiator, poll_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_RANGE,
+                                   poll, poll_len, false, &transmission) ==
+              MESH_SIM_OK,
+          "pair-skew initiator poll scheduling failed");
+    world.transmissions[transmission].protocol_msg_type = MSG_UWB_POLL;
+    CHECK(mesh_sim_run_until(&world, poll_end_us + 1u) == MESH_SIM_OK,
+          "pair-skew PHY simulation failed");
+    CHECK(world.reception_count == 1u,
+          "admitted pair-start skew did not produce one poll reception");
+    if (world.reception_count != 1u) {
+        return false;
+    }
+    CHECK(world.receptions[0].outcome == MESH_SIM_RX_DECODED,
+          "admitted pair-start skew did not contain the complete poll airtime");
+    return world.receptions[0].outcome == MESH_SIM_RX_DECODED;
+}
+
+static void test_pair_start_skew_covers_control_deadline(void)
+{
+    static const uint32_t phy_sweep_step_ms = 997u;
+    const struct uwb_range_header header = {
+        .type = MSG_UWB_POLL,
+        .seq = 1u,
+        .round_index = 0u,
+        .network_id = UINT32_C(0x494d4543),
+        .session_id = SURVEY_ID,
+        .session_nonce = UINT64_C(0x5066500600000001),
+        .initiator_short_addr =
+            uwb_session_short_addr_from_id(ANCHOR_ID),
+        .responder_short_addr =
+            uwb_session_short_addr_from_id(ANCHOR_2_ID),
+        .flags = FLAG_DIAGNOSTIC,
+        .initiator_id = ANCHOR_ID,
+        .responder_id = ANCHOR_2_ID,
+    };
+    uint8_t poll[UWB_POLL_LEN] = {0};
+    size_t poll_len = 0u;
+    uint32_t poll_airtime_us;
+    bool all_skews_have_margin = true;
+
+    CHECK(uwb_encode_poll(&header, poll, sizeof(poll), &poll_len) == PROTO_OK &&
+              poll_len == UWB_POLL_LEN,
+          "pair-skew poll encoding failed");
+    poll_airtime_us = mesh_sim_frame_duration_us(
+        MESH_SIM_PHY_CHANNEL5_RANGE, poll_len);
+    CHECK(poll_airtime_us < SURVEY_PAIR_START_SKEW_MARGIN_MS * 1000u,
+          "pair-start margin cannot contain one complete poll frame");
+
+    for (uint32_t skew_ms = 0u;
+         skew_ms <= SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+         skew_ms++) {
+        uint32_t remaining_ms = SURVEY_PAIR_RESPONDER_WINDOW_MS - skew_ms;
+
+        if (remaining_ms < SURVEY_PAIR_START_SKEW_MARGIN_MS ||
+            (uint64_t)remaining_ms * 1000u < poll_airtime_us) {
+            all_skews_have_margin = false;
+            break;
+        }
+    }
+    CHECK(all_skews_have_margin,
+          "responder window does not cover every admitted start skew plus margin");
+
+    for (uint32_t skew_ms = 0u;
+         skew_ms < SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+         skew_ms += phy_sweep_step_ms) {
+        if (!run_pair_start_skew_phy_case(poll, poll_len, skew_ms)) {
+            break;
+        }
+    }
+    run_pair_start_skew_phy_case(poll, poll_len,
+                                 SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+}
+
 static int build_pair_prepare_control(struct mesh_outbound *control,
                                       uint64_t target_id,
                                       uint64_t next_hop_id,
@@ -882,6 +993,7 @@ int main(void)
     run_survey_start_phy_case(false, 0u, true, true);
     run_survey_start_phy_case(false, 1u, false, true);
     run_survey_start_phy_case(true, 0u, false, false);
+    test_pair_start_skew_covers_control_deadline();
     test_pair_prepare_phr_and_complete_airtime_sweep();
     test_two_anchor_survey_lifecycle();
 

@@ -13,6 +13,9 @@ extern "C" {
 #endif
 
 #define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
+#define GATEWAY_COMMAND_BUDGET_MIN_MS 1000u
+#define GATEWAY_COMMAND_BUDGET_MAX_MS 600000u
+#define GATEWAY_COMMAND_BUDGET_RETRY_QUANTUM_MS 30000u
 #define GATEWAY_COLLECTION_RESULT_CACHE_SIZE 64u
 #define GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP GATEWAY_COLLECTION_RESULT_CACHE_SIZE
 #define GATEWAY_COMMAND_RX_DUP_CACHE_SIZE 4u
@@ -60,6 +63,12 @@ enum gateway_command_tracking_mode {
     GATEWAY_COMMAND_TRACK_NONE = 0,
     GATEWAY_COMMAND_TRACK_LEGACY_RESULT = 1,
     GATEWAY_COMMAND_TRACK_COLLECTION = 2,
+};
+
+enum gateway_command_result_admission {
+    GATEWAY_COMMAND_RESULT_IGNORE = 0,
+    GATEWAY_COMMAND_RESULT_WAIT,
+    GATEWAY_COMMAND_RESULT_ACCEPT,
 };
 
 enum gateway_command_transport_mode {
@@ -162,6 +171,23 @@ int gateway_command_extract_duration_ms(const uint8_t *payload,
                                         size_t payload_len,
                                         uint32_t default_duration_ms,
                                         uint32_t *duration_ms);
+int gateway_command_extract_budget_ms(const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t default_budget_ms,
+                                      uint32_t *budget_ms,
+                                      bool *explicit_budget);
+uint32_t gateway_command_budget_window_ms(bool explicit_budget,
+                                          uint32_t remaining_ms,
+                                          uint8_t phases_remaining,
+                                          uint32_t natural_window_ms);
+uint32_t gateway_command_budget_weighted_window_ms(bool explicit_budget,
+                                                   uint32_t remaining_ms,
+                                                   uint8_t phase_weight,
+                                                   uint8_t total_weight,
+                                                   uint32_t natural_window_ms);
+uint8_t gateway_command_budget_retry_limit(bool explicit_budget,
+                                           uint32_t budget_ms,
+                                           uint8_t default_limit);
 int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      const uint8_t *payload,
                                      size_t payload_len,
@@ -189,6 +215,11 @@ int gateway_command_pending_start(struct gateway_command_pending *pending,
                                   uint32_t timeout_ms);
 bool gateway_command_pending_matches_result(const struct gateway_command_pending *pending,
                                             const struct proto_packet *result);
+enum gateway_command_result_admission gateway_command_result_admit(
+    const struct gateway_command_pending *pending,
+    const struct proto_packet *result,
+    bool transaction_owned,
+    bool transaction_recognized);
 bool gateway_command_pending_complete_result(struct gateway_command_pending *pending,
                                              const struct proto_packet *result);
 bool gateway_command_pending_expired(struct gateway_command_pending *pending,

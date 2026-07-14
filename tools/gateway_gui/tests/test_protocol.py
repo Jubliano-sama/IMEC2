@@ -22,6 +22,7 @@ from tools.gateway_gui.protocol import (
     TLV_CLICKER_ID,
     TLV_CLICKER_CLOCK_OFFSET_RAW,
     TLV_COMMAND_ID,
+    TLV_COMMAND_BUDGET_MS,
     TLV_DIAG_STATUS_FLAGS,
     TLV_DISCOVERY_SLOT_COUNT,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
@@ -403,6 +404,39 @@ class ProtocolTests(unittest.TestCase):
                 session_id=1,
                 seq=1,
             )
+
+    def test_gateway_command_budget_is_optional_and_shared_by_all_workflows(self) -> None:
+        common = {
+            "host_id": DEFAULT_HOST_ID,
+            "gateway_id": 0xAABBCCDDEEFF0011,
+            "session_id": 1,
+            "seq": 2,
+            "command_budget_ms": 15000,
+        }
+        commands = (
+            build_here_i_am_command(**common),
+            build_assign_discovery_slots_command(**common),
+            build_anchor_discovery_command(
+                **common,
+                survey_id=3,
+                duration_ms=250,
+                discovery_slot_count=3,
+                sample_count=1,
+            ),
+        )
+        for command in commands:
+            with self.subTest(command=command.label):
+                self.assertEqual(command.packet.value(TLV_COMMAND_BUDGET_MS), 15000)
+                budget_tlv = next(
+                    value for value in command.packet.tlvs
+                    if value.type_id == TLV_COMMAND_BUDGET_MS
+                )
+                self.assertEqual(budget_tlv.name, "COMMAND_BUDGET_MS")
+
+        for invalid in (999, 600001):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "command budget"):
+                    build_here_i_am_command(**{**common, "command_budget_ms": invalid})
 
     def test_discovery_assignment_tlvs_and_clock_offsets_decode_exact_wire_shapes(self) -> None:
         entries = (

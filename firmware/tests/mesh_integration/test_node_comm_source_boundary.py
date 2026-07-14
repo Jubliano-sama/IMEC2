@@ -16,7 +16,11 @@ LEGACY_REPORT_CLIENTS = {
     "app_mesh_test.c",
     "main.c",
 }
-BOUNDARY_IMPLEMENTATION = {"app_mesh_report.c", "app_node_comm.c"}
+BOUNDARY_IMPLEMENTATION = {
+    "app_mesh_report.c",
+    "app_mesh_report_encode.c",
+    "app_node_comm.c",
+}
 LEGACY_TRANSPORT_CLIENTS = {
     "app_anchor.c",
     "app_anchor_survey_discovery.c",
@@ -81,7 +85,8 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "mesh_stop_role_scan()",
             "mesh_restart_role_scan()",
             "mesh_send_outbound(envelope, reason)",
-            "mesh_send_c5_flood(envelope, purpose, reason, sent_now)",
+            "mesh_send_c5_flood(flood_envelope, purpose, reason, sent_now)",
+            "mesh_try_send_control_response_view(",
             "mesh_request_route(target_id, reason)",
             "mesh_start_tracked_tx(envelope, reason)",
             "mesh_start_owned_tracked_tx(envelope, reason, rf_sent)",
@@ -195,6 +200,25 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             with self.subTest(name=name):
                 protocol_source = (APP_SRC / name).read_text(encoding="utf-8")
                 self.assertNotIn("node_comm_submit(", protocol_source)
+
+    def test_gateway_single_ack_uses_bounded_communication_response(self):
+        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+
+        queue_start = report.index(
+            "if (DEVICE_ROLE == ROLE_GATEWAY &&\n"
+            "            received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD)"
+        )
+        queue_end = report.index("app_mesh_gateway_ack_decide", queue_start)
+        queue_path = report[queue_start:queue_end]
+
+        self.assertIn("app_node_comm_submit_control_response(", queue_path)
+        self.assertIn("goto after_gateway_ack", queue_path)
+        self.assertNotIn("mesh_store_route_waiting_tx(", queue_path)
+        self.assertNotIn("mesh_propose_event_after_channel5_contact(", queue_path)
+        self.assertIn("NODE_COMM_PROFILE_CONTROL_RESPONSE", facade)
+        self.assertIn("mesh_try_send_control_response_view(", facade)
+        self.assertIn("app_node_comm_reap_auto_terminal_events_locked()", facade)
 
     def test_global_radio_admission_gate_closes_legacy_role_bypasses(self):
         state_header = (APP_SRC / "app_state.h").read_text(encoding="utf-8")

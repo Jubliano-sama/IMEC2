@@ -2354,6 +2354,63 @@ static void test_extract_duration_uses_optional_tlv(void)
                                                &duration_ms) == PROTO_ERR_MALFORMED);
 }
 
+static void test_command_budget_is_optional_bounded_and_phase_aware(void)
+{
+    uint8_t payload[16];
+    size_t payload_len = 0u;
+    uint32_t budget_ms = 0u;
+    bool explicit_budget = true;
+
+    assert(mesh_append_command_id(payload, sizeof(payload), &payload_len,
+                                  CMD_ASSIGN_DISCOVERY_SLOTS) == PROTO_OK);
+    assert(gateway_command_extract_budget_ms(
+               payload, payload_len, 90000u, &budget_ms,
+               &explicit_budget) == PROTO_OK);
+    assert(budget_ms == 90000u);
+    assert(!explicit_budget);
+
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_BUDGET_MS, 15000u) == PROTO_OK);
+    assert(gateway_command_extract_budget_ms(
+               payload, payload_len, 90000u, &budget_ms,
+               &explicit_budget) == PROTO_OK);
+    assert(budget_ms == 15000u);
+    assert(explicit_budget);
+
+    payload[payload_len - 4u] = 0xe7u;
+    payload[payload_len - 3u] = 0x03u;
+    payload[payload_len - 2u] = 0u;
+    payload[payload_len - 1u] = 0u;
+    assert(gateway_command_extract_budget_ms(
+               payload, payload_len, 90000u, &budget_ms,
+               &explicit_budget) == PROTO_ERR_MALFORMED);
+
+    assert(gateway_command_budget_window_ms(false, 15000u, 2u, 10000u) ==
+           10000u);
+    assert(gateway_command_budget_window_ms(true, 15000u, 2u, 10000u) ==
+           7500u);
+    assert(gateway_command_budget_window_ms(true, 15000u, 3u, 10000u) ==
+           5000u);
+    assert(gateway_command_budget_window_ms(true, 10000u, 1u, 10000u) ==
+           10000u);
+    assert(gateway_command_budget_window_ms(true, 7500u, 1u, 4750u) ==
+           4750u);
+    assert(gateway_command_budget_window_ms(true, 1u, 2u, 4750u) == 1u);
+    assert(gateway_command_budget_window_ms(true, 0u, 1u, 4750u) == 0u);
+    assert(gateway_command_budget_weighted_window_ms(
+               true, 20000u, 2u, 5u, 10000u) == 8000u);
+    assert(gateway_command_budget_weighted_window_ms(
+               true, 12000u, 3u, 5u, 10000u) == 7200u);
+    assert(gateway_command_budget_weighted_window_ms(
+               false, 1u, 2u, 5u, 10000u) == 10000u);
+
+    assert(gateway_command_budget_retry_limit(true, 15000u, 4u) == 1u);
+    assert(gateway_command_budget_retry_limit(true, 30000u, 4u) == 2u);
+    assert(gateway_command_budget_retry_limit(true, 60000u, 4u) == 3u);
+    assert(gateway_command_budget_retry_limit(true, 90000u, 4u) == 4u);
+    assert(gateway_command_budget_retry_limit(false, 1u, 4u) == 4u);
+}
+
 static void test_extract_role_requires_valid_device_role_tlv(void)
 {
     uint8_t payload[16];
@@ -2609,6 +2666,76 @@ static void test_pending_survey_prepare_completes_on_command_result(void)
     assert(!pending.active);
 }
 
+static void test_pair_result_admission_distinguishes_manual_and_automatic(void)
+{
+    const enum command_id pair_commands[] = {
+        CMD_SURVEY_PREPARE_PAIR,
+        CMD_SURVEY_START_PAIR,
+    };
+
+    for (size_t i = 0u; i < sizeof(pair_commands) / sizeof(pair_commands[0]); i++) {
+        struct gateway_command_pending pending = {0};
+        struct proto_packet command = {
+            .msg_type = pair_commands[i] == CMD_SURVEY_PREPARE_PAIR ?
+                        MSG_SURVEY_PAIR_PREPARE : MSG_COMMAND,
+            .src_id = GATEWAY_ID_TEST,
+            .dst_id = ANCHOR_ID_TEST,
+            .session_id = 700u + (uint32_t)i,
+            .seq = 80u + (uint16_t)i,
+            .ttl = MESH_DEFAULT_TTL,
+        };
+        struct proto_packet result = {
+            .msg_type = MSG_COMMAND_RESULT,
+            .src_id = ANCHOR_ID_TEST,
+            .dst_id = GATEWAY_ID_TEST,
+            .session_id = command.session_id,
+            .seq = command.seq,
+        };
+        struct proto_packet wrong_source = result;
+
+        assert(gateway_command_pending_start(&pending,
+                                             &command,
+                                             pair_commands[i],
+                                             1000u,
+                                             GATEWAY_COMMAND_RESULT_TIMEOUT_MS) ==
+               PROTO_OK);
+        assert(gateway_command_result_admit(&pending,
+                                            &result,
+                                            false,
+                                            false) ==
+               GATEWAY_COMMAND_RESULT_ACCEPT);
+
+        wrong_source.src_id++;
+        assert(gateway_command_result_admit(&pending,
+                                            &wrong_source,
+                                            false,
+                                            false) ==
+               GATEWAY_COMMAND_RESULT_IGNORE);
+        assert(pending.active);
+
+        assert(gateway_command_result_admit(&pending,
+                                            &result,
+                                            true,
+                                            false) ==
+               GATEWAY_COMMAND_RESULT_WAIT);
+        assert(pending.active);
+        assert(gateway_command_result_admit(&pending,
+                                            &result,
+                                            true,
+                                            true) ==
+               GATEWAY_COMMAND_RESULT_ACCEPT);
+
+        assert(gateway_command_pending_complete_result(&pending, &result));
+        assert(!pending.active);
+        assert(gateway_command_pending_start(&pending,
+                                             &command,
+                                             pair_commands[i],
+                                             1100u,
+                                             GATEWAY_COMMAND_RESULT_TIMEOUT_MS) ==
+               PROTO_OK);
+    }
+}
+
 static void test_pending_command_rejects_second_start(void)
 {
     struct gateway_command_pending pending = {0};
@@ -2674,6 +2801,7 @@ int main(void)
     test_collection_rejects_wrong_result_identity();
     test_collection_rejects_missing_or_wrong_collection_epoch();
     test_extract_duration_uses_optional_tlv();
+    test_command_budget_is_optional_bounded_and_phase_aware();
     test_extract_role_requires_valid_device_role_tlv();
     test_build_failure_result_is_host_visible();
     test_build_success_result_is_not_flagged_as_error();
@@ -2681,6 +2809,7 @@ int main(void)
     test_pending_command_expires_with_original_context();
     test_pending_command_expiry_handles_ms_wrap();
     test_pending_survey_prepare_completes_on_command_result();
+    test_pair_result_admission_distinguishes_manual_and_automatic();
     test_pending_command_rejects_second_start();
     return 0;
 }

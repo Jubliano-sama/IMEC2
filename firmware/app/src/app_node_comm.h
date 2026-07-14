@@ -8,8 +8,10 @@
 #include "node_comm.h"
 #include "protocol.h"
 
-#define APP_NODE_COMM_MAX_DELIVERIES 2u
+#define APP_NODE_COMM_MAX_DELIVERIES 4u
+#define APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES 1u
 #define APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN 192u
+#define APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS 120000u
 
 struct app_mesh_report_callbacks;
 struct mesh_delivery_health;
@@ -30,6 +32,15 @@ struct app_node_comm_route_refresh_event {
     uint8_t sent_count;
     int result;
     bool correlated;
+};
+
+struct app_node_comm_control_response_health {
+    uint32_t submitted;
+    uint32_t admission_failures;
+    uint32_t delivered;
+    uint32_t failed;
+    enum node_comm_terminal_reason last_terminal_reason;
+    uint8_t last_attempts_started;
 };
 
 /*
@@ -68,6 +79,11 @@ int app_node_comm_start_delivery(const app_node_comm_envelope *envelope,
 int app_node_comm_start_owned_delivery(const app_node_comm_envelope *envelope,
                                        const char *reason,
                                        bool *rf_sent);
+int app_node_comm_retry_backoff_ms(
+    const app_node_comm_envelope *envelope,
+    enum node_comm_delivery_profile profile,
+    uint16_t retry_round,
+    uint32_t *delay_ms_out);
 int app_node_comm_queue_local_delivery(
     const app_node_comm_envelope *envelope);
 int app_node_comm_submit_delivery(
@@ -76,16 +92,35 @@ int app_node_comm_submit_delivery(
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
+int app_node_comm_submit_control_response(
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token);
+int app_node_comm_submit_reliable_uplink(
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+int app_node_comm_submit_protocol_response(
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
 int app_node_comm_service_deliveries(void);
 int app_node_comm_cancel_delivery(uint32_t handle);
+int app_node_comm_abandon_delivery(uint32_t handle);
+int app_node_comm_auto_reap_delivery(uint32_t handle);
 bool app_node_comm_take_delivery_event(
     struct node_comm_terminal_event *event_out);
 bool app_node_comm_take_delivery_event_for(
     uint32_t handle,
     struct node_comm_terminal_event *event_out);
+int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet);
 size_t app_node_comm_pending_delivery_count(void);
 bool app_node_comm_delivery_backlog_active(void);
 bool app_node_comm_ack_wait_active(void);
+void app_node_comm_control_response_health_get(
+    struct app_node_comm_control_response_health *health);
 void app_node_comm_delivery_health_get(app_node_comm_delivery_health *health);
 bool app_node_comm_policy_running(void);
 int app_node_comm_pause_request(uint32_t owner,
@@ -108,5 +143,10 @@ int app_node_comm_request_route_refresh_correlated(
     uint32_t delay_ms,
     const char *reason,
     const struct proto_packet *correlation);
+int app_node_comm_request_route_refresh_correlated_bounded(
+    uint32_t delay_ms,
+    const char *reason,
+    const struct proto_packet *correlation,
+    uint32_t timeout_ms);
 
 #endif

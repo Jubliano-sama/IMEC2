@@ -127,21 +127,21 @@ static bool flood_args_valid(const struct mesh_outbound *out,
            FLOOD_RELAY_REPEAT_MS != 0u;
 }
 
-int app_mesh_flood_send_bounded_resume(
+static int app_mesh_flood_send_resume_limit(
     const struct mesh_outbound *out,
     const struct app_mesh_flood_ops *ops,
     struct app_mesh_flood_progress *progress,
-    struct app_mesh_flood_result *result)
+    struct app_mesh_flood_result *result,
+    uint8_t repeat_limit)
 {
     struct mesh_outbound attempt_tx;
-    uint8_t repeat_limit;
     int send_ret;
 
-    if (!flood_args_valid(out, ops) || progress == NULL) {
+    if (!flood_args_valid(out, ops) || progress == NULL ||
+        repeat_limit == 0u ||
+        repeat_limit > app_mesh_flood_repeat_limit()) {
         return -EINVAL;
     }
-
-    repeat_limit = app_mesh_flood_repeat_limit();
     if (!progress->initialized) {
         progress->due_ms = out->earliest_tx_ms != 0u ?
                            out->earliest_tx_ms : ops->now_ms(ops->ctx);
@@ -279,6 +279,26 @@ int app_mesh_flood_send_bounded_resume(
         return 0;
     }
     return -EAGAIN;
+}
+
+int app_mesh_flood_send_bounded_resume(
+    const struct mesh_outbound *out,
+    const struct app_mesh_flood_ops *ops,
+    struct app_mesh_flood_progress *progress,
+    struct app_mesh_flood_result *result)
+{
+    return app_mesh_flood_send_resume_limit(
+        out, ops, progress, result, app_mesh_flood_repeat_limit());
+}
+
+int app_mesh_flood_send_opportunity(
+    const struct mesh_outbound *out,
+    const struct app_mesh_flood_ops *ops,
+    struct app_mesh_flood_result *result)
+{
+    struct app_mesh_flood_progress progress = {0};
+
+    return app_mesh_flood_send_resume_limit(out, ops, &progress, result, 1u);
 }
 
 void app_mesh_flood_progress_rebase(struct app_mesh_flood_progress *progress,

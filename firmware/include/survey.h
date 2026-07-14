@@ -22,10 +22,21 @@ extern "C" {
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
 #define SURVEY_DEFAULT_TTL 4u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
+#define SURVEY_PAIR_START_SKEW_MARGIN_MS 5000u
+#define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
+    (SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +                                \
+     SURVEY_PAIR_START_SKEW_MARGIN_MS)
 #define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS 30000u
 #define SURVEY_PAIR_PREPARED_LEASE_MS 240000u
+#if SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS >                                  \
+    (UINT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS)
+#error "Survey pair responder window overflows uint32_t"
+#endif
 #if SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS > 2147483647u
 #error "Survey pair control timeout must fit wrap-safe signed time arithmetic"
+#endif
+#if SURVEY_PAIR_RESPONDER_WINDOW_MS <= SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS
+#error "Survey pair responder window must include positive start-skew margin"
 #endif
 #if SURVEY_PAIR_PREPARED_LEASE_MS > 2147483647u
 #error "Survey pair prepared lease must fit wrap-safe signed time arithmetic"
@@ -243,6 +254,9 @@ void survey_pending_report_clear(struct survey_pending_report_state *state);
 int survey_discovery_timing_from_age(const struct survey_discovery_config *config,
                                      uint32_t message_age_ms,
                                      struct survey_discovery_timing *timing);
+int survey_discovery_start_at_ms(const struct survey_discovery_timing *timing,
+                                 uint32_t received_at_ms,
+                                 uint32_t *start_at_ms);
 int survey_discovery_report_delay_ms(const struct survey_discovery_config *config,
                                      uint8_t anchor_slot,
                                      uint32_t report_slot_ms,
@@ -276,6 +290,9 @@ int survey_gateway_auto_begin(struct survey_gateway_auto_context *context);
 int survey_gateway_auto_next_action(struct survey_gateway_auto_context *auto_context,
                                     struct survey_gateway_context *gateway_context,
                                     struct survey_gateway_auto_action *action);
+bool survey_gateway_auto_no_unstarted_pairs(
+    const struct survey_gateway_auto_context *auto_context,
+    const struct survey_gateway_context *gateway_context);
 int survey_gateway_auto_mark_waiting(struct survey_gateway_auto_context *context);
 bool survey_gateway_auto_command_matches(const struct survey_gateway_auto_context *context,
                                          enum command_id command_id,

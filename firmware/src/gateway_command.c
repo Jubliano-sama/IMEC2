@@ -842,6 +842,102 @@ int gateway_command_extract_duration_ms(const uint8_t *payload,
     return *duration_ms == 0u ? PROTO_ERR_MALFORMED : PROTO_OK;
 }
 
+int gateway_command_extract_budget_ms(const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t default_budget_ms,
+                                      uint32_t *budget_ms,
+                                      bool *explicit_budget)
+{
+    bool present = false;
+    int ret;
+
+    if (payload == NULL || budget_ms == NULL || explicit_budget == NULL ||
+        default_budget_ms < GATEWAY_COMMAND_BUDGET_MIN_MS ||
+        default_budget_ms > GATEWAY_COMMAND_BUDGET_MAX_MS) {
+        return PROTO_ERR_ARG;
+    }
+    ret = extract_optional_u32(payload, payload_len, TLV_COMMAND_BUDGET_MS,
+                               budget_ms, &present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!present) {
+        *budget_ms = default_budget_ms;
+        *explicit_budget = false;
+        return PROTO_OK;
+    }
+    if (*budget_ms < GATEWAY_COMMAND_BUDGET_MIN_MS ||
+        *budget_ms > GATEWAY_COMMAND_BUDGET_MAX_MS) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *explicit_budget = true;
+    return PROTO_OK;
+}
+
+uint32_t gateway_command_budget_window_ms(bool explicit_budget,
+                                          uint32_t remaining_ms,
+                                          uint8_t phases_remaining,
+                                          uint32_t natural_window_ms)
+{
+    uint32_t fair_share_ms;
+
+    if (natural_window_ms == 0u || phases_remaining == 0u) {
+        return 0u;
+    }
+    if (!explicit_budget) {
+        return natural_window_ms;
+    }
+    if (remaining_ms == 0u) {
+        return 0u;
+    }
+    fair_share_ms = remaining_ms / phases_remaining;
+    if (fair_share_ms == 0u) {
+        fair_share_ms = 1u;
+    }
+    return fair_share_ms < natural_window_ms ? fair_share_ms :
+                                               natural_window_ms;
+}
+
+uint32_t gateway_command_budget_weighted_window_ms(bool explicit_budget,
+                                                   uint32_t remaining_ms,
+                                                   uint8_t phase_weight,
+                                                   uint8_t total_weight,
+                                                   uint32_t natural_window_ms)
+{
+    uint64_t weighted_ms;
+
+    if (!explicit_budget) {
+        return natural_window_ms;
+    }
+    if (remaining_ms == 0u || natural_window_ms == 0u ||
+        phase_weight == 0u || total_weight == 0u ||
+        phase_weight > total_weight) {
+        return 0u;
+    }
+    weighted_ms = ((uint64_t)remaining_ms * phase_weight) / total_weight;
+    if (weighted_ms == 0u) {
+        weighted_ms = 1u;
+    }
+    return weighted_ms < natural_window_ms ? (uint32_t)weighted_ms :
+                                             natural_window_ms;
+}
+
+uint8_t gateway_command_budget_retry_limit(bool explicit_budget,
+                                           uint32_t budget_ms,
+                                           uint8_t default_limit)
+{
+    uint32_t limit;
+
+    if (default_limit == 0u) {
+        return 0u;
+    }
+    if (!explicit_budget) {
+        return default_limit;
+    }
+    limit = 1u + budget_ms / GATEWAY_COMMAND_BUDGET_RETRY_QUANTUM_MS;
+    return limit < default_limit ? (uint8_t)limit : default_limit;
+}
+
 int gateway_command_prepare_outbound(const struct proto_packet *host_packet,
                                      const uint8_t *payload,
                                      size_t payload_len,
@@ -1011,6 +1107,21 @@ bool gateway_command_pending_matches_result(const struct gateway_command_pending
            result->dst_id == pending->command.src_id &&
            result->session_id == pending->command.session_id &&
            result->seq == pending->command.seq;
+}
+
+enum gateway_command_result_admission gateway_command_result_admit(
+    const struct gateway_command_pending *pending,
+    const struct proto_packet *result,
+    bool transaction_owned,
+    bool transaction_recognized)
+{
+    if (!gateway_command_pending_matches_result(pending, result)) {
+        return GATEWAY_COMMAND_RESULT_IGNORE;
+    }
+    if (transaction_owned && !transaction_recognized) {
+        return GATEWAY_COMMAND_RESULT_WAIT;
+    }
+    return GATEWAY_COMMAND_RESULT_ACCEPT;
 }
 
 bool gateway_command_pending_complete_result(struct gateway_command_pending *pending,

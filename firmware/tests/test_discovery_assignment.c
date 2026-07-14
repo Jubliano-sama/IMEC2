@@ -48,6 +48,45 @@ static void test_hash_order_is_deterministic_and_tied_by_id(void)
            PROTO_ERR_MALFORMED);
 }
 
+static void test_compact_anchor_id_path_matches_entry_wire_format(void)
+{
+    uint64_t anchor_ids[] = {
+        UINT64_C(0x2222222222222303),
+        UINT64_C(0x2222222222222301),
+        UINT64_C(0x2222222222222302),
+    };
+    struct discovery_assignment_claim claims[3];
+    struct discovery_assignment_entry entries[3];
+    uint8_t entry_payload[256];
+    uint8_t id_payload[256];
+    size_t entry_len = 0u;
+    size_t id_len = 0u;
+
+    for (size_t i = 0u; i < 3u; i++) {
+        claims[i].anchor_id = anchor_ids[i];
+        claims[i].hash = discovery_assignment_hash(anchor_ids[i]);
+    }
+    assert(discovery_assignment_sort_claims(claims, 3u) == PROTO_OK);
+    assert(discovery_assignment_entries_from_claims(
+               claims, 3u, entries, 3u) == PROTO_OK);
+    assert(discovery_assignment_sort_anchor_ids(anchor_ids, 3u) == PROTO_OK);
+    for (size_t i = 0u; i < 3u; i++) {
+        assert(anchor_ids[i] == entries[i].anchor_id);
+    }
+    assert(discovery_assignment_append_table_tlvs(
+               entry_payload, sizeof(entry_payload), &entry_len,
+               entries, 3u) == PROTO_OK);
+    assert(discovery_assignment_append_table_from_anchor_ids(
+               id_payload, sizeof(id_payload), &id_len,
+               anchor_ids, 3u) == PROTO_OK);
+    assert(id_len == entry_len);
+    assert(memcmp(id_payload, entry_payload, id_len) == 0);
+
+    anchor_ids[1] = anchor_ids[0];
+    assert(discovery_assignment_sort_anchor_ids(anchor_ids, 3u) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_control_and_claim_hash_round_trip(void)
 {
     uint8_t payload[64];
@@ -215,6 +254,7 @@ static void test_table_rejects_missing_and_corrupt_entries(void)
 int main(void)
 {
     test_hash_order_is_deterministic_and_tied_by_id();
+    test_compact_anchor_id_path_matches_entry_wire_format();
     test_control_and_claim_hash_round_trip();
     test_response_delay_uses_slot_hops_and_bounded_backoff();
     test_collection_window_covers_slots_and_hops();

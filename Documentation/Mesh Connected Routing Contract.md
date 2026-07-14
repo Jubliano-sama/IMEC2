@@ -102,6 +102,12 @@ will prove the new behavior.
   rebroadcasts that collisions are unlikely for the expected fanout. The jitter
   budget should be justified from packet airtime, retune time, guard time, and
   the maximum expected number of simultaneous responders.
+- Every failed or deferred RF operation must re-enter through the communication
+  service's randomized exponential backoff. A pre-RF deferral advances the
+  backoff round but does not consume a transmission opportunity; only an actual
+  RF start consumes one. Fixed delays are allowed for non-transmitting service
+  polls and protocol-defined spacing after a successful transmission, not for
+  another RF attempt.
 - The gateway does not own a normal channel 9 connection. It is primarily a
   continuous channel 9 receiver, and it originates mesh commands on channel 5.
 - Normal route acquisition does not depend on the gateway receiving channel 5
@@ -201,6 +207,15 @@ reliable uplink, durably owned reliable uplink, control response, or best
 effort. A caller must not construct a private profile to make one protocol pass
 a narrow timing case. Changing a profile requires testing every protocol that
 uses it under collision, busy-radio, retry, route-loss, and deadline pressure.
+
+Protocol control and progress messages have explicit service priority over
+ordinary reliable traffic, transit work, diagnostics, and background
+maintenance. This includes gateway control floods, assignment claims and ACKs,
+gateway-command results, survey reports, and transport control responses. The
+communication service reserves admission capacity for this class, while each
+protocol remains responsible for either consuming a terminal delivery event or
+explicitly abandoning its handle; superseding a request must atomically cancel
+and reap the old handle so terminal records cannot consume capacity forever.
 
 A logical request keeps one immutable packet identity and payload across every
 communication attempt. The communication service may defer or retry that same

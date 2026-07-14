@@ -106,11 +106,20 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         correlated = function_body(
             self.adapter, "app_node_comm_request_route_refresh_correlated"
         )
+        bounded = function_body(
+            self.adapter,
+            "app_node_comm_request_route_refresh_correlated_bounded",
+        )
 
         self.assertIn("app_node_comm_gateway_route_refresh_start()", start)
         self.assertIn("app_node_comm_gateway_route_refresh_request(", request)
         self.assertIn(
-            "app_node_comm_gateway_route_refresh_request(", correlated
+            "app_node_comm_request_route_refresh_correlated_bounded(",
+            correlated,
+        )
+        self.assertIn(
+            "app_node_comm_gateway_route_refresh_request_bounded(",
+            bounded,
         )
 
         legacy_pattern = re.compile(

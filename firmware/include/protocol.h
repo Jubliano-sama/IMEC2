@@ -283,6 +283,7 @@ enum tlv_type {
     TLV_CLICKER_CLOCK_OFFSET_RAW = 0xA8,
     TLV_ATTEMPT_INDEX = 0xA9,
     TLV_DETECTION_SOURCE = 0xAA,
+    TLV_COMMAND_BUDGET_MS = 0xAB,
 };
 
 enum detection_source {

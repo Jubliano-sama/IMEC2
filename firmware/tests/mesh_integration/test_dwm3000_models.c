@@ -1,6 +1,7 @@
 #include "dwm3000_runtime.h"
 #include "dwm3000_timing.h"
 #include "protocol.h"
+#include "uwb.h"
 
 #include <inttypes.h>
 #include <stdint.h>
@@ -340,12 +341,183 @@ static void test_runtime_rejects_illegal_order_and_overlap(void)
               DWM3000_RUNTIME_ERR_RADIO_STATE);
 }
 
+static int run_delayed_final_deadline_scenario(
+    bool insert_rx_diagnostics,
+    bool prestage_final,
+    uint64_t critical_path_stall_us,
+    uint64_t *scheduled_final_start_us,
+    uint64_t *start_command_end_us)
+{
+    const enum dwm3000_timing_phy phy = DWM3000_TIMING_PHY_CH5_RANGE;
+    const uint64_t response_rmarker_rctu =
+        dwm3000_timing_us_to_rctu_floor(20000u);
+    const uint64_t response_airtime_rctu =
+        dwm3000_timing_airtime_rctu(phy, UWB_RESP_LEN);
+    const uint64_t shr_rctu = dwm3000_timing_shr_rctu(phy);
+    const uint64_t final_raw_rmarker_rctu =
+        response_rmarker_rctu +
+        dwm3000_timing_uus_to_rctu(UWB_RANGE_REPLY_DELAY_UUS);
+    struct dwm3000_air_interval final_air;
+    struct dwm3000_runtime runtime;
+    struct dwm3000_runtime_interval interval;
+    uint64_t response_end_us;
+    uint64_t final_start_us;
+    uint64_t final_end_us;
+    uint64_t cursor;
+    int ret;
+
+    if (response_airtime_rctu <= shr_rctu ||
+        dwm3000_timing_delayed_tx_interval(phy,
+                                           UWB_FINAL_LEN,
+                                           final_raw_rmarker_rctu,
+                                           0u,
+                                           &final_air) != PROTO_OK) {
+        return DWM3000_RUNTIME_ERR_ARG;
+    }
+    response_end_us = dwm3000_timing_rctu_to_us_ceil(
+        response_rmarker_rctu + response_airtime_rctu - shr_rctu);
+    final_start_us = dwm3000_timing_rctu_to_us_floor(final_air.start_rctu);
+    final_end_us = dwm3000_timing_rctu_to_us_ceil(final_air.end_rctu);
+
+    dwm3000_runtime_init(&runtime);
+    ret = dwm3000_runtime_prepare_phy(&runtime, phy, 0u, &interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    cursor = interval.end_us;
+    if (prestage_final) {
+        ret = dwm3000_runtime_write_frame(&runtime,
+                                          UWB_FINAL_LEN,
+                                          cursor,
+                                          &interval);
+        if (ret != DWM3000_RUNTIME_OK) {
+            return ret;
+        }
+        cursor = interval.end_us;
+    }
+    ret = dwm3000_runtime_arm_rx(&runtime,
+                                  cursor,
+                                  response_end_us +
+                                      DWM3000_RUNTIME_STATUS_POLL_PERIOD_US +
+                                      1u,
+                                  &interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+
+    ret = dwm3000_runtime_status_poll(&runtime, response_end_us, &interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    cursor = interval.end_us;
+    ret = dwm3000_runtime_finish_rx(&runtime, cursor);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    /* Stress any unbudgeted work inserted after RX and before delayed TX. */
+    cursor += critical_path_stall_us;
+    if (insert_rx_diagnostics) {
+        ret = dwm3000_runtime_read_rx_diagnostics(&runtime,
+                                                   cursor,
+                                                   &interval);
+        if (ret != DWM3000_RUNTIME_OK) {
+            return ret;
+        }
+        cursor = interval.end_us;
+    }
+    ret = dwm3000_runtime_read_frame(&runtime,
+                                     UWB_RESP_LEN,
+                                     cursor,
+                                     &interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    cursor = interval.end_us;
+    ret = dwm3000_runtime_process_range_frame(&runtime, cursor, &interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    cursor = interval.end_us;
+    ret = dwm3000_runtime_write_frame(&runtime,
+                                      prestage_final ?
+                                          3u * sizeof(uint32_t) :
+                                          UWB_FINAL_LEN,
+                                      cursor,
+                                      &interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    cursor = interval.end_us;
+    ret = dwm3000_runtime_start_delayed_tx(&runtime,
+                                            cursor,
+                                            final_start_us,
+                                            final_end_us,
+                                            &interval);
+    if (scheduled_final_start_us != NULL) {
+        *scheduled_final_start_us = final_start_us;
+    }
+    if (start_command_end_us != NULL) {
+        *start_command_end_us = runtime.cpu_busy_until_us;
+    }
+    return ret;
+}
+
+static void test_ds_twr_delayed_final_deadline(void)
+{
+    uint64_t lean_deadline_us = 0u;
+    uint64_t lean_command_end_us = 0u;
+    uint64_t prepared_deadline_us = 0u;
+    uint64_t prepared_command_end_us = 0u;
+    uint64_t diagnostic_deadline_us = 0u;
+    uint64_t diagnostic_command_end_us = 0u;
+    uint64_t stalled_deadline_us = 0u;
+    uint64_t stalled_command_end_us = 0u;
+
+    CHECK_INT(run_delayed_final_deadline_scenario(false,
+                                                   false,
+                                                   0u,
+                                                   &lean_deadline_us,
+                                                   &lean_command_end_us),
+              DWM3000_RUNTIME_OK);
+    CHECK_TRUE(lean_command_end_us < lean_deadline_us);
+    CHECK_TRUE(lean_deadline_us - lean_command_end_us >= 1000u);
+
+    CHECK_INT(run_delayed_final_deadline_scenario(false,
+                                                   true,
+                                                   0u,
+                                                   &prepared_deadline_us,
+                                                   &prepared_command_end_us),
+              DWM3000_RUNTIME_OK);
+    CHECK_U64(prepared_deadline_us, lean_deadline_us);
+    CHECK_TRUE(prepared_command_end_us < lean_command_end_us);
+
+    CHECK_INT(run_delayed_final_deadline_scenario(true,
+                                                   true,
+                                                   0u,
+                                                   &diagnostic_deadline_us,
+                                                   &diagnostic_command_end_us),
+              DWM3000_RUNTIME_ERR_DEADLINE_MISSED);
+    CHECK_U64(diagnostic_deadline_us, lean_deadline_us);
+    CHECK_TRUE(diagnostic_command_end_us >= diagnostic_deadline_us);
+
+    CHECK_INT(run_delayed_final_deadline_scenario(
+                  false,
+                  true,
+                  UWB_RANGE_REPLY_DELAY_UUS,
+                  &stalled_deadline_us,
+                  &stalled_command_end_us),
+              DWM3000_RUNTIME_ERR_DEADLINE_MISSED);
+    CHECK_U64(stalled_deadline_us, lean_deadline_us);
+    CHECK_TRUE(stalled_command_end_us >= stalled_deadline_us);
+}
+
 int main(void)
 {
     test_airtime_golden_vectors();
     test_delayed_tx_and_rounding();
     test_runtime_legal_sequence_and_delays();
     test_runtime_rejects_illegal_order_and_overlap();
+    test_ds_twr_delayed_final_deadline();
 
     if (failures != 0u) {
         fprintf(stderr, "dwm3000 model tests failed: %u\n", failures);

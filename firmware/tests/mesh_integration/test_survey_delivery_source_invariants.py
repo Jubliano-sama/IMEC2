@@ -7,6 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORT = (ROOT / "app/src/app_mesh_report.c").read_text()
 ANCHOR = (ROOT / "app/src/app_anchor.c").read_text()
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
+SURVEY_RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
+NODE_COMM_APP = (ROOT / "app/src/app_node_comm.c").read_text()
 CONFIG = (ROOT / "app/src/app_config.h").read_text()
 DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
 PERSISTENCE = (ROOT / "app/src/app_mesh_persistence.c").read_text()
@@ -42,6 +44,30 @@ def function_body(source: str, name: str) -> str:
     raise AssertionError(f"unterminated function {name}")
 
 
+def assert_debug_record_fits(
+    source: str, marker: str, unsigned_widths: tuple[int, ...]
+) -> None:
+    match = re.search(
+        rf'status_debug_printf\("([^"\n]*{re.escape(marker)}[^"\n]*)"',
+        source,
+    )
+    assert match is not None, f"missing debug record {marker}"
+    rendered = match.group(1).replace(r"\n", "\n")
+    rendered = re.sub(r"%08x", "f" * 8, rendered)
+    widths = iter(unsigned_widths)
+    rendered = re.sub(r"%u", lambda unused: "9" * next(widths), rendered)
+    try:
+        next(widths)
+    except StopIteration:
+        pass
+    else:
+        raise AssertionError(f"unused width for debug record {marker}")
+    assert "%" not in rendered, f"unmodeled format in debug record {marker}"
+    assert len(rendered) <= 127, (
+        f"debug record {marker} can exceed status_debug_printf's 127-byte payload"
+    )
+
+
 tracked = function_body(REPORT, "mesh_start_tracked_tx_with_retry")
 for match in re.finditer(r"mesh_store_route_waiting_tx\(", tracked):
     prefix = tracked[max(0, match.start() - 100) : match.start()]
@@ -74,6 +100,21 @@ retry = function_body(DISCOVERY, "app_anchor_survey_discovery_retry_report")
 assert retry.index("mesh_owned_tracked_tx_preflight") < retry.index(
     "app_mesh_local_delivery_begin_attempt"
 ), "route preflight must avoid STARTING/refund NVS churn while disconnected"
+assert "app_node_comm_retry_backoff_ms(" in DISCOVERY
+assert "NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK" in DISCOVERY
+assert "DBG_SURVEY_REPORT_BACKOFF" in DISCOVERY
+released = function_body(
+    DISCOVERY, "app_anchor_survey_delivery_transport_released"
+)
+assert "survey_delivery_next_retry_delay_ms(" in released
+assert "schedule_work_ms(0u)" not in released, (
+    "a released RF attempt must use randomized exponential backoff"
+)
+delivery_service = function_body(
+    NODE_COMM_APP, "app_node_comm_service_deliveries"
+)
+assert delivery_service.count("node_comm_lease_defer_pre_rf_retry(") == 2
+assert "node_comm_lease_defer_pre_rf(" not in delivery_service
 
 survey_rx = function_body(DISCOVERY, "receive_survey_probes_until")
 assert "dwm3000_driver_receive_frame_continuous(" in survey_rx, (
@@ -94,17 +135,34 @@ assert margin is not None and int(margin.group(1)) >= 40
 assert "SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS +" in CONFIG
 assert "default survey start delay must allow early PHY preparation" in CONFIG
 
-worker_delay = function_body(DISCOVERY, "discovery_worker_delay_ms")
-assert "timing->wait_ms <= SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS" in worker_delay
-assert "timing->wait_ms - SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS" in worker_delay
-
 start = function_body(DISCOVERY, "app_anchor_survey_discovery_handle_start")
-assert "schedule_delay_ms = discovery_worker_delay_ms(&timing)" in start
-assert re.search(
-    r"timing\.pending\s*\?\s*now_ms \+ timing\.wait_ms\s*:\s*"
-    r"now_ms - timing\.elapsed_ms",
-    start,
-), "early worker scheduling must preserve the original absolute survey start"
+timing_index = start.index("survey_discovery_timing_from_age(")
+start_at_index = start.index("survey_discovery_start_at_ms(")
+queue_index = start.index("discovery_ops.queue_start(")
+assert timing_index < start_at_index < queue_index, (
+    "survey timing must be populated before reconstructing the absolute start"
+)
+assert "discovery_ops.queue_start(&config, start_at_ms)" in start
+assert "uptime_ms_until_deadline(now_ms, start_at_ms)" in start
+supersede_index = start.index("app_mesh_local_delivery_supersede(")
+assert supersede_index < queue_index, (
+    "obsolete report custody must terminate before the next survey is queued"
+)
+assert "schedule_work_ms(0u)" in start, (
+    "a duplicate survey start must re-kick its packet-exact pending delivery"
+)
+assert "DBG_SURVEY_REPORT_SUPERSEDED" in start
+
+drain = function_body(REPORT, "mesh_drain_rx_queue_locked")
+actions_index = drain.index("mesh_handle_result_actions(")
+delivery_index = drain.index("mesh_report_anchor_handle_survey_discovery_start(")
+refresh_indices = [
+    match.start()
+    for match in re.finditer(r"mesh_rx_pending_refresh_age\(", drain)
+]
+assert any(actions_index < index < delivery_index for index in refresh_indices), (
+    "local delivery must refresh message age after a potentially long relay action"
+)
 
 run = function_body(DISCOVERY, "app_anchor_survey_discovery_run")
 assert run.count("dwm3000_driver_configure_wake_mode(") == 1, (
@@ -124,8 +182,92 @@ ensure_wake = function_body(DRIVER, "dwm3000_driver_ensure_wake_mode")
 assert "ensure_phy_mode(DWM3000_PHY_WAKE)" in ensure_wake
 assert "configure_radio_from_reset(" not in ensure_wake
 
+receive_response = function_body(DRIVER, "receive_response")
+assert "read_rx_diagnostics(" not in receive_response
+assert "capture_rx_diag_raw(" not in receive_response
+initiator = function_body(DRIVER, "dwm3000_driver_range_initiator")
+delayed_final = initiator.index("DWT_START_TX_DELAYED")
+assert "request->capture_rsl" not in initiator[:delayed_final], (
+    "optional diagnostics must stay out of the RESP-to-delayed-FINAL path"
+)
+response_wait = initiator.index("receive_response(")
+poll_timestamp = initiator.index("capture_completed_tx_timestamp(")
+assert poll_timestamp < response_wait, (
+    "the poll TX timestamp must be captured during the poll-to-RESP interval"
+)
+final_prestage = initiator.index('take_port_error("final-prestage")')
+assert poll_timestamp < final_prestage < response_wait, (
+    "the invariant FINAL bytes must be staged before waiting for RESP"
+)
+final_build = initiator.index("final_tx_time =", response_wait)
+critical_path = initiator[final_build:delayed_final]
+assert "patch_tx_frame(" in critical_path
+assert "start_prepared_range_frame(" in critical_path
+assert "send_range_frame(" not in critical_path, (
+    "the full FINAL frame write must stay out of delayed-TX arm headroom"
+)
+assert "clear_status(" not in critical_path, (
+    "receive_response already clears TXFRS before FINAL preparation"
+)
+assert "dwt_setpreambledetecttimeout(" not in critical_path, (
+    "the unchanged delayed-RX preamble timeout must not be rewritten"
+)
+assert "read_tx_timestamp_u64(" not in critical_path, (
+    "timestamp SPI reads must stay out of the RESP-to-delayed-FINAL path"
+)
+assert "status_debug_printf(" not in critical_path, (
+    "RTT formatting/output must stay out of the RESP-to-delayed-FINAL path"
+)
+delayed_final_arm = initiator.index("start_prepared_range_frame(", final_build)
+post_arm_diagnostics = initiator.index("if (request->capture_rsl)", delayed_final_arm)
+assert delayed_final_arm < post_arm_diagnostics
+assert "read_rx_diagnostics(" in initiator[post_arm_diagnostics:]
+assert "capture_rx_diag_raw(" in initiator[post_arm_diagnostics:]
+assert_debug_record_fits(initiator, "stage=final-armed", (10, 3, 3, 1))
+assert_debug_record_fits(initiator, "stage=final-raw", (3,))
+responder = function_body(DRIVER, "responder_poll_once")
+response_arm = responder.index("DWT_START_TX_DELAYED")
+matched_poll = responder.index("reply_delay_uus = request_reply_delay_uus(")
+responder_critical_path = responder[matched_poll:response_arm]
+assert "status_debug_printf(" not in responder_critical_path, (
+    "RTT formatting/output must stay out of the POLL-to-delayed-RESP path"
+)
+assert_debug_record_fits(responder, "stage=resp-armed", (10, 3, 3))
+assert_debug_record_fits(responder, "stage=resp-raw", (3, 5))
+survey_initiator = function_body(SURVEY_RUNTIME, "run_pair_initiator")
+assert "request.capture_rsl = false" in survey_initiator
+
 restore = function_body(PERSISTENCE, "app_mesh_persistence_restore_local_delivery")
 assert "app_mesh_local_delivery_snapshot_valid(snapshot)" in restore
 assert "return -EBADMSG" in restore
+
+bounded_control = function_body(REPORT, "mesh_try_send_c5_flood_view")
+handoff_begin = bounded_control.index("mesh_rx_handoff_begin_control(")
+handoff_wait = bounded_control.index("mesh_rx_handoff_wait_for_control(")
+control_send = bounded_control.index("mesh_send_c5_flood_now(")
+handoff_end = bounded_control.index("mesh_rx_handoff_end_control(")
+scan_restart = bounded_control.index("mesh_restart_role_scan(")
+assert handoff_begin < handoff_wait < control_send < handoff_end < scan_restart, (
+    "bounded gateway control must own the RX handoff through its complete send"
+)
+assert re.search(
+    r"mesh_send_c5_flood_now\s*\([^;]+?\btrue\s*,\s*NULL\s*,\s*NULL\s*,\s*rf_started\s*\)",
+    bounded_control,
+    re.S,
+), "node-communication control attempts must request one lower-layer opportunity"
+
+control_backend = function_body(NODE_COMM_APP, "app_node_comm_service_deliveries")
+assert "mesh_try_send_c5_flood_view(" in control_backend
+assert "app_mesh_flood_send_bounded(" not in control_backend
+
+gateway_rx_worker = function_body(REPORT, "mesh_uwb_rx_work_handler")
+assert gateway_rx_worker.count("mesh_rx_radio_start(") == 2
+assert gateway_rx_worker.count("mesh_rx_radio_stop(") == 2
+assert "mesh_transport_radio_start(" not in gateway_rx_worker
+
+rx_schedule = function_body(REPORT, "mesh_schedule_uwb_rx")
+assert "mesh_rx_handoff_scan_rearm_allowed()" in rx_schedule, (
+    "continuous RX must not rearm while bounded control owns the radio"
+)
 
 print("survey delivery source invariants passed")

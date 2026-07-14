@@ -76,6 +76,15 @@ class CommandTelemetryProtocolTests(unittest.TestCase):
         self.assertIsNone(tracker.pending)
         self.assertTrue(tracker.begin(1, 202, 11, now=7.0))
 
+    def test_request_tracker_uses_each_commands_explicit_budget(self):
+        tracker = GatewayCommandRequestTracker(timeout_s=100.0)
+        self.assertTrue(tracker.begin(1, 210, 12, now=0.0, timeout_s=15.0))
+        self.assertFalse(tracker.expire(now=14.9))
+        self.assertTrue(tracker.expire(now=15.0))
+        self.assertTrue(tracker.begin(2, 211, 13, now=16.0))
+        self.assertFalse(tracker.expire(now=115.9))
+        self.assertTrue(tracker.expire(now=116.0))
+
     def test_request_tracker_ignores_intermediate_and_duplicate_correlations(self):
         tracker = GatewayCommandRequestTracker()
         self.assertTrue(tracker.begin(1, 300, 12, now=0.0))

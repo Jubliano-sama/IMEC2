@@ -72,6 +72,7 @@ static void clear_active(struct survey_pair_lease *lease)
     lease->phase = SURVEY_PAIR_LEASE_IDLE;
     lease->prepare_id_valid = false;
     lease->start_id_valid = false;
+    lease->start_released = false;
 }
 
 static void accept_prepare(struct survey_pair_lease *lease,
@@ -89,6 +90,7 @@ static void accept_prepare(struct survey_pair_lease *lease,
     lease->prepare_id_valid = true;
     lease->start_id_valid = false;
     lease->last_accepted_id_valid = true;
+    lease->start_released = false;
 }
 
 void survey_pair_lease_reset(struct survey_pair_lease *lease)
@@ -226,6 +228,7 @@ enum survey_pair_lease_decision survey_pair_lease_start(
         lease->last_accepted_id = *control_id;
         lease->phase = SURVEY_PAIR_LEASE_START_PENDING;
         lease->start_id_valid = true;
+        lease->start_released = false;
         return SURVEY_PAIR_LEASE_ACCEPTED;
     }
 
@@ -239,6 +242,7 @@ enum survey_pair_lease_decision survey_pair_lease_start(
     if (relation == SEQUENCE_NEWER) {
         lease->start_id = *control_id;
         lease->last_accepted_id = *control_id;
+        lease->start_released = false;
     }
     return SURVEY_PAIR_LEASE_DUPLICATE;
 }
@@ -255,10 +259,38 @@ bool survey_pair_lease_pending_snapshot(const struct survey_pair_lease *lease,
     return true;
 }
 
+bool survey_pair_lease_release_start(
+    struct survey_pair_lease *lease,
+    const struct survey_pair_control_id *control_id)
+{
+    if (lease == NULL || !control_id_valid(control_id) ||
+        lease->phase != SURVEY_PAIR_LEASE_START_PENDING ||
+        !lease->start_id_valid ||
+        !control_id_equal(&lease->start_id, control_id)) {
+        return false;
+    }
+    lease->start_released = true;
+    return true;
+}
+
+bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
+                                      struct survey_pair *pair)
+{
+    if (lease == NULL || lease->phase != SURVEY_PAIR_LEASE_START_PENDING ||
+        !lease->start_released) {
+        return false;
+    }
+    if (pair != NULL) {
+        *pair = lease->pair;
+    }
+    return true;
+}
+
 bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
                                     struct survey_pair *pair)
 {
-    if (lease == NULL || lease->phase != SURVEY_PAIR_LEASE_START_PENDING) {
+    if (lease == NULL || lease->phase != SURVEY_PAIR_LEASE_START_PENDING ||
+        !lease->start_released) {
         return false;
     }
     if (pair != NULL) {
@@ -266,6 +298,7 @@ bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
     }
     lease->prepared_deadline_ms = 0u;
     lease->phase = SURVEY_PAIR_LEASE_RUNNING;
+    lease->start_released = false;
     return true;
 }
 
@@ -320,6 +353,7 @@ bool survey_pair_lease_invariant(const struct survey_pair_lease *lease)
     }
     if (lease->phase == SURVEY_PAIR_LEASE_IDLE) {
         return !lease->prepare_id_valid && !lease->start_id_valid &&
+               !lease->start_released &&
                lease->prepared_deadline_ms == 0u &&
                pair_is_zero(&lease->pair) &&
                lease->prepare_id.session_id == 0u &&
@@ -334,13 +368,13 @@ bool survey_pair_lease_invariant(const struct survey_pair_lease *lease)
         return false;
     }
     if (lease->phase == SURVEY_PAIR_LEASE_PREPARED) {
-        return !lease->start_id_valid &&
+        return !lease->start_id_valid && !lease->start_released &&
                control_id_equal(&lease->prepare_id,
                                 &lease->last_accepted_id);
     }
     if ((lease->phase == SURVEY_PAIR_LEASE_RUNNING ||
          lease->phase == SURVEY_PAIR_LEASE_ABORTING) &&
-        lease->prepared_deadline_ms != 0u) {
+        (lease->prepared_deadline_ms != 0u || lease->start_released)) {
         return false;
     }
     return lease->start_id_valid &&

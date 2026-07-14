@@ -23,6 +23,17 @@ enum app_discovery_assignment_table_decision {
     APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID,
 };
 
+enum app_discovery_assignment_work_request {
+    APP_DISCOVERY_ASSIGNMENT_WORK_SUBMIT = 0,
+    APP_DISCOVERY_ASSIGNMENT_WORK_ALREADY_PENDING,
+    APP_DISCOVERY_ASSIGNMENT_WORK_WAIT_STALE,
+    APP_DISCOVERY_ASSIGNMENT_WORK_INVALID,
+};
+
+struct app_discovery_assignment_work_guard {
+    uint32_t pending_generation;
+};
+
 struct app_discovery_assignment_policy {
     uint32_t committed_epoch;
     uint32_t joining_epoch;
@@ -168,6 +179,92 @@ static inline bool app_discovery_assignment_operation_expired(
     uint32_t deadline_ms)
 {
     return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
+static inline uint8_t app_discovery_assignment_claim_round_limit(
+    bool explicit_budget,
+    uint8_t budget_round_limit,
+    uint8_t robust_round_limit)
+{
+    if (robust_round_limit == 0u ||
+        (explicit_budget && budget_round_limit == 0u)) {
+        return 0u;
+    }
+    if (!explicit_budget || budget_round_limit >= robust_round_limit) {
+        return robust_round_limit;
+    }
+    return budget_round_limit;
+}
+
+static inline uint8_t app_discovery_assignment_table_windows_remaining(
+    uint8_t current_round,
+    uint8_t round_limit)
+{
+    if (current_round == 0u || current_round > round_limit) {
+        return 0u;
+    }
+    return (uint8_t)(round_limit - current_round + 1u);
+}
+
+static inline bool app_discovery_assignment_table_retry_backoff_required(
+    bool ack_window_open,
+    uint8_t missing_ack_count,
+    uint8_t current_round,
+    uint8_t round_limit)
+{
+    return ack_window_open && missing_ack_count != 0u &&
+           current_round != 0u && current_round < round_limit;
+}
+
+static inline void app_discovery_assignment_work_guard_init(
+    struct app_discovery_assignment_work_guard *guard)
+{
+    if (guard != NULL) {
+        guard->pending_generation = 0u;
+    }
+}
+
+static inline enum app_discovery_assignment_work_request
+app_discovery_assignment_work_guard_request(
+    struct app_discovery_assignment_work_guard *guard,
+    uint32_t generation)
+{
+    if (guard == NULL || generation == 0u) {
+        return APP_DISCOVERY_ASSIGNMENT_WORK_INVALID;
+    }
+    if (guard->pending_generation == 0u) {
+        guard->pending_generation = generation;
+        return APP_DISCOVERY_ASSIGNMENT_WORK_SUBMIT;
+    }
+    if (guard->pending_generation == generation) {
+        return APP_DISCOVERY_ASSIGNMENT_WORK_ALREADY_PENDING;
+    }
+    return APP_DISCOVERY_ASSIGNMENT_WORK_WAIT_STALE;
+}
+
+static inline void app_discovery_assignment_work_guard_note_submit_result(
+    struct app_discovery_assignment_work_guard *guard,
+    uint32_t generation,
+    int result)
+{
+    if (guard != NULL && result < 0 &&
+        guard->pending_generation == generation) {
+        guard->pending_generation = 0u;
+    }
+}
+
+static inline bool app_discovery_assignment_work_guard_begin(
+    struct app_discovery_assignment_work_guard *guard,
+    uint32_t active_generation)
+{
+    uint32_t pending_generation;
+
+    if (guard == NULL || active_generation == 0u) {
+        return false;
+    }
+    pending_generation = guard->pending_generation;
+    guard->pending_generation = 0u;
+    return pending_generation == active_generation;
 }
 
 #endif

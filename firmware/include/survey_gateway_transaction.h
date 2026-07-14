@@ -20,6 +20,22 @@ enum survey_gateway_transaction_result {
     SURVEY_GATEWAY_TRANSACTION_RESULT_CONFLICT,
 };
 
+enum survey_gateway_drive_action {
+    SURVEY_GATEWAY_DRIVE_NONE = 0,
+    SURVEY_GATEWAY_DRIVE_POLL_CLEANUP,
+    SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY,
+    SURVEY_GATEWAY_DRIVE_RUN_NOW,
+};
+
+struct survey_gateway_drive_state {
+    bool survey_active;
+    bool auto_running;
+    bool auto_waiting;
+    bool pair_observation_active;
+    bool cleanup_pending;
+    bool boundary_pending;
+};
+
 struct survey_gateway_transaction_recent {
     struct node_transaction_key key;
     uint32_t request_fingerprint;
@@ -88,6 +104,8 @@ uint8_t survey_gateway_transaction_cleanup_mask(
     const struct survey_gateway_transaction *context);
 bool survey_gateway_transaction_cleanup_pending(
     const struct survey_gateway_transaction *context);
+enum survey_gateway_drive_action survey_gateway_drive_action(
+    const struct survey_gateway_drive_state *state);
 bool survey_gateway_transaction_request_fingerprint(
     const struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,

@@ -164,9 +164,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.status_text = tk.StringVar(value="Ready")
         self.error_text = tk.StringVar()
         self.host_id_text = tk.StringVar(value=f"0x{DEFAULT_HOST_ID:016x}")
+        self.command_budget_text = tk.StringVar(value="20000")
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
-        self.survey_id_text = tk.StringVar(value=str((time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1))
+        survey_id_seed = (time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1
+        self._survey_id_counter = survey_id_seed
+        self._used_survey_ids: set[int] = set()
+        self.survey_id_text = tk.StringVar(value=str(survey_id_seed))
+        self.survey_id_auto = tk.BooleanVar(value=True)
         self.duration_text = tk.StringVar(value="250")
         self.discovery_slots_text = tk.StringVar(value="6")
         self.sample_count_text = tk.StringVar(value="1")
@@ -280,28 +285,47 @@ class GatewayGui(GatewayDiagnosticsMixin):
         host_entry = ttk.Entry(identity, textvariable=self.host_id_text)
         host_entry.grid(row=0, column=1, sticky="ew")
         Tooltip(host_entry, "Source ID placed in host command envelopes. Accepts decimal or 0x-prefixed hexadecimal.")
+        ttk.Label(identity, text="Command limit (ms)").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+        command_budget_entry = ttk.Entry(
+            identity, textvariable=self.command_budget_text)
+        command_budget_entry.grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        Tooltip(
+            command_budget_entry,
+            "Total firmware time budget. Use 20000 for fast three-anchor bench work; clear it to use the robust worst-case default.",
+        )
 
         discovery = ttk.LabelFrame(parent, text="Anchor-Pair Survey", padding=10)
         discovery.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         discovery.grid_columnconfigure(1, weight=1)
         self._labeled_spin(discovery, 0, "Survey ID", self.survey_id_text, 1, 0xFFFFFFFF)
-        self._labeled_spin(discovery, 1, "Report grace (ms)", self.duration_text, 1, 60000)
-        self._labeled_spin(discovery, 2, "Discovery slots", self.discovery_slots_text, 1, 50)
-        self._labeled_spin(discovery, 3, "Pair samples", self.sample_count_text, 1, 1000)
+        auto_survey_id = ttk.Checkbutton(
+            discovery,
+            text="Generate a fresh ID for every survey",
+            variable=self.survey_id_auto,
+        )
+        auto_survey_id.grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 3))
+        Tooltip(
+            auto_survey_id,
+            "Enabled by default so delayed packets from an older run cannot match a new one. Clear it to send the exact Survey ID above.",
+        )
+        self._labeled_spin(discovery, 2, "Report grace (ms)", self.duration_text, 1, 60000)
+        self._labeled_spin(discovery, 3, "Discovery slots", self.discovery_slots_text, 1, 50)
+        self._labeled_spin(discovery, 4, "Pair samples", self.sample_count_text, 1, 1000)
         ttk.Label(
             discovery,
             text="Current gateway-role runtime accepts 1 pair sample; larger values may return DENIED.",
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(5, 8))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 8))
         self.discovery_button = ttk.Button(
             discovery,
             text="Start anchor-pair survey",
             style="Primary.TButton",
             command=self._send_discovery,
         )
-        self.discovery_button.grid(row=5, column=0, columnspan=2, sticky="ew")
+        self.discovery_button.grid(row=6, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.discovery_button,
             "Send gateway-local CMD_SURVEY_REACHABILITY (0x0100). Firmware starts survey discovery and reports COMMAND_RESULT.",
@@ -638,6 +662,35 @@ class GatewayGui(GatewayDiagnosticsMixin):
         session_id = (time.monotonic_ns() // 1_000_000) & 0xFFFFFFFF
         return session_id or 1, self.sequence
 
+    def _command_budget_ms(self) -> int | None:
+        raw = self.command_budget_text.get().strip()
+        if not raw:
+            return None
+        budget_ms = self._parse_int("Command limit", raw)
+        if not 1000 <= budget_ms <= 600000:
+            raise ValueError("Command limit must be in 1000..600000 ms, or blank")
+        return budget_ms
+
+    def _survey_id_for_send(self) -> int:
+        if not self.survey_id_auto.get():
+            survey_id = self._parse_int("Survey ID", self.survey_id_text.get())
+            if not 1 <= survey_id <= 0xFFFFFFFF:
+                raise ValueError("Survey ID must be in 1..4294967295")
+            self._used_survey_ids.add(survey_id)
+            return survey_id
+
+        candidate = self._survey_id_counter
+        for _ in range(len(self._used_survey_ids) + 1):
+            candidate = (candidate + 1) & 0xFFFFFFFF
+            if candidate == 0:
+                candidate = 1
+            if candidate not in self._used_survey_ids:
+                self._survey_id_counter = candidate
+                self._used_survey_ids.add(candidate)
+                self.survey_id_text.set(str(candidate))
+                return candidate
+        raise ValueError("No unused Survey ID is available")
+
     def _require_gateway_identity(self) -> int:
         if not self.connected:
             raise ValueError("Connect to a gateway before sending commands")
@@ -650,20 +703,26 @@ class GatewayGui(GatewayDiagnosticsMixin):
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
+            command_budget_ms = self._command_budget_ms()
+            survey_id = self._survey_id_for_send()
             command = build_anchor_discovery_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
-                survey_id=self._parse_int("Survey ID", self.survey_id_text.get()),
+                survey_id=survey_id,
                 duration_ms=self._parse_int("Report grace", self.duration_text.get()),
                 discovery_slot_count=self._parse_int("Discovery slots", self.discovery_slots_text.get()),
                 sample_count=self._parse_int("Pair samples", self.sample_count_text.get()),
+                command_budget_ms=command_budget_ms,
             )
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(2, session_id, seq):
+        if not self._begin_gateway_command(
+                2, session_id, seq,
+                timeout_s=None if command_budget_ms is None else
+                command_budget_ms / 1000.0 + 2.0):
             return
         self.status_text.set("Writing anchor-pair survey command over BLE...")
         self.transport.send_frame(command.frame, command.label)
@@ -673,16 +732,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
+            command_budget_ms = self._command_budget_ms()
             command = build_here_i_am_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
+                command_budget_ms=command_budget_ms,
             )
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(3, session_id, seq):
+        if not self._begin_gateway_command(
+                3, session_id, seq,
+                timeout_s=None if command_budget_ms is None else
+                command_budget_ms / 1000.0 + 2.0):
             return
         self.status_text.set("Writing Here I Am route-refresh request over BLE...")
         self.transport.send_frame(command.frame, command.label)
@@ -692,16 +756,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
+            command_budget_ms = self._command_budget_ms()
             command = build_assign_discovery_slots_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
+                command_budget_ms=command_budget_ms,
             )
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(1, session_id, seq):
+        if not self._begin_gateway_command(
+                1, session_id, seq,
+                timeout_s=None if command_budget_ms is None else
+                command_budget_ms / 1000.0 + 2.0):
             return
         self.status_text.set("Writing anchor enumeration and discovery-slot assignment request over BLE...")
         self.transport.send_frame(command.frame, command.label)

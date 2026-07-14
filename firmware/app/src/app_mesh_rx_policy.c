@@ -3,6 +3,7 @@
 #include "protocol.h"
 
 #include <errno.h>
+#include <string.h>
 
 bool app_mesh_rx_policy_should_drop(bool mesh_route_test_transmitter,
                                     uint8_t msg_type)
@@ -57,4 +58,62 @@ uint32_t app_mesh_rx_policy_gateway_ch9_window_ms(
     }
 
     return control_wait_ms > 0u ? control_wait_ms : 1u;
+}
+
+void app_mesh_rx_handoff_reset(struct app_mesh_rx_handoff_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+bool app_mesh_rx_handoff_begin_control(
+    struct app_mesh_rx_handoff_state *state,
+    bool *abort_scan)
+{
+    if (state == NULL || abort_scan == NULL || state->control_active) {
+        return false;
+    }
+
+    state->control_active = true;
+    *abort_scan = state->scan_radio_active;
+    return true;
+}
+
+bool app_mesh_rx_handoff_try_begin_scan(
+    struct app_mesh_rx_handoff_state *state)
+{
+    if (state == NULL || state->control_active || state->scan_radio_active) {
+        return false;
+    }
+
+    state->scan_radio_active = true;
+    return true;
+}
+
+void app_mesh_rx_handoff_end_scan(struct app_mesh_rx_handoff_state *state)
+{
+    if (state != NULL) {
+        state->scan_radio_active = false;
+    }
+}
+
+bool app_mesh_rx_handoff_control_ready(
+    const struct app_mesh_rx_handoff_state *state)
+{
+    return state != NULL && state->control_active &&
+           !state->scan_radio_active;
+}
+
+void app_mesh_rx_handoff_end_control(struct app_mesh_rx_handoff_state *state)
+{
+    if (state != NULL) {
+        state->control_active = false;
+    }
+}
+
+bool app_mesh_rx_handoff_scan_rearm_allowed(
+    const struct app_mesh_rx_handoff_state *state)
+{
+    return state != NULL && !state->control_active;
 }

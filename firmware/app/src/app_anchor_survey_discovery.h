@@ -28,6 +28,9 @@ void app_anchor_survey_discovery_handle_start(
 int app_anchor_survey_discovery_run(
     const struct survey_discovery_config *config,
     uint32_t start_ms);
+int app_anchor_survey_discovery_stage_empty_report(
+    const struct survey_discovery_config *config,
+    uint32_t start_ms);
 int app_anchor_survey_discovery_retry_report(void);
 void app_anchor_survey_delivery_gateway_confirmed(
     const struct proto_packet *packet);

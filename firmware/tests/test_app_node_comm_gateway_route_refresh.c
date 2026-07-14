@@ -544,6 +544,31 @@ static void test_synchronous_resume_schedule_cannot_strand_refresh(void)
     assert(terminal_count == 1u);
 }
 
+static void test_explicit_budget_bounds_forced_refresh(void)
+{
+    struct refresh_fixture fixture;
+    struct proto_packet command = correlated_command();
+    unsigned int steps = 0u;
+
+    fixture_init(&fixture);
+    fixture.quiet_failures_remaining = UINT8_MAX;
+    assert(app_node_comm_gateway_route_refresh_request_bounded(
+               0u, "short-budget", true, &command, 75u) == 0);
+    while ((fixture.event_count == 0u ||
+            fixture.events[fixture.event_count - 1u].kind !=
+                APP_NODE_COMM_ROUTE_REFRESH_COMPLETE) &&
+           steps++ < 32u) {
+        fixture_run(&fixture);
+    }
+    assert(fixture.event_count > 0u);
+    assert(fixture.events[fixture.event_count - 1u].kind ==
+           APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
+    assert(fixture.events[fixture.event_count - 1u].result == -ETIMEDOUT);
+    assert(fixture.events[fixture.event_count - 1u].correlation.session_id ==
+           command.session_id);
+    assert(fixture.now_ms >= 75u && fixture.now_ms <= 85u);
+}
+
 int main(void)
 {
     test_pause_between_opportunities_preserves_four_real_sends();
@@ -553,5 +578,6 @@ int main(void)
     test_packet_retry_bursts_each_keep_four_opportunities();
     test_concurrent_pause_stops_callbacks_and_preserves_correlation();
     test_synchronous_resume_schedule_cannot_strand_refresh();
+    test_explicit_budget_bounds_forced_refresh();
     return 0;
 }

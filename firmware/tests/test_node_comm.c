@@ -198,6 +198,42 @@ static void test_blocked_pre_rf_opportunities_never_consume_attempts(void)
     assert(attempts == 1u);
 }
 
+static void test_pre_rf_retry_uses_randomized_exponential_backoff(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        31u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 10000u);
+    struct node_comm_lease lease;
+    uint64_t now_ms = 0u;
+    uint8_t attempts;
+    uint32_t handle;
+
+    request.retry_jitter_seed = UINT32_C(0x51f15e37);
+    init_running(&comm, now_ms);
+    handle = submit_request(&comm, &request, now_ms);
+    for (uint16_t round = 1u; round <= 6u; round++) {
+        uint64_t due_ms;
+        uint32_t delay_ms;
+
+        assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
+        assert(lease.attempt_number == 1u);
+        assert(node_comm_lease_defer_pre_rf_retry(
+                   &comm, &lease, now_ms) == 0);
+        assert(node_comm_retry_backoff_ms(
+                   request.profile, request.retry_jitter_seed,
+                   round, &delay_ms) == 0);
+        assert(node_comm_next_service_due_ms(&comm, now_ms, &due_ms));
+        assert(due_ms == now_ms + delay_ms);
+        assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+        assert(attempts == 0u);
+        now_ms = due_ms;
+    }
+    assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, now_ms) == 0);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+}
+
 static void test_retry_backoff_and_attempt_exhaustion(void)
 {
     struct node_comm comm;
@@ -801,12 +837,14 @@ static void test_all_delivery_profiles_have_fixed_priority_order(void)
         NODE_COMM_PROFILE_BEST_EFFORT,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
     };
     const enum node_comm_delivery_profile expected[] = {
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
+        NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
         NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_BEST_EFFORT,
@@ -1011,11 +1049,114 @@ static void test_deterministic_state_and_request_sweep(void)
     assert(node_comm_pending_count(&comm) == 0u);
 }
 
+static void test_gateway_confirmation_is_exact_and_does_not_hold_scheduler(void)
+{
+    struct node_comm comm;
+    struct node_comm_request uplink = request_with(
+        901u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 1000u);
+    struct node_comm_request response = request_with(
+        902u, NODE_COMM_PROFILE_CONTROL_RESPONSE, 1000u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t response_handle;
+    uint32_t uplink_handle;
+
+    init_running(&comm, 0u);
+    uplink_handle = submit_request(&comm, &uplink, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(lease.handle == uplink_handle);
+    assert(node_comm_confirm_delivery(&comm, uplink_handle, 0u) == -EAGAIN);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 0u) ==
+           -EPROTO);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_confirm_delivery(&comm, uplink_handle, 0u) ==
+           -EINPROGRESS);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 1u) == 0);
+    assert(!node_comm_lease_active(&comm));
+    assert(node_comm_confirm_delivery(&comm, uplink_handle + 100u, 2u) ==
+           -ENOENT);
+
+    response_handle = submit_request(&comm, &response, 2u);
+    assert(node_comm_acquire(&comm, 2u, &lease) == 0);
+    assert(lease.handle == response_handle);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 2u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 3u) == 0);
+    assert(node_comm_confirm_delivery(&comm, uplink_handle, 4u) == 0);
+    assert(node_comm_confirm_delivery(&comm, uplink_handle, 4u) ==
+           -EALREADY);
+
+    assert(node_comm_take_terminal_event_for(&comm, uplink_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+    assert(node_comm_take_terminal_event_for(&comm, response_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+}
+
+static void test_late_gateway_confirmation_cannot_revive_expired_delivery(void)
+{
+    struct node_comm comm;
+    struct node_comm_request uplink = request_with(
+        903u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 100u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &uplink, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 1u) == 0);
+    assert(node_comm_confirm_delivery(&comm, handle, 100u) == -EALREADY);
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.attempts_started == 1u);
+    assert(node_comm_confirm_delivery(&comm, handle, 101u) == -ENOENT);
+}
+
+static void test_durable_retry_backoff_diversifies_fifty_reporters(void)
+{
+    for (uint16_t round = 1u; round <= 16u; round++) {
+        uint16_t shift = round - 1u;
+        uint32_t previous_delay = 0u;
+        uint32_t distinct_delays = 0u;
+        uint32_t base_ms;
+
+        if (shift > 3u) {
+            shift = 3u;
+        }
+        base_ms = 50u << shift;
+        for (uint32_t anchor = 0u; anchor < 50u; anchor++) {
+            uint32_t delay_ms = 0u;
+            uint32_t seed = UINT32_C(0x6d2b79f5) ^
+                            (anchor * UINT32_C(0x9e3779b9));
+
+            assert(node_comm_retry_backoff_ms(
+                       NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+                       seed, round, &delay_ms) == 0);
+            assert(delay_ms >= base_ms / 2u);
+            assert(delay_ms <= base_ms + base_ms / 2u);
+            if (anchor == 0u || delay_ms != previous_delay) {
+                distinct_delays++;
+            }
+            previous_delay = delay_ms;
+        }
+        assert(distinct_delays >= 20u);
+    }
+    assert(node_comm_retry_backoff_ms(
+               NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+               0u, 1u, &(uint32_t){0}) == -EINVAL);
+    assert(node_comm_retry_backoff_ms(
+               NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+               1u, 0u, &(uint32_t){0}) == -EINVAL);
+}
+
 int main(void)
 {
     test_lifecycle_requires_every_transition();
     test_quiesce_waits_for_generation_checked_lease();
     test_blocked_pre_rf_opportunities_never_consume_attempts();
+    test_pre_rf_retry_uses_randomized_exponential_backoff();
     test_retry_backoff_and_attempt_exhaustion();
     test_pause_rebases_retry_but_not_absolute_deadline();
     test_preserving_stop_invalidates_leases_and_rebases_retry();
@@ -1035,6 +1176,9 @@ int main(void)
     test_pause_then_preserving_stop_rebases_only_retry_timer();
     test_stop_during_resuming_does_not_rebase_retry_twice();
     test_all_delivery_profiles_have_fixed_priority_order();
+    test_gateway_confirmation_is_exact_and_does_not_hold_scheduler();
+    test_late_gateway_confirmation_cannot_revive_expired_delivery();
+    test_durable_retry_backoff_diversifies_fifty_reporters();
     test_deterministic_state_and_request_sweep();
     return 0;
 }

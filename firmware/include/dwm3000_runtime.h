@@ -39,6 +39,15 @@ extern "C" {
 #define DWM3000_RUNTIME_STATUS_TRANSFER_BYTES 8u
 #define DWM3000_RUNTIME_FRAME_IO_HEADER_BYTES 5u
 
+/*
+ * Conservative host-side bounds from the current RTT timing traces. The lean
+ * range path includes response decoding, FINAL construction, and the control
+ * register writes around it. Optional RX diagnostic/CIR collection has shown
+ * an additional roughly 3 ms cost and must not run before delayed FINAL arm.
+ */
+#define DWM3000_RUNTIME_RANGE_PROCESS_WORST_US 2000u
+#define DWM3000_RUNTIME_RX_DIAGNOSTICS_WORST_US 3000u
+
 enum dwm3000_runtime_status {
     DWM3000_RUNTIME_OK = 0,
     DWM3000_RUNTIME_ERR_ARG = -2000,
@@ -47,6 +56,7 @@ enum dwm3000_runtime_status {
     DWM3000_RUNTIME_ERR_RADIO_STATE = -2003,
     DWM3000_RUNTIME_ERR_NOT_READY = -2004,
     DWM3000_RUNTIME_ERR_OVERFLOW = -2005,
+    DWM3000_RUNTIME_ERR_DEADLINE_MISSED = -2006,
 };
 
 enum dwm3000_runtime_spi_rate {
@@ -78,6 +88,8 @@ enum dwm3000_runtime_operation {
     DWM3000_RUNTIME_OP_STATUS_POLL,
     DWM3000_RUNTIME_OP_FRAME_READ,
     DWM3000_RUNTIME_OP_CIR_READ,
+    DWM3000_RUNTIME_OP_RANGE_PROCESS,
+    DWM3000_RUNTIME_OP_RX_DIAGNOSTICS,
     DWM3000_RUNTIME_OP_SLEEP,
 };
 
@@ -152,6 +164,12 @@ int dwm3000_runtime_start_tx(struct dwm3000_runtime *runtime,
                              uint64_t now_us,
                              uint64_t air_end_us,
                              struct dwm3000_runtime_interval *interval);
+int dwm3000_runtime_start_delayed_tx(
+    struct dwm3000_runtime *runtime,
+    uint64_t now_us,
+    uint64_t scheduled_air_start_us,
+    uint64_t air_end_us,
+    struct dwm3000_runtime_interval *interval);
 int dwm3000_runtime_finish_tx(struct dwm3000_runtime *runtime,
                               uint64_t now_us);
 int dwm3000_runtime_status_poll(struct dwm3000_runtime *runtime,
@@ -165,6 +183,14 @@ int dwm3000_runtime_read_cir(struct dwm3000_runtime *runtime,
                              size_t cir_bytes,
                              uint64_t now_us,
                              struct dwm3000_runtime_interval *interval);
+int dwm3000_runtime_process_range_frame(
+    struct dwm3000_runtime *runtime,
+    uint64_t now_us,
+    struct dwm3000_runtime_interval *interval);
+int dwm3000_runtime_read_rx_diagnostics(
+    struct dwm3000_runtime *runtime,
+    uint64_t now_us,
+    struct dwm3000_runtime_interval *interval);
 int dwm3000_runtime_enter_retained_sleep(
     struct dwm3000_runtime *runtime,
     uint64_t now_us,

@@ -22,5 +22,6 @@ target_sources(app PRIVATE
     ../../../src/mesh.c
     ../../../src/mesh_preemption.c
     ../../../src/mesh_relay.c
+    ../../../src/mesh_relay_channel9.c
     ../../../src/route.c
 )

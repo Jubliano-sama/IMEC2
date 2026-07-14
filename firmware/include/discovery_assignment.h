@@ -43,6 +43,8 @@ struct discovery_assignment_entry {
 uint64_t discovery_assignment_hash(uint64_t anchor_id);
 int discovery_assignment_sort_claims(struct discovery_assignment_claim *claims,
                                      size_t claim_count);
+int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
+                                         size_t anchor_count);
 int discovery_assignment_entries_from_claims(
     const struct discovery_assignment_claim *claims,
     size_t claim_count,
@@ -72,6 +74,12 @@ int discovery_assignment_append_table_tlvs(
     size_t *offset,
     const struct discovery_assignment_entry *entries,
     size_t entry_count);
+int discovery_assignment_append_table_from_anchor_ids(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const uint64_t *anchor_ids,
+    size_t anchor_count);
 int discovery_assignment_parse_table_tlvs(
     const uint8_t *payload,
     size_t payload_len,

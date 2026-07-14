@@ -1,6 +1,8 @@
 #include "app_mesh_direct_gateway_retry.h"
 #include "dwm3000_timing.h"
 #include "mesh_relay.h"
+#include "node_comm.h"
+#include "survey.h"
 #include "uwb.h"
 
 #include <stdbool.h>
@@ -22,6 +24,13 @@ struct reporter {
     uint64_t tx_start_us;
     bool delivered;
     bool exhausted;
+};
+
+struct outer_reporter {
+    struct node_comm comm;
+    uint32_t handle;
+    uint64_t due_ms;
+    bool complete;
 };
 
 static int failures;
@@ -48,6 +57,115 @@ static bool overlaps(uint64_t first_start_us,
 {
     return first_start_us < second_start_us + airtime_us &&
            second_start_us < first_start_us + airtime_us;
+}
+
+static uint32_t outer_retry_seed(uint32_t scenario, uint32_t node)
+{
+    uint32_t seed = (scenario + 1u) * UINT32_C(0x9e3779b9) ^
+                    (node + 1u) * UINT32_C(0x85ebca6b);
+
+    seed ^= seed >> 16;
+    seed *= UINT32_C(0x7feb352d);
+    seed ^= seed >> 15;
+    return seed == 0u ? node + 1u : seed;
+}
+
+static size_t run_outer_delivery_twenty(uint32_t scenario)
+{
+    struct outer_reporter reporters[DIRECT_ANCHORS];
+    const uint64_t deadline_ms = SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS;
+    const uint64_t collision_guard_ms =
+        APP_MESH_DIRECT_GATEWAY_SURVEY_SERVICE_GUARD_MS;
+    size_t completed = 0u;
+
+    memset(reporters, 0, sizeof(reporters));
+    for (size_t i = 0u; i < DIRECT_ANCHORS; i++) {
+        struct node_comm_request request = {
+            .profile = NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+            .absolute_deadline_ms = deadline_ms,
+            .client_token = (uint32_t)(i + 1u),
+            .retry_jitter_seed = outer_retry_seed(scenario, (uint32_t)i),
+        };
+        struct node_comm_lease lease;
+
+        node_comm_init(&reporters[i].comm);
+        CHECK_VALUE(node_comm_start(&reporters[i].comm, 0u) == 0, 0u);
+        CHECK_VALUE(node_comm_submit(&reporters[i].comm, &request, 0u,
+                                     &reporters[i].handle) == 0, 0u);
+        CHECK_VALUE(node_comm_acquire(&reporters[i].comm, 0u, &lease) == 0,
+                    0u);
+        CHECK_VALUE(node_comm_lease_note_rf_started(
+                        &reporters[i].comm, &lease, 0u) == 0, 0u);
+        CHECK_VALUE(node_comm_lease_complete(
+                        &reporters[i].comm, &lease,
+                        NODE_COMM_DELIVERY_RETRY, 0u) == 0, 0u);
+    }
+
+    for (uint8_t wave = 0u; wave < 16u && completed < DIRECT_ANCHORS; wave++) {
+        bool collision[DIRECT_ANCHORS] = {false};
+
+        for (size_t i = 0u; i < DIRECT_ANCHORS; i++) {
+            if (reporters[i].complete) {
+                continue;
+            }
+            CHECK_VALUE(node_comm_next_service_due_ms(
+                            &reporters[i].comm, 0u,
+                            &reporters[i].due_ms), completed);
+        }
+        for (size_t i = 0u; i < DIRECT_ANCHORS; i++) {
+            if (reporters[i].complete || reporters[i].due_ms >= deadline_ms) {
+                continue;
+            }
+            for (size_t j = i + 1u; j < DIRECT_ANCHORS; j++) {
+                uint64_t difference_ms;
+
+                if (reporters[j].complete ||
+                    reporters[j].due_ms >= deadline_ms) {
+                    continue;
+                }
+                difference_ms = reporters[i].due_ms > reporters[j].due_ms ?
+                    reporters[i].due_ms - reporters[j].due_ms :
+                    reporters[j].due_ms - reporters[i].due_ms;
+                if (difference_ms < collision_guard_ms) {
+                    collision[i] = true;
+                    collision[j] = true;
+                }
+            }
+        }
+        for (size_t i = 0u; i < DIRECT_ANCHORS; i++) {
+            struct node_comm_terminal_event event;
+            struct node_comm_lease lease;
+
+            if (reporters[i].complete) {
+                continue;
+            }
+            (void)node_comm_service(&reporters[i].comm, reporters[i].due_ms);
+            if (node_comm_take_terminal_event_for(
+                    &reporters[i].comm, reporters[i].handle, &event)) {
+                reporters[i].complete = true;
+                continue;
+            }
+            CHECK_VALUE(node_comm_acquire(&reporters[i].comm,
+                                          reporters[i].due_ms,
+                                          &lease) == 0, completed);
+            CHECK_VALUE(node_comm_lease_note_rf_started(
+                            &reporters[i].comm, &lease,
+                            reporters[i].due_ms) == 0, completed);
+            CHECK_VALUE(node_comm_lease_complete(
+                            &reporters[i].comm, &lease,
+                            collision[i] ? NODE_COMM_DELIVERY_RETRY :
+                                           NODE_COMM_DELIVERY_SUCCEEDED,
+                            reporters[i].due_ms) == 0, completed);
+            if (node_comm_take_terminal_event_for(
+                    &reporters[i].comm, reporters[i].handle, &event)) {
+                reporters[i].complete = true;
+                if (event.reason == NODE_COMM_TERMINAL_DELIVERED) {
+                    completed++;
+                }
+            }
+        }
+    }
+    return completed;
 }
 
 static size_t run_twenty(uint32_t survey_id,
@@ -181,16 +299,26 @@ static void test_busy_deferral_does_not_consume_four_real_attempts(void)
 {
     struct app_mesh_direct_gateway_retry_state state;
     struct app_mesh_direct_gateway_retry_decision decision;
+    uint32_t previous_delay_ms = 0u;
 
     CHECK(app_mesh_direct_gateway_retry_init(
               &state, APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY,
               ANCHOR_BASE, SURVEY_ID) == 0);
     for (uint8_t i = 0u; i < APP_MESH_DIRECT_GATEWAY_SURVEY_BUSY_DEFERRALS; i++) {
+        uint8_t shift = i > 4u ? 4u : i;
+        uint32_t base_ms = APP_MESH_DIRECT_GATEWAY_SURVEY_BUSY_BASE_MS << shift;
+
         CHECK(app_mesh_direct_gateway_retry_note(
                   &state, APP_MESH_DIRECT_GATEWAY_ATTEMPT_RF_BUSY, 0u,
                   &decision) == 0);
         CHECK(decision.retry && !decision.attempt_consumed &&
               state.attempts == 0u);
+        CHECK(decision.delay_ms >= base_ms &&
+              decision.delay_ms <= base_ms * 2u);
+        if (i > 0u && base_ms < APP_MESH_DIRECT_GATEWAY_SURVEY_BUSY_MAX_BASE_MS) {
+            CHECK(decision.delay_ms > previous_delay_ms / 2u);
+        }
+        previous_delay_ms = decision.delay_ms;
     }
     CHECK(app_mesh_direct_gateway_retry_note(
               &state, APP_MESH_DIRECT_GATEWAY_ATTEMPT_RF_BUSY, 0u,
@@ -208,6 +336,20 @@ static void test_busy_deferral_does_not_consume_four_real_attempts(void)
         CHECK(decision.attempt_consumed && state.attempts == i + 1u);
     }
     CHECK(decision.exhausted && !decision.retry);
+
+    CHECK(app_mesh_direct_gateway_retry_init(
+              &state, APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE, 0u, 0u) == 0);
+    CHECK(app_mesh_direct_gateway_retry_note(
+              &state, APP_MESH_DIRECT_GATEWAY_ATTEMPT_FAILED, 0u,
+              &decision) == 0);
+    previous_delay_ms = decision.delay_ms;
+    CHECK(previous_delay_ms == APP_MESH_DIRECT_GATEWAY_ROUTE_BACKOFF_BASE_MS);
+    CHECK(app_mesh_direct_gateway_retry_note(
+              &state, APP_MESH_DIRECT_GATEWAY_ATTEMPT_FAILED, 0u,
+              &decision) == 0);
+    CHECK(decision.delay_ms ==
+          APP_MESH_DIRECT_GATEWAY_ROUTE_BACKOFF_MAX_BASE_MS);
+    CHECK(decision.delay_ms > previous_delay_ms);
 }
 
 static void test_full_width_identity_mixing_breaks_folded_collisions(void)
@@ -286,6 +428,23 @@ static void test_seeded_corpus_reports_empirical_result_without_claim(void)
     CHECK(passed == cases);
 }
 
+static void test_outer_delivery_backoff_delivers_twenty_direct_reporters(void)
+{
+    size_t successful_scenarios = 0u;
+    const size_t scenarios = 256u;
+
+    for (uint32_t scenario = 0u; scenario < scenarios; scenario++) {
+        if (run_outer_delivery_twenty(scenario) == DIRECT_ANCHORS) {
+            successful_scenarios++;
+        }
+    }
+    printf("survey-outer seeded_cases=%zu complete=%zu empirical_percent=%.3f "
+           "required_percent=95.000\n",
+           scenarios, successful_scenarios,
+           100.0 * (double)successful_scenarios / (double)scenarios);
+    CHECK(successful_scenarios * 100u >= scenarios * 95u);
+}
+
 static void test_fifty_identity_matrix_and_worst_hash_bin(void)
 {
     static const uint32_t survey_ids[] = {
@@ -349,6 +508,7 @@ int main(void)
     test_full_width_identity_mixing_breaks_folded_collisions();
     test_policy_deadline_boundary_and_wrap();
     test_seeded_corpus_reports_empirical_result_without_claim();
+    test_outer_delivery_backoff_delivers_twenty_direct_reporters();
     test_fifty_identity_matrix_and_worst_hash_bin();
     return failures == 0 ? 0 : 1;
 }

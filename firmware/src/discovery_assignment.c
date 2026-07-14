@@ -144,6 +144,43 @@ int discovery_assignment_sort_claims(struct discovery_assignment_claim *claims,
     return PROTO_OK;
 }
 
+static bool anchor_id_before(uint64_t left, uint64_t right)
+{
+    uint64_t left_hash = discovery_assignment_hash(left);
+    uint64_t right_hash = discovery_assignment_hash(right);
+
+    return left_hash < right_hash ||
+           (left_hash == right_hash && left < right);
+}
+
+int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
+                                         size_t anchor_count)
+{
+    if ((anchor_ids == NULL && anchor_count != 0u) ||
+        anchor_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_ARG;
+    }
+    for (size_t i = 0u; i < anchor_count; i++) {
+        uint64_t current = anchor_ids[i];
+        size_t j = i;
+
+        if (current == 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        while (j > 0u && anchor_id_before(current, anchor_ids[j - 1u])) {
+            anchor_ids[j] = anchor_ids[j - 1u];
+            j--;
+        }
+        anchor_ids[j] = current;
+    }
+    for (size_t i = 1u; i < anchor_count; i++) {
+        if (anchor_ids[i - 1u] == anchor_ids[i]) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+    return PROTO_OK;
+}
+
 int discovery_assignment_entries_from_claims(
     const struct discovery_assignment_claim *claims,
     size_t claim_count,
@@ -300,6 +337,66 @@ int discovery_assignment_append_table_tlvs(
             return ret;
         }
         entry_index += chunk_count;
+    }
+    return PROTO_OK;
+}
+
+int discovery_assignment_append_table_from_anchor_ids(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const uint64_t *anchor_ids,
+    size_t anchor_count)
+{
+    uint8_t raw[DISCOVERY_ASSIGNMENT_ENTRIES_PER_TLV *
+                DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN];
+    size_t anchor_index = 0u;
+    int ret;
+
+    if (payload == NULL || offset == NULL || anchor_ids == NULL ||
+        anchor_count == 0u || anchor_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset,
+                        TLV_DISCOVERY_SLOT_COUNT, UWB_DISCOVERY_SLOT_COUNT);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload, payload_cap, offset,
+                         TLV_EXPECTED_NODE_COUNT, (uint16_t)anchor_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    while (anchor_index < anchor_count) {
+        size_t chunk_count = anchor_count - anchor_index;
+        size_t raw_len;
+
+        if (chunk_count > DISCOVERY_ASSIGNMENT_ENTRIES_PER_TLV) {
+            chunk_count = DISCOVERY_ASSIGNMENT_ENTRIES_PER_TLV;
+        }
+        raw_len = chunk_count * DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN;
+        for (size_t i = 0u; i < chunk_count; i++) {
+            size_t index = anchor_index + i;
+            size_t raw_offset = i * DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN;
+            uint64_t anchor_id = anchor_ids[index];
+            uint64_t hash = discovery_assignment_hash(anchor_id);
+
+            if (anchor_id == 0u ||
+                (index > 0u &&
+                 !anchor_id_before(anchor_ids[index - 1u], anchor_id))) {
+                return PROTO_ERR_MALFORMED;
+            }
+            proto_put_u64_le(&raw[raw_offset], anchor_id);
+            proto_put_u64_le(&raw[raw_offset + 8u], hash);
+            raw[raw_offset + 16u] = (uint8_t)index;
+        }
+        ret = tlv_append_bytes(payload, payload_cap, offset,
+                               TLV_DISCOVERY_ASSIGNMENT_TABLE,
+                               raw, (uint8_t)raw_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        anchor_index += chunk_count;
     }
     return PROTO_OK;
 }

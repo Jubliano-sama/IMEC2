@@ -12,7 +12,8 @@
 #define ROUTE_REFRESH_MAX_OUTER_RETRIES 8u
 #define ROUTE_REFRESH_RETRY_BASE_MS 100u
 #define ROUTE_REFRESH_RETRY_MAX_MS 5000u
-#define ROUTE_REFRESH_PROTOCOL_DEADLINE_MS 120000u
+#define ROUTE_REFRESH_PROTOCOL_DEADLINE_MS \
+    APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS
 struct route_refresh_correlation {
     uint32_t session_id;
     uint16_t seq;
@@ -105,6 +106,14 @@ static int refresh_schedule(uint32_t delay_ms)
         route_refresh.operation_generation != generation ||
         route_refresh.paused) {
         return -ECANCELED;
+    }
+    if (route_refresh.absolute_deadline_valid) {
+        uint32_t remaining_ms = refresh_wait_ms(
+            now_ms, route_refresh.absolute_deadline_ms);
+
+        if (delay_ms > remaining_ms) {
+            delay_ms = remaining_ms;
+        }
     }
     due_ms = refresh_deadline_add(now_ms, delay_ms);
     route_refresh.due_ms = due_ms;
@@ -756,6 +765,21 @@ int app_node_comm_gateway_route_refresh_request(
     bool forced,
     const struct proto_packet *correlation)
 {
+    return app_node_comm_gateway_route_refresh_request_bounded(
+        delay_ms,
+        reason,
+        forced,
+        correlation,
+        ROUTE_REFRESH_PROTOCOL_DEADLINE_MS);
+}
+
+int app_node_comm_gateway_route_refresh_request_bounded(
+    uint32_t delay_ms,
+    const char *reason,
+    bool forced,
+    const struct proto_packet *correlation,
+    uint32_t timeout_ms)
+{
     const struct app_node_comm_gateway_route_refresh_config *config;
     uint32_t now_ms;
     bool allowed;
@@ -763,6 +787,9 @@ int app_node_comm_gateway_route_refresh_request(
     bool stop_role_scan = false;
     int ret;
 
+    if (timeout_ms == 0u || UINT32_MAX - delay_ms < timeout_ms) {
+        return -EINVAL;
+    }
     ret = app_node_comm_sync_lock();
     if (ret < 0) {
         return ret;
@@ -819,12 +846,12 @@ int app_node_comm_gateway_route_refresh_request(
                    sizeof(route_refresh.correlation));
         }
         route_refresh.absolute_deadline_ms = refresh_deadline_add(
-            now_ms, delay_ms + ROUTE_REFRESH_PROTOCOL_DEADLINE_MS);
+            now_ms, delay_ms + timeout_ms);
         route_refresh.absolute_deadline_valid = true;
         refresh_reset_outer_attempt();
     } else if (!route_refresh.active) {
         route_refresh.absolute_deadline_ms = refresh_deadline_add(
-            now_ms, delay_ms + ROUTE_REFRESH_PROTOCOL_DEADLINE_MS);
+            now_ms, delay_ms + timeout_ms);
         route_refresh.absolute_deadline_valid = true;
     }
     (void)reason;

@@ -126,11 +126,21 @@ int mesh_send_c5_flood(const struct mesh_outbound *out,
 int mesh_try_send_c5_flood(const struct mesh_outbound *out,
                            uint8_t purpose,
                            const char *reason,
-                           bool *sent_now);
+                           bool *rf_started);
 int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
-                                bool *sent_now);
+                                bool *rf_started);
+int mesh_try_send_control_response_view(
+    const struct app_mesh_outbound_view *view,
+    const char *reason,
+    bool *rf_started);
+int mesh_try_send_reliable_uplink_view(
+    const struct app_mesh_outbound_view *view,
+    const char *reason,
+    bool *rf_started,
+    bool *gateway_confirmed);
+int mesh_cancel_reliable_uplink(const struct proto_packet *packet);
 int mesh_send_gateway_command_flood(
     const struct app_mesh_command_orchestrator *orchestrator,
     const char *reason,

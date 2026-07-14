@@ -1213,6 +1213,9 @@ void gateway_note_command_result(const struct proto_packet *packet,
 {
     struct proto_packet command;
     enum command_id pending_command_id;
+    enum gateway_command_result_admission admission;
+    bool auto_transaction_owned;
+    bool pending_matches;
     bool survey_transaction_result;
     enum command_status status = COMMAND_INTERNAL_ERROR;
     uint8_t reason = 0u;
@@ -1234,11 +1237,22 @@ void gateway_note_command_result(const struct proto_packet *packet,
                                    received_radio_channel,
                                    current_channel9_plan);
 
-    survey_transaction_result = gateway_survey_auto_preflight_result(
-        packet, payload, payload_len);
+    auto_transaction_owned = gateway_survey_auto_owns_pending_command(
+        &gateway_command_pending_state.command,
+        gateway_command_pending_state.command_id);
+    pending_matches = gateway_command_pending_matches_result(
+        &gateway_command_pending_state, packet);
+    survey_transaction_result = false;
+    if (auto_transaction_owned || !pending_matches) {
+        survey_transaction_result = gateway_survey_auto_preflight_result(
+            packet, payload, payload_len);
+    }
+    admission = gateway_command_result_admit(&gateway_command_pending_state,
+                                              packet,
+                                              auto_transaction_owned,
+                                              survey_transaction_result);
 
-    if (!app_mesh_gateway_command_flow_result_matches(
-            &gateway_command_pending_state.command, packet)) {
+    if (admission == GATEWAY_COMMAND_RESULT_IGNORE) {
         if (survey_transaction_result) {
             LOG_DBG("gateway survey duplicate/late result reconciled: src=0x%016llx session=%u seq=%u",
                     packet == NULL ? 0ull :
@@ -1248,11 +1262,7 @@ void gateway_note_command_result(const struct proto_packet *packet,
         }
         return;
     }
-    if ((gateway_command_pending_state.command_id ==
-             CMD_SURVEY_PREPARE_PAIR ||
-         gateway_command_pending_state.command_id ==
-             CMD_SURVEY_START_PAIR) &&
-        !survey_transaction_result) {
+    if (admission == GATEWAY_COMMAND_RESULT_WAIT) {
         LOG_WRN("gateway survey result identity rejected while wait remains active: src=0x%016llx session=%u seq=%u",
                 packet == NULL ? 0ull :
                 (unsigned long long)packet->src_id,

@@ -32,6 +32,7 @@ enum node_comm_delivery_profile {
     NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD = 0,
     NODE_COMM_PROFILE_RELIABLE_UPLINK,
     NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+    NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
     NODE_COMM_PROFILE_CONTROL_RESPONSE,
     NODE_COMM_PROFILE_BEST_EFFORT,
     NODE_COMM_PROFILE_COUNT,
@@ -50,6 +51,7 @@ enum node_comm_request_slot_state {
     NODE_COMM_SLOT_READY,
     NODE_COMM_SLOT_WAIT_RETRY,
     NODE_COMM_SLOT_LEASED,
+    NODE_COMM_SLOT_WAIT_CONFIRMATION,
     NODE_COMM_SLOT_TERMINAL,
 };
 
@@ -99,6 +101,7 @@ struct node_comm_request_slot {
     uint32_t lease_generation;
     uint32_t retry_delay_ms;
     enum node_comm_request_slot_state state;
+    uint16_t retry_rounds;
     uint8_t attempts_started;
     uint8_t max_attempts;
     uint8_t retry_backoff_shift_cap;
@@ -196,10 +199,20 @@ int node_comm_lease_defer_pre_rf(struct node_comm *comm,
                                 const struct node_comm_lease *lease,
                                 uint64_t not_before_ms,
                                 uint64_t now_ms);
+int node_comm_lease_defer_pre_rf_retry(
+    struct node_comm *comm,
+    const struct node_comm_lease *lease,
+    uint64_t now_ms);
 int node_comm_lease_complete(struct node_comm *comm,
                              const struct node_comm_lease *lease,
                              enum node_comm_delivery_outcome outcome,
                              uint64_t now_ms);
+int node_comm_lease_await_confirmation(struct node_comm *comm,
+                                       const struct node_comm_lease *lease,
+                                       uint64_t now_ms);
+int node_comm_confirm_delivery(struct node_comm *comm,
+                               uint32_t handle,
+                               uint64_t now_ms);
 int node_comm_cancel(struct node_comm *comm,
                      uint32_t handle,
                      uint64_t now_ms);
@@ -218,5 +231,9 @@ bool node_comm_lease_active(const struct node_comm *comm);
 int node_comm_attempts_started(const struct node_comm *comm,
                                uint32_t handle,
                                uint8_t *attempts_out);
+int node_comm_retry_backoff_ms(enum node_comm_delivery_profile profile,
+                               uint32_t retry_jitter_seed,
+                               uint16_t retry_round,
+                               uint32_t *delay_ms_out);
 
 #endif

@@ -156,6 +156,72 @@ static void test_gateway_operation_deadline_is_wrap_safe_and_terminal(void)
     assert(app_discovery_assignment_operation_expired(3u, 3u));
 }
 
+static void test_explicit_budget_scales_complete_claim_rounds(void)
+{
+    assert(app_discovery_assignment_claim_round_limit(true, 1u, 4u) == 1u);
+    assert(app_discovery_assignment_claim_round_limit(true, 3u, 4u) == 3u);
+    assert(app_discovery_assignment_claim_round_limit(true, 8u, 4u) == 4u);
+    assert(app_discovery_assignment_claim_round_limit(false, 1u, 4u) == 4u);
+    assert(app_discovery_assignment_claim_round_limit(true, 0u, 4u) == 0u);
+    assert(app_discovery_assignment_claim_round_limit(true, 1u, 0u) == 0u);
+}
+
+static void test_table_retry_budget_preserves_every_ack_window(void)
+{
+    assert(app_discovery_assignment_table_windows_remaining(1u, 4u) == 4u);
+    assert(app_discovery_assignment_table_windows_remaining(2u, 4u) == 3u);
+    assert(app_discovery_assignment_table_windows_remaining(3u, 4u) == 2u);
+    assert(app_discovery_assignment_table_windows_remaining(4u, 4u) == 1u);
+    assert(app_discovery_assignment_table_windows_remaining(0u, 4u) == 0u);
+    assert(app_discovery_assignment_table_windows_remaining(5u, 4u) == 0u);
+
+    assert(app_discovery_assignment_table_retry_backoff_required(
+        true, 3u, 1u, 4u));
+    assert(app_discovery_assignment_table_retry_backoff_required(
+        true, 1u, 3u, 4u));
+    assert(!app_discovery_assignment_table_retry_backoff_required(
+        true, 1u, 4u, 4u));
+    assert(!app_discovery_assignment_table_retry_backoff_required(
+        true, 0u, 1u, 4u));
+    assert(!app_discovery_assignment_table_retry_backoff_required(
+        false, 3u, 1u, 4u));
+}
+
+static void test_stale_publish_work_cannot_run_in_next_assignment(void)
+{
+    struct app_discovery_assignment_work_guard guard;
+
+    app_discovery_assignment_work_guard_init(&guard);
+    assert(app_discovery_assignment_work_guard_request(&guard, 1u) ==
+           APP_DISCOVERY_ASSIGNMENT_WORK_SUBMIT);
+    assert(app_discovery_assignment_work_guard_request(&guard, 1u) ==
+           APP_DISCOVERY_ASSIGNMENT_WORK_ALREADY_PENDING);
+
+    /* Assignment 2 starts while assignment 1 still waits for a radio boundary. */
+    assert(app_discovery_assignment_work_guard_request(&guard, 2u) ==
+           APP_DISCOVERY_ASSIGNMENT_WORK_WAIT_STALE);
+    assert(!app_discovery_assignment_work_guard_begin(&guard, 2u));
+
+    assert(app_discovery_assignment_work_guard_request(&guard, 2u) ==
+           APP_DISCOVERY_ASSIGNMENT_WORK_SUBMIT);
+    assert(app_discovery_assignment_work_guard_begin(&guard, 2u));
+    assert(guard.pending_generation == 0u);
+}
+
+static void test_failed_publish_submission_releases_generation(void)
+{
+    struct app_discovery_assignment_work_guard guard;
+
+    app_discovery_assignment_work_guard_init(&guard);
+    assert(app_discovery_assignment_work_guard_request(&guard, 7u) ==
+           APP_DISCOVERY_ASSIGNMENT_WORK_SUBMIT);
+    app_discovery_assignment_work_guard_note_submit_result(&guard, 7u, -1);
+    assert(app_discovery_assignment_work_guard_request(&guard, 8u) ==
+           APP_DISCOVERY_ASSIGNMENT_WORK_SUBMIT);
+    app_discovery_assignment_work_guard_note_submit_result(&guard, 7u, -1);
+    assert(app_discovery_assignment_work_guard_begin(&guard, 8u));
+}
+
 static void test_low_power_failure_recovers_and_retries_once(void)
 {
     struct app_radio_low_power_policy policy;
@@ -207,6 +273,10 @@ int main(void)
     test_authoritative_omission_is_unprovisioned_until_reassigned();
     test_connected_anchor_low_power_policy_uses_idle();
     test_gateway_operation_deadline_is_wrap_safe_and_terminal();
+    test_explicit_budget_scales_complete_claim_rounds();
+    test_table_retry_budget_preserves_every_ack_window();
+    test_stale_publish_work_cannot_run_in_next_assignment();
+    test_failed_publish_submission_releases_generation();
     test_low_power_failure_recovers_and_retries_once();
     test_low_power_recovery_retry_can_complete();
     test_low_power_recovery_failure_does_not_retry();

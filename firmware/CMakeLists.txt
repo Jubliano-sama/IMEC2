@@ -28,6 +28,7 @@ add_library(core
     src/mesh_preemption.c
     src/mesh_runtime.c
     src/mesh_relay.c
+    src/mesh_relay_channel9.c
     src/report.c
     src/serial_frame.c
     src/stack_diag_transport.c
@@ -80,6 +81,14 @@ target_link_libraries(test_survey_gateway_transaction PRIVATE core)
 add_test(NAME survey_gateway_transaction
     COMMAND test_survey_gateway_transaction)
 set_tests_properties(survey_gateway_transaction
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication")
+
+add_executable(test_survey_gateway_drive_policy
+    tests/test_survey_gateway_drive_policy.c)
+target_link_libraries(test_survey_gateway_drive_policy PRIVATE core)
+add_test(NAME survey_gateway_drive_policy
+    COMMAND test_survey_gateway_drive_policy)
+set_tests_properties(survey_gateway_drive_policy
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication")
 
 add_executable(test_watchdog_adoption tests/test_watchdog_adoption.c)
@@ -506,6 +515,12 @@ add_test(NAME survey_delivery_source_invariants
 set_tests_properties(survey_delivery_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence")
 
+add_test(NAME survey_discovery_failure_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_discovery_failure_source_invariants.py)
+set_tests_properties(survey_discovery_failure_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing")
+
 add_test(NAME dwm3000_receive_source_invariants
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_dwm3000_receive_source_invariants.py)
@@ -527,6 +542,13 @@ add_test(NAME report COMMAND test_report)
 add_executable(test_survey tests/test_survey.c)
 target_link_libraries(test_survey PRIVATE core)
 add_test(NAME survey COMMAND test_survey)
+
+add_executable(test_survey_completion_policy
+    tests/test_survey_completion_policy.c)
+target_link_libraries(test_survey_completion_policy PRIVATE core)
+add_test(NAME survey_completion_policy COMMAND test_survey_completion_policy)
+set_tests_properties(survey_completion_policy
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication")
 
 add_executable(test_packet_initializers tests/test_packet_initializers.c)
 target_link_libraries(test_packet_initializers PRIVATE core)
@@ -678,6 +700,7 @@ add_executable(test_mesh_gateway_control_stress_scenarios
     app/src/app_gateway_command_lifecycle.c
     app/src/app_gateway_command_observability.c
     app/src/app_mesh_flood.c
+    app/src/app_mesh_rx_policy.c
 )
 target_include_directories(test_mesh_gateway_control_stress_scenarios
     PRIVATE app/src)
@@ -686,6 +709,14 @@ add_test(NAME mesh_gateway_control_stress_scenarios
     COMMAND test_mesh_gateway_control_stress_scenarios)
 set_tests_properties(mesh_gateway_control_stress_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;gateway_command;route;network_stress")
+
+add_executable(test_node_comm_delivery_stress_scenarios
+    tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c)
+target_link_libraries(test_node_comm_delivery_stress_scenarios PRIVATE core)
+add_test(NAME node_comm_delivery_stress_scenarios
+    COMMAND test_node_comm_delivery_stress_scenarios)
+set_tests_properties(node_comm_delivery_stress_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;gateway_command;network_stress")
 
 add_executable(test_mesh_survey_phy_scenarios
     tests/mesh_integration/test_mesh_survey_phy_scenarios.c

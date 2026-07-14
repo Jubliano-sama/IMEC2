@@ -355,6 +355,28 @@ bool survey_gateway_transaction_cleanup_pending(
             context->active.state == NODE_TRANSACTION_ABANDONING);
 }
 
+enum survey_gateway_drive_action survey_gateway_drive_action(
+    const struct survey_gateway_drive_state *state)
+{
+    if (state == NULL) {
+        return SURVEY_GATEWAY_DRIVE_NONE;
+    }
+    if (state->cleanup_pending) {
+        return SURVEY_GATEWAY_DRIVE_POLL_CLEANUP;
+    }
+    if (!state->survey_active) {
+        return SURVEY_GATEWAY_DRIVE_NONE;
+    }
+    if (state->boundary_pending) {
+        return SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY;
+    }
+    if (state->auto_running && !state->auto_waiting &&
+        !state->pair_observation_active) {
+        return SURVEY_GATEWAY_DRIVE_RUN_NOW;
+    }
+    return SURVEY_GATEWAY_DRIVE_NONE;
+}
+
 bool survey_gateway_transaction_request_fingerprint(
     const struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,

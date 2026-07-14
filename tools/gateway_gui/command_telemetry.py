@@ -68,6 +68,7 @@ class PendingGatewayCommand:
     host_session_id: int
     host_sequence: int
     started_at: float
+    timeout_s: float
 
 
 class GatewayCommandRequestTracker:
@@ -79,14 +80,19 @@ class GatewayCommandRequestTracker:
         self.last_outcome = "idle"
 
     def begin(self, command_kind: int, host_session_id: int, host_sequence: int,
-              *, now: float | None = None) -> bool:
+              *, now: float | None = None,
+              timeout_s: float | None = None) -> bool:
         self.expire(now=now)
         if self.pending is not None:
             self.last_outcome = "busy"
             return False
+        effective_timeout_s = self.timeout_s if timeout_s is None else timeout_s
+        if effective_timeout_s <= 0:
+            raise ValueError("command timeout must be positive")
         self.pending = PendingGatewayCommand(
             command_kind, host_session_id, host_sequence,
             time.monotonic() if now is None else now,
+            effective_timeout_s,
         )
         self.last_outcome = "pending"
         return True
@@ -118,7 +124,7 @@ class GatewayCommandRequestTracker:
         if self.pending is None:
             return False
         current = time.monotonic() if now is None else now
-        if current - self.pending.started_at < self.timeout_s:
+        if current - self.pending.started_at < self.pending.timeout_s:
             return False
         self.pending = None
         self.last_outcome = "timeout"

@@ -7,8 +7,8 @@ import argparse
 import asyncio
 from dataclasses import dataclass, field
 import pathlib
+import secrets
 import sys
-import time
 
 from bleak import BleakClient
 
@@ -361,6 +361,7 @@ def _pair(initiator_id: int, responder_id: int) -> tuple[int, int] | None:
 class SurveyQualification:
     host_session_id: int
     host_sequence: int
+    correlation_id: int
     survey_id: int
     expected_anchors: int
     expected_pairs: int
@@ -375,7 +376,7 @@ class SurveyQualification:
     def _matches(self, event: GatewayCommandEvent) -> bool:
         return (
             event.command_kind == GATEWAY_COMMAND_KIND_ANCHOR_SURVEY
-            and event.correlation_id == self.survey_id
+            and event.correlation_id == self.correlation_id
             and event.host_session_id == self.host_session_id
             and event.host_sequence == self.host_sequence
         )
@@ -472,16 +473,24 @@ class SurveyQualification:
             raise RuntimeError("survey qualification failed: " + "; ".join(self.errors))
 
 
+_identity_state = secrets.randbits(32)
+
+
 def _new_identity() -> int:
-    identity = int(time.time_ns() & 0xFFFFFFFF) or 1
-    return identity if identity & 0xFFFF else identity + 1
+    """Allocate a fresh process-local command identity from a random start."""
+    global _identity_state
+
+    while True:
+        _identity_state = (_identity_state + 1) & 0xFFFFFFFF
+        if _identity_state != 0 and _identity_state & 0xFFFF:
+            return _identity_state
 
 
 def _next_identity(previous: int = 0) -> int:
     identity = _new_identity()
-    if identity == previous:
-        identity = (identity + 1) & 0xFFFFFFFF
-    return identity or 1
+    while identity == previous:
+        identity = _new_identity()
+    return identity
 
 
 Qualification = SurveyQualification | AssignmentQualification | RouteRefreshQualification
@@ -489,6 +498,7 @@ Qualification = SurveyQualification | AssignmentQualification | RouteRefreshQual
 
 async def run(args: argparse.Namespace) -> Qualification | None:
     decoder = GatewayReceiveBuffer()
+    command_budget_ms = getattr(args, "command_budget_ms", None)
     received = 0
     decode_errors: list[str] = []
     disconnect_errors: list[str] = []
@@ -620,6 +630,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "gateway_id": gateway_id,
                 "session_id": route_identity,
                 "seq": route_identity & 0xFFFF,
+                "command_budget_ms": command_budget_ms,
             }
             qualification = RouteRefreshQualification(
                 route_identity,
@@ -651,6 +662,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "gateway_id": gateway_id,
                 "session_id": assignment_identity,
                 "seq": assignment_identity & 0xFFFF,
+                "command_budget_ms": command_budget_ms,
             }
             qualification_done.clear()
             qualification = AssignmentQualification(
@@ -688,6 +700,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     "gateway_id": gateway_id,
                     "session_id": identity,
                     "seq": identity & 0xFFFF,
+                    "command_budget_ms": command_budget_ms,
                 }
                 if args.command == "here-i-am":
                     command = build_here_i_am_command(**command_args)
@@ -715,6 +728,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         qualification = SurveyQualification(
                             identity,
                             identity & 0xFFFF,
+                            identity,
                             survey_id,
                             args.expected_anchors,
                             args.expected_pairs,
@@ -791,6 +805,11 @@ def main() -> None:
     parser.add_argument("--expected-multihop-anchors", type=int)
     parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
     parser.add_argument("--assignment-timeout", type=float, default=100.0)
+    parser.add_argument(
+        "--command-budget-ms",
+        type=int,
+        help="firmware command deadline in 1000..600000 ms; omitted keeps the robust default",
+    )
     args = parser.parse_args()
     if args.notification_hold_s < 0.0:
         parser.error("--notification-hold-s must be non-negative")
@@ -814,6 +833,8 @@ def main() -> None:
         parser.error("assignment qualification requires 1..50 expected anchors")
     if args.route_refresh_timeout <= 0.0 or args.assignment_timeout <= 0.0:
         parser.error("qualification timeouts must be positive")
+    if args.command_budget_ms is not None and not 1000 <= args.command_budget_ms <= 600000:
+        parser.error("--command-budget-ms must be in 1000..600000")
     for value, name in (
         (args.expected_direct_anchors, "--expected-direct-anchors"),
         (args.expected_multihop_anchors, "--expected-multihop-anchors"),

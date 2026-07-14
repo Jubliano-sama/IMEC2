@@ -426,6 +426,50 @@ int app_mesh_local_delivery_note_failed(
                                               APP_MESH_LOCAL_DELIVERY_FAILED);
 }
 
+int app_mesh_local_delivery_discard_failed(
+    struct app_mesh_local_delivery *delivery)
+{
+    int ret;
+
+    if (delivery == NULL ||
+        delivery->snapshot.state != APP_MESH_LOCAL_DELIVERY_FAILED) {
+        return -EINVAL;
+    }
+    if (delivery->ops.clear == NULL) {
+        return -ENOTSUP;
+    }
+    ret = delivery->ops.clear(delivery->ops.ctx);
+    if (ret == 0) {
+        memset(&delivery->snapshot, 0, sizeof(delivery->snapshot));
+    }
+    return ret;
+}
+
+int app_mesh_local_delivery_supersede(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t replacement_generation)
+{
+    int ret;
+
+    if (delivery == NULL || replacement_generation == 0u) {
+        return -EINVAL;
+    }
+    if (!app_mesh_local_delivery_active(delivery)) {
+        return 0;
+    }
+    if (delivery->snapshot.generation == replacement_generation) {
+        return -EALREADY;
+    }
+    if (delivery->ops.clear == NULL) {
+        return -ENOTSUP;
+    }
+    ret = delivery->ops.clear(delivery->ops.ctx);
+    if (ret == 0) {
+        memset(&delivery->snapshot, 0, sizeof(delivery->snapshot));
+    }
+    return ret;
+}
+
 bool app_mesh_local_delivery_active(const struct app_mesh_local_delivery *delivery)
 {
     return delivery != NULL &&

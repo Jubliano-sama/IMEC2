@@ -85,6 +85,7 @@ static struct gateway_command_event base_event(uint32_t epoch)
 static void run_pressure_case(size_t count)
 {
     struct discovery_assignment_entry entries[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
+    uint64_t anchor_ids[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
     struct app_gateway_assignment_publisher_diagnostics diagnostics;
     struct app_gateway_assignment_publisher_ops ops;
     struct gateway_command_event base = base_event((uint32_t)count);
@@ -99,7 +100,11 @@ static void run_pressure_case(size_t count)
     ops.ctx = &ble;
     assert(app_gateway_assignment_publisher_init(&ops) == 0);
     for (size_t i = 0u; i < count; i++) {
-        entries[i].anchor_id = UINT64_C(0x1000000000000000) + i;
+        anchor_ids[i] = UINT64_C(0x1000000000000000) + i;
+    }
+    assert(discovery_assignment_sort_anchor_ids(anchor_ids, count) == PROTO_OK);
+    for (size_t i = 0u; i < count; i++) {
+        entries[i].anchor_id = anchor_ids[i];
         entries[i].slot = (uint8_t)i;
     }
 
@@ -107,10 +112,10 @@ static void run_pressure_case(size_t count)
     ble.max_depth = ble.queue_count;
     ble.connected = true;
     ble.credit = false;
-    assert(app_gateway_assignment_publisher_stage_batch(
-               &base, entries, count, 2u) == 0);
-    assert(app_gateway_assignment_publisher_stage_batch(
-               &base, entries, count, 2u) == 1);
+    assert(app_gateway_assignment_publisher_stage_sorted_ids(
+               &base, anchor_ids, count, 2u) == 0);
+    assert(app_gateway_assignment_publisher_stage_sorted_ids(
+               &base, anchor_ids, count, 2u) == 1);
     table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
     table.attempt = 1u;
     app_gateway_assignment_publisher_stage_table_ready(&table);

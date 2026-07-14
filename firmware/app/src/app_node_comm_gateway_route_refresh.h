@@ -57,6 +57,12 @@ int app_node_comm_gateway_route_refresh_request(
     const char *reason,
     bool forced,
     const struct proto_packet *correlation);
+int app_node_comm_gateway_route_refresh_request_bounded(
+    uint32_t delay_ms,
+    const char *reason,
+    bool forced,
+    const struct proto_packet *correlation,
+    uint32_t timeout_ms);
 bool app_node_comm_gateway_route_refresh_pending_wait_ms(
     uint32_t now_ms, uint32_t *wait_ms);
 bool app_node_comm_gateway_route_refresh_due(uint32_t now_ms);

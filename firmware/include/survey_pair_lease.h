@@ -44,6 +44,7 @@ struct survey_pair_lease {
     bool prepare_id_valid;
     bool start_id_valid;
     bool last_accepted_id_valid;
+    bool start_released;
 };
 
 /* Reset is the only operation that intentionally forgets accepted command IDs. */
@@ -73,6 +74,11 @@ enum survey_pair_lease_decision survey_pair_lease_start(
 
 bool survey_pair_lease_pending_snapshot(const struct survey_pair_lease *lease,
                                         struct survey_pair *pair);
+bool survey_pair_lease_release_start(
+    struct survey_pair_lease *lease,
+    const struct survey_pair_control_id *control_id);
+bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
+                                      struct survey_pair *pair);
 bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
                                     struct survey_pair *pair);
 bool survey_pair_lease_finish(struct survey_pair_lease *lease);

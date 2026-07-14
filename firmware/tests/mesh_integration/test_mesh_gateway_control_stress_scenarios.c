@@ -2,6 +2,7 @@
 #include "app_gateway_command_lifecycle.h"
 #include "app_gateway_command_observability.h"
 #include "app_mesh_flood.h"
+#include "app_mesh_rx_policy.h"
 #include "gateway_command.h"
 #include "mesh_relay.h"
 #include "mesh_sim.h"
@@ -928,6 +929,49 @@ static void test_gateway_control_click_and_busy_deferral(void)
     }
 }
 
+static void test_gateway_control_rx_handoff_stress_sweep(void)
+{
+    struct app_mesh_rx_handoff_state handoff;
+    uint32_t real_attempts = 0u;
+
+    app_mesh_rx_handoff_reset(&handoff);
+    CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+
+    for (uint32_t cycle = 0u; cycle < 512u; cycle++) {
+        const uint32_t abort_delay_ms = cycle % 25u;
+        bool abort_scan = false;
+        bool attempted = false;
+
+        if ((cycle % 11u) == 0u) {
+            app_mesh_rx_handoff_end_scan(&handoff);
+        }
+        CHECK(app_mesh_rx_handoff_begin_control(&handoff, &abort_scan));
+        CHECK(abort_scan == ((cycle % 11u) != 0u));
+        CHECK(!app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
+        CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+
+        for (uint32_t elapsed_ms = 0u; elapsed_ms <= 25u; elapsed_ms++) {
+            if (abort_scan && elapsed_ms == abort_delay_ms) {
+                app_mesh_rx_handoff_end_scan(&handoff);
+            }
+            if (app_mesh_rx_handoff_control_ready(&handoff)) {
+                real_attempts++;
+                attempted = true;
+                break;
+            }
+            CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+        }
+
+        CHECK(attempted);
+        app_mesh_rx_handoff_end_control(&handoff);
+        CHECK(app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
+        CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+    }
+
+    CHECK(real_attempts == 512u);
+    app_mesh_rx_handoff_end_scan(&handoff);
+}
+
 static void run_survey_pair_control_case(enum command_id command_id,
                                          bool relayed)
 {
@@ -1287,11 +1331,12 @@ int main(void)
     test_gateway_control_reverse_route_contract();
     test_gateway_control_reverse_route_fifty_anchor_reply_sweep();
     test_gateway_control_click_and_busy_deferral();
+    test_gateway_control_rx_handoff_stress_sweep();
     test_survey_pair_control_bounded_flood_lane();
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {
-        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/ttl8/radio survey-control=direct/relay");
+        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/ttl8/radio survey-control=direct/relay handoff=512");
     }
     return failures == 0 ? 0 : 1;
 }

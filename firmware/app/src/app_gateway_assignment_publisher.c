@@ -78,6 +78,20 @@ static bool same_batch(const struct discovery_assignment_entry *entries,
     return true;
 }
 
+static bool same_sorted_ids(const uint64_t *anchor_ids, size_t anchor_count)
+{
+    if (anchor_count != publisher.entry_count) {
+        return false;
+    }
+    for (size_t i = 0u; i < anchor_count; i++) {
+        if (publisher.anchor_ids[i] != anchor_ids[i] ||
+            publisher.slots[i] != i) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void reset_event_progress(struct gateway_command_event *event)
 {
     event->flags = 0u;
@@ -205,6 +219,63 @@ int app_gateway_assignment_publisher_stage_batch(
     for (size_t i = 0u; i < entry_count; i++) {
         publisher.anchor_ids[i] = entries[i].anchor_id;
         publisher.slots[i] = entries[i].slot;
+    }
+    publisher.cursor = 0u;
+    publisher.inflight_event_seq = 0u;
+    publisher.table_ready = false;
+    publisher.terminal_pending = false;
+    publisher.skip_table_event = false;
+    publisher.emit_attempt_active = false;
+    publisher.active = true;
+    PUBLISHER_UNLOCK(key);
+    app_gateway_assignment_publisher_pump();
+    return 0;
+}
+
+int app_gateway_assignment_publisher_stage_sorted_ids(
+    const struct gateway_command_event *base_event,
+    const uint64_t *anchor_ids,
+    size_t anchor_count,
+    uint16_t duplicate_count)
+{
+    PUBLISHER_LOCK_KEY key;
+
+    if (base_event == NULL || anchor_ids == NULL || anchor_count == 0u ||
+        anchor_count > APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES ||
+        base_event->kind != GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION) {
+        return -EINVAL;
+    }
+    for (size_t i = 0u; i < anchor_count; i++) {
+        if (anchor_ids[i] == 0u ||
+            (i > 0u &&
+             (discovery_assignment_hash(anchor_ids[i - 1u]) >
+                  discovery_assignment_hash(anchor_ids[i]) ||
+              (discovery_assignment_hash(anchor_ids[i - 1u]) ==
+                   discovery_assignment_hash(anchor_ids[i]) &&
+               anchor_ids[i - 1u] >= anchor_ids[i])))) {
+            return -EINVAL;
+        }
+    }
+    key = PUBLISHER_LOCK();
+    if (publisher.active) {
+        if (same_identity(&publisher.base_event, base_event) &&
+            same_sorted_ids(anchor_ids, anchor_count)) {
+            if (publisher.duplicate_batches < UINT16_MAX) {
+                publisher.duplicate_batches++;
+            }
+            PUBLISHER_UNLOCK(key);
+            return 1;
+        }
+        PUBLISHER_UNLOCK(key);
+        return -EBUSY;
+    }
+
+    publisher.base_event = *base_event;
+    publisher.entry_count = (uint16_t)anchor_count;
+    publisher.duplicate_count = duplicate_count;
+    for (size_t i = 0u; i < anchor_count; i++) {
+        publisher.anchor_ids[i] = anchor_ids[i];
+        publisher.slots[i] = (uint8_t)i;
     }
     publisher.cursor = 0u;
     publisher.inflight_event_seq = 0u;

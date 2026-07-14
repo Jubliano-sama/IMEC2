@@ -20,6 +20,9 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
 bool gateway_survey_auto_preflight_result(const struct proto_packet *packet,
                                           const uint8_t *payload,
                                           size_t payload_len);
+bool gateway_survey_auto_owns_pending_command(
+    const struct proto_packet *command,
+    enum command_id command_id);
 #if defined(CONFIG_IMEC_GATEWAY_BLE)
 void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len);
 #endif

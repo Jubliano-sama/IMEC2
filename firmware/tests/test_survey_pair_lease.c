@@ -67,6 +67,17 @@ static void start_ok(struct survey_pair_lease *lease,
     assert(survey_pair_lease_invariant(lease));
 }
 
+static void release_ok(struct survey_pair_lease *lease,
+                       const struct survey_pair *pair,
+                       uint16_t seq)
+{
+    const struct survey_pair_control_id id = control_id(pair->survey_id, seq);
+
+    assert(survey_pair_lease_release_start(lease, &id));
+    assert(survey_pair_lease_ready_snapshot(lease, NULL));
+    assert(survey_pair_lease_invariant(lease));
+}
+
 static void test_reset_clears_every_phase(void)
 {
     const struct survey_pair pair = pair_with(10u, 1u);
@@ -85,6 +96,7 @@ static void test_reset_clears_every_phase(void)
 
     prepare_ok(&lease, &pair, 10u, 100u);
     start_ok(&lease, &pair, 11u, 101u);
+    release_ok(&lease, &pair, 11u);
     assert(survey_pair_lease_mark_running(&lease, NULL));
     assert(survey_pair_lease_abort(&lease));
     assert(lease.phase == SURVEY_PAIR_LEASE_ABORTING);
@@ -158,10 +170,17 @@ static void test_start_is_exact_ordered_transition(void)
 
     assert(survey_pair_lease_start(&lease, &pair, &start, 102u) ==
            SURVEY_PAIR_LEASE_DUPLICATE);
+    assert(survey_pair_lease_release_start(&lease, &start));
+    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
     assert(survey_pair_lease_start(&lease, &pair, &retry, 102u) ==
            SURVEY_PAIR_LEASE_DUPLICATE);
     assert(lease.start_id.command_seq == retry.command_seq);
     assert(survey_pair_lease_pending_snapshot(&lease, NULL));
+    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
+    assert(!survey_pair_lease_mark_running(&lease, NULL));
+    assert(!survey_pair_lease_release_start(&lease, &start));
+    assert(survey_pair_lease_release_start(&lease, &retry));
+    assert(survey_pair_lease_ready_snapshot(&lease, &snapshot));
     assert(survey_pair_lease_mark_running(&lease, &snapshot));
     assert_pair_equal(&snapshot, &pair);
     assert(lease.phase == SURVEY_PAIR_LEASE_RUNNING);
@@ -184,12 +203,17 @@ static void test_start_pending_expires_if_radio_never_runs(void)
 {
     const struct survey_pair pair = pair_with(31u, 1u);
     const struct survey_pair_control_id start = control_id(31u, 2u);
+    const struct survey_pair_control_id wrong = control_id(31u, 3u);
     struct survey_pair_lease lease = {0};
     const uint32_t deadline_ms = 100u + PREPARE_LEASE_MS;
 
     prepare_ok(&lease, &pair, 1u, 100u);
     assert(survey_pair_lease_start(&lease, &pair, &start, 101u) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(!survey_pair_lease_mark_running(&lease, NULL));
+    assert(!survey_pair_lease_release_start(&lease, &wrong));
+    assert(survey_pair_lease_release_start(&lease, &start));
+    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
     assert(!survey_pair_lease_expire(&lease, deadline_ms - 1u));
     assert(survey_pair_lease_pending_snapshot(&lease, NULL));
     assert(survey_pair_lease_expire(&lease, deadline_ms));
@@ -243,6 +267,7 @@ static void test_abort_is_bounded_and_idempotent(void)
 
     prepare_ok(&lease, &pair, 4u, 300u);
     start_ok(&lease, &pair, 5u, 301u);
+    release_ok(&lease, &pair, 5u);
     assert(survey_pair_lease_mark_running(&lease, NULL));
     assert(survey_pair_lease_abort(&lease));
     assert(lease.phase == SURVEY_PAIR_LEASE_ABORTING);
@@ -357,7 +382,7 @@ static void run_random_state_sequence(uint32_t seed)
         }
         id = control_id(pair.survey_id, seq);
 
-        switch (choice % 9u) {
+        switch (choice % 10u) {
         case 0u:
             (void)survey_pair_lease_prepare(&lease, &pair, &id, now_ms,
                                             PREPARE_LEASE_MS);
@@ -366,21 +391,24 @@ static void run_random_state_sequence(uint32_t seed)
             (void)survey_pair_lease_start(&lease, &pair, &id, now_ms);
             break;
         case 2u:
-            (void)survey_pair_lease_mark_running(&lease, NULL);
+            (void)survey_pair_lease_release_start(&lease, &id);
             break;
         case 3u:
-            (void)survey_pair_lease_finish(&lease);
+            (void)survey_pair_lease_mark_running(&lease, NULL);
             break;
         case 4u:
-            (void)survey_pair_lease_abort(&lease);
+            (void)survey_pair_lease_finish(&lease);
             break;
         case 5u:
-            (void)survey_pair_lease_expire(&lease, now_ms);
+            (void)survey_pair_lease_abort(&lease);
             break;
         case 6u:
-            (void)survey_pair_lease_remaining_ms(&lease, now_ms);
+            (void)survey_pair_lease_expire(&lease, now_ms);
             break;
         case 7u:
+            (void)survey_pair_lease_remaining_ms(&lease, now_ms);
+            break;
+        case 8u:
             if (lease.phase == SURVEY_PAIR_LEASE_IDLE) {
                 pair = pair_with(pair.survey_id + 1u,
                                  (uint64_t)(choice & 0xffu) + 1u);

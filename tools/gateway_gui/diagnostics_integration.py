@@ -126,8 +126,10 @@ class GatewayDiagnosticsMixin:
             self.click_diagnostics_view.show(state, self.click_location_model.positions_m)
 
     def _begin_gateway_command(self, command_kind: int, session_id: int,
-                               sequence: int) -> bool:
-        if self.command_request_tracker.begin(command_kind, session_id, sequence):
+                               sequence: int,
+                               *, timeout_s: float | None = None) -> bool:
+        if self.command_request_tracker.begin(
+                command_kind, session_id, sequence, timeout_s=timeout_s):
             self._update_command_state()
             return True
         self.status_text.set("A gateway command is already active")

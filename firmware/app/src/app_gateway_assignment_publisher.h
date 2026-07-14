@@ -37,6 +37,11 @@ int app_gateway_assignment_publisher_stage_batch(
     const struct discovery_assignment_entry *entries,
     size_t entry_count,
     uint16_t duplicate_count);
+int app_gateway_assignment_publisher_stage_sorted_ids(
+    const struct gateway_command_event *base_event,
+    const uint64_t *anchor_ids,
+    size_t anchor_count,
+    uint16_t duplicate_count);
 void app_gateway_assignment_publisher_stage_table_ready(
     const struct gateway_command_event *event);
 bool app_gateway_assignment_publisher_capture_terminal(

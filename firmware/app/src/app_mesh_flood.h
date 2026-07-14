@@ -43,6 +43,10 @@ uint32_t app_mesh_flood_backoff_ms(uint8_t retry_index, uint32_t random_value);
 int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
                                 const struct app_mesh_flood_ops *ops,
                                 struct app_mesh_flood_result *result);
+int app_mesh_flood_send_opportunity(
+    const struct mesh_outbound *out,
+    const struct app_mesh_flood_ops *ops,
+    struct app_mesh_flood_result *result);
 int app_mesh_flood_send_bounded_resume(
     const struct mesh_outbound *out,
     const struct app_mesh_flood_ops *ops,

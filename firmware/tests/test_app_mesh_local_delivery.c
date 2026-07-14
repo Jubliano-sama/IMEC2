@@ -253,6 +253,17 @@ static void test_corruption_and_bounded_attempts_fail_closed(void)
     rebooted = make_delivery(&store);
     assert(app_mesh_local_delivery_restore(&rebooted, &store.persisted) == 0);
     assert(rebooted.snapshot.state == APP_MESH_LOCAL_DELIVERY_FAILED);
+
+    store.clear_result = -EIO;
+    assert(app_mesh_local_delivery_discard_failed(&rebooted) == -EIO);
+    assert(app_mesh_local_delivery_active(&rebooted));
+    assert(store.present);
+
+    store.clear_result = 0;
+    assert(app_mesh_local_delivery_discard_failed(&rebooted) == 0);
+    assert(!app_mesh_local_delivery_active(&rebooted));
+    assert(!store.present);
+    assert(app_mesh_local_delivery_stage(&rebooted, &outbound, 402u) == 0);
 }
 
 static void test_synchronous_ack_wins_post_send_resolution(void)
@@ -504,6 +515,93 @@ static void test_last_blocked_token_can_retry_send_and_ack(void)
     assert(!app_mesh_local_delivery_active(&delivery));
 }
 
+static void test_supersede_is_generation_exact_and_persistence_safe(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    const struct mesh_outbound old_report = make_report(801u, 81u);
+    const struct mesh_outbound new_report = make_report(802u, 82u);
+
+    assert(app_mesh_local_delivery_stage(&delivery, &old_report, 801u) == 0);
+    assert(app_mesh_local_delivery_supersede(&delivery, 801u) == -EALREADY);
+    assert(app_mesh_local_delivery_active(&delivery));
+    assert(store.present);
+
+    store.clear_result = -EIO;
+    assert(app_mesh_local_delivery_supersede(&delivery, 802u) == -EIO);
+    assert(app_mesh_local_delivery_active(&delivery));
+    assert(store.present);
+    assert(app_mesh_local_delivery_stage(&delivery, &new_report, 802u) == -EBUSY);
+
+    store.clear_result = 0;
+    assert(app_mesh_local_delivery_supersede(&delivery, 802u) == 0);
+    assert(!app_mesh_local_delivery_active(&delivery));
+    assert(!store.present);
+    assert(app_mesh_local_delivery_stage(&delivery, &new_report, 802u) == 0);
+}
+
+static void test_fifty_anchors_survive_back_to_back_survey_and_lost_acks(void)
+{
+    enum { ANCHOR_COUNT = 50 };
+    static struct journal_store stores[ANCHOR_COUNT];
+    static struct app_mesh_local_delivery deliveries[ANCHOR_COUNT];
+    const uint32_t old_survey_id = 901u;
+    const uint32_t new_survey_id = 902u;
+
+    memset(stores, 0, sizeof(stores));
+    memset(deliveries, 0, sizeof(deliveries));
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        struct mesh_outbound old_report =
+            make_report(old_survey_id, (uint16_t)(100u + i));
+        struct mesh_outbound new_report =
+            make_report(new_survey_id, (uint16_t)(200u + i));
+        uint8_t attempt_token;
+        unsigned int destructive_collisions =
+            (unsigned int)(i % APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS);
+
+        deliveries[i] = make_delivery(&stores[i]);
+        old_report.packet.src_id += i;
+        new_report.packet.src_id += i;
+        assert(app_mesh_local_delivery_stage(
+                   &deliveries[i], &old_report, old_survey_id) == 0);
+        assert(app_mesh_local_delivery_begin_attempt(
+                   &deliveries[i], &attempt_token) == 0);
+        assert(app_mesh_local_delivery_note_attempt_sent(
+                   &deliveries[i], attempt_token) == 0);
+
+        if ((i % 4u) == 0u) {
+            assert(app_mesh_local_delivery_note_ack(
+                       &deliveries[i], &old_report.packet) == 0);
+        }
+        assert(app_mesh_local_delivery_supersede(
+                   &deliveries[i], new_survey_id) == 0);
+        assert(app_mesh_local_delivery_stage(
+                   &deliveries[i], &new_report, new_survey_id) == 0);
+        assert(app_mesh_local_delivery_note_ack(
+                   &deliveries[i], &old_report.packet) == -EKEYREJECTED);
+
+        for (unsigned int collision = 0u;
+             collision < destructive_collisions;
+             collision++) {
+            assert(app_mesh_local_delivery_begin_attempt(
+                       &deliveries[i], &attempt_token) == 0);
+            assert(app_mesh_local_delivery_note_attempt_sent(
+                       &deliveries[i], attempt_token) == 0);
+            assert(app_mesh_local_delivery_note_attempt_released(
+                       &deliveries[i], attempt_token,
+                       APP_MESH_LOCAL_DELIVERY_RETRY) == 0);
+        }
+        assert(app_mesh_local_delivery_begin_attempt(
+                   &deliveries[i], &attempt_token) == 0);
+        assert(app_mesh_local_delivery_note_attempt_sent(
+                   &deliveries[i], attempt_token) == 0);
+        assert(app_mesh_local_delivery_note_ack(
+                   &deliveries[i], &new_report.packet) == 0);
+        assert(!app_mesh_local_delivery_active(&deliveries[i]));
+        assert(!stores[i].present);
+    }
+}
+
 int main(void)
 {
     test_transactional_stage_and_back_to_back_rejection();
@@ -521,6 +619,8 @@ int main(void)
     test_persistence_mock_rejects_invalid_snapshot_like_production();
     test_sustained_pre_rf_contention_has_constant_write_bound();
     test_last_blocked_token_can_retry_send_and_ack();
+    test_supersede_is_generation_exact_and_persistence_safe();
+    test_fifty_anchors_survive_back_to_back_survey_and_lost_acks();
     puts("app mesh local delivery tests passed");
     return 0;
 }

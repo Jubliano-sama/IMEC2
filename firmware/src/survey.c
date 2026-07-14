@@ -476,6 +476,20 @@ int survey_discovery_timing_from_age(const struct survey_discovery_config *confi
     return PROTO_OK;
 }
 
+int survey_discovery_start_at_ms(const struct survey_discovery_timing *timing,
+                                 uint32_t received_at_ms,
+                                 uint32_t *start_at_ms)
+{
+    if (timing == NULL || start_at_ms == NULL || timing->expired ||
+        timing->pending == timing->active) {
+        return PROTO_ERR_ARG;
+    }
+
+    *start_at_ms = timing->pending ? received_at_ms + timing->wait_ms :
+                                    received_at_ms - timing->elapsed_ms;
+    return PROTO_OK;
+}
+
 int survey_discovery_report_delay_ms(const struct survey_discovery_config *config,
                                      uint8_t anchor_slot,
                                      uint32_t report_slot_ms,
@@ -911,6 +925,16 @@ int survey_gateway_auto_next_action(struct survey_gateway_auto_context *auto_con
     action->command_id = command_id;
     action->target_id = target_id;
     return PROTO_OK;
+}
+
+bool survey_gateway_auto_no_unstarted_pairs(
+    const struct survey_gateway_auto_context *auto_context,
+    const struct survey_gateway_context *gateway_context)
+{
+    return auto_context != NULL && gateway_context != NULL &&
+           auto_context->running && !auto_context->waiting &&
+           auto_context->stage == SURVEY_GATEWAY_AUTO_LOAD_PAIR &&
+           gateway_context->next_pair_index >= gateway_context->pair_count;
 }
 
 int survey_gateway_auto_mark_waiting(struct survey_gateway_auto_context *context)

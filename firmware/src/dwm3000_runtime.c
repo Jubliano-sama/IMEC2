@@ -513,6 +513,50 @@ int dwm3000_runtime_start_tx(struct dwm3000_runtime *runtime,
     return DWM3000_RUNTIME_OK;
 }
 
+int dwm3000_runtime_start_delayed_tx(
+    struct dwm3000_runtime *runtime,
+    uint64_t now_us,
+    uint64_t scheduled_air_start_us,
+    uint64_t air_end_us,
+    struct dwm3000_runtime_interval *interval)
+{
+    struct dwm3000_runtime_interval spi_interval;
+    int ret;
+
+    if (runtime == NULL || !runtime->frame_written) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_NOT_READY);
+    }
+    if (scheduled_air_start_us >= air_end_us) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_ARG);
+    }
+    ret = run_spi_operation(runtime,
+                            DWM3000_RUNTIME_SPI_FAST,
+                            DWM3000_RUNTIME_OP_TX_START,
+                            DWM3000_RUNTIME_TX_START_TRANSFER_BYTES,
+                            now_us,
+                            true,
+                            &spi_interval);
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    if (spi_interval.end_us >= scheduled_air_start_us) {
+        if (interval != NULL) {
+            *interval = spi_interval;
+        }
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_DEADLINE_MISSED);
+    }
+
+    runtime->radio_state = DWM3000_RUNTIME_RADIO_TX;
+    runtime->radio_busy_until_us = air_end_us;
+    runtime->frame_written = false;
+    if (interval != NULL) {
+        interval->start_us = scheduled_air_start_us;
+        interval->end_us = air_end_us;
+        interval->operation = DWM3000_RUNTIME_OP_TX_START;
+    }
+    return DWM3000_RUNTIME_OK;
+}
+
 int dwm3000_runtime_finish_tx(struct dwm3000_runtime *runtime,
                               uint64_t now_us)
 {
@@ -595,6 +639,64 @@ int dwm3000_runtime_read_cir(struct dwm3000_runtime *runtime,
                              now_us,
                              true,
                              interval);
+}
+
+int dwm3000_runtime_process_range_frame(
+    struct dwm3000_runtime *runtime,
+    uint64_t now_us,
+    struct dwm3000_runtime_interval *interval)
+{
+    int ret = begin_idle_operation(runtime, now_us);
+
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    if (!runtime->awake || !runtime->configured || !runtime->pll_locked) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_NOT_READY);
+    }
+    if (runtime->spi_rate != DWM3000_RUNTIME_SPI_FAST) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_SPI_ORDER);
+    }
+    if (now_us > UINT64_MAX - DWM3000_RUNTIME_RANGE_PROCESS_WORST_US) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_OVERFLOW);
+    }
+    runtime->spi_busy_until_us =
+        now_us + DWM3000_RUNTIME_RANGE_PROCESS_WORST_US;
+    note_interval(runtime,
+                  DWM3000_RUNTIME_OP_RANGE_PROCESS,
+                  now_us,
+                  now_us + DWM3000_RUNTIME_RANGE_PROCESS_WORST_US,
+                  interval);
+    return DWM3000_RUNTIME_OK;
+}
+
+int dwm3000_runtime_read_rx_diagnostics(
+    struct dwm3000_runtime *runtime,
+    uint64_t now_us,
+    struct dwm3000_runtime_interval *interval)
+{
+    int ret = begin_idle_operation(runtime, now_us);
+
+    if (ret != DWM3000_RUNTIME_OK) {
+        return ret;
+    }
+    if (!runtime->awake || !runtime->configured || !runtime->pll_locked) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_NOT_READY);
+    }
+    if (runtime->spi_rate != DWM3000_RUNTIME_SPI_FAST) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_SPI_ORDER);
+    }
+    if (now_us > UINT64_MAX - DWM3000_RUNTIME_RX_DIAGNOSTICS_WORST_US) {
+        return runtime_fail(runtime, DWM3000_RUNTIME_ERR_OVERFLOW);
+    }
+    runtime->spi_busy_until_us =
+        now_us + DWM3000_RUNTIME_RX_DIAGNOSTICS_WORST_US;
+    note_interval(runtime,
+                  DWM3000_RUNTIME_OP_RX_DIAGNOSTICS,
+                  now_us,
+                  now_us + DWM3000_RUNTIME_RX_DIAGNOSTICS_WORST_US,
+                  interval);
+    return DWM3000_RUNTIME_OK;
 }
 
 int dwm3000_runtime_enter_retained_sleep(

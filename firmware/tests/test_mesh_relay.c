@@ -738,6 +738,7 @@ static void test_survey_discovery_broadcast_delivers_and_floods(void)
     assert(result.forward.packet.msg_type == MSG_SURVEY_DISCOVERY_START);
     assert(result.forward.packet.dst_id == MESH_BROADCAST_ID);
     assert(result.forward.packet.ttl == 2u);
+    assert(result.forward.flood_retry_count == 0u);
     assert(result.forward.payload_len == sizeof(payload));
     assert(memcmp(result.forward.payload, payload, sizeof(payload)) == 0);
 

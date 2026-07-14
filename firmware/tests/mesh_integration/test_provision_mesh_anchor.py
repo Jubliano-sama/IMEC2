@@ -39,7 +39,7 @@ def command_event(
     command_id: int | None = None,
     host_session_id: int = 0x12345,
     host_sequence: int = 0x2345,
-    survey_id: int = 0x778899AA,
+    correlation_id: int = 0x12345,
     anchor_id: int = 0,
     pair: tuple[int, int] = (0, 0),
     attempt: int = 1,
@@ -69,7 +69,7 @@ def command_event(
             else 0x0102 if pair_stage else 0x0100
         ),
         route_epoch=0,
-        correlation_id=survey_id,
+        correlation_id=correlation_id,
         gateway_sequence=event_sequence,
         host_session_id=host_session_id,
         host_sequence=host_sequence,
@@ -132,7 +132,7 @@ def successful_route_events(
                 command_id=0x000C,
                 host_session_id=session_id,
                 host_sequence=session_id & 0xFFFF,
-                survey_id=session_id,
+                correlation_id=session_id,
                 attempt=attempt,
                 status=2,
                 reason=2,
@@ -147,7 +147,7 @@ def successful_route_events(
             command_id=0x000C,
             host_session_id=session_id,
             host_sequence=session_id & 0xFFFF,
-            survey_id=session_id,
+            correlation_id=session_id,
             attempt=retries + 1,
         )
     )
@@ -160,7 +160,7 @@ def successful_route_events(
             command_id=0x000C,
             host_session_id=session_id,
             host_sequence=session_id & 0xFFFF,
-            survey_id=session_id,
+            correlation_id=session_id,
         )
     )
     return events
@@ -183,7 +183,7 @@ def successful_assignment_events(
             command_id=0x0104,
             host_session_id=session_id,
             host_sequence=session_id & 0xFFFF,
-            survey_id=session_id,
+            correlation_id=session_id,
             attempt=1,
         )
     )
@@ -200,7 +200,7 @@ def successful_assignment_events(
                 command_id=0x0104,
                 host_session_id=session_id,
                 host_sequence=session_id & 0xFFFF,
-                survey_id=session_id,
+                correlation_id=session_id,
                 anchor_id=anchor_id,
                 previous_hop_id=previous_hop,
                 progress_count=index + 1,
@@ -218,7 +218,7 @@ def successful_assignment_events(
                 command_id=0x0104,
                 host_session_id=session_id,
                 host_sequence=session_id & 0xFFFF,
-                survey_id=session_id,
+                correlation_id=session_id,
                 anchor_id=0x1000 + index,
                 progress_count=index + 1,
                 discovery_slot=index,
@@ -233,7 +233,7 @@ def successful_assignment_events(
             command_id=0x0104,
             host_session_id=session_id,
             host_sequence=session_id & 0xFFFF,
-            survey_id=session_id,
+            correlation_id=session_id,
             progress_count=anchor_count,
         )
     )
@@ -246,7 +246,7 @@ def successful_assignment_events(
             command_id=0x0104,
             host_session_id=session_id,
             host_sequence=session_id & 0xFFFF,
-            survey_id=session_id,
+            correlation_id=session_id,
             attempt=1,
             progress_count=anchor_count,
             total_count=anchor_count,
@@ -261,7 +261,7 @@ def successful_assignment_events(
             command_id=0x0104,
             host_session_id=session_id,
             host_sequence=session_id & 0xFFFF,
-            survey_id=session_id,
+            correlation_id=session_id,
             progress_count=anchor_count,
             total_count=anchor_count,
             success_count=anchor_count,
@@ -273,7 +273,7 @@ def successful_assignment_events(
 class SurveyQualificationTests(unittest.TestCase):
     def test_exact_correlated_success_accepts_natural_retry(self) -> None:
         qualification = provision.SurveyQualification(
-            0x12345, 0x2345, 0x778899AA, 3, 3
+            0x12345, 0x2345, 0x12345, 0x778899AA, 3, 3
         )
         unrelated = dataclasses.replace(
             command_event(6, event_sequence=1, anchor_id=0x99),
@@ -289,7 +289,7 @@ class SurveyQualificationTests(unittest.TestCase):
 
     def test_loss_pair_order_and_terminal_counters_are_hard_failures(self) -> None:
         qualification = provision.SurveyQualification(
-            0x12345, 0x2345, 0x778899AA, 2, 1
+            0x12345, 0x2345, 0x12345, 0x778899AA, 2, 1
         )
         qualification.observe(
             command_event(
@@ -312,6 +312,22 @@ class SurveyQualificationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "lost events"):
             qualification.validate()
+
+
+class IdentityAllocationTests(unittest.TestCase):
+    def test_process_state_survives_wrap_without_zero_or_reuse(self) -> None:
+        with mock.patch.object(provision, "_identity_state", 0xFFFFFFFE):
+            identities = [provision._new_identity() for _ in range(3)]
+
+        self.assertEqual([0xFFFFFFFF, 1, 2], identities)
+        self.assertEqual(len(identities), len(set(identities)))
+        self.assertTrue(all(identity & 0xFFFF for identity in identities))
+
+    def test_next_identity_skips_the_previous_command_identity(self) -> None:
+        with mock.patch.object(provision, "_identity_state", 0x12344):
+            identity = provision._next_identity(previous=0x12345)
+
+        self.assertEqual(0x12346, identity)
 
 
 class RouteRefreshQualificationTests(unittest.TestCase):
@@ -620,6 +636,10 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         FakeDecoder.events = events
         FakeBleakClient.notification_count = len(events)
         sleeps: list[float] = []
+        command_args: dict[str, object] = {}
+        real_build_anchor_discovery_command = (
+            provision.build_anchor_discovery_command
+        )
 
         async def fake_sleep(delay: float) -> None:
             sleeps.append(delay)
@@ -628,10 +648,19 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         def fake_decode(payload: bytes, **_kwargs: object) -> object:
             return events[payload[0]]
 
+        def capture_command(**kwargs: object) -> object:
+            command_args.update(kwargs)
+            return real_build_anchor_discovery_command(**kwargs)
+
         with (
             mock.patch.object(provision, "BleakClient", FakeBleakClient),
             mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
             mock.patch.object(provision, "decode_gateway_command_event", fake_decode),
+            mock.patch.object(
+                provision,
+                "build_anchor_discovery_command",
+                side_effect=capture_command,
+            ),
             mock.patch.object(provision, "_new_identity", return_value=0x12345),
             mock.patch.object(provision.asyncio, "sleep", side_effect=fake_sleep),
             mock.patch("builtins.print"),
@@ -648,6 +677,10 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(FakeBleakClient.operations[write_index][1][1])
         self.assertIsNotNone(qualification)
         assert qualification is not None
+        self.assertEqual(0x12345, qualification.correlation_id)
+        self.assertEqual(0x778899AA, qualification.survey_id)
+        self.assertEqual(0x778899AA, command_args["survey_id"])
+        self.assertEqual(0x12345, command_args["session_id"])
         self.assertEqual(3, len(qualification.pair_successes))
 
     async def test_default_mode_keeps_notify_before_command_write(self) -> None:

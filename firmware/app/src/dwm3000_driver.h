@@ -31,6 +31,7 @@ struct dwm3000_range_request {
     uint8_t flags;
     uint32_t timeout_ms;
     uint16_t reply_delay_uus;
+    /* Responder-side FINAL diagnostics; initiator RSL comes from its report. */
     bool capture_rsl;
     bool skip_responder_report;
     bool send_clicker_diag;

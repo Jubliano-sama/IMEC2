@@ -59,9 +59,26 @@ assert "anchor_discovery_gateway_hop_count()" in schedule
 assert "anchor_discovery_gateway_hop_count()" in retry
 
 publish = function_body(ANCHOR, "gateway_discovery_assignment_publish_table")
-assert "app_gateway_assignment_publisher_stage_batch(" in publish
+assert "app_gateway_assignment_publisher_stage_sorted_ids(" in publish
 assert "app_gateway_assignment_publisher_stage_table_ready(" in publish
 assert "gateway_observe_command_event(&event, false)" not in publish
+assert function_body(PUBLISHER, "app_gateway_assignment_publisher_stage_batch")
+assert function_body(PUBLISHER, "app_gateway_assignment_publisher_stage_sorted_ids")
+
+window = function_body(ANCHOR, "gateway_discovery_assignment_window_ms")
+assert "app_discovery_assignment_table_windows_remaining(" in window
+assert "return remaining_ms;" not in window
+finalize = function_body(
+    ANCHOR, "gateway_discovery_assignment_finalize_work_handler"
+)
+assert "app_discovery_assignment_table_retry_backoff_required(" in finalize
+assert "discovery_assignment_retry_backoff_ms(" in finalize
+assert "DBG_DISCOVERY_SLOT_TABLE_BACKOFF" in finalize
+publish_work = function_body(
+    ANCHOR, "gateway_discovery_assignment_publish_work_handler"
+)
+assert "DBG_DISCOVERY_SLOT_CLAIM_BACKOFF" in publish_work
+assert "discovery_assignment_retry_backoff_ms(" in publish_work
 
 admit = function_body(BLE, "gateway_observe_command_event_if_available")
 prepare = admit.index("gateway_command_observability_prepare(")

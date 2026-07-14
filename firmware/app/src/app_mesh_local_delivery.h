@@ -119,6 +119,11 @@ int app_mesh_local_delivery_note_ack(
     const struct proto_packet *packet);
 int app_mesh_local_delivery_note_failed(
     struct app_mesh_local_delivery *delivery);
+int app_mesh_local_delivery_discard_failed(
+    struct app_mesh_local_delivery *delivery);
+int app_mesh_local_delivery_supersede(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t replacement_generation);
 bool app_mesh_local_delivery_active(const struct app_mesh_local_delivery *delivery);
 const struct mesh_outbound *app_mesh_local_delivery_outbound(
     const struct app_mesh_local_delivery *delivery);
