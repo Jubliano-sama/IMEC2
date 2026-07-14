@@ -80,6 +80,92 @@ static void test_duplicate_conflict_and_busy_are_distinct(void)
            APP_MESH_EVENT_REQUEST_BUSY);
 }
 
+static void test_accept_correlates_with_exact_and_stable_release_identities(void)
+{
+    const uint8_t payload[] = {0x31u, 0x32u, 0x33u};
+    struct app_mesh_event_request_identity request = request_identity(
+        LOCAL_ID, 0x12345678u, 19u, payload, sizeof(payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        request.session_id, request.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state proposal = {0};
+
+    assert(app_mesh_event_retry_begin(&proposal,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      1000u,
+                                      10000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          request.session_id,
+                                          request.sequence,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_EXACT);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          0x87654321u,
+                                          77u,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_LEGACY);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          0u,
+                                          77u,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          0x87654321u,
+                                          0u,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID + 1u,
+                                          LOCAL_ID,
+                                          PEER_ID + 1u,
+                                          request.session_id,
+                                          request.sequence,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID + 1u,
+                                          PEER_ID,
+                                          request.session_id,
+                                          request.sequence,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          request.session_id,
+                                          request.sequence,
+                                          false) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+    app_mesh_event_retry_clear(&proposal);
+    assert(app_mesh_event_accept_classify(&proposal,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          request.session_id,
+                                          request.sequence,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+}
+
 static void test_pre_rf_and_actual_failures_share_backoff_without_identity_loss(void)
 {
     static const uint32_t entropy[] = {
@@ -417,6 +503,7 @@ static void test_accept_rx_cache_is_scoped_to_one_live_session(void)
 int main(void)
 {
     test_duplicate_conflict_and_busy_are_distinct();
+    test_accept_correlates_with_exact_and_stable_release_identities();
     test_pre_rf_and_actual_failures_share_backoff_without_identity_loss();
     test_duplicate_proposal_reuses_response_and_installs_once();
     test_fifty_simultaneous_proposals_diverge();

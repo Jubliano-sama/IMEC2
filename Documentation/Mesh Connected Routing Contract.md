@@ -434,6 +434,15 @@ Route acquisition should proceed as follows:
 13. The packet producer ACKs the final route reply on channel 5.
 14. The participants enter the negotiated channel 9 rhythm.
 
+During channel 9 event negotiation, an ACCEPT is valid only while the matching
+proposal to that immediate peer is active, the physical previous hop and packet
+source are that peer, the destination is the proposer, and the complete timing
+shape matches the proposal. New peers should echo the proposal session and
+sequence in ACCEPT. For compatibility with the last stable connected-routing
+release, a peer may instead use a fresh nonzero ACCEPT packet identity; the
+active-peer and exact-timing checks still apply, so an unrelated or stale
+negotiation cannot install timing.
+
 In direct-or-relayed transmitter mode, a direct gateway route may satisfy route
 acquisition. In forced-relay transmitter mode, a direct gateway route must not
 satisfy route acquisition; the route must include at least one anchor hop.
@@ -821,6 +830,13 @@ is alive. If a gateway ACK or gateway batch ACK is missed but hop ACKs, partial
 batch progress, or other progress continue, keep the connection and retry on
 channel 9. Do not restart the wake train or route acquisition unless the
 connection is declared dead.
+
+The communication service must preserve the scheduler's next channel 9 prepare
+boundary. If a frozen delivery is ready before its transmit event, the service
+re-arms that same delivery at the prepare boundary and consumes no RF attempt;
+randomized exponential backoff applies to contention and failed attempts, not
+to polling for a deterministic connection slot. Dropping this boundary can make
+every service poll arrive too late for an otherwise healthy connection.
 
 Duplicate payload reception must be ACK-sticky. If an anchor receives a packet
 that it has already accepted within the packet deduplication window, it may

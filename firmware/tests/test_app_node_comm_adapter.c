@@ -33,6 +33,7 @@ static uint32_t try_uplink_calls;
 static int try_uplink_results[64];
 static bool try_uplink_sent[64];
 static bool try_uplink_confirmed[64];
+static uint32_t try_uplink_retry_delays_ms[64];
 static struct mesh_outbound try_uplink_envelopes[64];
 static uint32_t cancel_uplink_calls;
 static struct proto_packet last_cancelled_uplink;
@@ -435,7 +436,8 @@ int mesh_try_send_reliable_uplink_view(
     const struct app_mesh_outbound_view *view,
     const char *reason,
     bool *rf_started,
-    bool *gateway_confirmed)
+    bool *gateway_confirmed,
+    uint32_t *scheduled_retry_delay_ms)
 {
     struct mesh_outbound *out;
     uint32_t index = try_uplink_calls++;
@@ -459,6 +461,9 @@ int mesh_try_send_reliable_uplink_view(
     }
     if (gateway_confirmed != NULL) {
         *gateway_confirmed = try_uplink_confirmed[index];
+    }
+    if (scheduled_retry_delay_ms != NULL) {
+        *scheduled_retry_delay_ms = try_uplink_retry_delays_ms[index];
     }
     return try_uplink_results[index];
 }
@@ -541,6 +546,8 @@ static void reset_fixture(void)
     memset(try_uplink_results, 0, sizeof(try_uplink_results));
     memset(try_uplink_sent, 1, sizeof(try_uplink_sent));
     memset(try_uplink_confirmed, 0, sizeof(try_uplink_confirmed));
+    memset(try_uplink_retry_delays_ms, 0,
+           sizeof(try_uplink_retry_delays_ms));
     memset(try_uplink_envelopes, 0, sizeof(try_uplink_envelopes));
     cancel_uplink_calls = 0u;
     memset(&last_cancelled_uplink, 0, sizeof(last_cancelled_uplink));
@@ -1616,6 +1623,35 @@ static void test_reliable_uplink_waits_for_exact_gateway_confirmation(void)
     assert(event.client_token == 600u);
 }
 
+static void test_reliable_uplink_waits_for_scheduled_channel9_boundary(void)
+{
+    struct mesh_outbound envelope = reliable_uplink_envelope(166u);
+    struct node_comm_terminal_event event;
+    uint32_t handle = 0u;
+
+    reset_fixture();
+    try_uplink_results[0] = -EBUSY;
+    try_uplink_sent[0] = false;
+    try_uplink_retry_delays_ms[0] = 137u;
+    assert(app_node_comm_submit_delivery(
+        &envelope, NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        1000u, 1660u, &handle) == 0);
+
+    assert(app_node_comm_service_deliveries() == -EBUSY);
+    assert(try_uplink_calls == 1u);
+    atomic_store(&fake_now_ms, 136);
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    assert(try_uplink_calls == 1u);
+
+    atomic_store(&fake_now_ms, 137);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 2u);
+    assert(app_node_comm_note_gateway_confirmed(&envelope.packet) == 0);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+}
+
 static void test_reliable_backend_retries_are_observed_without_being_capped(void)
 {
     struct mesh_outbound envelope = reliable_uplink_envelope(162u);
@@ -2351,6 +2387,7 @@ int main(void)
     test_gateway_batch_ack_retry_keeps_exact_identity_and_one_terminal();
     test_control_response_terminal_records_do_not_leak_capacity();
     test_reliable_uplink_waits_for_exact_gateway_confirmation();
+    test_reliable_uplink_waits_for_scheduled_channel9_boundary();
     test_reliable_backend_retries_are_observed_without_being_capped();
     test_terminal_race_after_preflight_cannot_restart_backend();
     test_backend_false_start_completion_releases_attempt_lease();

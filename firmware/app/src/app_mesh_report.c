@@ -4994,7 +4994,8 @@ int mesh_try_send_reliable_uplink_view(
     const struct app_mesh_outbound_view *view,
     const char *reason,
     bool *rf_started,
-    bool *gateway_confirmed)
+    bool *gateway_confirmed,
+    uint32_t *scheduled_retry_delay_ms)
 {
     /*
      * The communication facade keeps compact frozen records.  This one
@@ -5004,6 +5005,7 @@ int mesh_try_send_reliable_uplink_view(
      */
     static struct mesh_outbound out;
     bool pending_exact;
+    bool policy_deferred = false;
     int ret;
 
     if (rf_started != NULL) {
@@ -5012,8 +5014,11 @@ int mesh_try_send_reliable_uplink_view(
     if (gateway_confirmed != NULL) {
         *gateway_confirmed = false;
     }
+    if (scheduled_retry_delay_ms != NULL) {
+        *scheduled_retry_delay_ms = 0u;
+    }
     if (view == NULL || view->packet == NULL || rf_started == NULL ||
-        gateway_confirmed == NULL ||
+        gateway_confirmed == NULL || scheduled_retry_delay_ms == NULL ||
         (view->payload_len != 0u && view->payload == NULL) ||
         view->payload_len > APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ||
         view->packet->payload_len != view->payload_len ||
@@ -5033,9 +5038,19 @@ int mesh_try_send_reliable_uplink_view(
     out.earliest_tx_ms = view->earliest_tx_ms;
     out.flood_retry_count = view->flood_retry_count;
 
-    ret = mesh_start_owned_tracked_tx(
-        &out, reason == NULL ? "node-comm-reliable-uplink" : reason,
-        rf_started);
+    ret = mesh_start_tracked_tx_with_retry(
+        &out,
+        reason == NULL ? "node-comm-reliable-uplink" : reason,
+        scheduled_retry_delay_ms,
+        app_mesh_route_wait_tx_may_store(
+            APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL),
+        NULL,
+        rf_started,
+        &policy_deferred);
+    if (policy_deferred) {
+        /* Channel-5 contention remains a randomized exponential retry. */
+        *scheduled_retry_delay_ms = 0u;
+    }
     pending_exact = mesh_relay_tx_active(&mesh_runtime) &&
         mesh_node_comm_packet_identity_matches(
             &mesh_runtime.pending.packet, view->packet);
@@ -9472,6 +9487,28 @@ static struct app_mesh_event_request_identity mesh_event_request_identity(
     };
 }
 
+static bool mesh_event_accept_timing_compatible(
+    const struct mesh_event_timing *accepted,
+    const struct mesh_event_control_record *proposal)
+{
+    const struct mesh_event_timing *proposed;
+
+    if (accepted == NULL || proposal == NULL || !proposal->valid) {
+        return false;
+    }
+    proposed = &proposal->timing;
+    return accepted->mesh_channel == proposed->mesh_channel &&
+           accepted->event_interval_ms == proposed->event_interval_ms &&
+           accepted->event_window_ms == proposed->event_window_ms &&
+           accepted->event_counter == proposed->event_counter &&
+           accepted->guard_ms == proposed->guard_ms &&
+           accepted->peer_clock_skew_estimate_ppm ==
+               proposed->peer_clock_skew_estimate_ppm &&
+           accepted->max_missed_events == proposed->max_missed_events &&
+           accepted->supervision_timeout_ms ==
+               proposed->supervision_timeout_ms;
+}
+
 static int mesh_prepare_event_control_record(
     struct mesh_event_control_record *record,
     uint64_t peer_id,
@@ -10468,6 +10505,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
     } else if (packet->msg_type == MSG_MESH_EVENT_ACCEPT) {
         struct app_mesh_event_request_identity request;
         struct app_mesh_rf_retry_key retry_key;
+        enum app_mesh_event_accept_correlation correlation;
         enum app_mesh_event_request_match accept_match;
         uint32_t now_ms = k_uptime_get_32();
 
@@ -10482,12 +10520,21 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         replayed_event_accept =
             accept_match == APP_MESH_EVENT_REQUEST_DUPLICATE;
         if (!replayed_event_accept) {
-            if (!mesh_event_propose_retry.active ||
-                mesh_event_propose_retry.peer_id != previous_hop_id ||
-                mesh_event_propose_record.packet.session_id != packet->session_id ||
-                mesh_event_propose_record.packet.seq != packet->seq) {
+            correlation = app_mesh_event_accept_classify(
+                &mesh_event_propose_retry,
+                packet->src_id,
+                packet->dst_id,
+                previous_hop_id,
+                packet->session_id,
+                packet->seq,
+                mesh_event_accept_timing_compatible(
+                    &timing, &mesh_event_propose_record));
+            if (correlation == APP_MESH_EVENT_ACCEPT_REJECT) {
                 status_debug_note("DBG_EVENT_ACCEPT_UNCORRELATED\n");
                 return true;
+            }
+            if (correlation == APP_MESH_EVENT_ACCEPT_LEGACY) {
+                status_debug_note("DBG_EVENT_ACCEPT_LEGACY_IDENTITY\n");
             }
             request = mesh_event_request_identity(packet, payload, payload_len);
             retry_key = mesh_rf_retry_packet_key(

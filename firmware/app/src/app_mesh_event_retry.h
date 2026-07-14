@@ -23,6 +23,12 @@ enum app_mesh_event_request_match {
     APP_MESH_EVENT_REQUEST_BUSY,
 };
 
+enum app_mesh_event_accept_correlation {
+    APP_MESH_EVENT_ACCEPT_REJECT = 0,
+    APP_MESH_EVENT_ACCEPT_EXACT,
+    APP_MESH_EVENT_ACCEPT_LEGACY,
+};
+
 struct app_mesh_event_retry_state {
     struct app_mesh_event_request_identity request;
     struct app_mesh_rf_retry_key retry_key;
@@ -53,6 +59,14 @@ enum app_mesh_event_request_match app_mesh_event_retry_match(
     const struct app_mesh_event_retry_state *state,
     uint64_t peer_id,
     const struct app_mesh_event_request_identity *request);
+enum app_mesh_event_accept_correlation app_mesh_event_accept_classify(
+    const struct app_mesh_event_retry_state *proposal,
+    uint64_t response_source_id,
+    uint64_t response_destination_id,
+    uint64_t response_previous_hop_id,
+    uint32_t response_session_id,
+    uint16_t response_sequence,
+    bool timing_compatible);
 int app_mesh_event_retry_begin(
     struct app_mesh_event_retry_state *state,
     uint64_t peer_id,

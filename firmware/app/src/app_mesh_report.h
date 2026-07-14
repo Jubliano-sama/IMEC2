@@ -153,7 +153,8 @@ int mesh_try_send_reliable_uplink_view(
     const struct app_mesh_outbound_view *view,
     const char *reason,
     bool *rf_started,
-    bool *gateway_confirmed);
+    bool *gateway_confirmed,
+    uint32_t *scheduled_retry_delay_ms);
 int mesh_cancel_reliable_uplink(const struct proto_packet *packet);
 int mesh_send_gateway_command_flood(
     const struct app_mesh_command_orchestrator *orchestrator,

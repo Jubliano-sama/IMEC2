@@ -63,6 +63,38 @@ enum app_mesh_event_request_match app_mesh_event_retry_match(
     return APP_MESH_EVENT_REQUEST_DUPLICATE;
 }
 
+enum app_mesh_event_accept_correlation app_mesh_event_accept_classify(
+    const struct app_mesh_event_retry_state *proposal,
+    uint64_t response_source_id,
+    uint64_t response_destination_id,
+    uint64_t response_previous_hop_id,
+    uint32_t response_session_id,
+    uint16_t response_sequence,
+    bool timing_compatible)
+{
+    if (proposal == NULL || !proposal->active || !timing_compatible ||
+        response_source_id == 0u || response_destination_id == 0u ||
+        response_previous_hop_id != proposal->peer_id ||
+        response_source_id != proposal->peer_id ||
+        response_destination_id != proposal->request.source_id) {
+        return APP_MESH_EVENT_ACCEPT_REJECT;
+    }
+    if (response_session_id == proposal->request.session_id &&
+        response_sequence == proposal->request.sequence) {
+        return APP_MESH_EVENT_ACCEPT_EXACT;
+    }
+    if (response_session_id == 0u || response_sequence == 0u) {
+        return APP_MESH_EVENT_ACCEPT_REJECT;
+    }
+
+    /*
+     * The stable connection release gave ACCEPT its own fresh packet identity.
+     * Active-peer and timing-shape correlation keeps that wire behavior
+     * interoperable without admitting an unrelated peer or negotiation.
+     */
+    return APP_MESH_EVENT_ACCEPT_LEGACY;
+}
+
 int app_mesh_event_retry_begin(
     struct app_mesh_event_retry_state *state,
     uint64_t peer_id,

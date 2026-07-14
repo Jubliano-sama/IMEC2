@@ -1067,6 +1067,7 @@ int app_node_comm_service_deliveries(void)
     bool recovery_started;
     bool gateway_confirmed = false;
     bool rf_started = false;
+    uint32_t scheduled_retry_delay_ms = 0u;
     uint64_t attempt_begin_ms;
     uint64_t now_ms;
     int state_ret = 0;
@@ -1153,7 +1154,8 @@ int app_node_comm_service_deliveries(void)
             &attempt_view,
             "node-comm-reliable-uplink",
             &rf_started,
-            &gateway_confirmed);
+            &gateway_confirmed,
+            &scheduled_retry_delay_ms);
     } else {
         ret = -ENOTSUP;
     }
@@ -1200,9 +1202,22 @@ int app_node_comm_service_deliveries(void)
             }
         }
     } else if (ret == 0 || app_node_comm_backend_error_retryable(ret)) {
-        state_ret = node_comm_lease_defer_pre_rf_retry(&node_comm_policy,
-                                                        &lease,
-                                                        now_ms);
+        if (scheduled_retry_delay_ms > 0u) {
+            uint64_t not_before_ms =
+                now_ms + (uint64_t)scheduled_retry_delay_ms;
+
+            if (not_before_ms < now_ms) {
+                not_before_ms = UINT64_MAX;
+            }
+            state_ret = node_comm_lease_defer_pre_rf(&node_comm_policy,
+                                                      &lease,
+                                                      not_before_ms,
+                                                      now_ms);
+        } else {
+            state_ret = node_comm_lease_defer_pre_rf_retry(&node_comm_policy,
+                                                            &lease,
+                                                            now_ms);
+        }
     } else {
         state_ret = node_comm_lease_complete(&node_comm_policy,
                                               &lease,
@@ -1214,12 +1229,13 @@ int app_node_comm_service_deliveries(void)
     app_node_comm_sync_unlock();
 
     status_debug_printf(
-        "DBG_NODE_COMM_ATTEMPT handle=%u profile=%u attempt=%u ret=%d rf=%u state=%d\n",
+        "DBG_NODE_COMM_ATTEMPT handle=%u profile=%u attempt=%u ret=%d rf=%u scheduled=%u state=%d\n",
         lease.handle,
         (unsigned int)attempt_record.profile,
         lease.attempt_number,
         ret,
         rf_started ? 1u : 0u,
+        scheduled_retry_delay_ms,
         state_ret);
 
     if (state_ret < 0 && state_ret != -ESTALE) {

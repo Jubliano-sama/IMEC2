@@ -191,7 +191,21 @@ delivery_service = function_body(
     NODE_COMM_APP, "app_node_comm_service_deliveries"
 )
 assert delivery_service.count("node_comm_lease_defer_pre_rf_retry(") == 2
-assert "node_comm_lease_defer_pre_rf(" not in delivery_service
+assert delivery_service.count("node_comm_lease_defer_pre_rf(") == 1
+assert re.search(
+    r"if\s*\(\s*scheduled_retry_delay_ms\s*>\s*0u\s*\).*?"
+    r"node_comm_lease_defer_pre_rf\s*\(.*?not_before_ms",
+    delivery_service,
+    re.S,
+), (
+    "only an exact backend-scheduled radio boundary may use deterministic "
+    "pre-RF deferral"
+)
+assert delivery_service.index("node_comm_lease_defer_pre_rf(") < (
+    delivery_service.index("node_comm_lease_defer_pre_rf_retry(",
+                           delivery_service.index(
+                               "node_comm_lease_defer_pre_rf("))
+), "unscheduled retryable deferrals must retain randomized retry policy"
 
 survey_rx = function_body(DISCOVERY, "receive_survey_probes_until")
 assert "dwm3000_driver_receive_frame_continuous(" in survey_rx, (
