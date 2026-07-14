@@ -160,6 +160,10 @@ int dwm3000_driver_force_recovery(void);
 int dwm3000_driver_send_frame(const uint8_t *frame,
                               size_t frame_len,
                               uint32_t timeout_ms);
+int dwm3000_driver_send_frame_tracked(const uint8_t *frame,
+                                      size_t frame_len,
+                                      uint32_t timeout_ms,
+                                      bool *rf_started);
 int dwm3000_driver_receive_frame(uint32_t timeout_ms,
                                  uint8_t *frame,
                                  size_t frame_cap,

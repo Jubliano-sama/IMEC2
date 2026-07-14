@@ -103,6 +103,7 @@ struct node_comm_request_slot {
     enum node_comm_request_slot_state state;
     uint16_t retry_rounds;
     uint8_t attempts_started;
+    uint8_t backend_attempts_started;
     uint8_t max_attempts;
     uint8_t retry_backoff_shift_cap;
     uint8_t priority;
@@ -213,6 +214,13 @@ int node_comm_lease_await_confirmation(struct node_comm *comm,
 int node_comm_confirm_delivery(struct node_comm *comm,
                                uint32_t handle,
                                uint64_t now_ms);
+int node_comm_fail_delivery(struct node_comm *comm,
+                            uint32_t handle,
+                            enum node_comm_terminal_reason reason,
+                            uint64_t now_ms);
+int node_comm_note_backend_rf_started(struct node_comm *comm,
+                                      uint32_t handle,
+                                      uint64_t now_ms);
 int node_comm_cancel(struct node_comm *comm,
                      uint32_t handle,
                      uint64_t now_ms);
@@ -224,6 +232,10 @@ bool node_comm_take_terminal_event(struct node_comm *comm,
                                    struct node_comm_terminal_event *event_out);
 bool node_comm_take_terminal_event_for(
     struct node_comm *comm,
+    uint32_t handle,
+    struct node_comm_terminal_event *event_out);
+bool node_comm_peek_terminal_event_for(
+    const struct node_comm *comm,
     uint32_t handle,
     struct node_comm_terminal_event *event_out);
 size_t node_comm_pending_count(const struct node_comm *comm);

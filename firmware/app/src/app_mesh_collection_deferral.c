@@ -5,13 +5,14 @@
 bool app_mesh_collection_defer_active_result(
     struct mesh_relay *relay,
     uint32_t now_ms,
+    uint32_t random_value,
     const struct app_mesh_collection_deferral_ops *ops,
     struct app_mesh_collection_deferral_result *result)
 {
     struct app_mesh_collection_deferral_result local_result;
 
     memset(&local_result, 0, sizeof(local_result));
-    if (!mesh_relay_defer_tx(relay, now_ms)) {
+    if (!mesh_relay_defer_tx(relay, now_ms, random_value)) {
         if (result != NULL) {
             *result = local_result;
         }

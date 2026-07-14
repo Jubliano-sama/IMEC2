@@ -43,6 +43,66 @@ class StackEvidenceVerifierTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def _synchronous_evidence(
+        self,
+        frames: dict[str, int],
+        calls: dict[str, set[str]],
+        *,
+        roots: tuple[str, ...] = ("root",),
+    ) -> object:
+        """Run ownership and synchronous-depth checks on one synthetic TU."""
+        source = "sync.c"
+        policy = self.policies["mesh_gateway"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(
+                Path(source), index, function, bytes_used, "static"
+            )
+            for index, (function, bytes_used) in enumerate(
+                frames.items(), start=1
+            )
+        ]
+        ownership_graph: dict[tuple[str, str], set[str]] = {}
+        for function in frames:
+            ownership_graph.setdefault(
+                (source, verifier._canonical_function(function)), set()
+            )
+        for function, targets in calls.items():
+            node = (source, verifier._canonical_function(function))
+            canonical_targets = set()
+            for target in targets:
+                if target.startswith(verifier._CGRAPH_REFERENCE_PREFIX):
+                    target = (
+                        verifier._CGRAPH_REFERENCE_PREFIX +
+                        verifier._canonical_function(
+                            target[len(verifier._CGRAPH_REFERENCE_PREFIX):]
+                        )
+                    )
+                else:
+                    target = verifier._canonical_function(target)
+                canonical_targets.add(target)
+            ownership_graph.setdefault(node, set()).update(canonical_targets)
+        synchronous_graph = {
+            (source, function): set(calls.get(function, set()))
+            for function in frames
+        }
+        thread_roots = {
+            (source, verifier._canonical_function(function)):
+                {"system_workqueue"}
+            for function in roots
+        }
+
+        verifier._attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            ownership_graph,
+            thread_roots,
+            self.frame_limit,
+            synchronous_graph,
+        )
+        return evidence
+
     def _write_build(self, policy: object, *, include_usage: bool = True,
                      include_cgraph: bool = True, source_name: str = "main.c", function: str = "main",
                      headroom_delta: int = 2048, identity: str | None = None) -> Path:
@@ -107,9 +167,11 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             (usage / f"{source_name}.su").write_text(f"{source}:1:1:{function}\t64\tstatic\n", encoding="utf-8")
         if include_cgraph:
             (usage / f"{source_name}.c.000i.cgraph").write_text(
+                "Optimized Symbol table:\n"
                 f"{function}/1 ({function})\n"
                 "  Type: function definition analyzed\n"
-                "  Calls: \n",
+                "  Calls: \n"
+                "Final Symbol table:\n",
                 encoding="utf-8",
             )
         origin, size = 0x20000000, 128 * 1024
@@ -339,6 +401,145 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertEqual([], evidence.issues)
         self.assertEqual(1, evidence.linked_usage_count)
         self.assertEqual(1, evidence.attributed_usage_count)
+
+    def test_synchronous_linear_chain_overflow_fails_owner_capacity(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 3200, "leaf": 3200},
+            {"root": {"leaf"}, "leaf": set()},
+        )
+
+        self.assertEqual(6400, evidence.synchronous_usage_bytes[
+            "system_workqueue"
+        ])
+        self.assertTrue(any(
+            "compiler synchronous stack chain 6400 plus required free 1229 "
+            "exceeds configured 6144"
+            in issue
+            for issue in evidence.issues
+        ), evidence.issues)
+
+    def test_synchronous_siblings_use_maximum_branch_not_sum(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 1000, "left": 2800, "right": 2800},
+            {"root": {"left", "right"}, "left": set(), "right": set()},
+        )
+
+        self.assertEqual(3800, evidence.synchronous_usage_bytes[
+            "system_workqueue"
+        ])
+        self.assertFalse(any(
+            "compiler synchronous stack chain" in issue
+            for issue in evidence.issues
+        ), evidence.issues)
+
+    def test_synchronous_owner_margin_boundary_is_inclusive(self) -> None:
+        accepted = self._synchronous_evidence(
+            {"root": 4915}, {"root": set()}
+        )
+        rejected = self._synchronous_evidence(
+            {"root": 4916}, {"root": set()}
+        )
+
+        self.assertEqual([], accepted.issues)
+        self.assertTrue(any(
+            "4916 plus required free 1229 exceeds configured 6144" in issue
+            for issue in rejected.issues
+        ), rejected.issues)
+
+    def test_callback_reference_owns_frame_but_is_not_synchronous(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 4000, "callback": 3000},
+            {
+                "root": {
+                    verifier._CGRAPH_REFERENCE_PREFIX + "callback"
+                },
+                "callback": set(),
+            },
+        )
+
+        self.assertEqual(4000, evidence.synchronous_usage_bytes[
+            "system_workqueue"
+        ])
+        self.assertEqual([], evidence.issues)
+        self.assertEqual(2, evidence.attributed_usage_count)
+
+    def test_recursive_synchronous_graph_fails_closed(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 64, "helper": 64},
+            {"root": {"helper"}, "helper": {"root"}},
+        )
+
+        self.assertTrue(any(
+            "recursive synchronous compiler call graph" in issue
+            for issue in evidence.issues
+        ), evidence.issues)
+        self.assertNotIn("system_workqueue", evidence.synchronous_usage_bytes)
+
+    def test_synchronous_clone_names_keep_distinct_frames_and_owners(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root.constprop.7": 3200, "leaf.isra.2": 3200},
+            {
+                "root.constprop.7": {"leaf.isra.2"},
+                "leaf.isra.2": set(),
+            },
+            roots=("root.constprop.7",),
+        )
+
+        self.assertEqual(6400, evidence.synchronous_usage_bytes[
+            "system_workqueue"
+        ])
+        issue = next(
+            issue for issue in evidence.issues
+            if "compiler synchronous stack chain" in issue
+        )
+        self.assertIn("sync.c:root.constprop.7", issue)
+        self.assertIn("sync.c:leaf.isra.2", issue)
+
+    def test_large_synchronous_dag_is_bounded_without_recursion(self) -> None:
+        node_count = 4000
+        frames = {f"node_{index}": 1 for index in range(node_count)}
+        calls = {
+            f"node_{index}": (
+                {f"node_{index + 1}", f"node_{index + 2}"} & frames.keys()
+            )
+            for index in range(node_count)
+        }
+        evidence = self._synchronous_evidence(
+            frames, calls, roots=("node_0",)
+        )
+
+        self.assertEqual(node_count, evidence.synchronous_usage_bytes[
+            "system_workqueue"
+        ])
+        self.assertEqual([], evidence.issues)
+
+    def test_synchronous_depth_never_crosses_owner_boundaries(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("split.c"), 1, "main_side", 3000,
+                                "static"),
+            verifier.StackUsage(Path("split.c"), 2, "work_side", 3000,
+                                "static"),
+        ]
+        synchronous_graph = {
+            ("split.c", "main_side"): {"work_side"},
+            ("split.c", "work_side"): set(),
+        }
+        owners = {
+            ("split.c", "main_side"): {"main"},
+            ("split.c", "work_side"): {"system_workqueue"},
+        }
+
+        verifier._validate_synchronous_stack_chains(
+            evidence, policy, linked, synchronous_graph, owners
+        )
+
+        self.assertEqual(
+            {"main": 3000, "system_workqueue": 3000},
+            evidence.synchronous_usage_bytes,
+        )
+        self.assertEqual([], evidence.issues)
 
     def test_anchor_capture_requires_survey_owner_queue_with_exact_stack(self) -> None:
         policy = self.policies["mesh_anchor"]

@@ -19,6 +19,13 @@ presets are not compatibility aliases: after upgrade, rerun the assignment
 command so stale numbered IDs are replaced by hardware-derived identities.
 The transmitter is also an anchor-role mesh node so it can use the normal
 relay, route-discovery, gateway-ACK, and channel-9 timing machinery.
+It submits each synthetic packet through the node-communication service and
+retains the service handle until an exact delivered or failed terminal result
+arrives. Queue admission is therefore not reported as delivery, and transient
+radio or route failures are retried by the same service used by product
+protocols. The synthetic transmitter alone reserves enough RAM for four
+simultaneous full-size extended-PHR packets plus the protocol-priority slot;
+production roles retain their smaller frozen-payload bound.
 
 ## Channel Behavior
 
@@ -61,8 +68,10 @@ The transmitter sends normal `MSG_MESH_DATA` packets to the gateway with
 `FLAG_GATEWAY_ACK_REQUIRED` and `FLAG_DIAGNOSTIC` set. Payload TLVs include:
 
 - `TLV_MESH_TEST_PACKET_ID` (`0x59`): incrementing synthetic packet ID.
-- `TLV_MESH_TEST_ATTEMPT` (`0x5A`): transmitter attempt count for that packet.
-- `TLV_MESH_TEST_DROP_COUNT` (`0x5B`): transmitter-side launch/build failures.
+- `TLV_MESH_TEST_ATTEMPT` (`0x5A`): source admission attempt for that immutable
+  packet; radio retry counts are reported by the terminal RTT marker.
+- `TLV_MESH_TEST_DROP_COUNT` (`0x5B`): transmitter-side build, permanent
+  admission, or terminal delivery failures.
 - `TLV_MESH_TEST_ORIGIN_ID` (`0x5C`): transmitter device ID.
 - `TLV_MESH_TEST_TARGET_ID` (`0x5D`): gateway device ID.
 - `TLV_MESH_TEST_FLAGS` (`0x5E`): synthetic test flags.
@@ -106,6 +115,7 @@ ctest --test-dir firmware/build --output-on-failure
 
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-gateway -- -DIMEC_BUILD_PRESET=mesh_gateway
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-transmitter -- -DIMEC_BUILD_PRESET=mesh_transmitter
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-transmitter-forcedhop -- -DIMEC_BUILD_PRESET=mesh_transmitter_forcedhop
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor -- -DIMEC_BUILD_PRESET=mesh_anchor
 ```
 
@@ -132,8 +142,10 @@ Expected close-range output:
 
 - Synthetic `packet_id` values increase monotonically.
 - `origin_id` is the transmitter device ID.
-- `attempt` is normally `1`.
-- `drop_count` remains `0` unless the transmitter cannot launch a frame.
+- `attempt` is normally `1`; `DBG_MESH_TEST_TERMINAL` reports the communication
+  service's actual radio attempts.
+- `drop_count` remains `0` unless packet construction, permanent admission, or
+  all bounded delivery opportunities fail.
 - `hop_count` is usually `1` when the gateway can receive directly.
 - No packet ID gaps appear during stable close-range operation.
 
@@ -154,8 +166,8 @@ Expected multi-hop output:
 - The gateway still receives increasing synthetic packet IDs.
 - `hop_count` rises above `1` when relays are used.
 - Missing packet IDs identify dropped synthetic packets.
-- `attempt` rises during weak connectivity and settles when the route is
-  stable.
+- `DBG_MESH_TEST_TERMINAL attempts=` rises during weak connectivity and settles
+  when the route is stable.
 - Relay-anchor BLE logs show channel-9 relay participation.
 
 To verify channel-5 preemption, keep channel-9 mesh traffic active and then

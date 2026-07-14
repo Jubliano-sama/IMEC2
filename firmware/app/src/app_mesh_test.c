@@ -5,6 +5,7 @@
 #include "app_high_debug.h"
 #include "app_mesh_report.h"
 #include "app_mesh_smoke_fast.h"
+#include "app_node_comm.h"
 #include "app_board.h"
 #include "app_state.h"
 #include "mesh_relay.h"
@@ -25,6 +26,11 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
 #define MESH_TEST_FLAG_CH5_WAKE_CONTINUOUS  (1u << 2)
 #define MESH_TEST_SUMMARY_INTERVAL_MS 5000u
 #define MESH_TEST_ROUTE_SUMMARY_REPEATS 8u
+#define MESH_TEST_DELIVERY_DEADLINE_MS 60000u
+#define MESH_TEST_RETRY_ADMISSION_MS 100u
+#define MESH_TEST_SOURCE_DELIVERY_CAPACITY \
+    (APP_NODE_COMM_MAX_DELIVERIES - \
+     APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES)
 
 #ifndef CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
 #define CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS 1000
@@ -38,10 +44,20 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
 #define CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES 0
 #endif
 
-BUILD_ASSERT(CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT <= REPORT_TX_QUEUE_DEPTH,
-             "mesh-test TX burst must fit in the report TX queue");
 BUILD_ASSERT(CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES <= UWB_MESH_MAX_PAYLOAD_LEN,
              "mesh-test payload must fit in the mesh payload buffer");
+BUILD_ASSERT(CONFIG_IMEC_MESH_ROUTE_TEST_PAYLOAD_BYTES <=
+                 APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN,
+             "mesh-test payload must fit in communication custody");
+BUILD_ASSERT(MESH_TEST_SOURCE_DELIVERY_CAPACITY >=
+                 CONFIG_IMEC_MESH_ROUTE_TEST_TX_BURST_COUNT,
+             "communication service must hold one complete source burst");
+
+struct mesh_test_delivery_tracking {
+    uint32_t handle;
+    uint32_t packet_id;
+    uint16_t seq;
+};
 
 K_THREAD_STACK_DEFINE(mesh_test_thread_stack, MESH_TEST_WORKQUEUE_STACK_SIZE);
 static struct k_thread mesh_test_thread;
@@ -76,6 +92,13 @@ static uint32_t mesh_test_route_next_summary_ms;
 static uint8_t mesh_test_route_summary_repeats;
 static bool mesh_test_route_start_seen;
 static bool mesh_test_route_ready_logged;
+static struct mesh_test_delivery_tracking
+    mesh_test_deliveries[MESH_TEST_SOURCE_DELIVERY_CAPACITY];
+static struct mesh_outbound mesh_test_pending_admission;
+static uint64_t mesh_test_pending_admission_deadline_ms;
+static uint32_t mesh_test_pending_admission_packet_id;
+static uint16_t mesh_test_pending_admission_attempt;
+static bool mesh_test_pending_admission_valid;
 
 static void mesh_test_inc_u16(uint16_t *counter)
 {
@@ -159,6 +182,85 @@ static void mesh_test_note_queued(uint32_t packet_id, uint16_t seq)
         mesh_test_first_queue_id = packet_id;
         mesh_test_first_queue_seq = seq;
     }
+}
+
+static struct mesh_test_delivery_tracking *mesh_test_free_delivery_slot(void)
+{
+    for (size_t i = 0u; i < MESH_TEST_SOURCE_DELIVERY_CAPACITY; i++) {
+        if (mesh_test_deliveries[i].handle == 0u) {
+            return &mesh_test_deliveries[i];
+        }
+    }
+    return NULL;
+}
+
+static int mesh_test_track_delivery(uint32_t handle,
+                                    uint32_t packet_id,
+                                    uint16_t seq)
+{
+    struct mesh_test_delivery_tracking *slot = mesh_test_free_delivery_slot();
+
+    if (slot == NULL || handle == 0u) {
+        return -ENOSPC;
+    }
+    *slot = (struct mesh_test_delivery_tracking) {
+        .handle = handle,
+        .packet_id = packet_id,
+        .seq = seq,
+    };
+    return 0;
+}
+
+static void mesh_test_reap_terminal_deliveries(void)
+{
+    for (size_t i = 0u; i < MESH_TEST_SOURCE_DELIVERY_CAPACITY; i++) {
+        struct mesh_test_delivery_tracking *delivery =
+            &mesh_test_deliveries[i];
+        struct node_comm_terminal_event event;
+
+        if (delivery->handle == 0u ||
+            !app_node_comm_take_delivery_event_for(delivery->handle, &event)) {
+            continue;
+        }
+        status_debug_printf(
+            "DBG_MESH_TEST_TERMINAL id=%u seq=%u handle=%u reason=%u attempts=%u\n",
+            delivery->packet_id,
+            delivery->seq,
+            event.handle,
+            (unsigned int)event.reason,
+            event.attempts_started);
+        if (event.reason == NODE_COMM_TERMINAL_DELIVERED) {
+            status_debug_note("DBG_MESH_TEST_DELIVERED\n");
+        } else {
+            if (mesh_test_drop_count < UINT32_MAX) {
+                mesh_test_drop_count++;
+            }
+            status_debug_note("DBG_MESH_TEST_DELIVERY_FAILED\n");
+            high_debug_log_event(
+                "MESH_TEST_DELIVERY_TERMINAL",
+                "id=%u seq=%u reason=%u attempts=%u drops=%u",
+                delivery->packet_id,
+                delivery->seq,
+                (unsigned int)event.reason,
+                event.attempts_started,
+                mesh_test_drop_count);
+        }
+        memset(delivery, 0, sizeof(*delivery));
+    }
+}
+
+static bool mesh_test_admission_retryable(int ret)
+{
+    return ret == -EAGAIN || ret == -EBUSY || ret == -EWOULDBLOCK ||
+           ret == -EINPROGRESS || ret == -ENOSPC || ret == -ESHUTDOWN;
+}
+
+static uint64_t mesh_test_delivery_deadline_ms(void)
+{
+    uint64_t now_ms = (uint64_t)k_uptime_get();
+
+    return UINT64_MAX - now_ms < MESH_TEST_DELIVERY_DEADLINE_MS ?
+           UINT64_MAX : now_ms + MESH_TEST_DELIVERY_DEADLINE_MS;
 }
 
 static bool mesh_test_route_telemetry_enabled(uint64_t target_id)
@@ -307,38 +409,39 @@ static int mesh_test_build_packet(struct mesh_outbound *outbound,
     outbound->packet.ttl = MESH_DEFAULT_TTL;
     outbound->packet.payload_len = (uint16_t)payload_len;
     outbound->payload_len = (uint16_t)payload_len;
+    outbound->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    outbound->queued_at_ms = k_uptime_get_32();
     return 0;
 }
 
 static uint32_t mesh_test_tx_once(void)
 {
     struct mesh_outbound outbound;
-    uint32_t packet_id;
-    uint16_t attempt;
-    bool relay_tx_active;
-    bool route_waiting_active;
-    bool ack_wait_active;
-    uint32_t queue_used;
-    uint8_t burst_target;
     struct mesh_smoke_fast_tx_gate gate;
     struct mesh_smoke_fast_tx_decision decision;
+    size_t service_pending;
+    uint32_t packet_id;
+    uint32_t handle;
+    uint16_t attempt;
+    uint8_t burst_target;
+    uint64_t absolute_deadline_ms;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR ||
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
         return CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS;
     }
+    mesh_test_reap_terminal_deliveries();
     mesh_test_route_periodic_summary();
-    relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
-    route_waiting_active = mesh_route_waiting_tx_active();
-    ack_wait_active = mesh_report_ch9_ack_wait_active();
-    queue_used = report_tx_queue_used();
+    service_pending = app_node_comm_pending_delivery_count();
     gate = (struct mesh_smoke_fast_tx_gate) {
-        .relay_tx_active = relay_tx_active,
-        .route_waiting_active = route_waiting_active,
-        .ack_wait_active = ack_wait_active,
-        .queue_used = queue_used,
-        .queue_depth = REPORT_TX_QUEUE_DEPTH,
+        /* Transport contention, route state, and ACK waits belong to node_comm. */
+        .relay_tx_active = false,
+        .route_waiting_active = false,
+        .ack_wait_active = false,
+        .queue_used = (uint32_t)MIN(
+            service_pending, (size_t)MESH_TEST_SOURCE_DELIVERY_CAPACITY),
+        .queue_depth = MESH_TEST_SOURCE_DELIVERY_CAPACITY,
         .configured_interval_ms = CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS,
         .fast_mode = IS_ENABLED(CONFIG_MESH_SMOKE_FAST_TX),
     };
@@ -346,27 +449,15 @@ static uint32_t mesh_test_tx_once(void)
     if (!decision.can_queue) {
         if (mesh_test_wait_log_ticks == 0u || mesh_test_wait_log_ticks >= 10u) {
             status_debug_note("DBG_MESH_TEST_WAIT\n");
-            if (relay_tx_active) {
-                status_debug_note("DBG_MESH_TEST_WAIT_RELAY\n");
-            }
-            if (route_waiting_active) {
-                status_debug_note("DBG_MESH_TEST_WAIT_ROUTE\n");
-            }
             if (decision.reason == MESH_SMOKE_FAST_DEFER_QUEUE_FULL) {
                 status_debug_note("DBG_MESH_TEST_WAIT_BACKLOG\n");
             }
-            if (ack_wait_active) {
-                status_debug_note("DBG_MESH_TEST_WAIT_ACK\n");
-            }
-            if (queue_used > 0u) {
+            if (service_pending > 0u) {
                 status_debug_note("DBG_MESH_TEST_QUEUE_WAIT\n");
             }
-            status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=%u route=%u headroom=%u ack=%u q=%u id=%u att=%u\n",
-                                relay_tx_active ? 1u : 0u,
-                                route_waiting_active ? 1u : 0u,
+            status_debug_printf("DBG_MESH_TEST_WAIT_STATE relay=0 route=0 headroom=%u ack=0 q=%u id=%u att=%u\n",
                                 decision.queue_headroom,
-                                ack_wait_active ? 1u : 0u,
-                                queue_used,
+                                (unsigned int)service_pending,
                                 mesh_test_next_packet_id,
                                 mesh_test_attempt);
             mesh_test_wait_log_ticks = 1u;
@@ -382,33 +473,80 @@ static uint32_t mesh_test_tx_once(void)
     for (uint8_t queued_count = 0u;
          queued_count < burst_target;
          queued_count++) {
-        packet_id = mesh_test_next_packet_id;
-        attempt = mesh_test_next_attempt();
-        ret = mesh_test_build_packet(&outbound, packet_id, attempt);
-        if (ret < 0) {
-            mesh_test_drop_count++;
-            LOG_WRN("mesh-test packet build failed: id=%u attempt=%u ret=%d drops=%u",
-                    packet_id, attempt, ret, mesh_test_drop_count);
-            return decision.delay_ms;
+        if (mesh_test_pending_admission_valid) {
+            outbound = mesh_test_pending_admission;
+            packet_id = mesh_test_pending_admission_packet_id;
+            attempt = mesh_test_pending_admission_attempt;
+            absolute_deadline_ms = mesh_test_pending_admission_deadline_ms;
+        } else {
+            packet_id = mesh_test_next_packet_id;
+            attempt = mesh_test_next_attempt();
+            ret = mesh_test_build_packet(&outbound, packet_id, attempt);
+            if (ret < 0) {
+                if (mesh_test_drop_count < UINT32_MAX) {
+                    mesh_test_drop_count++;
+                }
+                LOG_WRN("mesh-test packet build failed: id=%u attempt=%u ret=%d drops=%u",
+                        packet_id, attempt, ret, mesh_test_drop_count);
+                return decision.delay_ms;
+            }
+            absolute_deadline_ms = mesh_test_delivery_deadline_ms();
         }
 
-        ret = queue_anchor_report(&outbound);
-        status_debug_note(ret == 0 ? "DBG_MESH_TEST_SEND_OK\n" :
-                          "DBG_MESH_TEST_SEND_FAIL\n");
+        handle = 0u;
+        ret = app_node_comm_submit_reliable_uplink(
+            &outbound,
+            absolute_deadline_ms,
+            packet_id,
+            &handle);
         if (ret == 0) {
+            ret = mesh_test_track_delivery(handle,
+                                           packet_id,
+                                           outbound.packet.seq);
+            if (ret < 0) {
+                (void)app_node_comm_abandon_delivery(handle);
+            }
+        }
+        if (ret == 0) {
+            status_debug_note("DBG_MESH_TEST_ADMITTED\n");
+            mesh_test_pending_admission_valid = false;
             mesh_test_note_queued(packet_id, outbound.packet.seq);
             mesh_test_advance_packet_id();
             mesh_test_reset_attempts();
             status_debug_printf("DBG_MESH_TEST_QUEUED id=%u att=%u q=%u burst=%u/%u\n",
                                 packet_id,
                                 attempt,
-                                report_tx_queue_used(),
+                                (unsigned int)app_node_comm_pending_delivery_count(),
                                 (uint8_t)(queued_count + 1u),
                                 burst_target);
             continue;
         }
 
-        mesh_test_drop_count++;
+        if (mesh_test_admission_retryable(ret)) {
+            status_debug_note("DBG_MESH_TEST_ADMISSION_DEFERRED\n");
+            if (!mesh_test_pending_admission_valid) {
+                mesh_test_pending_admission = outbound;
+                mesh_test_pending_admission_deadline_ms = absolute_deadline_ms;
+                mesh_test_pending_admission_packet_id = packet_id;
+                mesh_test_pending_admission_attempt = attempt;
+                mesh_test_pending_admission_valid = true;
+            }
+            high_debug_log_event(
+                "MESH_TEST_ADMISSION_DEFER",
+                "id=%u attempt=%u seq=%u ret=%d pending=%u",
+                packet_id,
+                attempt,
+                outbound.packet.seq,
+                ret,
+                (unsigned int)service_pending);
+            return MESH_TEST_RETRY_ADMISSION_MS;
+        }
+
+        mesh_test_pending_admission_valid = false;
+        status_debug_note("DBG_MESH_TEST_ADMISSION_REJECTED\n");
+        if (mesh_test_drop_count < UINT32_MAX) {
+            mesh_test_drop_count++;
+        }
         high_debug_log_event("MESH_TEST_TX_RETRY",
                              "id=%u attempt=%u ret=%d drops=%u queued=%u",
                              packet_id,
@@ -418,7 +556,9 @@ static uint32_t mesh_test_tx_once(void)
                              queued_count);
         LOG_WRN("mesh-test synthetic packet not launched: id=%u attempt=%u ret=%d drops=%u queued=%u",
                 packet_id, attempt, ret, mesh_test_drop_count, queued_count);
-        return ret == -EBUSY ? 100u : 250u;
+        mesh_test_advance_packet_id();
+        mesh_test_reset_attempts();
+        return 250u;
     }
 
     return decision.delay_ms;

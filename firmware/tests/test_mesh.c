@@ -292,6 +292,58 @@ static void test_channel9_sender_reanchors_to_control_tx_completion(void)
     assert(timing.next_event_time_ms == 501u);
 }
 
+static void test_channel9_exact_accept_replay_realigns_both_peers(void)
+{
+    struct mesh_event_timing encoded_timing = {0};
+    struct mesh_event_timing first_sender = {0};
+    struct mesh_event_timing first_receiver = {0};
+    struct mesh_event_timing replay_sender = {0};
+    struct mesh_event_timing replay_receiver = {0};
+    struct mesh_event_params params = event_params();
+    uint8_t accept_payload[96];
+    size_t accept_len = 0u;
+    const uint32_t encoded_at_ms = 1000u;
+    const uint32_t encoded_delay_ms = 600u;
+    const uint32_t airtime_ms = 10u;
+
+    params.first_event_time_ms = encoded_at_ms + encoded_delay_ms;
+    assert(mesh_event_timing_negotiate(&encoded_timing, &params, true) ==
+           PROTO_OK);
+    assert(mesh_append_event_timing_tlvs_at(accept_payload,
+                                            sizeof(accept_payload),
+                                            &accept_len,
+                                            &encoded_timing,
+                                            encoded_at_ms) == PROTO_OK);
+
+    first_sender = encoded_timing;
+    mesh_event_timing_reanchor_after_control_tx(&first_sender,
+                                                1100u,
+                                                encoded_delay_ms,
+                                                airtime_ms);
+    assert(mesh_event_timing_from_tlvs_at(&first_receiver,
+                                          accept_payload,
+                                          accept_len,
+                                          1100u - airtime_ms,
+                                          true) == PROTO_OK);
+    assert(first_sender.next_event_time_ms ==
+           first_receiver.next_event_time_ms);
+
+    /* Reuse the exact payload later; both peers must move to the new phase. */
+    replay_sender = encoded_timing;
+    mesh_event_timing_reanchor_after_control_tx(&replay_sender,
+                                                2100u,
+                                                encoded_delay_ms,
+                                                airtime_ms);
+    assert(mesh_event_timing_from_tlvs_at(&replay_receiver,
+                                          accept_payload,
+                                          accept_len,
+                                          2100u - airtime_ms,
+                                          true) == PROTO_OK);
+    assert(replay_sender.next_event_time_ms ==
+           replay_receiver.next_event_time_ms);
+    assert(replay_sender.next_event_time_ms != first_sender.next_event_time_ms);
+}
+
 static void test_channel9_event_planner_reserves_channel5_scan(void)
 {
     struct mesh_event_timing timing = {0};
@@ -380,6 +432,7 @@ static void test_channel5_activity_preempts_channel9_mesh(void)
     assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
     assert(mesh_event_plan_channel9(&timing, &click_requirements, 1000u, &plan) == PROTO_OK);
     assert(plan.action == MESH_EVENT_PLAN_DEFER_CH5_ACTIVE);
+    assert(mesh_event_plan_is_policy_deferral(plan.action));
     mesh_event_note_plan_action(&diagnostics, plan.action);
     assert(diagnostics.mesh_deferrals == 1u);
     assert(diagnostics.channel5_preemptions == 1u);
@@ -388,6 +441,19 @@ static void test_channel5_activity_preempts_channel9_mesh(void)
     assert(diagnostics.channel_switches == 1u);
     assert(diagnostics.pll_ready_failures == 1u);
     assert(diagnostics.late_channel5_returns == 1u);
+}
+
+static void test_channel9_policy_deferral_classification(void)
+{
+    assert(mesh_event_plan_is_policy_deferral(
+        MESH_EVENT_PLAN_DEFER_CH5_ACTIVE));
+    assert(mesh_event_plan_is_policy_deferral(
+        MESH_EVENT_PLAN_SKIP_CH5_SCAN_GUARD));
+    assert(!mesh_event_plan_is_policy_deferral(MESH_EVENT_PLAN_START));
+    assert(!mesh_event_plan_is_policy_deferral(MESH_EVENT_PLAN_CLIP));
+    assert(!mesh_event_plan_is_policy_deferral(MESH_EVENT_PLAN_WAIT));
+    assert(!mesh_event_plan_is_policy_deferral(
+        MESH_EVENT_PLAN_REFRESH_CONTACT_CH5));
 }
 
 static void test_channel5_active_until_zero_is_idle_across_uptime_wrap(void)
@@ -523,10 +589,12 @@ int main(void)
     test_channel9_timing_crosses_uptime_domains_as_relative_delay();
     test_channel9_accept_reanchors_after_wake_train_delay();
     test_channel9_sender_reanchors_to_control_tx_completion();
+    test_channel9_exact_accept_replay_realigns_both_peers();
     test_channel9_event_planner_reserves_channel5_scan();
     test_channel9_event_planner_keeps_negotiated_window_when_late();
     test_channel9_observed_rx_keeps_negotiated_cadence();
     test_channel5_activity_preempts_channel9_mesh();
+    test_channel9_policy_deferral_classification();
     test_channel5_active_until_zero_is_idle_across_uptime_wrap();
     test_channel9_missed_events_refresh_contact_at_configured_limit();
     test_channel9_skip_elapsed_advances_to_next_live_slot();

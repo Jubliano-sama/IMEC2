@@ -12,6 +12,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef DEVICE_ROLE
+#define DEVICE_ROLE ROLE_CLICKER
+#endif
+
 static atomic_int_fast64_t fake_now_ms;
 static atomic_bool radio_busy;
 static atomic_bool rx_response_active;
@@ -47,6 +51,18 @@ static uint32_t watchdog_stop_calls;
 static uint32_t reschedule_calls;
 static struct k_work_delayable *last_rescheduled_work;
 static int last_rescheduled_delay_ms;
+static struct k_work_q dedicated_mesh_route_queue;
+static uint32_t mesh_route_reschedule_calls;
+static int mesh_route_reschedule_result;
+static bool gateway_delivery_due_pending;
+static bool gateway_scan_active;
+static uint32_t gateway_delivery_due_begin_calls;
+static uint32_t gateway_delivery_due_end_calls;
+static uint32_t gateway_priority_safe_boundary_calls;
+static int gateway_priority_safe_boundary_results[8];
+static uint32_t scheduling_sequence;
+static uint32_t gateway_priority_schedule_order;
+static uint32_t mesh_route_schedule_order;
 
 static pthread_mutex_t interleave_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t interleave_cond = PTHREAD_COND_INITIALIZER;
@@ -89,6 +105,65 @@ void zephyr_shim_note_work_reschedule(struct k_work_delayable *work,
     reschedule_calls++;
     last_rescheduled_work = work;
     last_rescheduled_delay_ms = timeout;
+}
+
+int mesh_route_work_reschedule(struct k_work_delayable *work,
+                               uint32_t delay_ms)
+{
+    int ret;
+
+    mesh_route_reschedule_calls++;
+    mesh_route_schedule_order = ++scheduling_sequence;
+    ret = k_work_reschedule_for_queue(&dedicated_mesh_route_queue,
+                                      work,
+                                      K_MSEC(delay_ms));
+    return mesh_route_reschedule_result != 0 ?
+           mesh_route_reschedule_result : ret;
+}
+
+int mesh_gateway_command_priority_safe_boundary(void)
+{
+    uint32_t index = gateway_priority_safe_boundary_calls;
+
+    gateway_priority_safe_boundary_calls++;
+    gateway_priority_schedule_order = ++scheduling_sequence;
+    return index < sizeof(gateway_priority_safe_boundary_results) /
+                       sizeof(gateway_priority_safe_boundary_results[0]) ?
+           gateway_priority_safe_boundary_results[index] : 0;
+}
+
+int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary)
+{
+    if (wait_for_scan_boundary == NULL) {
+        return -EINVAL;
+    }
+    gateway_delivery_due_begin_calls++;
+    gateway_delivery_due_pending = true;
+    *wait_for_scan_boundary = gateway_scan_active;
+    if (gateway_scan_active) {
+        receive_abort_calls++;
+        atomic_store(&receive_abort_pending, true);
+    }
+    return 0;
+}
+
+bool mesh_node_comm_gateway_delivery_due_pending(void)
+{
+    return gateway_delivery_due_pending;
+}
+
+bool mesh_node_comm_gateway_delivery_due_ready(void)
+{
+    return gateway_delivery_due_pending && !gateway_scan_active;
+}
+
+bool mesh_node_comm_gateway_delivery_due_end(void)
+{
+    bool was_pending = gateway_delivery_due_pending;
+
+    gateway_delivery_due_end_calls++;
+    gateway_delivery_due_pending = false;
+    return was_pending;
 }
 
 void app_watchdog_stop_feeding(void)
@@ -483,6 +558,20 @@ static void reset_fixture(void)
     reschedule_calls = 0u;
     last_rescheduled_work = NULL;
     last_rescheduled_delay_ms = -1;
+    memset(&dedicated_mesh_route_queue, 0,
+           sizeof(dedicated_mesh_route_queue));
+    mesh_route_reschedule_calls = 0u;
+    mesh_route_reschedule_result = 0;
+    gateway_delivery_due_pending = false;
+    gateway_scan_active = false;
+    gateway_delivery_due_begin_calls = 0u;
+    gateway_delivery_due_end_calls = 0u;
+    gateway_priority_safe_boundary_calls = 0u;
+    memset(gateway_priority_safe_boundary_results, 0,
+           sizeof(gateway_priority_safe_boundary_results));
+    scheduling_sequence = 0u;
+    gateway_priority_schedule_order = 0u;
+    mesh_route_schedule_order = 0u;
     legacy_queue_depth = 3u;
     assert(pthread_mutex_lock(&interleave_lock) == 0);
     block_send = false;
@@ -910,9 +999,20 @@ static void test_delivery_copies_envelope_and_runs_four_rf_opportunities(void)
     for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)(attempt * 40u));
         if (attempt == 0u) {
+            struct k_work_delayable *scheduled_work;
+
             assert(last_rescheduled_work != NULL);
             assert(last_rescheduled_delay_ms == 0);
-            last_rescheduled_work->work.handler(&last_rescheduled_work->work);
+            scheduled_work = last_rescheduled_work;
+            scheduled_work->work.handler(&scheduled_work->work);
+            if (DEVICE_ROLE == ROLE_GATEWAY) {
+                assert(gateway_delivery_due_pending);
+                assert(last_rescheduled_work != scheduled_work);
+                scheduled_work = last_rescheduled_work;
+                assert(scheduled_work->last_queue ==
+                       &dedicated_mesh_route_queue);
+                scheduled_work->work.handler(&scheduled_work->work);
+            }
         } else {
             assert(app_node_comm_service_deliveries() == 0);
         }
@@ -930,6 +1030,213 @@ static void test_delivery_copies_envelope_and_runs_four_rf_opportunities(void)
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(event.attempts_started == 4u);
     assert(app_node_comm_pending_delivery_count() == 0u);
+}
+
+static void test_delivery_schedule_uses_role_queue_path(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(11u);
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        78u,
+        &handle) == 0);
+    assert(handle != 0u);
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        assert(mesh_route_reschedule_calls == 0u);
+        assert(last_rescheduled_work != NULL);
+        assert(last_rescheduled_work->last_queue == NULL);
+        assert(last_rescheduled_delay_ms == 0);
+        {
+            struct k_work_delayable *due_kick = last_rescheduled_work;
+
+            due_kick->work.handler(&due_kick->work);
+        }
+        assert(gateway_delivery_due_begin_calls == 1u);
+        assert(gateway_priority_safe_boundary_calls == 1u);
+        assert(mesh_route_reschedule_calls == 1u);
+        assert(gateway_priority_schedule_order < mesh_route_schedule_order);
+    } else {
+        assert(mesh_route_reschedule_calls == 1u);
+    }
+    assert(last_rescheduled_work != NULL);
+    assert(last_rescheduled_work->last_queue == &dedicated_mesh_route_queue);
+    assert(last_rescheduled_delay_ms == 0);
+}
+
+static void test_gateway_due_kick_aborts_active_scan_at_safe_boundary(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(12u);
+    struct k_work_delayable *due_kick;
+    struct k_work_delayable *delivery_work;
+    uint32_t handle;
+
+    reset_fixture();
+    gateway_scan_active = true;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        79u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    assert(due_kick != NULL);
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_pending);
+    assert(gateway_delivery_due_begin_calls == 1u);
+    assert(receive_abort_calls == 1u);
+    assert(mesh_route_reschedule_calls == 0u);
+
+    /* RX owns the boundary; host priority is scheduled before node_comm. */
+    gateway_scan_active = false;
+    assert(app_node_comm_gateway_delivery_safe_boundary() == 0);
+    assert(mesh_route_reschedule_calls == 1u);
+    assert(gateway_priority_schedule_order < mesh_route_schedule_order);
+    delivery_work = last_rescheduled_work;
+    assert(delivery_work != due_kick);
+    delivery_work->work.handler(&delivery_work->work);
+    assert(try_flood_calls == 1u);
+    assert(!gateway_delivery_due_pending);
+    assert(restart_scan_calls == 1u);
+}
+
+static void test_gateway_due_kick_retries_behind_host_priority(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(14u);
+    struct k_work_delayable *due_kick;
+    uint32_t handle;
+
+    reset_fixture();
+    gateway_priority_safe_boundary_results[0] = -EAGAIN;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        81u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_pending);
+    assert(gateway_delivery_due_begin_calls == 1u);
+    assert(gateway_priority_safe_boundary_calls == 1u);
+    assert(mesh_route_reschedule_calls == 0u);
+    assert(last_rescheduled_work == due_kick);
+    assert(last_rescheduled_delay_ms == 1);
+
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_begin_calls == 1u);
+    assert(gateway_priority_safe_boundary_calls == 2u);
+    assert(mesh_route_reschedule_calls == 1u);
+    assert(gateway_priority_schedule_order < mesh_route_schedule_order);
+    assert(gateway_delivery_due_pending);
+}
+
+static void test_gateway_due_kick_retries_transient_route_queue_failure(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(16u);
+    struct k_work_delayable *due_kick;
+    uint32_t handle;
+
+    reset_fixture();
+    mesh_route_reschedule_result = -EBUSY;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        84u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    due_kick->work.handler(&due_kick->work);
+    assert(!gateway_delivery_due_pending);
+    assert(mesh_route_reschedule_calls == 1u);
+    assert(last_rescheduled_work == due_kick);
+    assert(last_rescheduled_delay_ms == 1);
+    assert(restart_scan_calls == 1u);
+    assert(try_flood_calls == 0u);
+
+    mesh_route_reschedule_result = 0;
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_begin_calls == 2u);
+    assert(gateway_priority_safe_boundary_calls == 2u);
+    assert(mesh_route_reschedule_calls == 2u);
+    assert(gateway_delivery_due_pending);
+}
+
+static void test_gateway_due_gate_cancellation_releases_scan_without_rf(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(13u);
+    struct k_work_delayable *due_kick;
+    uint32_t handle;
+
+    reset_fixture();
+    gateway_scan_active = true;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        80u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_pending);
+    assert(app_node_comm_cancel_delivery(handle) == 0);
+    assert(!gateway_delivery_due_pending);
+    assert(mesh_route_reschedule_calls == 0u);
+    assert(try_flood_calls == 0u);
+    assert(restart_scan_calls == 1u);
+    assert(due_kick->cancel_calls >= 1u);
+}
+
+static void test_gateway_due_gate_pause_and_stop_clear_without_rf(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(15u);
+    struct node_comm_pause_lease pause_lease;
+    struct k_work_delayable *due_kick;
+    uint32_t handle;
+
+    reset_fixture();
+    gateway_scan_active = true;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        82u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_pending);
+    assert(app_node_comm_pause_request(90u, 100u, &pause_lease) == 0);
+    assert(!gateway_delivery_due_pending);
+    assert(try_flood_calls == 0u);
+    assert(due_kick->cancel_calls >= 1u);
+
+    gateway_scan_active = false;
+    atomic_store(&receive_abort_pending, false);
+    assert(app_node_comm_pause_note_quiesced(&pause_lease) == 0);
+    assert(app_node_comm_resume_begin(&pause_lease) == 0);
+    assert(app_node_comm_resume_complete(&pause_lease) == 0);
+    assert(app_node_comm_cancel_delivery(handle) == 0);
+
+    reset_fixture();
+    gateway_scan_active = true;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        83u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_pending);
+    assert(app_node_comm_stop_preserving_queued() == -EINPROGRESS);
+    assert(!gateway_delivery_due_pending);
+    assert(try_flood_calls == 0u);
+    gateway_scan_active = false;
+    atomic_store(&receive_abort_pending, false);
+    assert(app_node_comm_stop_preserving_queued() == 0);
 }
 
 static void test_delivery_pre_rf_busy_defers_without_consuming_attempts(void)
@@ -1200,6 +1507,58 @@ static void test_control_response_pre_rf_phy_block_does_not_spend_attempt(void)
     assert(health.last_attempts_started == 1u);
 }
 
+static void test_gateway_batch_ack_retry_keeps_exact_identity_and_one_terminal(void)
+{
+    struct mesh_outbound response = control_response_envelope(48u);
+    struct mesh_outbound frozen;
+    struct app_node_comm_control_response_health health;
+    uint32_t retry_delay_ms;
+
+    response.payload[0] = UINT8_C(0x04);
+    response.payload[1] = UINT8_C(0x91);
+    frozen = response;
+
+    reset_fixture();
+    try_response_results[0] = -ETIMEDOUT;
+    try_response_sent[0] = true;
+    assert(app_node_comm_submit_control_response(
+        &response, 10000u, UINT32_C(0x4848)) == 0);
+
+    response.packet.seq++;
+    response.payload[0] ^= UINT8_C(0xff);
+    response.payload[1] ^= UINT8_C(0xff);
+    assert(app_node_comm_service_deliveries() == -ETIMEDOUT);
+    assert(app_node_comm_retry_backoff_ms(
+               &frozen, NODE_COMM_PROFILE_CONTROL_RESPONSE,
+               1u, &retry_delay_ms) == 0);
+    atomic_store(&fake_now_ms, retry_delay_ms);
+    assert(app_node_comm_service_deliveries() == 0);
+
+    assert(try_response_calls == 2u);
+    for (uint32_t i = 0u; i < try_response_calls; i++) {
+        assert(try_response_envelopes[i].packet.msg_type ==
+               frozen.packet.msg_type);
+        assert(try_response_envelopes[i].packet.src_id ==
+               frozen.packet.src_id);
+        assert(try_response_envelopes[i].packet.dst_id ==
+               frozen.packet.dst_id);
+        assert(try_response_envelopes[i].packet.session_id ==
+               frozen.packet.session_id);
+        assert(try_response_envelopes[i].packet.seq == frozen.packet.seq);
+        assert(try_response_envelopes[i].next_hop_id == frozen.next_hop_id);
+        assert(try_response_envelopes[i].payload_len == frozen.payload_len);
+        assert(memcmp(try_response_envelopes[i].payload,
+                      frozen.payload,
+                      frozen.payload_len) == 0);
+    }
+    app_node_comm_control_response_health_get(&health);
+    assert(health.submitted == 1u);
+    assert(health.delivered == 1u);
+    assert(health.failed == 0u);
+    assert(health.last_attempts_started == 2u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+}
+
 static void test_control_response_terminal_records_do_not_leak_capacity(void)
 {
     struct app_node_comm_control_response_health health;
@@ -1257,6 +1616,129 @@ static void test_reliable_uplink_waits_for_exact_gateway_confirmation(void)
     assert(event.client_token == 600u);
 }
 
+static void test_reliable_backend_retries_are_observed_without_being_capped(void)
+{
+    struct mesh_outbound envelope = reliable_uplink_envelope(162u);
+    struct node_comm_terminal_event event;
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+        &envelope, NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        100u, 1620u, &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 1u);
+
+    /* The facade observes the backend's retries; it does not cap or reschedule them. */
+    for (uint32_t retry = 0u; retry < 12u; retry++) {
+        atomic_store(&fake_now_ms, (int64_t)retry + 1);
+        assert(app_node_comm_backend_retry_preflight(&envelope.packet) == 0);
+        assert(app_node_comm_note_backend_rf_started(&envelope.packet) == 0);
+    }
+    assert(cancel_uplink_calls == 0u);
+
+    atomic_store(&fake_now_ms, 100);
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) ==
+           -ETIMEDOUT);
+    assert(cancel_uplink_calls == 1u);
+    assert(last_cancelled_uplink.msg_type == envelope.packet.msg_type);
+    assert(last_cancelled_uplink.src_id == envelope.packet.src_id);
+    assert(last_cancelled_uplink.dst_id == envelope.packet.dst_id);
+    assert(last_cancelled_uplink.session_id == envelope.packet.session_id);
+    assert(last_cancelled_uplink.seq == envelope.packet.seq);
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) ==
+           -ETIMEDOUT);
+    assert(cancel_uplink_calls == 1u);
+
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.attempts_started == 13u);
+    assert(event.client_token == 1620u);
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) == 0);
+}
+
+static void test_terminal_race_after_preflight_cannot_restart_backend(void)
+{
+    struct mesh_outbound envelope = reliable_uplink_envelope(163u);
+    struct node_comm_terminal_event event;
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+        &envelope, NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        1000u, 1630u, &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) == 0);
+
+    /* A confirmation can win after preflight but before the RF-start report. */
+    assert(app_node_comm_note_gateway_confirmed(&envelope.packet) == 0);
+    assert(cancel_uplink_calls == 0u);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+    assert(!app_node_comm_take_delivery_event(&event));
+    assert(app_node_comm_note_backend_rf_started(&envelope.packet) ==
+           -ECANCELED);
+    assert(cancel_uplink_calls == 1u);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 2u);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+}
+
+static void test_backend_attempt_completion_gates_cancel_and_auto_reap(void)
+{
+    struct mesh_outbound envelope = reliable_uplink_envelope(165u);
+    struct node_comm_terminal_event event;
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+        &envelope, NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        1000u, 1650u, &handle) == 0);
+    assert(app_node_comm_auto_reap_delivery(handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) == 0);
+
+    assert(app_node_comm_cancel_delivery(handle) == 0);
+    assert(cancel_uplink_calls == 0u);
+    assert(app_node_comm_pending_delivery_count() == 1u);
+    assert(app_node_comm_complete_backend_attempt(&envelope.packet, true) ==
+           -ECANCELED);
+    assert(cancel_uplink_calls == 1u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+}
+
+static void test_backend_false_start_completion_releases_attempt_lease(void)
+{
+    struct mesh_outbound envelope = reliable_uplink_envelope(164u);
+    struct node_comm_terminal_event event;
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+        &envelope, NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        1000u, 1640u, &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) == 0);
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) == -EBUSY);
+    assert(app_node_comm_complete_backend_attempt(&envelope.packet, false) ==
+           0);
+    assert(cancel_uplink_calls == 0u);
+
+    assert(app_node_comm_backend_retry_preflight(&envelope.packet) == 0);
+    assert(app_node_comm_note_gateway_confirmed(&envelope.packet) == 0);
+    assert(cancel_uplink_calls == 0u);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+    assert(app_node_comm_complete_backend_attempt(&envelope.packet, false) ==
+           -ECANCELED);
+    assert(cancel_uplink_calls == 1u);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+}
+
 static void test_reliable_uplink_synchronous_and_late_confirmations_are_bounded(void)
 {
     struct mesh_outbound immediate = reliable_uplink_envelope(61u);
@@ -1280,6 +1762,46 @@ static void test_reliable_uplink_synchronous_and_late_confirmations_are_bounded(
     atomic_store(&fake_now_ms, 100);
     assert(app_node_comm_note_gateway_confirmed(&late.packet) == -ESTALE);
     assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.attempts_started == 1u);
+}
+
+static void test_reliable_uplink_failure_preserves_reason_and_releases_owner(void)
+{
+    struct mesh_outbound first = reliable_uplink_envelope(160u);
+    struct mesh_outbound second = reliable_uplink_envelope(161u);
+    struct proto_packet wrong = first.packet;
+    struct node_comm_terminal_event event;
+    uint32_t first_handle;
+    uint32_t second_handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_protocol_response(
+        &first, 10000u, 1600u, &first_handle) == 0);
+    assert(app_node_comm_submit_protocol_response(
+        &second, 10000u, 1601u, &second_handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 1u);
+
+    wrong.seq += 100u;
+    assert(app_node_comm_note_gateway_failed(
+               &wrong,
+               NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED) == -ENOENT);
+    assert(app_node_comm_note_gateway_failed(
+               &first.packet,
+               NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED) == 0);
+    assert(app_node_comm_take_delivery_event_for(first_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+    assert(event.attempts_started == 1u);
+    assert(event.client_token == 1600u);
+
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 2u);
+    assert(try_uplink_envelopes[1].packet.seq == second.packet.seq);
+    assert(app_node_comm_note_gateway_failed(
+               &second.packet,
+               NODE_COMM_TERMINAL_DEADLINE_EXPIRED) == 0);
+    assert(app_node_comm_take_delivery_event_for(second_handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
     assert(event.attempts_started == 1u);
 }
@@ -1611,6 +2133,172 @@ static void test_retry_backoff_hashes_complete_packet_identity(void)
     assert(changed >= 20u);
 }
 
+static void test_survey_rf_retry_identity_sweep_diversifies_and_caps(void)
+{
+    static const uint32_t expected_base_ms[] = {
+        200u, 400u, 800u, 1600u, 1600u, 1600u, 1600u, 1600u,
+    };
+    uint32_t previous_survey_delay_ms = 0u;
+    uint32_t changed_survey_delays = 0u;
+
+    for (uint32_t survey_index = 0u; survey_index < 256u; survey_index++) {
+        uint32_t schedules[50u][sizeof(expected_base_ms) /
+                                sizeof(expected_base_ms[0])] = {{0}};
+        uint32_t survey_id = UINT32_C(0x50665000) + survey_index + 1u;
+        bool opportunity_diversified = false;
+
+        for (uint32_t anchor = 0u; anchor < 50u; anchor++) {
+            uint64_t anchor_id = UINT64_C(0xa002000000010000) + anchor;
+
+            for (uint16_t round = 1u;
+                 round <= sizeof(expected_base_ms) /
+                              sizeof(expected_base_ms[0]);
+                 round++) {
+                uint32_t base_ms = expected_base_ms[round - 1u];
+                uint32_t delay_ms = 0u;
+
+                assert(app_node_comm_retry_identity_backoff_ms(
+                           anchor_id,
+                           survey_id,
+                           (uint32_t)MSG_SURVEY_DISCOVERY_START << 16,
+                           NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+                           round,
+                           &delay_ms) == 0);
+                assert(delay_ms >= base_ms / 2u);
+                assert(delay_ms <= base_ms + base_ms / 2u);
+                schedules[anchor][round - 1u] = delay_ms;
+                if (anchor == 0u) {
+                    uint32_t next_opportunity_delay_ms = 0u;
+
+                    assert(app_node_comm_retry_identity_backoff_ms(
+                               anchor_id,
+                               survey_id,
+                               ((uint32_t)MSG_SURVEY_DISCOVERY_START << 16) |
+                                   1u,
+                               NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+                               round,
+                               &next_opportunity_delay_ms) == 0);
+                    opportunity_diversified |=
+                        next_opportunity_delay_ms != delay_ms;
+                }
+            }
+        }
+
+        assert(opportunity_diversified);
+
+        for (uint32_t first = 0u; first < 50u; first++) {
+            for (uint32_t second = first + 1u; second < 50u; second++) {
+                bool remained_synchronized = true;
+
+                for (size_t round = 0u;
+                     round < sizeof(expected_base_ms) /
+                                 sizeof(expected_base_ms[0]);
+                     round++) {
+                    if (schedules[first][round] != schedules[second][round]) {
+                        remained_synchronized = false;
+                        break;
+                    }
+                }
+                assert(!remained_synchronized);
+            }
+        }
+
+        if (survey_index > 0u &&
+            schedules[0][0] != previous_survey_delay_ms) {
+            changed_survey_delays++;
+        }
+        previous_survey_delay_ms = schedules[0][0];
+    }
+
+    assert(changed_survey_delays >= 100u);
+    assert(app_node_comm_retry_identity_backoff_ms(
+               0u, 1u, 1u,
+               NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+               1u, &(uint32_t){0}) == -EINVAL);
+    assert(app_node_comm_retry_identity_backoff_ms(
+               1u, 0u, 1u,
+               NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+               1u, &(uint32_t){0}) == -EINVAL);
+}
+
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+static void test_transmitter_freezes_four_full_payloads_with_protocol_reserve(void)
+{
+    struct mesh_outbound envelopes[4u];
+    struct mesh_outbound blocked = reliable_uplink_envelope(140u);
+    struct mesh_outbound protocol = reliable_uplink_envelope(141u);
+    struct node_comm_terminal_event event;
+    uint8_t expected[4u][900u];
+    uint32_t handles[4u];
+    uint32_t blocked_handle = 0u;
+    uint32_t protocol_handle;
+
+    assert(APP_NODE_COMM_MAX_DELIVERIES == 5u);
+    assert(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ==
+           PACKET_EXT_MAX_PAYLOAD_LEN);
+    reset_fixture();
+    for (size_t request = 0u; request < 4u; request++) {
+        envelopes[request] = reliable_uplink_envelope(
+            (uint16_t)(129u + request));
+        for (size_t byte = 0u; byte < sizeof(expected[request]); byte++) {
+            expected[request][byte] =
+                (uint8_t)(byte ^ (byte >> 8) ^ (request * 37u));
+        }
+        memcpy(envelopes[request].payload,
+               expected[request],
+               sizeof(expected[request]));
+        envelopes[request].payload_len =
+            (uint16_t)sizeof(expected[request]);
+        envelopes[request].packet.payload_len =
+            (uint16_t)sizeof(expected[request]);
+        assert(app_node_comm_submit_reliable_uplink(
+                   &envelopes[request],
+                   60000u,
+                   (uint32_t)(129u + request),
+                   &handles[request]) == 0);
+    }
+
+    assert(app_node_comm_submit_reliable_uplink(
+               &blocked, 60000u, 140u, &blocked_handle) == -ENOSPC);
+    assert(blocked_handle == 0u);
+    assert(app_node_comm_submit_protocol_response(
+               &protocol, 60000u, 141u, &protocol_handle) == 0);
+    assert(app_node_comm_pending_delivery_count() == 5u);
+
+    for (size_t request = 0u; request < 4u; request++) {
+        memset(envelopes[request].payload,
+               0,
+               sizeof(expected[request]));
+        envelopes[request].packet.seq++;
+    }
+    memset(&protocol, 0, sizeof(protocol));
+    memset(try_uplink_confirmed, 1, 5u * sizeof(try_uplink_confirmed[0]));
+
+    /* Protocol priority consumes the reserved fifth slot before source work. */
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_envelopes[0].packet.seq == 141u);
+    assert(app_node_comm_take_delivery_event_for(protocol_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+
+    for (size_t request = 0u; request < 4u; request++) {
+        assert(app_node_comm_service_deliveries() == 0);
+        assert(try_uplink_envelopes[request + 1u].payload_len ==
+               sizeof(expected[request]));
+        assert(memcmp(try_uplink_envelopes[request + 1u].payload,
+                      expected[request],
+                      sizeof(expected[request])) == 0);
+        assert(try_uplink_envelopes[request + 1u].packet.seq ==
+               (uint16_t)(129u + request));
+        assert(app_node_comm_take_delivery_event_for(handles[request],
+                                                     &event));
+        assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+        assert(event.attempts_started == 1u);
+    }
+    assert(try_uplink_calls == 5u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+}
+#endif
+
 static void test_durable_uplink_uses_shared_reliable_backend(void)
 {
     struct mesh_outbound envelope = reliable_uplink_envelope(130u);
@@ -1644,6 +2332,14 @@ int main(void)
     test_pause_expiry_preserves_full_64_bit_uptime();
     test_send_stays_closed_until_backend_resume_is_ready();
     test_delivery_copies_envelope_and_runs_four_rf_opportunities();
+    test_delivery_schedule_uses_role_queue_path();
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        test_gateway_due_kick_aborts_active_scan_at_safe_boundary();
+        test_gateway_due_kick_retries_behind_host_priority();
+        test_gateway_due_kick_retries_transient_route_queue_failure();
+        test_gateway_due_gate_cancellation_releases_scan_without_rf();
+        test_gateway_due_gate_pause_and_stop_clear_without_rf();
+    }
     test_delivery_pre_rf_busy_defers_without_consuming_attempts();
     test_auto_reaped_control_flood_retries_without_leaking_handle();
     test_gateway_control_flood_preempts_queued_control_response();
@@ -1652,9 +2348,15 @@ int main(void)
     test_control_response_retry_exhaustion_is_terminal_and_reaped();
     test_control_response_phy_errors_consume_four_real_attempts();
     test_control_response_pre_rf_phy_block_does_not_spend_attempt();
+    test_gateway_batch_ack_retry_keeps_exact_identity_and_one_terminal();
     test_control_response_terminal_records_do_not_leak_capacity();
     test_reliable_uplink_waits_for_exact_gateway_confirmation();
+    test_reliable_backend_retries_are_observed_without_being_capped();
+    test_terminal_race_after_preflight_cannot_restart_backend();
+    test_backend_false_start_completion_releases_attempt_lease();
+    test_backend_attempt_completion_gates_cancel_and_auto_reap();
     test_reliable_uplink_synchronous_and_late_confirmations_are_bounded();
+    test_reliable_uplink_failure_preserves_reason_and_releases_owner();
     test_reliable_uplinks_serialize_single_flight_backend();
     test_cancelling_reliable_uplink_releases_backend_owner();
     test_protocol_response_preempts_ordinary_reliable_uplink();
@@ -1665,6 +2367,10 @@ int main(void)
     test_delivery_queue_survives_stop_and_restart();
     test_inflight_delivery_is_accounted_before_preserving_stop();
     test_retry_backoff_hashes_complete_packet_identity();
+    test_survey_rf_retry_identity_sweep_diversifies_and_caps();
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+    test_transmitter_freezes_four_full_payloads_with_protocol_reserve();
+#endif
     test_durable_uplink_uses_shared_reliable_backend();
     return 0;
 }

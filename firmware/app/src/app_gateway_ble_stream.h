@@ -72,15 +72,20 @@ struct gateway_ble_stream_item {
     uint8_t priority;
     bool retain_until_sent;
     uint32_t queued_at_ms;
+    uint32_t received_at_ms;
     struct proto_packet packet;
 };
 
 struct gateway_ble_stream_state {
     uint8_t record_pool[GATEWAY_BLE_STREAM_RECORD_POOL_BYTES];
+    /* An active reservation owns the final item slot but is not in count. */
     struct gateway_ble_stream_item items[GATEWAY_BLE_STREAM_QUEUE_DEPTH];
     uint16_t pool_used;
+    uint16_t reservation_payload_len;
+    uint16_t reservation_payload_crc;
     uint8_t count;
     bool head_send_active;
+    bool reservation_active;
     struct gateway_ble_stream_diagnostics diagnostics;
 };
 
@@ -101,6 +106,20 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
                                       uint32_t received_at_ms,
                                       uint32_t now_ms,
                                       bool ble_ready);
+int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
+                                      const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t received_at_ms,
+                                      uint32_t now_ms,
+                                      bool ble_ready);
+int gateway_ble_stream_commit_reservation(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
+void gateway_ble_stream_cancel_reservation(
+    struct gateway_ble_stream_state *state);
 unsigned int gateway_ble_stream_drain(struct gateway_ble_stream_state *state,
                                       gateway_ble_stream_send_fn send_fn,
                                       void *send_ctx,

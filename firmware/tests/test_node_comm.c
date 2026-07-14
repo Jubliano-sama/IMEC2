@@ -1114,6 +1114,114 @@ static void test_late_gateway_confirmation_cannot_revive_expired_delivery(void)
     assert(node_comm_confirm_delivery(&comm, handle, 101u) == -ENOENT);
 }
 
+static void test_backend_rf_starts_are_accounted_without_changing_retry_policy(void)
+{
+    struct node_comm comm;
+    struct node_comm_request uplink = request_with(
+        906u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 100u);
+    struct node_comm_terminal_event event;
+    struct node_comm_terminal_event peeked;
+    struct node_comm_lease lease;
+    uint8_t attempts = 0u;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &uplink, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 1u) == 0);
+
+    /* The legacy backend owns retry policy; facade accounting must not cap it. */
+    for (uint32_t retry = 0u; retry < 12u; retry++) {
+        assert(node_comm_note_backend_rf_started(&comm,
+                                                 handle,
+                                                 2u + retry) == 0);
+    }
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 13u);
+    assert(!node_comm_peek_terminal_event_for(&comm, handle, &peeked));
+
+    assert(node_comm_confirm_delivery(&comm, handle, 20u) == 0);
+    assert(node_comm_peek_terminal_event_for(&comm, handle, &peeked));
+    assert(peeked.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(peeked.attempts_started == 13u);
+    assert(node_comm_note_backend_rf_started(&comm, handle, 20u) ==
+           -EALREADY);
+    assert(node_comm_peek_terminal_event_for(&comm, handle, &peeked));
+    assert(peeked.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(peeked.attempts_started == 14u);
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 14u);
+    assert(!node_comm_take_terminal_event_for(&comm, handle, &event));
+
+    uplink.client_token++;
+    uplink.absolute_deadline_ms = 50u;
+    handle = submit_request(&comm, &uplink, 21u);
+    assert(node_comm_acquire(&comm, 21u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 21u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 21u) == 0);
+    assert(node_comm_note_backend_rf_started(&comm, handle, 49u) == 0);
+    assert(node_comm_note_backend_rf_started(&comm, handle, 50u) ==
+           -ETIMEDOUT);
+    assert(node_comm_peek_terminal_event_for(&comm, handle, &peeked));
+    assert(peeked.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(peeked.attempts_started == 3u);
+    assert(node_comm_note_backend_rf_started(&comm, handle, 51u) ==
+           -EALREADY);
+    assert(node_comm_peek_terminal_event_for(&comm, handle, &peeked));
+    assert(peeked.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(peeked.attempts_started == 4u);
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.attempts_started == 4u);
+    assert(!node_comm_take_terminal_event_for(&comm, handle, &event));
+}
+
+static void test_gateway_failure_is_exact_and_preserves_terminal_reason(void)
+{
+    struct node_comm comm;
+    struct node_comm_request failed = request_with(
+        904u, NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE, 1000u);
+    struct node_comm_request queued = request_with(
+        905u, NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE, 1000u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t failed_handle;
+    uint32_t queued_handle;
+
+    init_running(&comm, 0u);
+    failed_handle = submit_request(&comm, &failed, 0u);
+    queued_handle = submit_request(&comm, &queued, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(lease.handle == failed_handle);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 1u) == 0);
+
+    assert(node_comm_fail_delivery(
+               &comm, queued_handle,
+               NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, 2u) == -EAGAIN);
+    assert(node_comm_fail_delivery(
+               &comm, failed_handle,
+               NODE_COMM_TERMINAL_DELIVERED, 2u) == -EINVAL);
+    assert(node_comm_fail_delivery(
+               &comm, failed_handle + 100u,
+               NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, 2u) == -ENOENT);
+    assert(node_comm_fail_delivery(
+               &comm, failed_handle,
+               NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, 2u) == 0);
+    assert(node_comm_fail_delivery(
+               &comm, failed_handle,
+               NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, 2u) == -EALREADY);
+
+    assert(node_comm_take_terminal_event_for(&comm, failed_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+    assert(event.attempts_started == 1u);
+    assert(node_comm_pending_count(&comm) == 1u);
+    assert(node_comm_acquire(&comm, 2u, &lease) == 0);
+    assert(lease.handle == queued_handle);
+}
+
 static void test_durable_retry_backoff_diversifies_fifty_reporters(void)
 {
     for (uint16_t round = 1u; round <= 16u; round++) {
@@ -1178,6 +1286,8 @@ int main(void)
     test_all_delivery_profiles_have_fixed_priority_order();
     test_gateway_confirmation_is_exact_and_does_not_hold_scheduler();
     test_late_gateway_confirmation_cannot_revive_expired_delivery();
+    test_backend_rf_starts_are_accounted_without_changing_retry_policy();
+    test_gateway_failure_is_exact_and_preserves_terminal_reason();
     test_durable_retry_backoff_diversifies_fifty_reporters();
     test_deterministic_state_and_request_sweep();
     return 0;

@@ -5,6 +5,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = (ROOT / "app/src/app_mesh_report.c").read_text()
+REPORT_HEADER = (ROOT / "app/src/app_mesh_report.h").read_text()
 ANCHOR = (ROOT / "app/src/app_anchor.c").read_text()
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
 SURVEY_RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
@@ -80,6 +81,82 @@ assert "rf_sent" in owned
 direct = function_body(REPORT, "mesh_send_direct_gateway_payload_and_wait_ack")
 assert "anchor_survey_delivery_gateway_confirmed" in direct
 assert "&out->packet" in direct
+
+gateway_accept_wrapper = function_body(
+    REPORT, "mesh_report_gateway_handle_survey_discovery_report"
+)
+assert re.search(
+    r"\bint\s*\(\*gateway_handle_survey_discovery_report\)", REPORT_HEADER
+), "gateway survey callback must report semantic acceptance"
+assert "return mesh_report_callbacks->gateway_handle_survey_discovery_report(" in (
+    gateway_accept_wrapper
+)
+assert "return -ENOTSUP;" in gateway_accept_wrapper
+
+gateway_accept = function_body(ANCHOR, "gateway_handle_survey_discovery_report")
+pair_accept = function_body(ANCHOR, "gateway_note_survey_pair_result")
+transport_check = gateway_accept.index("packet->dst_id != DEVICE_ID")
+pair_dispatch = gateway_accept.index("gateway_note_survey_pair_result(")
+report_decode = gateway_accept.index("survey_extract_reach_report_tlvs(")
+assert transport_check < pair_dispatch < report_decode, (
+    "both survey report classes must pass the common transport gate"
+)
+for rejected_transport in (
+    "packet->payload_len != payload_len",
+    "packet->src_id == DEVICE_ID",
+    "radio_channel != UWB_CHANNEL_MESH_PAYLOAD",
+    "FLAG_GATEWAY_ACK_REQUIRED",
+    "!mesh_id_is_unicast(previous_hop_id)",
+    "previous_hop_id == DEVICE_ID",
+    "link_quality > 100u",
+):
+    assert rejected_transport in gateway_accept
+assert "packet->session_id != survey_id" in gateway_accept
+assert "packet->src_id != anchor_id" in gateway_accept
+assert "return -ESTALE;" in gateway_accept
+duplicate_report = gateway_accept[
+    gateway_accept.index("if (duplicate_report)") :
+    gateway_accept.index("reverse_hint =")
+]
+assert "return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;" in duplicate_report, (
+    "a valid previously recorded reach report must remain ACK-eligible"
+)
+assert gateway_accept.index("if (duplicate_report)") < gateway_accept.index(
+    "if (gateway_survey_auto.running)"
+), "an accepted report duplicate must survive orchestration phase advance"
+plan_tail = gateway_accept[
+    gateway_accept.index("ret = survey_gateway_plan_pairs(") :
+]
+assert re.search(
+    r"if \(ret != PROTO_OK\).*?return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;",
+    plan_tail,
+    re.S,
+), (
+    "pair-planning failure after report storage must not revoke acceptance"
+)
+
+for required_sample_field in (
+    "TLV_SURVEY_ID",
+    "TLV_INITIATOR_ID",
+    "TLV_RESPONDER_ID",
+    "TLV_SAMPLE_COUNT",
+    "TLV_SAMPLE_INDEX",
+    "TLV_DISTANCE_MM",
+    "TLV_QUALITY",
+    "TLV_RANGE_STATUS",
+):
+    assert required_sample_field in pair_accept
+assert "survey_sample_validate(&sample)" in pair_accept
+assert "packet->session_id != sample.pair.survey_id" in pair_accept
+assert "packet->src_id != sample.pair.initiator_id" in pair_accept
+assert "packet->src_id != sample.pair.responder_id" in pair_accept
+duplicate_sample = pair_accept[
+    pair_accept.index("gateway_survey_pair_result_mask & sample_bit") :
+    pair_accept.index("gateway_survey_pair_result_mask |= sample_bit")
+]
+assert "return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;" in duplicate_sample, (
+    "a valid previously recorded pair sample must remain ACK-eligible"
+)
 
 relay_ack = function_body(REPORT, "mesh_handle_result_actions")
 assert "anchor_survey_delivery_gateway_confirmed" in relay_ack
@@ -170,10 +247,12 @@ assert run.count("dwm3000_driver_configure_wake_mode(") == 1, (
 )
 assert "dwm3000_driver_idle(" in run and "sleep_until_ms(start_ms)" in run
 assert "sleep_with_uwb_standby_until_ms(" not in run
-send_index = run.index("dwm3000_driver_send_frame(")
+send_index = run.index("send_local_survey_probe(")
 ensure_index = run.index("dwm3000_driver_ensure_wake_mode(", send_index)
 post_tx_rx_index = run.index("receive_survey_probes_until(", ensure_index)
 assert send_index < ensure_index < post_tx_rx_index
+probe_send = function_body(DISCOVERY, "send_local_survey_probe")
+assert "dwm3000_driver_send_frame_tracked(" in probe_send
 assert run.count("receive_survey_probes_until(") >= 2, (
     "discovery must listen both before and after its own probe airtime"
 )

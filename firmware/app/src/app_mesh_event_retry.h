@@ -1,0 +1,97 @@
+#ifndef APP_MESH_EVENT_RETRY_H
+#define APP_MESH_EVENT_RETRY_H
+
+#include "app_mesh_rf_retry.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct app_mesh_event_request_identity {
+    uint64_t source_id;
+    uint32_t session_id;
+    uint16_t sequence;
+    uint32_t payload_fingerprint;
+    uint16_t payload_len;
+    uint8_t message_type;
+};
+
+enum app_mesh_event_request_match {
+    APP_MESH_EVENT_REQUEST_NEW = 0,
+    APP_MESH_EVENT_REQUEST_DUPLICATE,
+    APP_MESH_EVENT_REQUEST_CONFLICT,
+    APP_MESH_EVENT_REQUEST_BUSY,
+};
+
+struct app_mesh_event_retry_state {
+    struct app_mesh_event_request_identity request;
+    struct app_mesh_rf_retry_key retry_key;
+    struct app_mesh_rf_retry_state retry;
+    uint64_t peer_id;
+    uint32_t deadline_ms;
+    uint32_t retry_due_ms;
+    uint32_t phase_anchor_ms;
+    uint32_t event_interval_ms;
+    uint16_t phase_slop_ms;
+    uint16_t rf_attempts;
+    uint16_t pre_rf_deferrals;
+    bool active;
+    bool response_sent;
+    bool timing_installed;
+};
+
+struct app_mesh_event_completion {
+    struct app_mesh_event_request_identity request;
+    uint64_t peer_id;
+    uint32_t expires_at_ms;
+    bool valid;
+};
+
+uint32_t app_mesh_event_payload_fingerprint(const uint8_t *payload,
+                                            size_t payload_len);
+enum app_mesh_event_request_match app_mesh_event_retry_match(
+    const struct app_mesh_event_retry_state *state,
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request);
+int app_mesh_event_retry_begin(
+    struct app_mesh_event_retry_state *state,
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request,
+    const struct app_mesh_rf_retry_key *retry_key,
+    uint32_t now_ms,
+    uint32_t deadline_ms,
+    uint32_t event_interval_ms,
+    uint16_t phase_slop_ms);
+int app_mesh_event_retry_resume_backoff(
+    struct app_mesh_event_retry_state *state,
+    uint16_t retry_round);
+bool app_mesh_event_retry_note_failure(
+    struct app_mesh_event_retry_state *state,
+    enum app_mesh_rf_retry_policy policy,
+    uint32_t now_ms,
+    uint32_t attempt_entropy,
+    bool rf_started,
+    uint32_t *delay_ms);
+void app_mesh_event_retry_note_send_success(
+    struct app_mesh_event_retry_state *state);
+bool app_mesh_event_retry_claim_timing_install(
+    struct app_mesh_event_retry_state *state);
+bool app_mesh_event_retry_due(const struct app_mesh_event_retry_state *state,
+                              uint32_t now_ms);
+bool app_mesh_event_retry_expired(
+    const struct app_mesh_event_retry_state *state,
+    uint32_t now_ms);
+void app_mesh_event_retry_clear(struct app_mesh_event_retry_state *state);
+enum app_mesh_event_request_match app_mesh_event_completion_match(
+    const struct app_mesh_event_completion *completion,
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request,
+    uint32_t now_ms);
+int app_mesh_event_completion_store(
+    struct app_mesh_event_completion *completion,
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request,
+    uint32_t now_ms,
+    uint32_t expires_at_ms);
+
+#endif

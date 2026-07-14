@@ -27,15 +27,15 @@ uint32_t app_wake_train_politeness_backoff_ms(uint8_t retry_index,
     uint32_t jitter_window_ms;
 
     for (uint8_t i = 0u; i < retry_index; i++) {
-        if (base_ms >= APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS / 2u) {
-            base_ms = APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS;
+        if (base_ms >= APP_WAKE_TRAIN_POLITE_BACKOFF_CAPPED_BASE_MS / 2u) {
+            base_ms = APP_WAKE_TRAIN_POLITE_BACKOFF_CAPPED_BASE_MS;
             break;
         }
         base_ms *= 2u;
     }
 
-    if (base_ms > APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS) {
-        base_ms = APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS;
+    if (base_ms > APP_WAKE_TRAIN_POLITE_BACKOFF_CAPPED_BASE_MS) {
+        base_ms = APP_WAKE_TRAIN_POLITE_BACKOFF_CAPPED_BASE_MS;
     }
     jitter_window_ms = APP_WAKE_TRAIN_POLITE_BACKOFF_MAX_MS - base_ms;
     if (jitter_window_ms >= base_ms) {

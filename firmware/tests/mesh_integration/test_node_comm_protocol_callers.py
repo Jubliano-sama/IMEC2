@@ -255,8 +255,89 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         )
         self.assertLess(
             finalize.index("survey_gateway_auto_no_unstarted_pairs("),
-            finalize.index("gateway_survey_auto_finish()"),
+            finalize.index("GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL"),
         )
+        self.assertLess(
+            worker.index("gateway_survey_finalize_pair_observation()"),
+            worker.index("gateway_survey_auto_finish()"),
+        )
+
+    def test_survey_finish_graph_is_acyclic_and_terminal_is_exactly_once(self):
+        names = (
+            "gateway_survey_finalize_pair_observation",
+            "gateway_survey_auto_finish_status",
+            "gateway_survey_auto_finish",
+            "gateway_survey_work_handler",
+        )
+        bodies = {
+            name: function_body(self.anchor, name)
+            for name in names
+        }
+        graph = {
+            name: {
+                target for target in names
+                if re.search(rf"\b{re.escape(target)}\s*\(", body)
+            }
+            for name, body in bodies.items()
+        }
+        remaining = set(names)
+        while remaining:
+            sinks = {
+                name for name in remaining
+                if not (graph[name] & remaining)
+            }
+            self.assertTrue(sinks, f"recursive survey finish graph: {graph}")
+            remaining -= sinks
+
+        finalize = bodies["gateway_survey_finalize_pair_observation"]
+        finish = bodies["gateway_survey_auto_finish_status"]
+        automatic = bodies["gateway_survey_auto_finish"]
+        self.assertNotIn("gateway_survey_auto_finish(", finalize)
+        self.assertNotIn("gateway_survey_auto_finish_status(", finalize)
+        self.assertEqual(1, automatic.count("gateway_survey_auto_finish_status("))
+        self.assertEqual(1, finish.count("gateway_observe_survey_terminal("))
+        self.assertLess(
+            finish.index("if (!gateway_survey_active)"),
+            finish.index("gateway_observe_survey_terminal("),
+        )
+        self.assertLess(
+            finish.index("gateway_observe_survey_terminal("),
+            finish.index("gateway_survey_active = false"),
+        )
+        self.assertIn(
+            "GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL",
+            bodies["gateway_survey_work_handler"],
+        )
+        self.assertNotIn("gateway_command_survey_terminal_outcome(", finish)
+        self.assertIn("gateway_command_survey_terminal_outcome(", automatic)
+        self.assertLess(
+            finalize.index("gateway_survey_observe_with_custody("),
+            finalize.index("gateway_survey_pair_observation_active = false"),
+        )
+
+    def test_explicit_survey_deadline_reason_survives_final_pair_flush(self):
+        worker = function_body(self.anchor, "gateway_survey_work_handler")
+        finish = function_body(
+            self.anchor, "gateway_survey_auto_finish_status"
+        )
+        deadline = re.search(
+            r"gateway_survey_budget_explicit\s*&&.*?"
+            r"gateway_survey_auto_finish_status\s*\(\s*COMMAND_TIMEOUT\s*,\s*"
+            r"GATEWAY_COMMAND_EVENT_REASON_TIMEOUT\s*\)",
+            worker,
+            re.DOTALL,
+        )
+
+        self.assertIsNotNone(deadline)
+        self.assertLess(
+            worker.index("gateway_survey_operation_deadline_ms"),
+            worker.index("gateway_survey_finalize_pair_observation()"),
+        )
+        self.assertLess(
+            finish.index("gateway_survey_finalize_pair_observation()"),
+            finish.index("gateway_observe_survey_terminal(status, reason)"),
+        )
+        self.assertNotIn("gateway_command_survey_terminal_outcome(", finish)
 
     def test_survey_cleanup_completion_publishes_next_pair_wake(self):
         scheduler = function_body(self.anchor,

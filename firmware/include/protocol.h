@@ -284,6 +284,7 @@ enum tlv_type {
     TLV_ATTEMPT_INDEX = 0xA9,
     TLV_DETECTION_SOURCE = 0xAA,
     TLV_COMMAND_BUDGET_MS = 0xAB,
+    TLV_EACK_PACKET_SEQUENCE = 0xAC,
 };
 
 enum detection_source {
@@ -449,6 +450,7 @@ struct gateway_collection_eack {
     uint16_t membership_epoch;
     uint16_t expected_count;
     uint16_t received_count;
+    uint16_t packet_sequence;
     uint8_t eack_format;
     uint8_t retry_round;
     uint32_t next_retry_spread_ms;
@@ -538,6 +540,11 @@ int gateway_collection_eack_append_tlvs(uint8_t *payload,
 int gateway_collection_eack_from_tlvs(const uint8_t *payload,
                                       size_t payload_len,
                                       struct gateway_collection_eack *eack);
+int gateway_collection_eack_packet_validate(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_collection_eack *eack);
 int gateway_collection_eack_contains_node_id(const uint8_t *payload,
                                              size_t payload_len,
                                              uint64_t node_id,

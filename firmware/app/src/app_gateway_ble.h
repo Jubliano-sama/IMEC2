@@ -39,6 +39,22 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
                               const uint8_t *payload,
                               size_t payload_len,
                               uint32_t received_at_ms);
+int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t received_at_ms);
+int gateway_ble_commit_stream_reservation(const struct proto_packet *packet,
+                                          const uint8_t *payload,
+                                          size_t payload_len);
+void gateway_ble_cancel_stream_reservation(void);
+int gateway_finalize_semantic_delivery(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint8_t received_radio_channel,
+    const struct mesh_event_plan *current_channel9_plan,
+    int semantic_acceptance);
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics);
 int gateway_observe_command_event(struct gateway_command_event *event,
                                   bool terminal);
@@ -65,18 +81,18 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
                                              const uint64_t *node_ids,
                                              size_t node_count);
 void gateway_clear_registered_membership_roster(void);
-void gateway_note_command_result(const struct proto_packet *packet,
-                                 const uint8_t *payload,
-                                 size_t payload_len,
-                                 uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel,
-                                 const struct mesh_event_plan *current_channel9_plan);
-void gateway_note_command_result_bundle(const struct proto_packet *packet,
-                                        const uint8_t *payload,
-                                        size_t payload_len,
-                                        uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel,
-                                        const struct mesh_event_plan *current_channel9_plan);
+int gateway_note_command_result(const struct proto_packet *packet,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                uint64_t previous_hop_id,
+                                uint8_t received_radio_channel,
+                                const struct mesh_event_plan *current_channel9_plan);
+int gateway_note_command_result_bundle(const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint64_t previous_hop_id,
+                                       uint8_t received_radio_channel,
+                                       const struct mesh_event_plan *current_channel9_plan);
 void gateway_command_result_tracking_init(void);
 
 #endif

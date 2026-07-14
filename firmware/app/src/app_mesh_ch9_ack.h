@@ -14,6 +14,8 @@
 #else
 #define APP_MESH_CH9_ACK_BATCH_ENTRY_MAX 8u
 #endif
+#define APP_MESH_CH9_ACK_RETRY_BASE_MS 50u
+#define APP_MESH_CH9_ACK_RETRY_BASE_MAX_MS 400u
 
 struct app_mesh_ch9_tx_ack_entry {
     uint32_t session_id;
@@ -78,9 +80,12 @@ struct app_mesh_ch9_ack_batch {
     struct app_mesh_ch9_ack_batch_entry
         entries[APP_MESH_CH9_ACK_BATCH_ENTRY_MAX];
     uint64_t peer_id;
+    uint32_t retry_not_before_ms;
+    uint16_t retry_round;
     uint8_t count;
     bool valid;
     bool preserve_payload;
+    bool retry_deferred;
 };
 
 /* One slot for the production upstream and one for the downstream peer. */
@@ -127,6 +132,20 @@ int app_mesh_ch9_ack_table_build_peer(
 bool app_mesh_ch9_ack_table_clear_peer(
     struct app_mesh_ch9_ack_table *table,
     uint64_t peer_id);
+bool app_mesh_ch9_ack_table_retry_ready(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    uint32_t now_ms);
+uint32_t app_mesh_ch9_ack_table_retry_wait_ms(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    uint32_t now_ms);
+int app_mesh_ch9_ack_table_note_send_failure(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    uint32_t now_ms,
+    uint32_t attempt_entropy,
+    uint32_t *delay_ms_out);
 
 /* The batch remains owned by the table unless the flush callback succeeds. */
 int app_mesh_ch9_ack_table_flush_peer(
@@ -178,10 +197,16 @@ bool app_mesh_ch9_tx_timeout_counts_route_failure(
     uint64_t next_hop_id,
     uint64_t gateway_id);
 
+/*
+ * local_origin_priority_needs_capacity is an explicit caller-owned pressure
+ * signal. A downstream reservation alone never authorizes dropping transit
+ * custody.
+ */
 enum app_mesh_ch9_timeout_pressure_action
 app_mesh_ch9_timeout_pressure_decide(const struct mesh_outbound *outbound,
                                      bool anchor_role,
                                      bool downstream_reserved,
+                                     bool local_origin_priority_needs_capacity,
                                      uint64_t local_id);
 
 bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,

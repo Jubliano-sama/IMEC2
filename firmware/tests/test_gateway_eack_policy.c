@@ -316,7 +316,7 @@ static void test_channel9_uses_second_candidate_without_c5_flood(void)
     assert(ctx.sent_channel9.radio_channel == MESH_EVENT_CHANNEL);
     assert(result.mode == APP_GATEWAY_EACK_SEND_CHANNEL9);
     assert(result.channel9_candidate_count == 2u);
-    assert(result.channel9_attempt_count == 2u);
+    assert(result.channel9_attempt_count == 1u);
     assert(result.channel9_plan_ret == 0);
     assert(result.channel9_prepare_ret == 0);
     assert(result.channel9_send_ret == 0);
@@ -349,45 +349,65 @@ static void test_duplicate_and_invalid_candidates_are_not_planned(void)
     assert(ctx.sent_channel9.next_hop_id == HOP_B);
     assert(result.mode == APP_GATEWAY_EACK_SEND_CHANNEL9);
     assert(result.channel9_candidate_count == 2u);
-    assert(result.channel9_attempt_count == 2u);
+    assert(result.channel9_attempt_count == 1u);
     assert(result.channel9_prepare_ret == 0);
     assert(result.channel9_next_hop_id == HOP_B);
 }
 
-static void test_falls_back_to_c5_only_after_all_channel9_sends_fail(void)
+static void test_failed_send_never_falls_through_to_another_rf_lane(void)
 {
-    struct policy_test_ctx ctx = {0};
-    struct mesh_outbound eack;
-    struct app_gateway_eack_policy_result result;
-    const struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
-    const uint64_t candidates[] = {HOP_A, HOP_B};
+    const uint64_t candidates[] = {
+        HOP_A,
+        HOP_B,
+        UINT64_C(0x3333444455556666),
+        UINT64_C(0x4444555566667777),
+        UINT64_C(0x5555666677778888),
+        UINT64_C(0x6666777788889999),
+        UINT64_C(0x777788889999aaaa),
+        UINT64_C(0x88889999aaaabbbb),
+    };
+    const int failures[] = {-EIO, -ETIMEDOUT, -EBUSY};
 
-    ctx.send_channel9_returns[0] = -EIO;
-    ctx.send_channel9_returns[1] = -EIO;
-    init_eack(&eack);
-    eack.earliest_tx_ms = 4242u;
-    assert(app_gateway_eack_send_to_candidates(&eack,
-                                               candidates,
-                                               sizeof(candidates) / sizeof(candidates[0]),
-                                               &ops,
-                                               &result) == 0);
-    assert(ctx.plan_count == 2);
-    assert(ctx.prepare_count == 2);
-    assert(ctx.send_channel9_count == 2);
-    assert(ctx.send_c5_count == 1);
-    assert(ctx.note_tx_count == 1);
-    assert(ctx.note_channel9_count == 0);
-    assert(ctx.sent_c5.next_hop_id == MESH_BROADCAST_ID);
-    assert(ctx.sent_c5.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
-    assert(ctx.sent_c5.earliest_tx_ms == 0u);
-    assert(eack.next_hop_id == MESH_BROADCAST_ID);
-    assert(eack.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
-    assert(eack.earliest_tx_ms == 0u);
-    assert(result.mode == APP_GATEWAY_EACK_SEND_C5_FLOOD);
-    assert(result.channel9_candidate_count == 2u);
-    assert(result.channel9_attempt_count == 2u);
-    assert(result.channel9_send_ret == -EIO);
-    assert(result.c5_send_ret == 0);
+    for (size_t failure_index = 0u;
+         failure_index < sizeof(failures) / sizeof(failures[0]);
+         failure_index++) {
+        for (size_t candidate_count = 1u;
+             candidate_count <= sizeof(candidates) / sizeof(candidates[0]);
+             candidate_count++) {
+            struct policy_test_ctx ctx = {0};
+            struct mesh_outbound eack;
+            struct mesh_outbound original_eack;
+            struct app_gateway_eack_policy_result result;
+            const struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
+
+            ctx.send_channel9_returns[0] = failures[failure_index];
+            init_eack(&eack);
+            eack.earliest_tx_ms = 4242u;
+            eack.payload[0] = 0xa5u;
+            eack.payload_len = 1u;
+            original_eack = eack;
+
+            assert(app_gateway_eack_send_to_candidates(&eack,
+                                                       candidates,
+                                                       candidate_count,
+                                                       &ops,
+                                                       &result) ==
+                   failures[failure_index]);
+            assert(ctx.plan_count == 1);
+            assert(ctx.prepare_count == 1);
+            assert(ctx.send_channel9_count == 1);
+            assert(ctx.send_c5_count == 0);
+            assert(ctx.note_tx_count == 0);
+            assert(ctx.note_channel9_count == 0);
+            assert(memcmp(&eack, &original_eack, sizeof(eack)) == 0);
+            assert(result.mode == APP_GATEWAY_EACK_SEND_NONE);
+            assert(result.channel9_candidate_count == 1u);
+            assert(result.channel9_attempt_count == 1u);
+            assert(result.channel9_next_hop_id == HOP_A);
+            assert(result.channel9_send_ret == failures[failure_index]);
+            assert(result.c5_send_ret == 0);
+        }
+    }
 }
 
 static void test_no_return_candidates_uses_bounded_c5_recovery(void)
@@ -414,13 +434,54 @@ static void test_no_return_candidates_uses_bounded_c5_recovery(void)
     assert(ctx.sent_c5.radio_channel == UWB_CHANNEL_WAKE_CONTACT);
 }
 
+static void test_c5_pre_rf_deferrals_never_complete_a_round(void)
+{
+    const int deferrals[] = {
+        -EAGAIN,
+        -EBUSY,
+        -ENOSPC,
+        -ETIMEDOUT,
+    };
+
+    for (size_t i = 0u; i < sizeof(deferrals) / sizeof(deferrals[0]); i++) {
+        struct policy_test_ctx ctx = {
+            .c5_return = deferrals[i],
+        };
+        struct mesh_outbound eack;
+        struct mesh_outbound original;
+        struct app_gateway_eack_policy_result result;
+        const struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
+
+        init_eack(&eack);
+        eack.payload[0] = (uint8_t)i;
+        eack.payload_len = 1u;
+        original = eack;
+
+        assert(app_gateway_eack_send_to_candidates(&eack,
+                                                   NULL,
+                                                   0u,
+                                                   &ops,
+                                                   &result) == deferrals[i]);
+        assert(ctx.send_c5_count == 1);
+        assert(ctx.note_tx_count == 0);
+        assert(ctx.note_channel9_count == 0);
+        assert(result.mode == APP_GATEWAY_EACK_SEND_NONE);
+        assert(result.c5_send_ret == deferrals[i]);
+        assert(eack.packet.session_id == original.packet.session_id);
+        assert(eack.packet.seq == original.packet.seq);
+        assert(eack.payload_len == original.payload_len);
+        assert(eack.payload[0] == original.payload[0]);
+    }
+}
+
 int main(void)
 {
     test_current_channel9_success_preempts_later_candidates();
     test_current_channel9_failure_stays_on_negotiated_lane();
     test_channel9_uses_second_candidate_without_c5_flood();
     test_duplicate_and_invalid_candidates_are_not_planned();
-    test_falls_back_to_c5_only_after_all_channel9_sends_fail();
+    test_failed_send_never_falls_through_to_another_rf_lane();
     test_no_return_candidates_uses_bounded_c5_recovery();
+    test_c5_pre_rf_deferrals_never_complete_a_round();
     return 0;
 }

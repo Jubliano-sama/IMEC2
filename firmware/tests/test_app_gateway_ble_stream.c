@@ -452,6 +452,250 @@ static void test_pool_holds_core_click_and_two_cir_records(void)
     assert(state.pool_used <= GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
 }
 
+static void test_reservation_reports_full_queue_backpressure(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_ble_stream_diagnostics diag;
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 1u);
+    struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 20u);
+    uint8_t payload[1] = {0x5au};
+
+    gateway_ble_stream_init(&state);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        click.seq = i;
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &click,
+                                                 payload,
+                                                 sizeof(payload),
+                                                 0u,
+                                                 i,
+                                                 true) == 1);
+    }
+    assert(gateway_ble_stream_reserve_packet(&state,
+                                             &result,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             10u,
+                                             true) == -ENOSPC);
+    assert(!state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) ==
+           GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    gateway_ble_stream_get_diagnostics(&state, 10u, &diag);
+    assert(diag.drops_queue_full == 1u);
+
+    gateway_ble_stream_init(&state);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        click.seq = i;
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &click,
+                                                 payload,
+                                                 sizeof(payload),
+                                                 0u,
+                                                 i,
+                                                 false) == 1);
+    }
+    assert(gateway_ble_stream_reserve_packet(&state,
+                                             &result,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             10u,
+                                             false) == -ENOTCONN);
+    gateway_ble_stream_get_diagnostics(&state, 10u, &diag);
+    assert(diag.drops_not_ready == 1u);
+}
+
+static void test_reservation_protects_capacity_and_cancel_releases_it(void)
+{
+    struct gateway_ble_stream_state state;
+    struct proto_packet reserved = packet(MSG_CLICK_REPORT, 0u, 1u);
+    struct proto_packet other = packet(MSG_CLICK_REPORT, 0u, 2u);
+    uint8_t payload[GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN];
+
+    fill_payload(payload, sizeof(payload));
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_reserve_packet(
+               &state,
+               &reserved,
+               payload,
+               sizeof(payload),
+               0u,
+               1u,
+               true) == 1);
+    assert(state.reservation_active);
+    assert(state.pool_used == 0u);
+    assert(gateway_ble_stream_depth(&state) == 0u);
+    assert(state.items[GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u].len ==
+           GATEWAY_BLE_STREAM_RECORD_MAX_LEN);
+    assert(state.reservation_payload_len == sizeof(payload));
+    assert(gateway_ble_stream_reserve_packet(&state,
+                                             &other,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             2u,
+                                             true) == -EBUSY);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &other,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             2u,
+                                             true) == -ENOSPC);
+    assert(state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) == 0u);
+
+    gateway_ble_stream_cancel_reservation(&state);
+    assert(!state.reservation_active);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &other,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             2u,
+                                             true) == 1);
+}
+
+static void test_reservation_commit_is_exact_and_single_use(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_ble_stream_state expected;
+    struct gateway_ble_stream_diagnostics diag;
+    struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 41u);
+    struct proto_packet wrong;
+    const uint8_t *record = NULL;
+    const uint8_t *expected_record = NULL;
+    uint8_t payload[7] = {1u, 3u, 5u, 7u, 9u, 11u, 13u};
+    uint8_t wrong_payload[sizeof(payload)];
+    size_t record_len = 0u;
+    size_t expected_len = 0u;
+
+    result.payload_len = sizeof(payload);
+    gateway_ble_stream_init(&state);
+    gateway_ble_stream_init(&expected);
+    assert(gateway_ble_stream_reserve_packet(&state,
+                                             &result,
+                                             payload,
+                                             sizeof(payload),
+                                             100u,
+                                             123u,
+                                             true) == 1);
+
+    wrong = result;
+    wrong.seq++;
+    assert(gateway_ble_stream_commit_reservation(&state,
+                                                 &wrong,
+                                                 payload,
+                                                 sizeof(payload)) == -ESTALE);
+    memcpy(wrong_payload, payload, sizeof(payload));
+    wrong_payload[3] ^= 0x80u;
+    assert(gateway_ble_stream_commit_reservation(&state,
+                                                 &result,
+                                                 wrong_payload,
+                                                 sizeof(wrong_payload)) ==
+           -ESTALE);
+    assert(gateway_ble_stream_commit_reservation(&state,
+                                                 &result,
+                                                 payload,
+                                                 sizeof(payload) - 1u) ==
+           -ESTALE);
+    assert(state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) == 0u);
+
+    assert(gateway_ble_stream_commit_reservation(&state,
+                                                 &result,
+                                                 payload,
+                                                 sizeof(payload)) == 1);
+    assert(!state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) == 1u);
+    assert(gateway_ble_stream_enqueue_packet(&expected,
+                                             &result,
+                                             payload,
+                                             sizeof(payload),
+                                             100u,
+                                             123u,
+                                             true) == 1);
+    assert(gateway_ble_stream_peek(&state, &record, &record_len) == 0);
+    assert(gateway_ble_stream_peek(&expected,
+                                   &expected_record,
+                                   &expected_len) == 0);
+    assert(record_len == expected_len);
+    assert(memcmp(record, expected_record, record_len) == 0);
+    assert(gateway_ble_stream_commit_reservation(&state,
+                                                 &result,
+                                                 payload,
+                                                 sizeof(payload)) == -ENOENT);
+    assert(gateway_ble_stream_depth(&state) == 1u);
+    gateway_ble_stream_get_diagnostics(&state, 124u, &diag);
+    assert(diag.enqueue_attempts == 1u);
+}
+
+static void test_reservation_uses_priority_eviction_and_survives_drain(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_ble_stream_diagnostics diag;
+    struct send_capture capture = {0};
+    struct proto_packet status = packet(MSG_ANCHOR_HEARTBEAT, 0u, 1u);
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 50u);
+    struct proto_packet other = packet(MSG_ANCHOR_HEARTBEAT, 0u, 60u);
+    uint8_t payload[1] = {0x33u};
+
+    gateway_ble_stream_init(&state);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        status.seq = i;
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &status,
+                                                 payload,
+                                                 sizeof(payload),
+                                                 0u,
+                                                 i,
+                                                 true) == 1);
+    }
+    assert(gateway_ble_stream_reserve_packet(&state,
+                                             &click,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             10u,
+                                             true) == 1);
+    assert(state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) == 2u);
+    gateway_ble_stream_get_diagnostics(&state, 10u, &diag);
+    assert(diag.drops_priority == 1u);
+
+    assert(gateway_ble_stream_drain(&state,
+                                    capture_send,
+                                    &capture,
+                                    11u,
+                                    true,
+                                    1u) == 1u);
+    assert(state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) == 1u);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &other,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             12u,
+                                             true) == 1);
+    other.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &other,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             13u,
+                                             true) == -ENOSPC);
+    assert(state.reservation_active);
+    assert(gateway_ble_stream_commit_reservation(&state,
+                                                 &click,
+                                                 payload,
+                                                 sizeof(payload)) == 1);
+    assert(gateway_ble_stream_depth(&state) ==
+           GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+}
+
 static void test_ble_recovery_backoff_is_random_exponential_and_capped(void)
 {
     assert(gateway_ble_recovery_backoff_ms(0u, 0u) == 250u);
@@ -474,6 +718,10 @@ int main(void)
     test_fast_drain_and_counters();
     test_active_head_cannot_be_evicted();
     test_pool_holds_core_click_and_two_cir_records();
+    test_reservation_reports_full_queue_backpressure();
+    test_reservation_protects_capacity_and_cancel_releases_it();
+    test_reservation_commit_is_exact_and_single_use();
+    test_reservation_uses_priority_eviction_and_survives_drain();
     test_ble_recovery_backoff_is_random_exponential_and_capped();
     return 0;
 }

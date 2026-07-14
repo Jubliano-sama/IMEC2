@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import heapq
 import json
 import re
 import subprocess
@@ -97,6 +98,7 @@ class BuildEvidence:
     app_object_count: int = 0
     linked_usage_count: int = 0
     attributed_usage_count: int = 0
+    synchronous_usage_bytes: dict[str, int] = field(default_factory=dict)
     elf_path: Path | None = None
     hex_path: Path | None = None
     elf_sha256: str = ""
@@ -445,6 +447,275 @@ def _parse_cgraph(path: Path, source_name: str) -> dict[tuple[str, str], set[str
     return nodes
 
 
+def _parse_synchronous_cgraph(
+    path: Path, source_name: str
+) -> dict[tuple[str, str], set[str]]:
+    """Parse the final optimized, non-inlined Calls edges from a GCC dump."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    optimized_markers = list(re.finditer(
+        r"^Optimized Symbol table:\s*$", text, re.MULTILINE
+    ))
+    if not optimized_markers:
+        raise EvidenceError(
+            f"compiler call graph lacks an optimized symbol table {path}"
+        )
+    start = optimized_markers[-1].end()
+    end_marker = re.search(
+        r"^(?:Removing variables:|Final Symbol table:)\s*$",
+        text[start:],
+        re.MULTILINE,
+    )
+    end = start + end_marker.start() if end_marker is not None else len(text)
+    optimized = text[start:end]
+
+    nodes: dict[tuple[str, str], set[str]] = {}
+    pattern = re.compile(
+        r"^([^\s/]+)/\d+ \(([^)]+)\).*?(?=^[^\s/]+/\d+ \(|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    for match in pattern.finditer(optimized):
+        block = match.group(0)
+        if "Type: function definition analyzed" not in block:
+            continue
+        symbol = match.group(1)
+        targets: set[str] = set()
+        calls = re.search(r"^  Calls:\s*(.*)$", block, re.MULTILINE)
+        if calls is not None:
+            call_line = calls.group(1)
+            call_matches = list(re.finditer(r"([^\s/]+)/\d+", call_line))
+            for index, target_match in enumerate(call_matches):
+                metadata_end = (
+                    call_matches[index + 1].start()
+                    if index + 1 < len(call_matches)
+                    else len(call_line)
+                )
+                metadata = call_line[target_match.end():metadata_end]
+                if "(inlined)" in metadata:
+                    continue
+                targets.add(target_match.group(1))
+        nodes.setdefault((source_name, symbol), set()).update(targets)
+    if not nodes:
+        raise EvidenceError(
+            f"compiler optimized call graph has no analyzed definitions {path}"
+        )
+    return nodes
+
+
+def _synchronous_cgraph(
+    cgraphs: dict[tuple[str, str], set[str]],
+    linked_by_key: dict[tuple[str, str], list[StackUsage]],
+) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """Resolve only compiler-proved synchronous calls between app functions."""
+    graph_nodes = set(cgraphs)
+    by_function: dict[str, set[tuple[str, str]]] = {}
+    for node in linked_by_key:
+        by_function.setdefault(node[1], set()).add(node)
+
+    resolved: dict[tuple[str, str], set[tuple[str, str]]] = {
+        node: set()
+        for node in graph_nodes
+        if not node[1].startswith(_CGRAPH_VARIABLE_PREFIX)
+    }
+    for node in resolved:
+        for target in cgraphs.get(node, set()):
+            if target.startswith(_CGRAPH_REFERENCE_PREFIX):
+                continue
+            local = (node[0], target)
+            if local in resolved:
+                candidates = (local,)
+            else:
+                candidates = by_function.get(target, ())
+            resolved[node].update(
+                candidate for candidate in candidates if candidate in resolved
+            )
+    return resolved
+
+
+def _strongly_connected_components(
+    adjacency: dict[tuple[str, str], set[tuple[str, str]]],
+    nodes: set[tuple[str, str]],
+) -> list[set[tuple[str, str]]]:
+    """Return SCCs with iterative Kosaraju passes bounded by nodes plus edges."""
+    visited: set[tuple[str, str]] = set()
+    finish_order: list[tuple[str, str]] = []
+    for start in sorted(nodes):
+        if start in visited:
+            continue
+        visited.add(start)
+        pending: list[
+            tuple[tuple[str, str], list[tuple[str, str]], int]
+        ] = [(start, sorted(adjacency.get(start, set())), 0)]
+        while pending:
+            node, targets, index = pending[-1]
+            if index >= len(targets):
+                pending.pop()
+                finish_order.append(node)
+                continue
+            target = targets[index]
+            pending[-1] = (node, targets, index + 1)
+            if target in nodes and target not in visited:
+                visited.add(target)
+                pending.append((
+                    target,
+                    sorted(adjacency.get(target, set())),
+                    0,
+                ))
+
+    reverse: dict[tuple[str, str], set[tuple[str, str]]] = {
+        node: set() for node in nodes
+    }
+    for node in nodes:
+        for target in adjacency.get(node, set()):
+            if target in nodes:
+                reverse[target].add(node)
+
+    components: list[set[tuple[str, str]]] = []
+    visited.clear()
+    for start in reversed(finish_order):
+        if start in visited:
+            continue
+        component: set[tuple[str, str]] = set()
+        pending = [start]
+        visited.add(start)
+        while pending:
+            node = pending.pop()
+            component.add(node)
+            for target in reverse[node]:
+                if target not in visited:
+                    visited.add(target)
+                    pending.append(target)
+        components.append(component)
+    return components
+
+
+def _format_stack_path(
+    start: tuple[str, str],
+    successor: dict[tuple[str, str], tuple[str, str] | None],
+) -> str:
+    path: list[str] = []
+    node: tuple[str, str] | None = start
+    seen: set[tuple[str, str]] = set()
+    while node is not None and node not in seen and len(path) < 12:
+        seen.add(node)
+        path.append(f"{node[0]}:{node[1]}")
+        node = successor.get(node)
+    if node is not None:
+        path.append("...")
+    return " -> ".join(path)
+
+
+def _validate_synchronous_stack_chains(
+    evidence: BuildEvidence,
+    policy: PresetPolicy,
+    linked: list[StackUsage],
+    cgraphs: dict[tuple[str, str], set[str]],
+    owners: dict[tuple[str, str], set[str]],
+) -> None:
+    linked_by_key: dict[tuple[str, str], list[StackUsage]] = {}
+    for record in linked:
+        linked_by_key.setdefault((record.source.name, record.function), []).append(record)
+    adjacency = _synchronous_cgraph(cgraphs, linked_by_key)
+    synchronous_owners = {
+        node: owners.get((node[0], _canonical_function(node[1])), set())
+        for node in adjacency
+    }
+    weights = {
+        node: max((record.bytes_used for record in linked_by_key.get(node, ())),
+                  default=0)
+        for node in adjacency
+    }
+    owner_names = sorted({
+        owner for node_owners in synchronous_owners.values()
+        for owner in node_owners
+    })
+    for owner in owner_names:
+        owner_nodes = {
+            node for node in adjacency
+            if owner in synchronous_owners.get(node, set())
+        }
+        owner_adjacency = {
+            node: {
+                target for target in adjacency[node]
+                if target in owner_nodes
+            }
+            for node in owner_nodes
+        }
+        if not owner_nodes:
+            continue
+
+        cyclic_components = []
+        for component in _strongly_connected_components(
+            owner_adjacency, owner_nodes
+        ):
+            if len(component) > 1 or any(
+                node in owner_adjacency.get(node, set())
+                for node in component
+            ):
+                cyclic_components.append(component)
+        if cyclic_components:
+            for component in cyclic_components:
+                functions = sorted(
+                    f"{node[0]}:{node[1]}" for node in component
+                )
+                if len(functions) > 8:
+                    functions = functions[:8] + ["..."]
+                evidence.issues.append(
+                    "recursive synchronous compiler call graph "
+                    f"owner={owner}: {', '.join(functions)}"
+                )
+            continue
+
+        indegree = {node: 0 for node in owner_nodes}
+        for targets in owner_adjacency.values():
+            for target in targets:
+                indegree[target] += 1
+        ready = [node for node, count in indegree.items() if count == 0]
+        heapq.heapify(ready)
+        topological: list[tuple[str, str]] = []
+        while ready:
+            node = heapq.heappop(ready)
+            topological.append(node)
+            for target in sorted(owner_adjacency[node]):
+                indegree[target] -= 1
+                if indegree[target] == 0:
+                    heapq.heappush(ready, target)
+        if len(topological) != len(owner_nodes):
+            evidence.issues.append(
+                "synchronous compiler call graph could not be bounded "
+                f"owner={owner}"
+            )
+            continue
+
+        depths: dict[tuple[str, str], int] = {}
+        successor: dict[tuple[str, str], tuple[str, str] | None] = {}
+        for node in reversed(topological):
+            next_node = max(
+                owner_adjacency[node],
+                key=lambda target: (depths[target], target),
+                default=None,
+            )
+            successor[node] = next_node
+            depths[node] = weights[node] + (
+                depths[next_node] if next_node else 0
+            )
+
+        depth, start = max(
+            (depths[node], node) for node in owner_nodes
+        )
+        evidence.synchronous_usage_bytes[owner] = depth
+        capacity = _owner_capacity(policy, owner)
+        required_free = _required_free(
+            capacity,
+            service=owner in {"isr", "bt_rx", "fatal_context"},
+        )
+        if capacity == 0 or depth + required_free > capacity:
+            evidence.issues.append(
+                f"compiler synchronous stack chain {depth} plus required "
+                f"free {required_free} exceeds configured {capacity} "
+                f"owner={owner}: {_format_stack_path(start, successor)}"
+            )
+
+
 def _attribute_linked_functions(
     evidence: BuildEvidence,
     policy: PresetPolicy,
@@ -452,6 +723,7 @@ def _attribute_linked_functions(
     cgraphs: dict[tuple[str, str], set[str]],
     roots: dict[tuple[str, str], set[str]],
     frame_limit: int,
+    synchronous_cgraphs: dict[tuple[str, str], set[str]] | None = None,
 ) -> None:
     linked_by_key: dict[tuple[str, str], list[StackUsage]] = {}
     for record in linked:
@@ -524,6 +796,13 @@ def _attribute_linked_functions(
                         f"compiler owner bound failed for {record.source.name}:{record.function} owner={owner}"
                     )
         evidence.attributed_usage_count += len(records)
+    _validate_synchronous_stack_chains(
+        evidence,
+        policy,
+        linked,
+        synchronous_cgraphs if synchronous_cgraphs is not None else cgraphs,
+        owners,
+    )
 
 
 def _required_free(size: int, service: bool = False) -> int:
@@ -578,6 +857,7 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
         roots = load_thread_roots()
         records: list[StackUsage] = []
         cgraphs: dict[tuple[str, str], set[str]] = {}
+        synchronous_cgraphs: dict[tuple[str, str], set[str]] = {}
         for object_path, source_path in objects:
             usage_path = (build_dir / object_path).with_suffix(".su")
             if not usage_path.is_file():
@@ -602,11 +882,26 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
             except OSError as exc:
                 evidence.issues.append(f"cannot resolve application source {source_path}: {exc}")
             cgraphs.update(_parse_cgraph(graph_path, source_path.name))
-        linked = [record for record in records if _canonical_function(record.function) in symbols]
+            synchronous_cgraphs.update(
+                _parse_synchronous_cgraph(graph_path, source_path.name)
+            )
+        linked = [
+            record for record in records
+            if record.function in symbols or
+            _canonical_function(record.function) in symbols
+        ]
         evidence.linked_usage_count = len(linked)
         if not linked:
             evidence.issues.append("no linked application functions matched compiler evidence")
-        _attribute_linked_functions(evidence, policy, linked, cgraphs, roots, frame_limit)
+        _attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            cgraphs,
+            roots,
+            frame_limit,
+            synchronous_cgraphs,
+        )
     except (OSError, EvidenceError, ValueError) as exc:
         evidence.issues.append(str(exc))
     return evidence

@@ -645,6 +645,54 @@ static bool survey_peer_reportable(uint64_t peer_id)
            peer_id != GATEWAY_ID;
 }
 
+static int schedule_survey_probe_retry(
+    const struct survey_discovery_config *config,
+    uint32_t retry_origin_ms,
+    uint32_t absolute_deadline_ms,
+    struct survey_discovery_probe_attempt *attempt)
+{
+    int ret;
+
+    ret = survey_discovery_probe_attempt_defer(
+        attempt, config, DEVICE_ID, retry_origin_ms, absolute_deadline_ms);
+    if (ret != PROTO_OK) {
+        return ret == PROTO_ERR_BUSY ? -ETIMEDOUT : mesh_errno_from_proto(ret);
+    }
+    status_debug_printf(
+        "DBG_SURVEY_PROBE_DEFER survey=%u opportunity=%u round=%u delay_ms=%u deadline_ms=%u\n",
+        config->survey_id,
+        attempt->opportunity,
+        attempt->retry_round,
+        attempt->due_ms - retry_origin_ms,
+        absolute_deadline_ms);
+    return 0;
+}
+
+static bool survey_probe_slot_matches_any_opportunity(
+    const struct survey_discovery_config *config,
+    const struct uwb_survey_discovery_probe_frame *probe,
+    uint8_t *opportunity_out)
+{
+    if (config == NULL || probe == NULL) {
+        return false;
+    }
+    for (uint8_t opportunity = 0u;
+         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+         opportunity++) {
+        if (probe->anchor_slot == survey_discovery_opportunity_slot(
+                                      probe->anchor_id,
+                                      config->survey_id,
+                                      opportunity,
+                                      config->slot_count)) {
+            if (opportunity_out != NULL) {
+                *opportunity_out = opportunity;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 static void survey_add_reach_entry(struct survey_reachability_entry *entries,
                                    size_t entry_cap,
                                    size_t *entry_count,
@@ -677,7 +725,6 @@ static void survey_add_reach_entry(struct survey_reachability_entry *entries,
 
 static void receive_survey_probes_until(
     const struct survey_discovery_config *config,
-    uint8_t opportunity,
     uint32_t deadline_ms,
     struct survey_reachability_entry *entries,
     size_t entry_cap,
@@ -689,6 +736,7 @@ static void receive_survey_probes_until(
         uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
         size_t frame_len = 0u;
         uint8_t quality = 0u;
+        uint8_t opportunity = 0u;
         int8_t rsl_dbm = 0;
         enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
         uint32_t remaining_ms = uptime_ms_until_deadline(k_uptime_get_32(),
@@ -710,9 +758,8 @@ static void receive_survey_probes_until(
             probe.survey_id != config->survey_id ||
             probe.anchor_id == DEVICE_ID ||
             probe.slot_count != config->slot_count ||
-            probe.anchor_slot != survey_discovery_opportunity_slot(
-                                     probe.anchor_id, config->survey_id,
-                                     opportunity, config->slot_count)) {
+            !survey_probe_slot_matches_any_opportunity(config, &probe,
+                                                       &opportunity)) {
             continue;
         }
         if (quality > 100u) {
@@ -734,6 +781,37 @@ static void receive_survey_probes_until(
                              probe.anchor_slot, quality, rsl_dbm,
                              (unsigned int)*entry_count);
     }
+}
+
+static int send_local_survey_probe(
+    const struct survey_discovery_config *config,
+    uint8_t opportunity,
+    uint8_t *slot_out,
+    bool *rf_started)
+{
+    struct uwb_survey_discovery_probe_frame probe = {
+        .network_id = NETWORK_ID,
+        .survey_id = config->survey_id,
+        .anchor_id = DEVICE_ID,
+        .slot_count = config->slot_count,
+        .flags = FLAG_DIAGNOSTIC,
+    };
+    uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
+    size_t frame_len = 0u;
+    int ret;
+
+    probe.anchor_slot = survey_discovery_opportunity_slot(
+        DEVICE_ID, config->survey_id, opportunity, config->slot_count);
+    if (slot_out != NULL) {
+        *slot_out = probe.anchor_slot;
+    }
+    ret = uwb_encode_survey_discovery_probe(&probe, frame, sizeof(frame),
+                                            &frame_len);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    return dwm3000_driver_send_frame_tracked(
+        frame, frame_len, SURVEY_DISCOVERY_TX_TIMEOUT_MS, rf_started);
 }
 
 int app_anchor_survey_discovery_run(
@@ -765,116 +843,199 @@ int app_anchor_survey_discovery_run(
 
     report_slot = local_survey_discovery_slot(config->slot_count);
     {
+        struct survey_discovery_probe_attempt
+            retry_states[SURVEY_DISCOVERY_OPPORTUNITY_COUNT] = {0};
+        uint32_t discovery_duration_ms =
+            survey_discovery_duration_ms(config);
+        uint32_t nominal_duration_ms = discovery_duration_ms / 2u;
+        uint32_t reserve_start_ms = start_ms + nominal_duration_ms;
+        uint32_t discovery_deadline_ms = start_ms + discovery_duration_ms;
+        uint32_t tx_budget_ms = survey_discovery_probe_tx_budget_ms();
         uint8_t deferred_mask = 0u;
-        uint8_t actual_attempt_count = 0u;
 
-        for (uint8_t phase = 0u; phase < 2u; phase++) {
-            for (uint8_t opportunity = 0u;
-                 opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT &&
-                 !abort_requested();
-                 opportunity++) {
-                struct uwb_survey_discovery_probe_frame probe = {
-                    .network_id = NETWORK_ID,
-                    .survey_id = config->survey_id,
-                    .anchor_id = DEVICE_ID,
-                    .slot_count = config->slot_count,
-                    .flags = FLAG_DIAGNOSTIC,
-                };
-                struct survey_discovery_attempt_schedule nominal = {0};
-                struct survey_discovery_attempt_schedule attempt = {0};
-                uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
-                size_t frame_len = 0u;
-                uint32_t opportunity_start_ms;
-                uint32_t opportunity_tx_ms;
-                uint32_t opportunity_end_ms;
-                uint32_t relative_now_ms;
-                bool should_tx;
+        if (discovery_duration_ms == 0u || nominal_duration_ms == 0u ||
+            tx_budget_ms == UINT32_MAX) {
+            return -EINVAL;
+        }
+        for (uint8_t opportunity = 0u;
+             opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+             opportunity++) {
+            if (survey_discovery_probe_attempt_begin(
+                    &retry_states[opportunity], opportunity) != PROTO_OK) {
+                return -EINVAL;
+            }
+        }
 
-                ret = survey_discovery_schedule_attempt(config, DEVICE_ID,
-                                                        opportunity, 0u,
-                                                        &nominal);
-                if (ret != PROTO_OK) {
-                    return mesh_errno_from_proto(ret);
-                }
-                if (phase == 0u) {
-                    attempt = nominal;
-                    should_tx = true;
-                } else {
-                    ret = survey_discovery_schedule_attempt(
-                        config, DEVICE_ID, opportunity,
-                        nominal.latest_tx_start_ms + 1u, &attempt);
-                    if (ret != PROTO_OK || !attempt.deferred) {
-                        return ret == PROTO_OK ? -EINVAL :
-                               mesh_errno_from_proto(ret);
-                    }
-                    should_tx = (deferred_mask & (1u << opportunity)) != 0u;
-                }
-                probe.anchor_slot = survey_discovery_opportunity_slot(
-                    DEVICE_ID, config->survey_id, opportunity,
-                    config->slot_count);
-                opportunity_start_ms = start_ms + attempt.window_start_ms;
-                opportunity_tx_ms = start_ms + attempt.tx_ms;
-                opportunity_end_ms = start_ms + attempt.window_end_ms;
+        for (uint8_t opportunity = 0u;
+             opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT &&
+             !abort_requested();
+             opportunity++) {
+            struct survey_discovery_attempt_schedule nominal = {0};
+            uint32_t opportunity_start_ms;
+            uint32_t opportunity_tx_ms;
+            uint32_t opportunity_end_ms;
+            uint32_t retry_origin_ms;
+            uint32_t relative_now_ms;
+            uint8_t probe_slot = 0u;
+            bool rf_started = false;
 
-                if (!uptime_deadline_reached(k_uptime_get_32(),
-                                             opportunity_start_ms)) {
-                    sleep_until_ms(opportunity_start_ms);
-                }
-                if (!uptime_deadline_reached(k_uptime_get_32(),
-                                             opportunity_tx_ms)) {
-                    receive_survey_probes_until(
-                        config, opportunity, opportunity_tx_ms, entries,
-                        ARRAY_SIZE(entries), &entry_count);
-                }
-                relative_now_ms = k_uptime_get_32() - start_ms;
-                if (should_tx &&
-                    relative_now_ms > attempt.latest_tx_start_ms) {
-                    if (phase == 0u) {
-                        deferred_mask |= (uint8_t)(1u << opportunity);
-                        should_tx = false;
-                    } else {
-                        return -EBUSY;
-                    }
-                }
+            ret = survey_discovery_schedule_attempt(config, DEVICE_ID,
+                                                    opportunity, 0u,
+                                                    &nominal);
+            if (ret != PROTO_OK) {
+                return mesh_errno_from_proto(ret);
+            }
+            opportunity_start_ms = start_ms + nominal.window_start_ms;
+            opportunity_tx_ms = start_ms + nominal.tx_ms;
+            opportunity_end_ms = start_ms + nominal.window_end_ms;
 
-                if (should_tx) {
-                    ret = uwb_encode_survey_discovery_probe(
-                        &probe, frame, sizeof(frame), &frame_len);
-                    if (ret != PROTO_OK) {
-                        return mesh_errno_from_proto(ret);
-                    }
-                    ret = dwm3000_driver_send_frame(
-                        frame, frame_len, SURVEY_DISCOVERY_TX_TIMEOUT_MS);
-                    if (ret < 0) {
-                        if (phase == 0u) {
-                            deferred_mask |= (uint8_t)(1u << opportunity);
-                        }
-                        LOG_WRN("survey discovery probe TX failed: survey=%u opportunity=%u slot=%u deferred=%u ret=%d",
-                                config->survey_id, opportunity,
-                                probe.anchor_slot, phase, ret);
-                    } else {
-                        actual_attempt_count++;
-                        high_debug_log_event(
-                            "SURVEY_DISCOVERY_PROBE_TX",
-                            "survey=%u opportunity=%u slot=%u slot_ms=%u deferred=%u",
-                            config->survey_id, opportunity,
-                            probe.anchor_slot, config->slot_ms, phase);
-                    }
-                    ret = dwm3000_driver_ensure_wake_mode();
-                    if (ret < 0) {
-                        return ret;
-                    }
-                }
+            if (!uptime_deadline_reached(k_uptime_get_32(),
+                                         opportunity_start_ms)) {
+                sleep_until_ms(opportunity_start_ms);
+            }
+            if (!uptime_deadline_reached(k_uptime_get_32(),
+                                         opportunity_tx_ms)) {
                 receive_survey_probes_until(
-                    config, opportunity, opportunity_end_ms, entries,
+                    config, opportunity_tx_ms, entries,
                     ARRAY_SIZE(entries), &entry_count);
+            }
+            relative_now_ms = k_uptime_get_32() - start_ms;
+            if (relative_now_ms <= nominal.latest_tx_start_ms) {
+                ret = send_local_survey_probe(config, opportunity,
+                                              &probe_slot, &rf_started);
+                if (rf_started) {
+                    if (survey_discovery_probe_attempt_note_rf_started(
+                            &retry_states[opportunity]) != PROTO_OK) {
+                        return -EINVAL;
+                    }
+                    high_debug_log_event(
+                        "SURVEY_DISCOVERY_PROBE_TX",
+                        "survey=%u opportunity=%u slot=%u slot_ms=%u deferred=0 completion_ret=%d",
+                        config->survey_id, opportunity, probe_slot,
+                        config->slot_ms, ret);
+                }
+                if (ret < 0) {
+                    LOG_WRN("survey discovery probe TX failed: survey=%u opportunity=%u slot=%u deferred=0 rf_started=%u ret=%d",
+                            config->survey_id, opportunity, probe_slot,
+                            rf_started ? 1u : 0u, ret);
+                }
+                ret = dwm3000_driver_ensure_wake_mode();
+                if (ret < 0) {
+                    return ret;
+                }
+            }
+            if (!rf_started) {
+                uint32_t now_ms = k_uptime_get_32();
+
+                deferred_mask |= (uint8_t)(1u << opportunity);
+                retry_origin_ms = uptime_deadline_reached(now_ms,
+                                                          reserve_start_ms) ?
+                                  now_ms : reserve_start_ms;
+                ret = schedule_survey_probe_retry(
+                    config, retry_origin_ms, discovery_deadline_ms,
+                    &retry_states[opportunity]);
+                if (ret < 0 && ret != -ETIMEDOUT) {
+                    return ret;
+                }
+            }
+            receive_survey_probes_until(
+                config, opportunity_end_ms, entries,
+                ARRAY_SIZE(entries), &entry_count);
+        }
+
+        while (deferred_mask != 0u && !abort_requested() &&
+               !uptime_deadline_reached(k_uptime_get_32(),
+                                        discovery_deadline_ms)) {
+            uint32_t now_ms = k_uptime_get_32();
+            uint32_t next_delay_ms = UINT32_MAX;
+            uint8_t next_opportunity = SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+            uint8_t probe_slot = 0u;
+            bool rf_started = false;
+
+            for (uint8_t opportunity = 0u;
+                 opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                 opportunity++) {
+                uint32_t delay_ms;
+
+                if (!retry_states[opportunity].pending) {
+                    continue;
+                }
+                delay_ms = uptime_deadline_reached(
+                               now_ms, retry_states[opportunity].due_ms) ?
+                           0u : uptime_ms_until_deadline(
+                                    now_ms,
+                                    retry_states[opportunity].due_ms);
+                if (delay_ms < next_delay_ms) {
+                    next_delay_ms = delay_ms;
+                    next_opportunity = opportunity;
+                }
+            }
+            if (next_opportunity >= SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+                break;
+            }
+            if (next_delay_ms != 0u) {
+                receive_survey_probes_until(
+                    config, retry_states[next_opportunity].due_ms, entries,
+                    ARRAY_SIZE(entries), &entry_count);
+            }
+            now_ms = k_uptime_get_32();
+            if (abort_requested() ||
+                uptime_ms_until_deadline(now_ms, discovery_deadline_ms) <=
+                    tx_budget_ms) {
+                break;
+            }
+
+            ret = send_local_survey_probe(config, next_opportunity,
+                                          &probe_slot, &rf_started);
+            if (rf_started) {
+                if (survey_discovery_probe_attempt_note_rf_started(
+                        &retry_states[next_opportunity]) != PROTO_OK) {
+                    return -EINVAL;
+                }
+                deferred_mask &= (uint8_t)~(1u << next_opportunity);
+                high_debug_log_event(
+                    "SURVEY_DISCOVERY_PROBE_TX",
+                    "survey=%u opportunity=%u slot=%u slot_ms=%u deferred=1 retry_round=%u completion_ret=%d",
+                    config->survey_id, next_opportunity, probe_slot,
+                    config->slot_ms,
+                    retry_states[next_opportunity].retry_round, ret);
+            } else {
+                uint32_t retry_origin_ms = k_uptime_get_32();
+                int retry_ret = schedule_survey_probe_retry(
+                    config, retry_origin_ms, discovery_deadline_ms,
+                    &retry_states[next_opportunity]);
+
+                if (retry_ret < 0 && retry_ret != -ETIMEDOUT) {
+                    return retry_ret;
+                }
+            }
+            if (ret < 0) {
+                LOG_WRN("survey discovery probe TX failed: survey=%u opportunity=%u slot=%u deferred=1 round=%u rf_started=%u ret=%d",
+                        config->survey_id, next_opportunity, probe_slot,
+                        retry_states[next_opportunity].retry_round,
+                        rf_started ? 1u : 0u, ret);
+            }
+            ret = dwm3000_driver_ensure_wake_mode();
+            if (ret < 0) {
+                return ret;
             }
         }
         if (!abort_requested() &&
-            actual_attempt_count != SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
-            LOG_ERR("survey discovery attempt invariant failed: survey=%u attempted=%u deferred_mask=0x%02x",
-                    config->survey_id, actual_attempt_count, deferred_mask);
-            return -EBUSY;
+            !uptime_deadline_reached(k_uptime_get_32(),
+                                     discovery_deadline_ms)) {
+            receive_survey_probes_until(
+                config, discovery_deadline_ms, entries,
+                ARRAY_SIZE(entries), &entry_count);
+        }
+        if (!abort_requested() &&
+            survey_discovery_probe_real_attempt_count(
+                retry_states, ARRAY_SIZE(retry_states)) !=
+                SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+            LOG_ERR("survey discovery deadline ended before four real attempts: survey=%u attempted=%u deferred_mask=0x%02x",
+                    config->survey_id,
+                    (unsigned int)survey_discovery_probe_real_attempt_count(
+                        retry_states, ARRAY_SIZE(retry_states)),
+                    deferred_mask);
         }
     }
 

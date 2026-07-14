@@ -445,6 +445,19 @@ static void invalidate_lease(struct node_comm *comm,
     slot->rf_started = false;
 }
 
+static uint8_t total_attempts_started(
+    const struct node_comm_request_slot *slot)
+{
+    uint16_t total;
+
+    if (slot == NULL) {
+        return 0u;
+    }
+    total = (uint16_t)slot->attempts_started +
+            (uint16_t)slot->backend_attempts_started;
+    return total > UINT8_MAX ? UINT8_MAX : (uint8_t)total;
+}
+
 static void terminalize(struct node_comm *comm,
                         struct node_comm_request_slot *slot,
                         enum node_comm_terminal_reason reason)
@@ -458,7 +471,7 @@ static void terminalize(struct node_comm *comm,
         .handle = slot->handle,
         .client_token = slot->request.client_token,
         .reason = reason,
-        .attempts_started = slot->attempts_started,
+        .attempts_started = total_attempts_started(slot),
     };
     slot->state = NODE_COMM_SLOT_TERMINAL;
 }
@@ -1006,6 +1019,73 @@ int node_comm_confirm_delivery(struct node_comm *comm,
     return 0;
 }
 
+int node_comm_fail_delivery(struct node_comm *comm,
+                            uint32_t handle,
+                            enum node_comm_terminal_reason reason,
+                            uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+
+    if (comm == NULL || handle == 0u ||
+        (reason != NODE_COMM_TERMINAL_DEADLINE_EXPIRED &&
+         reason != NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED &&
+         reason != NODE_COMM_TERMINAL_PERMANENT_FAILURE)) {
+        return -EINVAL;
+    }
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+        return -EALREADY;
+    }
+    if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+        return -EAGAIN;
+    }
+    terminalize(comm, slot, reason);
+    return 0;
+}
+
+int node_comm_note_backend_rf_started(struct node_comm *comm,
+                                      uint32_t handle,
+                                      uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+
+    if (comm == NULL || handle == 0u) {
+        return -EINVAL;
+    }
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+        /*
+         * A backend can pass its final preflight, lose the race to facade
+         * terminalization, and still have started RF before cancellation took
+         * effect. Preserve the terminal reason and state, but update the
+         * frozen terminal snapshot so every real RF start remains observable.
+         */
+        if (slot->backend_attempts_started != UINT8_MAX) {
+            slot->backend_attempts_started++;
+        }
+        slot->terminal.attempts_started = total_attempts_started(slot);
+        return -EALREADY;
+    }
+    if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+        return -EAGAIN;
+    }
+    if (slot->backend_attempts_started != UINT8_MAX) {
+        slot->backend_attempts_started++;
+    }
+    if (deadline_expired(slot, now_ms)) {
+        terminalize(comm, slot, NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+        return -ETIMEDOUT;
+    }
+    return 0;
+}
+
 int node_comm_cancel(struct node_comm *comm,
                      uint32_t handle,
                      uint64_t now_ms)
@@ -1110,6 +1190,26 @@ bool node_comm_take_terminal_event_for(
     return true;
 }
 
+bool node_comm_peek_terminal_event_for(
+    const struct node_comm *comm,
+    uint32_t handle,
+    struct node_comm_terminal_event *event_out)
+{
+    if (comm == NULL || handle == 0u || event_out == NULL) {
+        return false;
+    }
+    for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
+        const struct node_comm_request_slot *slot = &comm->slots[i];
+
+        if (slot->state == NODE_COMM_SLOT_TERMINAL &&
+            slot->handle == handle) {
+            *event_out = slot->terminal;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool node_comm_take_terminal_event(struct node_comm *comm,
                                    struct node_comm_terminal_event *event_out)
 {
@@ -1166,7 +1266,7 @@ int node_comm_attempts_started(const struct node_comm *comm,
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         if (comm->slots[i].state != NODE_COMM_SLOT_FREE &&
             comm->slots[i].handle == handle) {
-            *attempts_out = comm->slots[i].attempts_started;
+            *attempts_out = total_attempts_started(&comm->slots[i]);
             return 0;
         }
     }

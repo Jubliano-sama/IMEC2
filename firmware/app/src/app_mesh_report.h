@@ -15,9 +15,16 @@
 
 struct k_work_delayable;
 struct app_mesh_command_orchestrator;
+struct app_mesh_flood_progress;
+struct app_mesh_flood_result;
 struct app_node_comm_route_refresh_event;
 
 struct uwb_range_schedule_frame;
+
+enum app_gateway_semantic_acceptance {
+    APP_GATEWAY_SEMANTIC_ACCEPT_NEW = 0,
+    APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE = 1,
+};
 
 struct mesh_delivery_health {
     uint32_t ack_retry_admission_failures;
@@ -62,12 +69,12 @@ struct app_mesh_report_callbacks {
     void (*anchor_handle_survey_pair_prepare)(const struct proto_packet *packet,
                                               const uint8_t *payload,
                                               size_t payload_len);
-    void (*gateway_handle_survey_discovery_report)(const struct proto_packet *packet,
-                                                   const uint8_t *payload,
-                                                   size_t payload_len,
-                                                   uint64_t previous_hop_id,
-                                                   uint8_t radio_channel,
-                                                   uint8_t link_quality);
+    int (*gateway_handle_survey_discovery_report)(const struct proto_packet *packet,
+                                                  const uint8_t *payload,
+                                                  size_t payload_len,
+                                                  uint64_t previous_hop_id,
+                                                  uint8_t radio_channel,
+                                                  uint8_t link_quality);
     void (*anchor_survey_delivery_gateway_confirmed)(const struct proto_packet *packet);
     void (*anchor_survey_delivery_transport_released)(
         const struct proto_packet *packet,
@@ -127,6 +134,13 @@ int mesh_try_send_c5_flood(const struct mesh_outbound *out,
                            uint8_t purpose,
                            const char *reason,
                            bool *rf_started);
+int mesh_try_send_c5_flood_resume(
+    const struct mesh_outbound *out,
+    uint8_t purpose,
+    const char *reason,
+    struct app_mesh_flood_progress *progress,
+    struct app_mesh_flood_result *result,
+    bool *rf_started);
 int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
@@ -193,6 +207,11 @@ bool mesh_rx_response_active(void);
 bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
 bool mesh_anchor_connected_radio_active(void);
 int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
+int mesh_gateway_command_priority_safe_boundary(void);
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms);
+int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary);
+bool mesh_node_comm_gateway_delivery_due_pending(void);
+bool mesh_node_comm_gateway_delivery_due_ready(void);
+bool mesh_node_comm_gateway_delivery_due_end(void);
 
 #endif

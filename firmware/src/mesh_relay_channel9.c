@@ -99,8 +99,7 @@ static void channel9_guard_reset(struct mesh_relay_channel9_guard_status *status
 
 bool relay_channel9_plan_misses_event(enum mesh_event_plan_action action)
 {
-    return action == MESH_EVENT_PLAN_DEFER_CH5_ACTIVE ||
-           action == MESH_EVENT_PLAN_SKIP_CH5_SCAN_GUARD;
+    return mesh_event_plan_is_policy_deferral(action);
 }
 
 static uint32_t greatest_common_divisor(uint32_t a, uint32_t b)

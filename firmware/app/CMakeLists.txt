@@ -326,8 +326,7 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_LOG=n\n")
         if(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
             file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
-                "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n"
-                "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=16384\n")
+                "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n")
         endif()
     endif()
     list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
@@ -341,10 +340,14 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
-# The hardware facade freezes at most four concurrent control deliveries. Keep
-# the pure/native scheduler's wider stress-test capacity without paying for
-# unreachable request slots in every constrained firmware image.
-target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=4)
+# Production roles freeze at most four concurrent deliveries.  The synthetic
+# transmitter owns four ordinary stress datagrams plus the protocol reserve.
+# Keep the pure/native scheduler's wider capacity out of constrained images.
+if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
+    target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=5)
+else()
+    target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=4)
+endif()
 
 if(FIRMWARE_ROLE STREQUAL "clicker")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=1)
@@ -366,6 +369,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_assignment_publisher.c
     src/app_gateway_survey_observability.c
     src/app_gateway_collection_eack.c
+    src/app_gateway_eack_retry.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
     src/app_ml.c
@@ -395,8 +399,10 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_tx_handoff_gate.c
     src/app_mesh_route_reply_ack.c
     src/app_mesh_route_ready_handoff.c
+    src/app_mesh_event_retry.c
     src/app_mesh_route_request_policy.c
     src/app_mesh_route_wait_tx.c
+    src/app_mesh_rf_retry.c
     src/app_mesh_gateway_ack_policy.c
     src/app_mesh_result_handoff.c
     src/app_wake_train_politeness.c

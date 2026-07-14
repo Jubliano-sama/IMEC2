@@ -1222,6 +1222,27 @@ static int command_find_u32_tlv(const uint8_t *payload,
     return PROTO_OK;
 }
 
+static int command_find_i32_tlv(const uint8_t *payload,
+                                size_t payload_len,
+                                uint8_t type,
+                                int32_t *value)
+{
+    uint32_t encoded_value;
+    int ret;
+
+    if (value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = command_find_u32_tlv(payload, payload_len, type, &encoded_value);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memcpy(value, &encoded_value, sizeof(*value));
+    return PROTO_OK;
+}
+
 static int command_find_u16_tlv(const uint8_t *payload,
                                 size_t payload_len,
                                 uint8_t type,
@@ -2421,8 +2442,15 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                           SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS +
                           SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS;
     if (budget_explicit) {
+        /*
+         * Collection is one indivisible phase.  If the host deadline is
+         * shorter than the natural collection horizon, wake at that deadline
+         * so the worker reports an operation timeout; never close collection
+         * at an arbitrary fair-share point and mislabel later valid reports as
+         * absent.
+         */
         collection_delay_ms = gateway_command_budget_window_ms(
-            true, command_budget_ms, 3u, collection_delay_ms);
+            true, command_budget_ms, 1u, collection_delay_ms);
     }
 
     ret = survey_append_discovery_start_tlvs(outbound.payload,
@@ -2547,38 +2575,77 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     return 0;
 }
 
-static void gateway_note_survey_pair_result(const struct proto_packet *packet,
-                                            const uint8_t *payload,
-                                            size_t payload_len)
+static int gateway_note_survey_pair_result(const struct proto_packet *packet,
+                                           const uint8_t *payload,
+                                           size_t payload_len)
 {
-    uint64_t initiator_id = 0u;
-    uint64_t responder_id = 0u;
-    uint32_t survey_id = 0u;
-    uint16_t sample_index = 0u;
+    struct survey_sample sample = {0};
     uint8_t range_status = RANGE_INTERNAL_ERROR;
     uint16_t sample_bit;
 
-    if (!gateway_survey_pair_observation_active || packet == NULL || payload == NULL ||
-        packet->msg_type != MSG_SURVEY_PAIR_RESULT ||
-        command_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, &survey_id) != PROTO_OK ||
-        command_find_u64_tlv(payload, payload_len, TLV_INITIATOR_ID, &initiator_id) != PROTO_OK ||
-        command_find_u64_tlv(payload, payload_len, TLV_RESPONDER_ID, &responder_id) != PROTO_OK ||
-        command_find_u16_tlv(payload, payload_len, TLV_SAMPLE_INDEX, &sample_index) != PROTO_OK ||
-        command_find_u8_tlv(payload, payload_len, TLV_RANGE_STATUS, &range_status) != PROTO_OK ||
-        survey_id != gateway_survey_auto.pair.survey_id ||
-        initiator_id != gateway_survey_auto.pair.initiator_id ||
-        responder_id != gateway_survey_auto.pair.responder_id ||
-        packet->src_id != gateway_survey_auto.pair.initiator_id ||
-        sample_index >= gateway_survey_auto.pair.sample_count || sample_index >= 16u) {
-        return;
+    if (packet == NULL || payload == NULL ||
+        packet->msg_type != MSG_SURVEY_PAIR_RESULT) {
+        return -EINVAL;
+    }
+    if (command_find_u32_tlv(payload,
+                             payload_len,
+                             TLV_SURVEY_ID,
+                             &sample.pair.survey_id) != PROTO_OK ||
+        command_find_u64_tlv(payload,
+                             payload_len,
+                             TLV_INITIATOR_ID,
+                             &sample.pair.initiator_id) != PROTO_OK ||
+        command_find_u64_tlv(payload,
+                             payload_len,
+                             TLV_RESPONDER_ID,
+                             &sample.pair.responder_id) != PROTO_OK ||
+        command_find_u16_tlv(payload,
+                             payload_len,
+                             TLV_SAMPLE_COUNT,
+                             &sample.pair.sample_count) != PROTO_OK ||
+        command_find_u16_tlv(payload,
+                             payload_len,
+                             TLV_SAMPLE_INDEX,
+                             &sample.sample_index) != PROTO_OK ||
+        command_find_i32_tlv(payload,
+                             payload_len,
+                             TLV_DISTANCE_MM,
+                             &sample.distance_mm) != PROTO_OK ||
+        command_find_u8_tlv(payload,
+                            payload_len,
+                            TLV_QUALITY,
+                            &sample.quality) != PROTO_OK ||
+        command_find_u8_tlv(payload,
+                            payload_len,
+                            TLV_RANGE_STATUS,
+                            &range_status) != PROTO_OK) {
+        return -EBADMSG;
+    }
+    sample.range_status = (enum range_status)range_status;
+    if (survey_sample_validate(&sample) != PROTO_OK) {
+        return -EBADMSG;
+    }
+    if (packet->session_id != sample.pair.survey_id ||
+        (packet->src_id != sample.pair.initiator_id &&
+         packet->src_id != sample.pair.responder_id)) {
+        return -EPROTO;
+    }
+    if (!gateway_survey_active || !gateway_survey_auto.running ||
+        !gateway_survey_pair_observation_active ||
+        sample.pair.survey_id != gateway_survey_auto.pair.survey_id ||
+        sample.pair.initiator_id != gateway_survey_auto.pair.initiator_id ||
+        sample.pair.responder_id != gateway_survey_auto.pair.responder_id ||
+        sample.pair.sample_count != gateway_survey_auto.pair.sample_count ||
+        sample.sample_index >= 16u) {
+        return -ESTALE;
     }
 
-    sample_bit = (uint16_t)(UINT16_C(1) << sample_index);
+    sample_bit = (uint16_t)(UINT16_C(1) << sample.sample_index);
     if ((gateway_survey_pair_result_mask & sample_bit) != 0u) {
         if (gateway_survey_duplicate_count < UINT16_MAX) {
             gateway_survey_duplicate_count++;
         }
-        return;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
     gateway_survey_pair_result_mask |= sample_bit;
     if (range_status != RANGE_OK && gateway_survey_pair_range_failure_count < UINT16_MAX) {
@@ -2588,14 +2655,15 @@ static void gateway_note_survey_pair_result(const struct proto_packet *packet,
         gateway_survey_auto.pair.sample_count) {
         (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
     }
+    return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
 
-static void gateway_handle_survey_discovery_report(const struct proto_packet *packet,
-                                                    const uint8_t *payload,
-                                                    size_t payload_len,
-                                                    uint64_t previous_hop_id,
-                                                    uint8_t radio_channel,
-                                                    uint8_t link_quality)
+static int gateway_handle_survey_discovery_report(const struct proto_packet *packet,
+                                                   const uint8_t *payload,
+                                                   size_t payload_len,
+                                                   uint64_t previous_hop_id,
+                                                   uint8_t radio_channel,
+                                                   uint8_t link_quality)
 {
     struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
     struct survey_gateway_reverse_hint reverse_hint;
@@ -2606,19 +2674,20 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL || payload == NULL) {
-        return;
+        return -EINVAL;
     }
-    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
-        gateway_note_survey_pair_result(packet, payload, payload_len);
-        return;
+    if (packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT &&
+        packet->msg_type != MSG_SURVEY_PAIR_RESULT) {
+        return -ENOMSG;
     }
-    if (packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
-        packet->dst_id != DEVICE_ID) {
-        return;
-    }
-    if (radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+    if (packet->dst_id != DEVICE_ID ||
+        packet->payload_len != payload_len ||
+        !mesh_id_is_unicast(packet->src_id) ||
+        packet->src_id == DEVICE_ID ||
+        radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
         (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
         !mesh_id_is_unicast(previous_hop_id) ||
+        previous_hop_id == DEVICE_ID ||
         link_quality > 100u) {
         LOG_WRN("gateway survey discovery report rejected transport: src=0x%016llx prev=0x%016llx channel=%u flags=0x%02x quality=%u",
                 (unsigned long long)packet->src_id,
@@ -2626,7 +2695,10 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 radio_channel,
                 packet->flags,
                 link_quality);
-        return;
+        return -EPROTO;
+    }
+    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
+        return gateway_note_survey_pair_result(packet, payload, payload_len);
     }
 
     ret = survey_extract_reach_report_tlvs(payload,
@@ -2641,7 +2713,7 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 ret,
                 (unsigned long long)packet->src_id,
                 packet->session_id);
-        return;
+        return ret == PROTO_ERR_NO_SPACE ? -EMSGSIZE : -EBADMSG;
     }
     if (packet->session_id != survey_id || packet->src_id != anchor_id) {
         LOG_WRN("gateway survey discovery report identity mismatch: pkt_session=%u survey=%u src=0x%016llx anchor=0x%016llx",
@@ -2649,7 +2721,7 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 survey_id,
                 (unsigned long long)packet->src_id,
                 (unsigned long long)anchor_id);
-        return;
+        return -EPROTO;
     }
     if (!gateway_survey_active ||
         gateway_survey_context.survey_id != survey_id) {
@@ -2658,16 +2730,8 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 gateway_survey_active ? 1u : 0u,
                 gateway_survey_context.survey_id,
                 (unsigned long long)anchor_id);
-        return;
+        return -ESTALE;
     }
-    if (gateway_survey_auto.running) {
-        LOG_WRN("gateway survey discovery report ignored after orchestration start: survey=%u anchor=0x%016llx entries=%u",
-                survey_id,
-                (unsigned long long)anchor_id,
-                (unsigned int)entry_count);
-        return;
-    }
-
     for (size_t i = 0u; i < gateway_survey_context.report_count; i++) {
         if (gateway_survey_context.reports[i].valid &&
             gateway_survey_context.reports[i].anchor_id == anchor_id) {
@@ -2684,7 +2748,14 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 (unsigned long long)anchor_id,
                 (unsigned int)entry_count,
                 (unsigned long long)previous_hop_id);
-        return;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+    }
+    if (gateway_survey_auto.running) {
+        LOG_WRN("gateway survey discovery report ignored after orchestration start: survey=%u anchor=0x%016llx entries=%u",
+                survey_id,
+                (unsigned long long)anchor_id,
+                (unsigned int)entry_count);
+        return -ESTALE;
     }
 
     reverse_hint = (struct survey_gateway_reverse_hint) {
@@ -2706,7 +2777,10 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 (unsigned long long)anchor_id,
                 (unsigned int)entry_count,
                 ret);
-        return;
+        if (ret == PROTO_ERR_NO_SPACE) {
+            return -ENOSPC;
+        }
+        return ret == PROTO_ERR_STALE ? -ESTALE : -EBADMSG;
     }
     app_stack_workload_diag_gateway_report_cycle(
         packet, (uint16_t)gateway_survey_context.report_count, 1u);
@@ -2717,7 +2791,7 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 survey_id,
                 (unsigned int)gateway_survey_context.report_count,
                 ret);
-        return;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
 
     if (gateway_survey_context.pair_count > 0u) {
@@ -2728,7 +2802,7 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
             LOG_WRN("gateway survey first pair unavailable: survey=%u ret=%d",
                     survey_id,
                     ret);
-            return;
+            return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
         }
 
         LOG_INF("gateway survey report recorded: survey=%u reports=%u pairs=%u first=0x%016llx->0x%016llx samples=%u",
@@ -2743,6 +2817,7 @@ static void gateway_handle_survey_discovery_report(const struct proto_packet *pa
                 survey_id,
                 (unsigned int)gateway_survey_context.report_count);
     }
+    return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
 
 static uint32_t gateway_survey_pair_run_delay_ms(const struct survey_pair *pair)
@@ -2758,14 +2833,21 @@ static uint32_t gateway_survey_pair_run_delay_ms(const struct survey_pair *pair)
     return ((uint32_t)pair->sample_count * per_sample_ms) + GATEWAY_SURVEY_PAIR_SETTLE_MS;
 }
 
-static bool gateway_survey_finalize_pair_observation(void)
+enum gateway_survey_pair_finalize_result {
+    GATEWAY_SURVEY_PAIR_FINALIZE_CONTINUE = 0,
+    GATEWAY_SURVEY_PAIR_FINALIZE_RETRY,
+    GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL,
+};
+
+static enum gateway_survey_pair_finalize_result
+gateway_survey_finalize_pair_observation(void)
 {
     struct gateway_command_event event;
     uint16_t observed_count;
     bool success;
 
     if (!gateway_survey_pair_observation_active) {
-        return true;
+        return GATEWAY_SURVEY_PAIR_FINALIZE_CONTINUE;
     }
     observed_count = (uint16_t)__builtin_popcount(
         gateway_survey_pair_result_mask);
@@ -2795,7 +2877,7 @@ static bool gateway_survey_finalize_pair_observation(void)
     if (gateway_survey_observe_with_custody(&event, false) < 0) {
         (void)k_work_reschedule(&gateway_survey_work,
                                 K_MSEC(GATEWAY_BLE_TX_RETRY_MS));
-        return false;
+        return GATEWAY_SURVEY_PAIR_FINALIZE_RETRY;
     }
     if (success) {
         gateway_survey_pair_success_count++;
@@ -2817,24 +2899,31 @@ static bool gateway_survey_finalize_pair_observation(void)
         gateway_survey_begin_cleanup();
         if (survey_gateway_auto_no_unstarted_pairs(
                 &gateway_survey_auto, &gateway_survey_context)) {
-            gateway_survey_auto_finish();
+            return GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL;
         }
-        return false;
+        return GATEWAY_SURVEY_PAIR_FINALIZE_RETRY;
     }
 #endif
-    return true;
+    return GATEWAY_SURVEY_PAIR_FINALIZE_CONTINUE;
 }
 
 static void gateway_survey_auto_finish_status(
     enum command_status status,
     enum gateway_command_event_reason reason)
 {
+    enum gateway_survey_pair_finalize_result finalize_result;
+
+    if (!gateway_survey_active) {
+        return;
+    }
     LOG_INF("gateway survey orchestration complete: survey=%u planned_pairs=%u",
             gateway_survey_context.survey_id,
             (unsigned int)gateway_survey_context.pair_count);
-    if (!gateway_survey_finalize_pair_observation()) {
+    finalize_result = gateway_survey_finalize_pair_observation();
+    if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_RETRY) {
         return;
     }
+    /* An explicit caller outcome, especially the host deadline, is final. */
     gateway_observe_survey_terminal(status, reason);
 #if DEVICE_ROLE == ROLE_GATEWAY
     if (gateway_survey_transaction.active.state != NODE_TRANSACTION_EMPTY &&
@@ -2957,39 +3046,6 @@ static uint32_t gateway_survey_next_transaction_token(void)
     return gateway_survey_transaction_client_token;
 }
 
-static uint8_t gateway_survey_remaining_control_phases(void)
-{
-    size_t future_pairs = 0u;
-    size_t phases;
-
-    if (gateway_survey_context.pair_count >
-        gateway_survey_context.next_pair_index) {
-        future_pairs = gateway_survey_context.pair_count -
-                       gateway_survey_context.next_pair_index;
-    }
-    phases = future_pairs * 4u;
-    switch (gateway_survey_auto.stage) {
-    case SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR:
-        phases += 4u;
-        break;
-    case SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER:
-        phases += 3u;
-        break;
-    case SURVEY_GATEWAY_AUTO_START_RESPONDER:
-        phases += 2u;
-        break;
-    case SURVEY_GATEWAY_AUTO_START_INITIATOR:
-        phases += 1u;
-        break;
-    case SURVEY_GATEWAY_AUTO_IDLE:
-    case SURVEY_GATEWAY_AUTO_LOAD_PAIR:
-    default:
-        phases += 1u;
-        break;
-    }
-    return phases > UINT8_MAX ? UINT8_MAX : (uint8_t)phases;
-}
-
 static uint32_t gateway_survey_control_timeout_ms(void)
 {
     uint32_t remaining_ms;
@@ -2999,10 +3055,15 @@ static uint32_t gateway_survey_control_timeout_ms(void)
     }
     remaining_ms = uptime_ms_until_deadline(
         k_uptime_get_32(), gateway_survey_operation_deadline_ms);
+    /*
+     * The host budget is one absolute operation deadline.  A control result
+     * that arrives before it must not become late merely because other pairs
+     * were assigned an equal share of the remaining time.
+     */
     return gateway_command_budget_window_ms(
         true,
         remaining_ms,
-        gateway_survey_remaining_control_phases(),
+        1u,
         SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
 }
 
@@ -4315,10 +4376,10 @@ static int gateway_start_discovery_assignment(
     return 0;
 }
 
-bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
-                                             const uint8_t *payload,
-                                             size_t payload_len,
-                                             uint64_t previous_hop_id)
+int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
+                                            const uint8_t *payload,
+                                            size_t payload_len,
+                                            uint64_t previous_hop_id)
 {
     enum discovery_assignment_phase phase = 0;
     enum command_id command_id = CMD_VENDOR_BASE;
@@ -4330,26 +4391,36 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     uint64_t hash = 0u;
     uint32_t epoch = 0u;
     size_t anchor_index = SIZE_MAX;
+    bool duplicate_ack;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL || payload == NULL ||
-        packet->msg_type != MSG_COMMAND_RESULT ||
-        !gateway_discovery_assignment_state.active) {
-        return false;
+        packet->msg_type != MSG_COMMAND_RESULT) {
+        return -ENOENT;
     }
     ret = gateway_command_extract_id(payload, payload_len, &command_id);
-    if (ret != PROTO_OK || command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
-        return false;
+    if (ret != PROTO_OK) {
+        return -EBADMSG;
+    }
+    if (command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
+        return -ENOENT;
+    }
+    if (!gateway_discovery_assignment_state.active) {
+        return -ESTALE;
     }
     ret = discovery_assignment_extract_control_tlvs(payload,
                                                     payload_len,
                                                     &phase,
                                                     &epoch);
-    if (ret != PROTO_OK ||
-        (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
-         phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) ||
-        epoch != gateway_discovery_assignment_state.epoch) {
-        return false;
+    if (ret != PROTO_OK) {
+        return -EBADMSG;
+    }
+    if (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
+        phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        return -EPROTO;
+    }
+    if (epoch != gateway_discovery_assignment_state.epoch) {
+        return -ESTALE;
     }
     ret = tlv_find(payload,
                    payload_len,
@@ -4367,14 +4438,19 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                             (unsigned long long)packet->src_id,
                             epoch,
                             ret);
-        return true;
+        return -EBADMSG;
     }
-    if (tlv_find(payload, payload_len, TLV_HOP_COUNT, &hop_raw, &hop_len) ==
-        PROTO_OK && hop_len == sizeof(uint8_t)) {
+    ret = tlv_find(payload, payload_len, TLV_HOP_COUNT, &hop_raw, &hop_len);
+    if (ret == PROTO_OK) {
+        if (hop_len != sizeof(uint8_t)) {
+            return -EBADMSG;
+        }
         hop_count = hop_raw[0];
         if (hop_count > gateway_discovery_assignment_state.max_hop_count) {
             gateway_discovery_assignment_state.max_hop_count = hop_count;
         }
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return -EBADMSG;
     }
     for (size_t i = 0u;
          i < gateway_discovery_assignment_state.claim_count;
@@ -4397,8 +4473,10 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                 packet->session_id,
                                 gateway_discovery_assignment_state.table_command_seq,
                                 anchor_index == SIZE_MAX ? -1 : (int)anchor_index);
-            return true;
+            return -ESTALE;
         }
+        duplicate_ack = (gateway_discovery_assignment_state.ack_mask &
+                         (UINT64_C(1) << anchor_index)) != 0u;
         gateway_discovery_assignment_state.ack_mask |=
             UINT64_C(1) << anchor_index;
         status_debug_printf("DBG_DISCOVERY_SLOT_ACK_RX epoch=%u anchor=0x%016llx hop=%u acked=%u missing=%u\n",
@@ -4435,21 +4513,22 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
             (void)k_work_cancel_delayable(
                 &gateway_discovery_assignment_finalize_work);
         }
-        return true;
+        return duplicate_ack ? APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE :
+                               APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
 
     if (anchor_index != SIZE_MAX) {
         if (gateway_discovery_assignment_state.duplicate_count < UINT16_MAX) {
             gateway_discovery_assignment_state.duplicate_count++;
         }
-        return true;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
     if (gateway_discovery_assignment_state.claim_count >=
         ARRAY_SIZE(gateway_discovery_assignment_state.anchor_ids)) {
         status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_REJECT src=0x%016llx epoch=%u reason=capacity\n",
                             (unsigned long long)packet->src_id,
                             epoch);
-        return true;
+        return -ENOSPC;
     }
     gateway_discovery_assignment_state.anchor_ids[
         gateway_discovery_assignment_state.claim_count] = packet->src_id;
@@ -4487,7 +4566,7 @@ bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                         (unsigned long long)hash,
                         hop_count,
                         (unsigned int)gateway_discovery_assignment_state.claim_count);
-    return true;
+    return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
 
 static int gateway_discovery_assignment_publish_table(void)
@@ -4766,16 +4845,16 @@ static int gateway_start_discovery_assignment(
     return -ENOTSUP;
 }
 
-bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
-                                             const uint8_t *payload,
-                                             size_t payload_len,
-                                             uint64_t previous_hop_id)
+int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
+                                            const uint8_t *payload,
+                                            size_t payload_len,
+                                            uint64_t previous_hop_id)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
     ARG_UNUSED(payload_len);
     ARG_UNUSED(previous_hop_id);
-    return false;
+    return -ENOTSUP;
 }
 #endif
 
@@ -4857,6 +4936,7 @@ static void gateway_survey_service_active_delivery(void)
 static void gateway_survey_work_handler(struct k_work *work)
 {
     struct survey_gateway_auto_action action = {0};
+    enum gateway_survey_pair_finalize_result finalize_result;
     int ret;
 
     ARG_UNUSED(work);
@@ -4887,8 +4967,15 @@ static void gateway_survey_work_handler(struct k_work *work)
     if (gateway_survey_auto.waiting) {
         goto out;
     }
-    if (!gateway_survey_flush_boundary_event() ||
-        !gateway_survey_finalize_pair_observation()) {
+    if (!gateway_survey_flush_boundary_event()) {
+        goto out;
+    }
+    finalize_result = gateway_survey_finalize_pair_observation();
+    if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL) {
+        gateway_survey_auto_finish();
+        goto out;
+    }
+    if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_RETRY) {
         goto out;
     }
     if (!gateway_survey_auto.running) {
@@ -4935,6 +5022,11 @@ static void gateway_survey_work_handler(struct k_work *work)
                 (unsigned int)action.command_id,
                 (unsigned long long)action.target_id,
                 ret);
+        if (ret == -ETIMEDOUT && gateway_survey_budget_explicit) {
+            gateway_survey_auto_finish_status(
+                COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
+            goto out;
+        }
 #if DEVICE_ROLE == ROLE_GATEWAY
         if (gateway_survey_transaction.active.state == NODE_TRANSACTION_ACTIVE) {
             (void)app_node_comm_cancel_delivery(
@@ -5159,14 +5251,32 @@ static bool gateway_host_command_send_retryable(int ret)
            ret == -EHOSTUNREACH;
 }
 
+static int gateway_route_mesh_host_payload(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    struct mesh_outbound outbound = {0};
+
+    if (packet == NULL || payload == NULL ||
+        payload_len > sizeof(outbound.payload)) {
+        return -EINVAL;
+    }
+    outbound.packet = *packet;
+    outbound.packet.payload_len = (uint16_t)payload_len;
+    outbound.payload_len = (uint16_t)payload_len;
+    memcpy(outbound.payload, payload, payload_len);
+    return mesh_start_tracked_tx(&outbound, "ble-host-packet");
+}
+
 static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
     struct proto_packet *packet,
     uint8_t *payload,
     size_t payload_len)
 {
     struct app_mesh_command_orchestrator *orchestrator;
-    struct mesh_outbound outbound = {0};
-    struct gateway_command_options command_options;
+    const struct mesh_outbound *outbound;
+    const struct gateway_command_options *command_options;
     enum command_id command_id;
     enum gateway_command_tracking_mode tracking_mode;
     bool sent_now = false;
@@ -5176,15 +5286,12 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         return -EINVAL;
     }
 
-    if (packet == NULL || payload == NULL || payload_len > sizeof(outbound.payload)) {
+    if (packet == NULL || payload == NULL ||
+        payload_len > UWB_MESH_MAX_PAYLOAD_LEN) {
         return -EINVAL;
     }
     if (packet->msg_type != MSG_COMMAND) {
-        outbound.packet = *packet;
-        outbound.packet.payload_len = (uint16_t)payload_len;
-        outbound.payload_len = (uint16_t)payload_len;
-        memcpy(outbound.payload, payload, payload_len);
-        return mesh_start_tracked_tx(&outbound, "ble-host-packet");
+        return gateway_route_mesh_host_payload(packet, payload, payload_len);
     }
 
     orchestrator = mesh_gateway_command_orchestrator_context();
@@ -5202,31 +5309,31 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
                                          (uint8_t)(-ret));
         return mesh_errno_from_proto(ret);
     }
-    outbound = orchestrator->gateway_flow.outbound;
-    command_options = orchestrator->gateway_flow.options;
+    outbound = &orchestrator->gateway_flow.outbound;
+    command_options = &orchestrator->gateway_flow.options;
     command_id = orchestrator->gateway_flow.command_id;
     tracking_mode = orchestrator->gateway_flow.tracking_mode;
     if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
-        ret = gateway_begin_command_result_wait(&outbound.packet, command_id);
+        ret = gateway_begin_command_result_wait(&outbound->packet, command_id);
         if (ret < 0) {
             LOG_WRN("gateway command result tracker busy: cmd=0x%04x dst=0x%016llx ret=%d",
                     (unsigned int)command_id,
-                    (unsigned long long)outbound.packet.dst_id,
+                    (unsigned long long)outbound->packet.dst_id,
                     ret);
-            gateway_emit_host_command_result(&outbound.packet,
+            gateway_emit_host_command_result(&outbound->packet,
                                              command_id,
                                              ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
                                              (uint8_t)(-ret));
             return ret;
         }
     } else if (tracking_mode == GATEWAY_COMMAND_TRACK_COLLECTION) {
-        ret = gateway_begin_command_collection(&command_options);
+        ret = gateway_begin_command_collection(command_options);
         if (ret < 0) {
             LOG_WRN("gateway command collection tracker busy: cmd=0x%04x command_seq=%u ret=%d",
                     (unsigned int)command_id,
-                    command_options.command_seq,
+                    command_options->command_seq,
                     ret);
-            gateway_emit_host_command_result(&outbound.packet,
+            gateway_emit_host_command_result(&outbound->packet,
                                              command_id,
                                              ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
                                              (uint8_t)(-ret));
@@ -5234,46 +5341,46 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         }
     }
 
-    if (gateway_command_transport_mode_from_outbound(&outbound) ==
+    if (gateway_command_transport_mode_from_outbound(outbound) ==
         GATEWAY_COMMAND_TRANSPORT_C5_BROADCAST) {
         ret = mesh_send_gateway_command_flood(orchestrator,
                                               "ble-command-broadcast",
                                               &sent_now);
         if (ret == 0 && sent_now) {
-            mesh_relay_note_tx_sent(&mesh_runtime, &outbound, k_uptime_get_32());
+            mesh_relay_note_tx_sent(&mesh_runtime, outbound, k_uptime_get_32());
         }
     } else {
-        ret = mesh_start_tracked_tx(&outbound, "ble-command");
+        ret = mesh_start_tracked_tx(outbound, "ble-command");
     }
     if (ret < 0) {
         LOG_WRN("gateway BLE command route failed: cmd=0x%04x dst=0x%016llx ret=%d",
                 (unsigned int)command_id,
-                (unsigned long long)outbound.packet.dst_id,
+                (unsigned long long)outbound->packet.dst_id,
                 ret);
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
             LOG_INF("gateway command waiting for reactive route discovery: cmd=0x%04x dst=0x%016llx",
                     (unsigned int)command_id,
-                    (unsigned long long)outbound.packet.dst_id);
+                    (unsigned long long)outbound->packet.dst_id);
             return 0;
         }
         if (gateway_host_command_send_retryable(ret)) {
             if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
-                gateway_clear_pending_command_result(&outbound.packet);
+                gateway_clear_pending_command_result(&outbound->packet);
             } else if (tracking_mode == GATEWAY_COMMAND_TRACK_COLLECTION) {
-                gateway_clear_command_collection(&command_options);
+                gateway_clear_command_collection(command_options);
             }
             LOG_INF("gateway command retained for send retry: cmd=0x%04x dst=0x%016llx ret=%d",
                     (unsigned int)command_id,
-                    (unsigned long long)outbound.packet.dst_id,
+                    (unsigned long long)outbound->packet.dst_id,
                     ret);
             return -EAGAIN;
         }
         if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
-            gateway_clear_pending_command_result(&outbound.packet);
+            gateway_clear_pending_command_result(&outbound->packet);
         } else if (tracking_mode == GATEWAY_COMMAND_TRACK_COLLECTION) {
-            gateway_clear_command_collection(&command_options);
+            gateway_clear_command_collection(command_options);
         }
-        gateway_emit_host_command_result(&outbound.packet,
+        gateway_emit_host_command_result(&outbound->packet,
                                          command_id,
                                          ret == -EBUSY ? COMMAND_BUSY : COMMAND_INVALID_STATE,
                                          (uint8_t)(-ret));
@@ -5282,10 +5389,10 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
 
     LOG_INF("gateway BLE command routed: cmd=0x%04x dst=0x%016llx session=%u seq=%u ttl=%u",
             (unsigned int)command_id,
-            (unsigned long long)outbound.packet.dst_id,
-            outbound.packet.session_id,
-            outbound.packet.seq,
-            outbound.packet.ttl);
+            (unsigned long long)outbound->packet.dst_id,
+            outbound->packet.session_id,
+            outbound->packet.seq,
+            outbound->packet.ttl);
     return 0;
 }
 

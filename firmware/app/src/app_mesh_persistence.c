@@ -28,6 +28,7 @@ LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 #define APP_MESH_NVS_DISCOVERY_ASSIGNMENT_ID 0x0106u
 #define APP_MESH_NVS_CLICK_HANDOFF_ID 0x0107u
 #define APP_MESH_NVS_LOCAL_DELIVERY_ID 0x0108u
+#define APP_MESH_NVS_GATEWAY_EACK_CUSTODY_ID 0x0109u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
@@ -50,9 +51,12 @@ BUILD_ASSERT(sizeof(struct app_mesh_click_handoff_snapshot) <
 BUILD_ASSERT(sizeof(struct app_mesh_local_delivery_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "local delivery journal must fit comfortably in one NVS sector");
-BUILD_ASSERT(sizeof(struct gateway_collection_state_snapshot) <=
+BUILD_ASSERT(sizeof(struct gateway_collection_state) <=
              (APP_MESH_NVS_SECTOR_SIZE - 256u),
-             "gateway collection snapshot must leave NVS sector headroom");
+             "gateway collection state must leave NVS sector headroom");
+BUILD_ASSERT(sizeof(struct gateway_collection_eack_custody_snapshot) <
+             (APP_MESH_NVS_SECTOR_SIZE / 2u),
+             "gateway EACK custody must fit comfortably in one NVS sector");
 BUILD_ASSERT(sizeof(struct gateway_membership_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "gateway membership snapshot must fit comfortably in one NVS sector");
@@ -461,6 +465,20 @@ void app_mesh_persistence_clear_gateway_collection(void)
     }
 }
 
+void app_mesh_persistence_clear_gateway_eack_custody(void)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || !mesh_persistence_ready()) {
+        return;
+    }
+
+    ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_GATEWAY_EACK_CUSTODY_ID);
+    if (ret < 0 && ret != -ENOENT) {
+        LOG_WRN("gateway EACK custody clear failed: %d", ret);
+    }
+}
+
 void app_mesh_persistence_clear_gateway_membership(void)
 {
     int ret;
@@ -675,24 +693,43 @@ int app_mesh_persistence_save_collection_result(
 int app_mesh_persistence_save_gateway_collection(
     const struct gateway_collection_state *collection)
 {
-    struct gateway_collection_state_snapshot snapshot;
     int ret;
 
+    if (gateway_collection_state_validate(collection) != PROTO_OK) {
+        LOG_WRN("gateway collection state validation failed before save");
+        return -EINVAL;
+    }
     ret = app_mesh_persistence_init();
     if (ret < 0) {
         return ret;
     }
 
-    ret = gateway_collection_export_snapshot(collection, &snapshot);
-    if (ret != PROTO_OK) {
-        LOG_WRN("gateway collection snapshot export failed: %d", ret);
+    return mesh_persistence_write(APP_MESH_NVS_GATEWAY_COLLECTION_ID,
+                                  collection,
+                                  sizeof(*collection),
+                                  "gateway collection state");
+}
+
+int app_mesh_persistence_save_gateway_eack_custody(
+    const struct gateway_collection_eack_custody_snapshot *snapshot)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    if (gateway_collection_eack_custody_validate(snapshot) != PROTO_OK) {
         return -EINVAL;
     }
+    ret = app_mesh_persistence_init();
+    if (ret < 0) {
+        return ret;
+    }
 
-    return mesh_persistence_write(APP_MESH_NVS_GATEWAY_COLLECTION_ID,
-                                  &snapshot,
-                                  sizeof(snapshot),
-                                  "gateway collection snapshot");
+    return mesh_persistence_write(APP_MESH_NVS_GATEWAY_EACK_CUSTODY_ID,
+                                  snapshot,
+                                  sizeof(*snapshot),
+                                  "gateway EACK custody");
 }
 
 int app_mesh_persistence_save_gateway_membership(
@@ -762,9 +799,7 @@ int app_mesh_persistence_restore_collection_result(
 int app_mesh_persistence_restore_gateway_collection(
     struct gateway_collection_state *collection)
 {
-    struct gateway_collection_state_snapshot snapshot;
     ssize_t read_len;
-    int ret;
 
     if (collection == NULL) {
         return -EINVAL;
@@ -774,11 +809,10 @@ int app_mesh_persistence_restore_gateway_collection(
     }
 
     gateway_collection_clear(collection);
-    memset(&snapshot, 0, sizeof(snapshot));
     read_len = nvs_read(&mesh_nvs,
                         APP_MESH_NVS_GATEWAY_COLLECTION_ID,
-                        &snapshot,
-                        sizeof(snapshot));
+                        collection,
+                        sizeof(*collection));
     if (read_len == -ENOENT) {
         return 0;
     }
@@ -786,27 +820,74 @@ int app_mesh_persistence_restore_gateway_collection(
         LOG_WRN("gateway collection snapshot read failed: %d", (int)read_len);
         return (int)read_len;
     }
-    if ((size_t)read_len != sizeof(snapshot)) {
-        LOG_WRN("gateway collection snapshot has wrong size: %d/%u",
+    if ((size_t)read_len != sizeof(*collection)) {
+        LOG_WRN("gateway collection state has wrong size: %d/%u",
                 (int)read_len,
-                (unsigned int)sizeof(snapshot));
+                (unsigned int)sizeof(*collection));
+        gateway_collection_clear(collection);
         app_mesh_persistence_clear_gateway_collection();
         return -EINVAL;
     }
 
-    ret = gateway_collection_restore_snapshot(collection, &snapshot);
-    if (ret != PROTO_OK) {
-        LOG_WRN("gateway collection snapshot restore rejected: %d", ret);
+    if (gateway_collection_state_validate(collection) != PROTO_OK) {
+        LOG_WRN("gateway collection state restore rejected");
+        gateway_collection_clear(collection);
         app_mesh_persistence_clear_gateway_collection();
         return -EINVAL;
     }
 
-    LOG_INF("gateway collection snapshot restored: command_seq=%u collection=%u received=%u expected=%u open=%u",
+    LOG_INF("gateway collection state restored: command_seq=%u collection=%u received=%u expected=%u open=%u",
             collection->command_seq,
             collection->collection_epoch_id,
             collection->received_count,
             collection->expected_count,
             collection->collection_open ? 1u : 0u);
+    return 0;
+}
+
+int app_mesh_persistence_restore_gateway_eack_custody(
+    struct gateway_collection_eack_custody_snapshot *snapshot)
+{
+    ssize_t read_len;
+    int ret;
+
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    if (!mesh_persistence_ready()) {
+        return -ENODEV;
+    }
+
+    read_len = nvs_read(&mesh_nvs,
+                        APP_MESH_NVS_GATEWAY_EACK_CUSTODY_ID,
+                        snapshot,
+                        sizeof(*snapshot));
+    if (read_len == -ENOENT) {
+        return 0;
+    }
+    if (read_len < 0) {
+        LOG_WRN("gateway EACK custody read failed: %d", (int)read_len);
+        return (int)read_len;
+    }
+    if ((size_t)read_len != sizeof(*snapshot)) {
+        LOG_WRN("gateway EACK custody has wrong size: %d/%u",
+                (int)read_len,
+                (unsigned int)sizeof(*snapshot));
+        app_mesh_persistence_clear_gateway_eack_custody();
+        return -EINVAL;
+    }
+
+    ret = gateway_collection_eack_custody_validate(snapshot);
+    if (ret != PROTO_OK) {
+        LOG_WRN("gateway EACK custody restore rejected: %d", ret);
+        memset(snapshot, 0, sizeof(*snapshot));
+        app_mesh_persistence_clear_gateway_eack_custody();
+        return -EINVAL;
+    }
     return 0;
 }
 
@@ -1088,6 +1169,26 @@ int app_mesh_persistence_restore_gateway_collection(
 }
 
 void app_mesh_persistence_clear_gateway_collection(void)
+{
+}
+
+int app_mesh_persistence_save_gateway_eack_custody(
+    const struct gateway_collection_eack_custody_snapshot *snapshot)
+{
+    ARG_UNUSED(snapshot);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_restore_gateway_eack_custody(
+    struct gateway_collection_eack_custody_snapshot *snapshot)
+{
+    if (snapshot != NULL) {
+        memset(snapshot, 0, sizeof(*snapshot));
+    }
+    return -ENOTSUP;
+}
+
+void app_mesh_persistence_clear_gateway_eack_custody(void)
 {
 }
 

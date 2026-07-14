@@ -472,6 +472,7 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
         .membership_epoch = 15u,
         .expected_count = 16u,
         .received_count = 10u,
+        .packet_sequence = 513u,
         .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
         .retry_round = 2u,
         .next_retry_spread_ms = 30000u,
@@ -486,6 +487,14 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
     struct result_bundle_header decoded_bundle = {0};
     struct result_bundle_record decoded_record = {0};
     struct gateway_collection_eack decoded_eack = {0};
+    struct proto_packet eack_packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = bundle.gateway_id,
+        .dst_id = 0u,
+        .session_id = bundle.command_seq,
+        .seq = eack.packet_sequence,
+        .ttl = 3u,
+    };
     uint8_t payload[160];
     size_t payload_len = 0u;
     size_t cursor = 0u;
@@ -560,10 +569,22 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
     assert(decoded_eack.membership_epoch == eack.membership_epoch);
     assert(decoded_eack.expected_count == eack.expected_count);
     assert(decoded_eack.received_count == eack.received_count);
+    assert(decoded_eack.packet_sequence == eack.packet_sequence);
     assert(decoded_eack.eack_format == eack.eack_format);
     assert(decoded_eack.retry_round == eack.retry_round);
     assert(decoded_eack.next_retry_spread_ms == eack.next_retry_spread_ms);
     assert(decoded_eack.collection_open == eack.collection_open);
+    eack_packet.payload_len = (uint16_t)payload_len;
+    assert(gateway_collection_eack_packet_validate(&eack_packet,
+                                                   payload,
+                                                   payload_len,
+                                                   &decoded_eack) == PROTO_OK);
+    eack_packet.dst_id = 0x1002ull;
+    assert(gateway_collection_eack_packet_validate(&eack_packet,
+                                                   payload,
+                                                   payload_len,
+                                                   &decoded_eack) == PROTO_ERR_MALFORMED);
+    eack_packet.dst_id = 0u;
     bool listed = false;
     assert(gateway_collection_eack_contains_node_id(payload,
                                                     payload_len,

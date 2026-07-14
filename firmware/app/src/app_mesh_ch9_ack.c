@@ -328,6 +328,80 @@ bool app_mesh_ch9_ack_table_clear_peer(
     return true;
 }
 
+static bool ack_retry_deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
+bool app_mesh_ch9_ack_table_retry_ready(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    uint32_t now_ms)
+{
+    const struct app_mesh_ch9_ack_batch *batch =
+        ack_table_find_peer_const(table, peer_id);
+
+    return batch != NULL && batch->count > 0u &&
+           (!batch->retry_deferred ||
+            ack_retry_deadline_reached(now_ms,
+                                       batch->retry_not_before_ms));
+}
+
+uint32_t app_mesh_ch9_ack_table_retry_wait_ms(
+    const struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    uint32_t now_ms)
+{
+    const struct app_mesh_ch9_ack_batch *batch =
+        ack_table_find_peer_const(table, peer_id);
+
+    if (batch == NULL || batch->count == 0u || !batch->retry_deferred ||
+        ack_retry_deadline_reached(now_ms, batch->retry_not_before_ms)) {
+        return 0u;
+    }
+    return batch->retry_not_before_ms - now_ms;
+}
+
+int app_mesh_ch9_ack_table_note_send_failure(
+    struct app_mesh_ch9_ack_table *table,
+    uint64_t peer_id,
+    uint32_t now_ms,
+    uint32_t attempt_entropy,
+    uint32_t *delay_ms_out)
+{
+    struct app_mesh_ch9_ack_batch *batch =
+        ack_table_find_peer(table, peer_id);
+    uint32_t base_ms = APP_MESH_CH9_ACK_RETRY_BASE_MS;
+    uint32_t delay_ms;
+    uint16_t shift;
+
+    if (batch == NULL || batch->count == 0u) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    if (batch->retry_round < UINT16_MAX) {
+        batch->retry_round++;
+    }
+    shift = batch->retry_round == 0u ? 0u :
+            (uint16_t)(batch->retry_round - 1u);
+    while (shift > 0u && base_ms < APP_MESH_CH9_ACK_RETRY_BASE_MAX_MS) {
+        base_ms *= 2u;
+        shift--;
+    }
+    if (base_ms > APP_MESH_CH9_ACK_RETRY_BASE_MAX_MS) {
+        base_ms = APP_MESH_CH9_ACK_RETRY_BASE_MAX_MS;
+    }
+
+    delay_ms = base_ms - (base_ms / 2u) +
+               (attempt_entropy % (base_ms + 1u));
+    batch->retry_not_before_ms = now_ms + delay_ms;
+    batch->retry_deferred = true;
+    if (delay_ms_out != NULL) {
+        *delay_ms_out = delay_ms;
+    }
+    return PROTO_OK;
+}
+
 int app_mesh_ch9_ack_table_flush_peer(
     struct app_mesh_ch9_ack_table *table,
     uint64_t peer_id,
@@ -670,6 +744,7 @@ enum app_mesh_ch9_timeout_pressure_action
 app_mesh_ch9_timeout_pressure_decide(const struct mesh_outbound *outbound,
                                      bool anchor_role,
                                      bool downstream_reserved,
+                                     bool local_origin_priority_needs_capacity,
                                      uint64_t local_id)
 {
     if (outbound == NULL || !anchor_role || !downstream_reserved ||
@@ -677,7 +752,9 @@ app_mesh_ch9_timeout_pressure_decide(const struct mesh_outbound *outbound,
         return APP_MESH_CH9_TIMEOUT_RETRY;
     }
     if (outbound->packet.src_id != local_id) {
-        return APP_MESH_CH9_TIMEOUT_DROP_TRANSIT;
+        return local_origin_priority_needs_capacity ?
+               APP_MESH_CH9_TIMEOUT_DROP_TRANSIT :
+               APP_MESH_CH9_TIMEOUT_RETRY;
     }
     if (outbound->packet.msg_type == MSG_CLICK_REPORT ||
         outbound->packet.msg_type == MSG_COMMAND_RESULT) {

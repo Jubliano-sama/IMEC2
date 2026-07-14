@@ -8,6 +8,7 @@
 #define GATEWAY_ID_TEST 0x9999888877776666ull
 #define HOP_CURRENT 0x1111222233334444ull
 #define HOP_STORED 0x2222333344445555ull
+#define HOP_NEW 0x3333444455556666ull
 #define NODE_A 0xaaaabbbbcccc0001ull
 #define NODE_B 0xaaaabbbbcccc0002ull
 #define NODE_C 0xaaaabbbbcccc0003ull
@@ -334,9 +335,187 @@ static void test_current_channel9_hop_filters_invalid_sources(void)
                GATEWAY_ID_TEST) == HOP_CURRENT);
 }
 
+static void test_failed_lane_rounds_reach_alternate_then_c5(void)
+{
+    const uint64_t expected_node_ids[] = {NODE_A, NODE_B, NODE_C};
+    struct gateway_collection_state collection;
+    struct mesh_outbound outbound;
+    struct orchestration_test_ctx ctx;
+    struct app_gateway_collection_eack_input input = {
+        .collection = &collection,
+        .expected_node_ids = expected_node_ids,
+        .expected_node_id_count =
+            sizeof(expected_node_ids) / sizeof(expected_node_ids[0]),
+        .self_id = GATEWAY_ID_TEST,
+    };
+    const uint64_t exclude_current[] = {HOP_CURRENT};
+    const uint64_t exclude_current_and_new[] = {HOP_CURRENT, HOP_NEW};
+    struct app_gateway_collection_eack_result result;
+    struct app_gateway_eack_policy_ops ops;
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    GATEWAY_EPOCH_TEST,
+                                    COMMAND_SEQ_TEST,
+                                    COLLECTION_EPOCH_TEST,
+                                    MEMBERSHIP_EPOCH_TEST,
+                                    3u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    record_collection_result(&collection, NODE_A, HOP_STORED, 1u);
+    record_collection_result(&collection, NODE_B, HOP_CURRENT, 2u);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ops = test_ops(&ctx);
+    assert(app_gateway_collection_eack_send(&outbound, &input, &ops, &result) == 0);
+    assert(ctx.send_channel9_count == 1);
+    assert(ctx.sent_channel9.next_hop_id == HOP_CURRENT);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ops = test_ops(&ctx);
+    input.excluded_channel9_next_hop_ids = exclude_current;
+    input.excluded_channel9_next_hop_count = 1u;
+    assert(app_gateway_collection_eack_send(&outbound, &input, &ops, &result) == 0);
+    assert(ctx.send_channel9_count == 1);
+    assert(ctx.sent_channel9.next_hop_id == HOP_STORED);
+
+    record_collection_result(&collection, NODE_C, HOP_NEW, 3u);
+    memset(&ctx, 0, sizeof(ctx));
+    ops = test_ops(&ctx);
+    assert(app_gateway_collection_eack_send(&outbound, &input, &ops, &result) == 0);
+    assert(ctx.send_channel9_count == 1);
+    assert(ctx.sent_channel9.next_hop_id == HOP_NEW);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ops = test_ops(&ctx);
+    input.excluded_channel9_next_hop_ids = exclude_current_and_new;
+    input.excluded_channel9_next_hop_count = 2u;
+    assert(app_gateway_collection_eack_send(&outbound, &input, &ops, &result) == 0);
+    assert(ctx.send_channel9_count == 0);
+    assert(ctx.send_c5_count == 1);
+    assert(result.policy.mode == APP_GATEWAY_EACK_SEND_C5_FLOOD);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ops = test_ops(&ctx);
+    input.excluded_channel9_next_hop_ids = NULL;
+    input.excluded_channel9_next_hop_count = 0u;
+    input.force_c5_recovery = true;
+    assert(app_gateway_collection_eack_send(&outbound, &input, &ops, &result) == 0);
+    assert(ctx.send_channel9_count == 0);
+    assert(ctx.send_c5_count == 1);
+}
+
+static void test_prebuilt_retry_preserves_payload_but_reselects_return_lane(void)
+{
+    const uint64_t expected_node_ids[] = {NODE_A, NODE_B, NODE_C};
+    struct gateway_collection_state collection;
+    struct mesh_outbound outbound = {0};
+    struct mesh_outbound frozen;
+    struct orchestration_test_ctx ctx = {0};
+    struct app_gateway_eack_policy_ops ops = test_ops(&ctx);
+    struct app_gateway_collection_eack_input input = {
+        .collection = &collection,
+        .expected_node_ids = expected_node_ids,
+        .expected_node_id_count =
+            sizeof(expected_node_ids) / sizeof(expected_node_ids[0]),
+        .self_id = GATEWAY_ID_TEST,
+    };
+    struct app_gateway_collection_eack_result result;
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    GATEWAY_EPOCH_TEST,
+                                    COMMAND_SEQ_TEST,
+                                    COLLECTION_EPOCH_TEST,
+                                    MEMBERSHIP_EPOCH_TEST,
+                                    3u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    record_collection_result(&collection, NODE_A, HOP_STORED, 1u);
+
+    assert(app_gateway_collection_eack_send(&outbound,
+                                            &input,
+                                            &ops,
+                                            &result) == 0);
+    assert(result.received_count == 1u);
+    assert(result.missing_count == 2u);
+    assert(result.collection_open);
+    frozen = outbound;
+
+    record_collection_result(&collection, NODE_B, HOP_CURRENT, 2u);
+    record_collection_result(&collection, NODE_C, HOP_NEW, 3u);
+    assert(collection.received_count == 3u);
+    assert(!collection.collection_open);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ops = test_ops(&ctx);
+    outbound = frozen;
+    input.use_prebuilt_eack = true;
+    assert(app_gateway_collection_eack_send(&outbound,
+                                            &input,
+                                            &ops,
+                                            &result) == 0);
+
+    assert(ctx.send_channel9_count == 1);
+    assert(ctx.sent_channel9.next_hop_id == HOP_NEW);
+    assert(ctx.sent_channel9.packet.seq == frozen.packet.seq);
+    assert(ctx.sent_channel9.packet.session_id == frozen.packet.session_id);
+    assert(ctx.sent_channel9.payload_len == frozen.payload_len);
+    assert(memcmp(ctx.sent_channel9.payload,
+                  frozen.payload,
+                  frozen.payload_len) == 0);
+    assert(result.received_count == 1u);
+    assert(result.missing_count == 2u);
+    assert(result.collection_open);
+}
+
+static void test_prepare_builds_exact_eack_without_starting_transport(void)
+{
+    const uint64_t expected_node_ids[] = {NODE_A, NODE_B, NODE_C};
+    struct gateway_collection_state collection;
+    struct mesh_outbound outbound = {0};
+    struct app_gateway_collection_eack_input input = {
+        .collection = &collection,
+        .expected_node_ids = expected_node_ids,
+        .expected_node_id_count =
+            sizeof(expected_node_ids) / sizeof(expected_node_ids[0]),
+        .self_id = GATEWAY_ID_TEST,
+    };
+    struct app_gateway_collection_eack_result result;
+    struct gateway_collection_eack decoded;
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    GATEWAY_EPOCH_TEST,
+                                    COMMAND_SEQ_TEST,
+                                    COLLECTION_EPOCH_TEST,
+                                    MEMBERSHIP_EPOCH_TEST,
+                                    3u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    record_collection_result(&collection, NODE_A, HOP_STORED, 1u);
+
+    assert(app_gateway_collection_eack_prepare(&outbound,
+                                               &input,
+                                               &result) == 0);
+    assert(outbound.packet.msg_type == MSG_GATEWAY_COLLECTION_EACK);
+    assert(outbound.packet.seq == collection.eack_sequence);
+    assert(result.received_count == 1u);
+    assert(result.missing_count == 2u);
+    assert(gateway_collection_eack_packet_validate(&outbound.packet,
+                                                   outbound.payload,
+                                                   outbound.payload_len,
+                                                   &decoded) == PROTO_OK);
+    assert(decoded.received_count == 1u);
+    assert(decoded.packet_sequence == collection.eack_sequence);
+}
+
 int main(void)
 {
     test_strict_roster_missing_list_uses_current_channel9_first();
     test_current_channel9_hop_filters_invalid_sources();
+    test_failed_lane_rounds_reach_alternate_then_c5();
+    test_prebuilt_retry_preserves_payload_but_reselects_return_lane();
+    test_prepare_builds_exact_eack_without_starting_transport();
     return 0;
 }

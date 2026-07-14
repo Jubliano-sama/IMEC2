@@ -201,6 +201,20 @@ struct mesh_sim_role_instance *mesh_sim_role(struct mesh_sim_world *world,
     return &world->roles[node_index];
 }
 
+int mesh_sim_gateway_reject_next_semantic_deliveries(
+    struct mesh_sim_world *world,
+    uint8_t gateway_index,
+    uint16_t count)
+{
+    struct mesh_sim_role_instance *gateway = mesh_sim_role(world, gateway_index);
+
+    if (gateway == NULL || gateway->role != MESH_SIM_ROLE_GATEWAY) {
+        return MESH_SIM_ERR_ARG;
+    }
+    gateway->gateway_semantic_rejections_remaining = count;
+    return MESH_SIM_OK;
+}
+
 int mesh_sim_init_clicker_session(struct mesh_sim_world *world,
                                   uint8_t node_index,
                                   const struct uwb_clicker_config *config)

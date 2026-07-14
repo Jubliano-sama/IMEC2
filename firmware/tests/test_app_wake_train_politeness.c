@@ -38,7 +38,9 @@ static void test_backoff_is_random_exponential_between_bounds(void)
 
     assert(app_wake_train_politeness_backoff_ms(3u, 0u) == 1600u);
     assert(app_wake_train_politeness_backoff_ms(3u, 400u) == 2000u);
-    assert(app_wake_train_politeness_backoff_ms(4u, 1234u) == 2000u);
+    assert(app_wake_train_politeness_backoff_ms(4u, 0u) == 1600u);
+    assert(app_wake_train_politeness_backoff_ms(4u, 400u) == 2000u);
+    assert(app_wake_train_politeness_backoff_ms(9u, 401u) == 1600u);
 }
 
 static void test_production_opportunity_budget(void)

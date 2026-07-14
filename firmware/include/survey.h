@@ -134,6 +134,15 @@ struct survey_discovery_attempt_schedule {
     bool deferred;
 };
 
+struct survey_discovery_probe_attempt {
+    uint32_t due_ms;
+    uint16_t retry_round;
+    uint8_t opportunity;
+    bool initialized;
+    bool pending;
+    bool rf_started;
+};
+
 enum survey_pending_report_action {
     SURVEY_PENDING_REPORT_IDLE = 0,
     SURVEY_PENDING_REPORT_WAIT,
@@ -237,6 +246,20 @@ int survey_discovery_schedule_attempt(
     uint8_t opportunity,
     uint32_t earliest_relative_ms,
     struct survey_discovery_attempt_schedule *schedule);
+int survey_discovery_probe_attempt_begin(
+    struct survey_discovery_probe_attempt *attempt,
+    uint8_t opportunity);
+int survey_discovery_probe_attempt_defer(
+    struct survey_discovery_probe_attempt *attempt,
+    const struct survey_discovery_config *config,
+    uint64_t anchor_id,
+    uint32_t retry_origin_ms,
+    uint32_t absolute_deadline_ms);
+int survey_discovery_probe_attempt_note_rf_started(
+    struct survey_discovery_probe_attempt *attempt);
+size_t survey_discovery_probe_real_attempt_count(
+    const struct survey_discovery_probe_attempt *attempts,
+    size_t attempt_count);
 int survey_pending_report_begin(struct survey_pending_report_state *state,
                                 uint32_t survey_id,
                                 uint32_t now_ms,

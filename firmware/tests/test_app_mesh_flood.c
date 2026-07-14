@@ -23,8 +23,10 @@ struct flood_test_ctx {
     uint8_t quiet_count;
     uint8_t quiet_busy_remaining;
     uint8_t send_busy_remaining;
+    uint8_t quiet_busy_at_count;
     bool defer_active;
     bool defer_after_quiet;
+    bool quiet_busy_once;
 };
 
 static uint32_t test_now_ms(void *ctx)
@@ -48,6 +50,11 @@ static bool test_c5_quiet(uint32_t sniff_ms, void *ctx)
 
     assert(sniff_ms == 20u);
     test->quiet_count++;
+    if (test->quiet_busy_once &&
+        test->quiet_count == test->quiet_busy_at_count) {
+        test->quiet_busy_once = false;
+        return false;
+    }
     if (test->defer_after_quiet) {
         test->defer_active = true;
     }
@@ -324,6 +331,56 @@ static void test_pre_rf_blocks_preserve_four_real_opportunities(void)
     assert(ctx.quiet_count == 8u + app_mesh_flood_repeat_limit());
 }
 
+static void test_partial_success_never_completes_a_four_frame_burst(void)
+{
+    for (uint8_t sent_before_busy = 1u;
+         sent_before_busy < app_mesh_flood_repeat_limit();
+         sent_before_busy++) {
+        struct mesh_outbound gateway_adv = {
+            .packet = {
+                .msg_type = MSG_GATEWAY_ROUTE_ADV,
+                .src_id = TEST_GATEWAY,
+                .dst_id = MESH_BROADCAST_ID,
+                .session_id = 30u + sent_before_busy,
+                .seq = 30u + sent_before_busy,
+            },
+            .next_hop_id = MESH_BROADCAST_ID,
+            .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+            .earliest_tx_ms = 1000u,
+        };
+        struct app_mesh_flood_progress progress = {0};
+        struct app_mesh_flood_result result = {0};
+        struct flood_test_ctx ctx = {
+            .now_ms = 1000u,
+            .quiet_busy_at_count = sent_before_busy + 1u,
+            .quiet_busy_once = true,
+        };
+        const struct app_mesh_flood_ops ops = {
+            .now_ms = test_now_ms,
+            .sleep_until_ms = test_sleep_until_ms,
+            .defer_active = test_defer_active,
+            .c5_quiet = test_c5_quiet,
+            .random_u32 = test_random_u32,
+            .send = test_send,
+            .ctx = &ctx,
+        };
+
+        assert(app_mesh_flood_send_bounded_resume(
+                   &gateway_adv, &ops, &progress, &result) == -EAGAIN);
+        assert(!progress.complete);
+        assert(progress.next_opportunity == sent_before_busy);
+        assert(result.sent_count == sent_before_busy);
+        assert(ctx.send_count == sent_before_busy);
+
+        assert(app_mesh_flood_send_bounded_resume(
+                   &gateway_adv, &ops, &progress, &result) == 0);
+        assert(progress.complete);
+        assert(progress.next_opportunity == app_mesh_flood_repeat_limit());
+        assert(result.sent_count == app_mesh_flood_repeat_limit());
+        assert(ctx.send_count == app_mesh_flood_repeat_limit());
+    }
+}
+
 static void test_one_shot_continuous_busy_returns_boundedly(void)
 {
     struct mesh_outbound gateway_adv = {
@@ -470,6 +527,7 @@ int main(void)
     test_resumable_deferral_saturates_and_rollover_rebases();
     test_pause_after_quiet_check_prevents_send();
     test_pre_rf_blocks_preserve_four_real_opportunities();
+    test_partial_success_never_completes_a_four_frame_burst();
     test_one_shot_continuous_busy_returns_boundedly();
     test_scheduler_owned_opportunity_sends_exactly_once();
     test_resumable_continuous_busy_times_out_across_rollover();

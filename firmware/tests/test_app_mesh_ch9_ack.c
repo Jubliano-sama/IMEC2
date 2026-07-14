@@ -526,12 +526,21 @@ static void test_anchor_tracks_transit_direct_gateway_send(void)
     assert(app_mesh_ch9_tx_should_track_sent(&sent, RELAY_ID));
 }
 
-static void test_downstream_pressure_drops_transit_timeout(void)
+static void test_forced_hop_transit_retries_without_local_pressure(void)
 {
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
 
     assert(app_mesh_ch9_timeout_pressure_decide(
-               &sent, true, true, RELAY_ID) ==
+               &sent, true, true, false, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_RETRY);
+}
+
+static void test_local_priority_pressure_displaces_transit_timeout(void)
+{
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, true, RELAY_ID) ==
            APP_MESH_CH9_TIMEOUT_DROP_TRANSIT);
 }
 
@@ -541,7 +550,10 @@ static void test_downstream_pressure_defers_nonpriority_local_timeout(void)
 
     sent.packet.msg_type = MSG_ANCHOR_HEARTBEAT;
     assert(app_mesh_ch9_timeout_pressure_decide(
-               &sent, true, true, RELAY_ID) ==
+               &sent, true, true, false, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_DEFER_LOCAL);
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, true, RELAY_ID) ==
            APP_MESH_CH9_TIMEOUT_DEFER_LOCAL);
 }
 
@@ -551,12 +563,12 @@ static void test_downstream_pressure_allows_local_click_preemption(void)
 
     sent.packet.msg_type = MSG_CLICK_REPORT;
     assert(app_mesh_ch9_timeout_pressure_decide(
-               &sent, true, true, RELAY_ID) ==
+               &sent, true, true, false, RELAY_ID) ==
            APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL);
 
     sent.packet.msg_type = MSG_COMMAND_RESULT;
     assert(app_mesh_ch9_timeout_pressure_decide(
-               &sent, true, true, RELAY_ID) ==
+               &sent, true, true, true, RELAY_ID) ==
            APP_MESH_CH9_TIMEOUT_PREEMPT_FOR_LOCAL);
 }
 
@@ -565,10 +577,13 @@ static void test_timeout_pressure_is_inactive_without_downstream(void)
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
 
     assert(app_mesh_ch9_timeout_pressure_decide(
-               &sent, true, false, RELAY_ID) ==
+               &sent, true, false, true, RELAY_ID) ==
            APP_MESH_CH9_TIMEOUT_RETRY);
     assert(app_mesh_ch9_timeout_pressure_decide(
-               &sent, false, true, RELAY_ID) ==
+               &sent, false, true, true, RELAY_ID) ==
+           APP_MESH_CH9_TIMEOUT_RETRY);
+    assert(app_mesh_ch9_timeout_pressure_decide(
+               &sent, true, true, true, 0u) ==
            APP_MESH_CH9_TIMEOUT_RETRY);
 }
 
@@ -939,6 +954,107 @@ static void test_forwarded_gateway_ack_does_not_replace_other_peer(void)
     assert(app_mesh_ch9_ack_table_pending_for_peer(&table, TRANSMITTER_ID));
 }
 
+static void test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound forwarded = ack_outbound(RELAY_ID, MSG_GATEWAY_ACK);
+    struct mesh_outbound other =
+        ack_outbound(TRANSMITTER_ID, MSG_MESH_HOP_ACK);
+    struct app_mesh_ch9_ack_batch_entry other_entry =
+        ack_batch_entry(UINT32_C(0x2200), UINT16_C(0x33), UINT32_C(44));
+    struct mesh_outbound built_before;
+    struct mesh_outbound built_after;
+    uint32_t first_delay_ms = 0u;
+    uint32_t second_delay_ms = 0u;
+    const uint32_t now_ms = UINT32_C(1000);
+
+    forwarded.payload[0] = UINT8_C(0x5a);
+    forwarded.payload[1] = UINT8_C(0xa5);
+    forwarded.payload_len = 2u;
+    forwarded.packet.payload_len = 2u;
+
+    assert(app_mesh_ch9_ack_table_queue_forwarded(&table,
+                                                  &forwarded,
+                                                  NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &other,
+                                        &other_entry,
+                                        NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_build_peer(&table,
+                                             RELAY_ID,
+                                             &built_before) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table, RELAY_ID, now_ms, UINT32_C(0),
+               &first_delay_ms) == PROTO_OK);
+    assert(first_delay_ms == APP_MESH_CH9_ACK_RETRY_BASE_MS / 2u);
+    assert(!app_mesh_ch9_ack_table_retry_ready(&table, RELAY_ID, now_ms));
+    assert(app_mesh_ch9_ack_table_retry_ready(&table,
+                                               TRANSMITTER_ID,
+                                               now_ms));
+    assert(app_mesh_ch9_ack_table_retry_wait_ms(&table,
+                                                 RELAY_ID,
+                                                 now_ms) == first_delay_ms);
+    assert(app_mesh_ch9_ack_table_build_peer(&table,
+                                             RELAY_ID,
+                                             &built_after) == PROTO_OK);
+    assert(built_after.packet.msg_type == built_before.packet.msg_type);
+    assert(built_after.packet.src_id == built_before.packet.src_id);
+    assert(built_after.packet.dst_id == built_before.packet.dst_id);
+    assert(built_after.packet.session_id == built_before.packet.session_id);
+    assert(built_after.packet.seq == built_before.packet.seq);
+    assert(built_after.next_hop_id == built_before.next_hop_id);
+    assert(built_after.payload_len == built_before.payload_len);
+    assert(memcmp(built_after.payload,
+                  built_before.payload,
+                  built_before.payload_len) == 0);
+    assert(app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
+
+    assert(!app_mesh_ch9_ack_table_retry_ready(
+        &table, RELAY_ID, now_ms + first_delay_ms - 1u));
+    assert(app_mesh_ch9_ack_table_retry_ready(
+        &table, RELAY_ID, now_ms + first_delay_ms));
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table, RELAY_ID, now_ms + first_delay_ms,
+               UINT32_C(100), &second_delay_ms) == PROTO_OK);
+    assert(second_delay_ms >= APP_MESH_CH9_ACK_RETRY_BASE_MS);
+    assert(second_delay_ms <= APP_MESH_CH9_ACK_RETRY_BASE_MS * 3u);
+    assert(second_delay_ms != first_delay_ms);
+    assert(app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
+}
+
+static void test_duplicate_sender_retry_does_not_reset_ack_retry_round(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound ack = ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    struct app_mesh_ch9_ack_batch_entry entry =
+        ack_batch_entry(UINT32_C(0x4411), UINT16_C(0x55), UINT32_C(66));
+    enum app_mesh_ch9_ack_queue_result result;
+    uint32_t delay_ms = 0u;
+    uint32_t retry_not_before_ms;
+
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &ack,
+                                        &entry,
+                                        NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table, RELAY_ID, UINT32_C(2000), UINT32_C(17),
+               &delay_ms) == PROTO_OK);
+    retry_not_before_ms = UINT32_C(2000) + delay_ms;
+
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &ack,
+                                        &entry,
+                                        &result) == PROTO_OK);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+    assert(app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID)->retry_round == 1u);
+    assert(app_mesh_ch9_ack_table_get_peer(
+               &table, RELAY_ID)->retry_not_before_ms == retry_not_before_ms);
+    assert(!app_mesh_ch9_ack_table_retry_ready(
+        &table, RELAY_ID, retry_not_before_ms - 1u));
+    assert(app_mesh_ch9_ack_table_retry_ready(
+        &table, RELAY_ID, retry_not_before_ms));
+}
+
 int main(void)
 {
     test_ack_table_interleaves_two_peers();
@@ -947,6 +1063,8 @@ int main(void)
     test_ack_table_pressure_rejects_without_eviction_and_reuses_slot();
     test_ack_table_flush_retains_failure_and_clears_only_sent_peer();
     test_forwarded_gateway_ack_does_not_replace_other_peer();
+    test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff();
+    test_duplicate_sender_retry_does_not_reset_ack_retry_round();
     test_ack_complete_keeps_idle_route_test_timing_open();
     test_ack_complete_does_not_close_when_work_remains();
     test_ack_complete_policy_is_disabled_outside_route_test();
@@ -964,7 +1082,8 @@ int main(void)
     test_relay_path_core_ack_wait_requires_channel9();
     test_durable_gateway_result_stays_in_core_tracker();
     test_anchor_tracks_transit_direct_gateway_send();
-    test_downstream_pressure_drops_transit_timeout();
+    test_forced_hop_transit_retries_without_local_pressure();
+    test_local_priority_pressure_displaces_transit_timeout();
     test_downstream_pressure_defers_nonpriority_local_timeout();
     test_downstream_pressure_allows_local_click_preemption();
     test_timeout_pressure_is_inactive_without_downstream();

@@ -892,6 +892,17 @@ int gateway_collection_eack_append_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (eack->packet_sequence == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = tlv_append_u16(payload,
+                         payload_cap,
+                         offset,
+                         TLV_EACK_PACKET_SEQUENCE,
+                         eack->packet_sequence);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = tlv_append_u8(payload, payload_cap, offset, TLV_EACK_FORMAT, eack->eack_format);
     if (ret != PROTO_OK) {
         return ret;
@@ -957,6 +968,16 @@ int gateway_collection_eack_from_tlvs(const uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = tlv_require_u16(payload,
+                          payload_len,
+                          TLV_EACK_PACKET_SEQUENCE,
+                          &eack->packet_sequence);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (eack->packet_sequence == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
     ret = tlv_require_u8(payload, payload_len, TLV_EACK_FORMAT, &eack->eack_format);
     if (ret != PROTO_OK) {
         return ret;
@@ -983,6 +1004,53 @@ int gateway_collection_eack_from_tlvs(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
     eack->collection_open = collection_open != 0u;
+    return PROTO_OK;
+}
+
+int gateway_collection_eack_packet_validate(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_collection_eack *eack)
+{
+    struct gateway_collection_eack decoded;
+    int ret;
+
+    if (packet == NULL || payload == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (payload_len == 0u ||
+        payload_len > PACKET_EXT_MAX_PAYLOAD_LEN ||
+        packet->msg_type != MSG_GATEWAY_COLLECTION_EACK ||
+        packet->src_id == 0u ||
+        packet->dst_id != 0u ||
+        packet->session_id == 0u ||
+        packet->seq == 0u ||
+        packet->ttl == 0u ||
+        packet->payload_len != payload_len) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = gateway_collection_eack_from_tlvs(payload, payload_len, &decoded);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (decoded.gateway_id == 0u ||
+        decoded.command_seq == 0u ||
+        decoded.collection_epoch_id == 0u ||
+        decoded.membership_epoch == 0u ||
+        decoded.expected_count == 0u ||
+        decoded.received_count > decoded.expected_count ||
+        decoded.packet_sequence == 0u ||
+        packet->src_id != decoded.gateway_id ||
+        packet->session_id != decoded.command_seq ||
+        packet->seq != decoded.packet_sequence) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    if (eack != NULL) {
+        *eack = decoded;
+    }
     return PROTO_OK;
 }
 

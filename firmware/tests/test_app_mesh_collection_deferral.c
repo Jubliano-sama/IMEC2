@@ -144,6 +144,7 @@ static void test_collection_result_defers_and_runs_hooks_in_order(void)
 
     assert(app_mesh_collection_defer_active_result(&relay,
                                                   5100u,
+                                                  UINT32_C(0x11111111),
                                                   &ops,
                                                   &result));
     assert(result.deferred);
@@ -160,7 +161,9 @@ static void test_collection_result_defers_and_runs_hooks_in_order(void)
     assert(mesh_relay_tx_active(&relay));
     assert(mesh_relay_tx_active_local_collection_result(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.retry_after_ms == 5100u + RELAY_BUSY_RETRY_MIN_MS);
+    assert(relay.pending.retry_after_ms - 5100u >= RELAY_BUSY_RETRY_MIN_MS);
+    assert(relay.pending.retry_after_ms - 5100u <=
+           RELAY_BUSY_RETRY_MIN_MS + (RELAY_BUSY_RETRY_MIN_MS / 2u));
     assert(relay.pending.packet.msg_type == MSG_COMMAND_RESULT);
     assert(relay.pending.payload_len == payload_len);
     assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
@@ -186,6 +189,7 @@ static void test_collection_result_defers_even_when_snapshot_save_fails(void)
 
     assert(app_mesh_collection_defer_active_result(&relay,
                                                   5100u,
+                                                  UINT32_C(0x22222222),
                                                   &ops,
                                                   &result));
     assert(result.deferred);
@@ -240,6 +244,7 @@ static void test_forwarded_child_result_defers_and_preserves_outbox(void)
 
     assert(app_mesh_collection_defer_active_result(&relay,
                                                   5100u,
+                                                  UINT32_C(0x33333333),
                                                   &ops,
                                                   &result));
     assert(result.deferred);
@@ -252,7 +257,9 @@ static void test_forwarded_child_result_defers_and_preserves_outbox(void)
     assert(mesh_relay_tx_active(&relay));
     assert(!mesh_relay_tx_active_local_collection_result(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.retry_after_ms == 5100u + RELAY_BUSY_RETRY_MIN_MS);
+    assert(relay.pending.retry_after_ms - 5100u >= RELAY_BUSY_RETRY_MIN_MS);
+    assert(relay.pending.retry_after_ms - 5100u <=
+           RELAY_BUSY_RETRY_MIN_MS + (RELAY_BUSY_RETRY_MIN_MS / 2u));
     assert(relay.pending.packet.msg_type == MSG_COMMAND_RESULT);
     assert(relay.pending.packet.src_id == ANCHOR_A);
     assert(relay.pending.payload_len == payload_len);
@@ -289,6 +296,7 @@ static void test_non_collection_tx_is_left_for_caller_fallback(void)
 
     assert(!app_mesh_collection_defer_active_result(&relay,
                                                    5100u,
+                                                   UINT32_C(0x44444444),
                                                    &ops,
                                                    &result));
     assert(!result.deferred);
@@ -303,11 +311,72 @@ static void test_non_collection_tx_is_left_for_caller_fallback(void)
     assert(!mesh_relay_tx_active(&relay));
 }
 
+static void test_repeated_owned_deferrals_preserve_identity_and_escalate(void)
+{
+    static const uint32_t entropy[] = {
+        UINT32_C(0x10203040),
+        UINT32_C(0x50607080),
+        UINT32_C(0x90a0b0c0),
+        UINT32_C(0xd0e0f001),
+    };
+    struct mesh_relay relay;
+    struct mesh_outbound tx;
+    struct proto_packet frozen_packet;
+    uint8_t frozen_payload[96];
+    uint8_t payload[96];
+    size_t payload_len;
+    struct deferral_test_ctx ctx = {0};
+    const struct app_mesh_collection_deferral_ops ops = deferral_ops(&ctx);
+    struct app_mesh_collection_deferral_result result;
+    uint32_t now_ms = 6000u;
+    uint32_t base_ms = RELAY_BUSY_RETRY_MIN_MS;
+
+    start_collection_result_tx(&relay,
+                               &tx,
+                               payload,
+                               sizeof(payload),
+                               &payload_len);
+    frozen_packet = relay.pending.packet;
+    memcpy(frozen_payload, relay.pending.payload, payload_len);
+
+    for (size_t i = 0u; i < sizeof(entropy) / sizeof(entropy[0]); i++) {
+        uint32_t delay_ms;
+
+        assert(app_mesh_collection_defer_active_result(&relay,
+                                                       now_ms,
+                                                       entropy[i],
+                                                       &ops,
+                                                       &result));
+        assert(result.deferred);
+        assert(relay.pending.busy_retry_round == i + 1u);
+        delay_ms = relay.pending.retry_after_ms - now_ms;
+        assert(delay_ms >= base_ms);
+        assert(delay_ms <= base_ms + (base_ms / 2u));
+        assert(relay.pending.packet.msg_type == frozen_packet.msg_type);
+        assert(relay.pending.packet.src_id == frozen_packet.src_id);
+        assert(relay.pending.packet.dst_id == frozen_packet.dst_id);
+        assert(relay.pending.packet.session_id == frozen_packet.session_id);
+        assert(relay.pending.packet.seq == frozen_packet.seq);
+        assert(relay.pending.packet.payload_len == frozen_packet.payload_len);
+        assert(relay.pending.payload_len == payload_len);
+        assert(memcmp(relay.pending.payload, frozen_payload, payload_len) == 0);
+
+        if (base_ms < RELAY_BUSY_RETRY_MAX_MS) {
+            base_ms *= 2u;
+            if (base_ms > RELAY_BUSY_RETRY_MAX_MS) {
+                base_ms = RELAY_BUSY_RETRY_MAX_MS;
+            }
+        }
+        now_ms += 10u;
+    }
+}
+
 int main(void)
 {
     test_collection_result_defers_and_runs_hooks_in_order();
     test_collection_result_defers_even_when_snapshot_save_fails();
     test_forwarded_child_result_defers_and_preserves_outbox();
     test_non_collection_tx_is_left_for_caller_fallback();
+    test_repeated_owned_deferrals_preserve_identity_and_escalate();
     return 0;
 }

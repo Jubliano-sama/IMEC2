@@ -1165,6 +1165,173 @@ static bool command_result_id_equal(const struct command_result_id *a,
            a->result_seq == b->result_seq;
 }
 
+static bool gateway_collection_result_id_equal(
+    const struct gateway_collection_result_id *a,
+    const struct gateway_collection_result_id *b)
+{
+    return a->node_id == b->node_id &&
+           a->node_boot_counter == b->node_boot_counter &&
+           a->result_seq == b->result_seq;
+}
+
+static int gateway_collection_roster_validate(
+    uint64_t gateway_id,
+    uint16_t expected_count,
+    const uint64_t *expected_node_ids,
+    size_t expected_node_id_count)
+{
+    if (expected_node_id_count == 0u) {
+        return PROTO_OK;
+    }
+    if (expected_node_ids == NULL ||
+        expected_node_id_count != expected_count ||
+        expected_node_id_count > GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (size_t i = 0u; i < expected_node_id_count; i++) {
+        if (expected_node_ids[i] == 0u || expected_node_ids[i] == gateway_id) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            if (expected_node_ids[j] == expected_node_ids[i]) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+    }
+    return PROTO_OK;
+}
+
+static bool gateway_collection_node_expected(
+    const struct gateway_collection_state *collection,
+    uint64_t node_id)
+{
+    if (collection == NULL || node_id == 0u) {
+        return false;
+    }
+    if (collection->expected_node_id_count == 0u) {
+        return true;
+    }
+
+    for (size_t i = 0u; i < collection->expected_node_id_count; i++) {
+        if (collection->expected_node_ids[i] == node_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+struct gateway_collection_staged_result {
+    struct gateway_collection_result_id id;
+    uint16_t payload_crc;
+    uint16_t payload_len;
+    uint8_t result_slot;
+};
+
+_Static_assert(GATEWAY_COLLECTION_RESULT_CACHE_SIZE <= UINT8_MAX,
+               "bundle staging indexes must address the result cache");
+_Static_assert(COLLECTION_BUNDLE_MAX_RECORDS *
+               sizeof(struct gateway_collection_staged_result) <= 256u,
+               "bundle preflight staging must stay workqueue-stack bounded");
+
+static const struct gateway_collection_staged_result *
+gateway_collection_staged_find(
+    const struct gateway_collection_staged_result *staged,
+    uint8_t staged_count,
+    const struct command_result_id *id)
+{
+    const struct gateway_collection_result_id candidate = {
+        .node_id = id->node_id,
+        .node_boot_counter = id->node_boot_counter,
+        .result_seq = id->result_seq,
+    };
+
+    for (uint8_t i = 0u; i < staged_count; i++) {
+        if (gateway_collection_result_id_equal(&staged[i].id, &candidate)) {
+            return &staged[i];
+        }
+    }
+    return NULL;
+}
+
+static bool gateway_collection_staged_has_node(
+    const struct gateway_collection_staged_result *staged,
+    uint8_t staged_count,
+    uint64_t node_id)
+{
+    for (uint8_t i = 0u; i < staged_count; i++) {
+        if (staged[i].id.node_id == node_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool gateway_collection_next_free_result_slot(
+    const struct gateway_collection_state *collection,
+    size_t *next_slot,
+    uint8_t *result_slot)
+{
+    while (*next_slot < GATEWAY_COLLECTION_RESULT_CACHE_SIZE &&
+           collection->results[*next_slot].valid) {
+        (*next_slot)++;
+    }
+    if (*next_slot >= GATEWAY_COLLECTION_RESULT_CACHE_SIZE) {
+        return false;
+    }
+
+    *result_slot = (uint8_t)*next_slot;
+    (*next_slot)++;
+    return true;
+}
+
+static int gateway_collection_bundle_record_validate(
+    const struct gateway_collection_state *collection,
+    const struct result_bundle_header *bundle,
+    const struct result_bundle_record *record)
+{
+    struct command_result_id payload_id;
+    uint32_t collection_epoch_id = 0u;
+    int ret;
+
+    if (record->result_id.gateway_id != bundle->gateway_id ||
+        record->result_id.gateway_epoch != bundle->gateway_epoch ||
+        record->result_id.command_seq != bundle->command_seq ||
+        record->result_id.node_id == 0u ||
+        command_result_id_from_tlvs(record->payload,
+                                    record->payload_len,
+                                    &payload_id) != PROTO_OK ||
+        !command_result_id_equal(&record->result_id, &payload_id)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = extract_required_u32(record->payload,
+                               record->payload_len,
+                               TLV_COLLECTION_EPOCH_ID,
+                               &collection_epoch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (collection_epoch_id != collection->collection_epoch_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return gateway_collection_node_expected(collection, record->result_id.node_id) ?
+           PROTO_OK : PROTO_ERR_NOT_FOUND;
+}
+
+static bool gateway_collection_entry_matches_id(
+    const struct gateway_collection_state *collection,
+    const struct gateway_collection_result_entry *entry,
+    const struct command_result_id *id)
+{
+    return collection->gateway_id == id->gateway_id &&
+           collection->gateway_epoch == id->gateway_epoch &&
+           collection->command_seq == id->command_seq &&
+           entry->id.node_id == id->node_id &&
+           entry->id.node_boot_counter == id->node_boot_counter &&
+           entry->id.result_seq == id->result_seq;
+}
+
 static int result_bundle_first_record_offset(const uint8_t *payload,
                                              size_t payload_len,
                                              size_t *record_offset)
@@ -1227,7 +1394,8 @@ int gateway_collection_start(struct gateway_collection_state *collection,
         command_seq == 0u ||
         collection_epoch_id == 0u ||
         membership_epoch == 0u ||
-        expected_count == 0u) {
+        expected_count == 0u ||
+        expected_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE) {
         return PROTO_ERR_ARG;
     }
 
@@ -1239,8 +1407,50 @@ int gateway_collection_start(struct gateway_collection_state *collection,
     collection->membership_epoch = membership_epoch;
     collection->expected_count = expected_count;
     collection->retry_round = retry_round;
+    collection->eack_sequence = (uint16_t)retry_round + 1u;
     collection->next_retry_spread_ms = next_retry_spread_ms;
     collection->collection_open = true;
+    collection->eack_pending = true;
+    collection->persistence_version =
+        GATEWAY_COLLECTION_STATE_PERSISTENCE_VERSION;
+    collection->persistence_valid = true;
+    return PROTO_OK;
+}
+
+int gateway_collection_set_expected_roster(
+    struct gateway_collection_state *collection,
+    const uint64_t *expected_node_ids,
+    size_t expected_node_id_count)
+{
+    int ret;
+
+    if (collection == NULL || collection->gateway_id == 0u ||
+        collection->command_seq == 0u || collection->collection_epoch_id == 0u ||
+        collection->received_count != 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = gateway_collection_roster_validate(collection->gateway_id,
+                                             collection->expected_count,
+                                             expected_node_ids,
+                                             expected_node_id_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    if (expected_node_id_count != 0u &&
+        expected_node_ids != collection->expected_node_ids) {
+        memmove(collection->expected_node_ids,
+                expected_node_ids,
+                expected_node_id_count * sizeof(collection->expected_node_ids[0]));
+    }
+    if (expected_node_id_count < GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP) {
+        memset(&collection->expected_node_ids[expected_node_id_count],
+               0,
+               (GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP - expected_node_id_count) *
+                   sizeof(collection->expected_node_ids[0]));
+    }
+    collection->expected_node_id_count = (uint16_t)expected_node_id_count;
     return PROTO_OK;
 }
 
@@ -1254,7 +1464,7 @@ bool gateway_collection_contains_result(const struct gateway_collection_state *c
     for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
         const struct gateway_collection_result_entry *entry = &collection->results[i];
 
-        if (entry->valid && command_result_id_equal(&entry->id, id)) {
+        if (entry->valid && gateway_collection_entry_matches_id(collection, entry, id)) {
             return true;
         }
     }
@@ -1276,6 +1486,25 @@ static bool gateway_collection_has_node_result(const struct gateway_collection_s
         }
     }
     return false;
+}
+
+static const struct gateway_collection_result_entry *
+gateway_collection_find_result(
+    const struct gateway_collection_state *collection,
+    const struct command_result_id *id)
+{
+    if (collection == NULL || id == NULL) {
+        return NULL;
+    }
+
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_entry *entry = &collection->results[i];
+
+        if (entry->valid && gateway_collection_entry_matches_id(collection, entry, id)) {
+            return entry;
+        }
+    }
+    return NULL;
 }
 
 int gateway_collection_record_result(struct gateway_collection_state *collection,
@@ -1302,6 +1531,7 @@ int gateway_collection_record_result_from_hop(struct gateway_collection_state *c
     struct command_result_id id;
     struct gateway_collection_result_entry *free_entry = NULL;
     uint32_t collection_epoch_id = 0u;
+    uint16_t payload_crc;
     int ret;
 
     if (collection == NULL || result == NULL || duplicate == NULL ||
@@ -1322,6 +1552,7 @@ int gateway_collection_record_result_from_hop(struct gateway_collection_state *c
         id.gateway_epoch != collection->gateway_epoch ||
         id.command_seq != collection->command_seq ||
         id.node_id == 0u ||
+        result->session_id != id.command_seq ||
         result->src_id != id.node_id) {
         return PROTO_ERR_MALFORMED;
     }
@@ -1335,15 +1566,26 @@ int gateway_collection_record_result_from_hop(struct gateway_collection_state *c
     if (collection_epoch_id != collection->collection_epoch_id) {
         return PROTO_ERR_MALFORMED;
     }
+    if (!gateway_collection_node_expected(collection, id.node_id)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    payload_crc = proto_crc16_ccitt_false(payload, payload_len);
 
     *duplicate = false;
     for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
         struct gateway_collection_result_entry *entry = &collection->results[i];
 
         if (entry->valid) {
-            if (command_result_id_equal(&entry->id, &id)) {
+            if (gateway_collection_entry_matches_id(collection, entry, &id)) {
+                if (entry->payload_len != payload_len ||
+                    entry->payload_crc != payload_crc) {
+                    return PROTO_ERR_MALFORMED;
+                }
                 *duplicate = true;
                 return PROTO_OK;
+            }
+            if (entry->id.node_id == id.node_id) {
+                return PROTO_ERR_MALFORMED;
             }
             continue;
         }
@@ -1358,15 +1600,18 @@ int gateway_collection_record_result_from_hop(struct gateway_collection_state *c
         return PROTO_ERR_NO_SPACE;
     }
 
-    free_entry->id = id;
+    free_entry->id.node_id = id.node_id;
+    free_entry->id.node_boot_counter = id.node_boot_counter;
+    free_entry->id.result_seq = id.result_seq;
     free_entry->previous_hop_id = previous_hop_id;
-    free_entry->payload_crc = proto_crc16_ccitt_false(payload, payload_len);
+    free_entry->payload_crc = payload_crc;
     free_entry->payload_len = (uint16_t)payload_len;
     free_entry->valid = true;
     if (collection->received_count < UINT16_MAX) {
         collection->received_count++;
     }
     gateway_collection_refresh_open(collection);
+    collection->eack_pending = true;
     return PROTO_OK;
 }
 
@@ -1395,16 +1640,15 @@ int gateway_collection_record_bundle_from_hop(struct gateway_collection_state *c
                                              uint16_t *duplicate_count)
 {
     struct result_bundle_header bundle;
+    struct gateway_collection_staged_result staged[COLLECTION_BUNDLE_MAX_RECORDS];
     size_t cursor = 0u;
+    size_t next_free_slot = 0u;
+    uint16_t committed_received_count;
+    uint16_t local_duplicate_count = 0u;
     uint8_t parsed_count = 0u;
+    uint8_t staged_count = 0u;
+    bool committed_collection_open;
     int ret;
-
-    if (accepted_count != NULL) {
-        *accepted_count = 0u;
-    }
-    if (duplicate_count != NULL) {
-        *duplicate_count = 0u;
-    }
 
     if (collection == NULL || bundle_packet == NULL ||
         (payload == NULL && payload_len != 0u)) {
@@ -1439,11 +1683,13 @@ int gateway_collection_record_bundle_from_hop(struct gateway_collection_state *c
         return PROTO_ERR_BAD_CRC;
     }
 
+    committed_received_count = collection->received_count;
+    committed_collection_open = collection->collection_open;
+
     while (cursor < payload_len) {
         struct result_bundle_record record;
-        struct command_result_id payload_id;
-        struct proto_packet result = {0};
-        bool duplicate = false;
+        const struct gateway_collection_result_entry *existing;
+        const struct gateway_collection_staged_result *staged_duplicate;
         size_t before = cursor;
 
         if (payload[cursor] != TLV_RESULT_RECORD) {
@@ -1461,43 +1707,92 @@ int gateway_collection_record_bundle_from_hop(struct gateway_collection_state *c
         }
         parsed_count++;
 
-        if (record.result_id.gateway_id != bundle.gateway_id ||
-            record.result_id.gateway_epoch != bundle.gateway_epoch ||
-            record.result_id.command_seq != bundle.command_seq ||
-            record.result_id.node_id == 0u ||
-            command_result_id_from_tlvs(record.payload,
-                                        record.payload_len,
-                                        &payload_id) != PROTO_OK ||
-            !command_result_id_equal(&record.result_id, &payload_id)) {
-            return PROTO_ERR_MALFORMED;
-        }
-
-        result.msg_type = MSG_COMMAND_RESULT;
-        result.src_id = record.result_id.node_id;
-        result.dst_id = collection->gateway_id;
-        result.session_id = record.result_id.command_seq;
-        result.seq = record.result_id.result_seq;
-        result.ttl = 1u;
-        result.payload_len = record.payload_len;
-        ret = gateway_collection_record_result_from_hop(collection,
-                                                        &result,
-                                                        record.payload,
-                                                        record.payload_len,
-                                                        previous_hop_id,
-                                                        &duplicate);
+        ret = gateway_collection_bundle_record_validate(collection, &bundle, &record);
         if (ret != PROTO_OK) {
             return ret;
         }
-        if (duplicate) {
-            if (duplicate_count != NULL && *duplicate_count < UINT16_MAX) {
-                (*duplicate_count)++;
+
+        existing = gateway_collection_find_result(collection, &record.result_id);
+        if (existing != NULL) {
+            if (existing->payload_crc != record.payload_crc ||
+                existing->payload_len != record.payload_len) {
+                return PROTO_ERR_MALFORMED;
             }
-        } else if (accepted_count != NULL && *accepted_count < UINT16_MAX) {
-            (*accepted_count)++;
+            local_duplicate_count++;
+            continue;
+        }
+        staged_duplicate = gateway_collection_staged_find(staged,
+                                                          staged_count,
+                                                          &record.result_id);
+        if (staged_duplicate != NULL) {
+            if (staged_duplicate->payload_crc != record.payload_crc ||
+                staged_duplicate->payload_len != record.payload_len) {
+                return PROTO_ERR_MALFORMED;
+            }
+            local_duplicate_count++;
+            continue;
+        }
+        if (gateway_collection_has_node_result(collection,
+                                               record.result_id.node_id) ||
+            gateway_collection_staged_has_node(staged,
+                                               staged_count,
+                                               record.result_id.node_id)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (!committed_collection_open) {
+            return PROTO_ERR_STALE;
+        }
+        if (staged_count >= COLLECTION_BUNDLE_MAX_RECORDS ||
+            !gateway_collection_next_free_result_slot(collection,
+                                                      &next_free_slot,
+                                                      &staged[staged_count].result_slot)) {
+            return PROTO_ERR_NO_SPACE;
+        }
+
+        staged[staged_count].id.node_id = record.result_id.node_id;
+        staged[staged_count].id.node_boot_counter = record.result_id.node_boot_counter;
+        staged[staged_count].id.result_seq = record.result_id.result_seq;
+        staged[staged_count].payload_crc = record.payload_crc;
+        staged[staged_count].payload_len = record.payload_len;
+        staged_count++;
+
+        if (committed_received_count < UINT16_MAX) {
+            committed_received_count++;
+        }
+        if (collection->expected_count != 0u &&
+            committed_received_count >= collection->expected_count) {
+            committed_collection_open = false;
         }
     }
 
-    return parsed_count == bundle.record_count ? PROTO_OK : PROTO_ERR_MALFORMED;
+    if (parsed_count != bundle.record_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    for (uint8_t i = 0u; i < staged_count; i++) {
+        struct gateway_collection_result_entry *entry =
+            &collection->results[staged[i].result_slot];
+
+        entry->id.node_id = staged[i].id.node_id;
+        entry->id.node_boot_counter = staged[i].id.node_boot_counter;
+        entry->id.result_seq = staged[i].id.result_seq;
+        entry->previous_hop_id = previous_hop_id;
+        entry->payload_crc = staged[i].payload_crc;
+        entry->payload_len = staged[i].payload_len;
+        entry->valid = true;
+    }
+    collection->received_count = committed_received_count;
+    collection->collection_open = committed_collection_open;
+    if (staged_count != 0u) {
+        collection->eack_pending = true;
+    }
+    if (accepted_count != NULL) {
+        *accepted_count = staged_count;
+    }
+    if (duplicate_count != NULL) {
+        *duplicate_count = local_duplicate_count;
+    }
+    return PROTO_OK;
 }
 
 size_t gateway_collection_return_candidates(const struct gateway_collection_state *collection,
@@ -1559,16 +1854,26 @@ static int gateway_collection_snapshot_validate(
         snapshot->collection_epoch_id == 0u ||
         snapshot->membership_epoch == 0u ||
         snapshot->expected_count == 0u ||
+        snapshot->expected_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
+        snapshot->eack_sequence == 0u ||
         snapshot->received_count > snapshot->expected_count ||
         snapshot->received_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
         snapshot->result_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
         snapshot->result_count != snapshot->received_count ||
+        (snapshot->collection_open && !snapshot->eack_pending) ||
         (snapshot->received_count >= snapshot->expected_count && snapshot->collection_open)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (gateway_collection_roster_validate(snapshot->gateway_id,
+                                           snapshot->expected_count,
+                                           snapshot->expected_node_ids,
+                                           snapshot->expected_node_id_count) != PROTO_OK) {
         return PROTO_ERR_MALFORMED;
     }
 
     for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
-        const struct gateway_collection_result_entry *entry = &snapshot->results[i];
+        const struct gateway_collection_result_snapshot_entry *entry =
+            &snapshot->results[i];
 
         if (!entry->valid) {
             continue;
@@ -1576,14 +1881,32 @@ static int gateway_collection_snapshot_validate(
         if (entry->id.gateway_id != snapshot->gateway_id ||
             entry->id.gateway_epoch != snapshot->gateway_epoch ||
             entry->id.command_seq != snapshot->command_seq ||
-            entry->id.node_id == 0u) {
+            entry->id.node_id == 0u ||
+            entry->payload_len == 0u) {
             return PROTO_ERR_MALFORMED;
         }
+        if (snapshot->expected_node_id_count != 0u) {
+            bool expected = false;
+
+            for (size_t roster_index = 0u;
+                 roster_index < snapshot->expected_node_id_count;
+                 roster_index++) {
+                if (snapshot->expected_node_ids[roster_index] == entry->id.node_id) {
+                    expected = true;
+                    break;
+                }
+            }
+            if (!expected) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
         for (size_t j = 0u; j < i; j++) {
-            const struct gateway_collection_result_entry *prior =
+            const struct gateway_collection_result_snapshot_entry *prior =
                 &snapshot->results[j];
 
-            if (prior->valid && command_result_id_equal(&prior->id, &entry->id)) {
+            if (prior->valid &&
+                (command_result_id_equal(&prior->id, &entry->id) ||
+                 prior->id.node_id == entry->id.node_id)) {
                 return PROTO_ERR_MALFORMED;
             }
         }
@@ -1599,40 +1922,37 @@ static int gateway_collection_snapshot_validate(
     return PROTO_OK;
 }
 
-int gateway_collection_export_snapshot(
-    const struct gateway_collection_state *collection,
-    struct gateway_collection_state_snapshot *snapshot)
+static int gateway_collection_validate(const struct gateway_collection_state *collection,
+                                       uint16_t *result_count)
 {
-    struct gateway_collection_state_snapshot tmp;
-    uint16_t result_count = 0u;
+    uint16_t valid_count = 0u;
 
-    if (collection == NULL || snapshot == NULL) {
+    if (collection == NULL || result_count == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (collection->gateway_id == 0u ||
+    if (collection->persistence_version !=
+            GATEWAY_COLLECTION_STATE_PERSISTENCE_VERSION ||
+        !collection->persistence_valid ||
+        collection->gateway_id == 0u ||
         collection->command_seq == 0u ||
         collection->collection_epoch_id == 0u ||
         collection->membership_epoch == 0u ||
         collection->expected_count == 0u ||
+        collection->expected_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
+        collection->eack_sequence == 0u ||
         collection->received_count > collection->expected_count ||
         collection->received_count > GATEWAY_COLLECTION_RESULT_CACHE_SIZE ||
-        (collection->received_count >= collection->expected_count && collection->collection_open)) {
+        (collection->collection_open && !collection->eack_pending) ||
+        (collection->received_count >= collection->expected_count &&
+         collection->collection_open)) {
         return PROTO_ERR_MALFORMED;
     }
-
-    memset(&tmp, 0, sizeof(tmp));
-    tmp.version = GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION;
-    tmp.valid = true;
-    tmp.gateway_id = collection->gateway_id;
-    tmp.gateway_epoch = collection->gateway_epoch;
-    tmp.command_seq = collection->command_seq;
-    tmp.collection_epoch_id = collection->collection_epoch_id;
-    tmp.membership_epoch = collection->membership_epoch;
-    tmp.expected_count = collection->expected_count;
-    tmp.received_count = collection->received_count;
-    tmp.retry_round = collection->retry_round;
-    tmp.next_retry_spread_ms = collection->next_retry_spread_ms;
-    tmp.collection_open = collection->collection_open;
+    if (gateway_collection_roster_validate(collection->gateway_id,
+                                           collection->expected_count,
+                                           collection->expected_node_ids,
+                                           collection->expected_node_id_count) != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
         const struct gateway_collection_result_entry *entry = &collection->results[i];
@@ -1640,32 +1960,97 @@ int gateway_collection_export_snapshot(
         if (!entry->valid) {
             continue;
         }
-        if (entry->id.gateway_id != collection->gateway_id ||
-            entry->id.gateway_epoch != collection->gateway_epoch ||
-            entry->id.command_seq != collection->command_seq ||
-            entry->id.node_id == 0u) {
+        if (entry->id.node_id == 0u || entry->payload_len == 0u ||
+            !gateway_collection_node_expected(collection, entry->id.node_id)) {
             return PROTO_ERR_MALFORMED;
         }
         for (size_t j = 0u; j < i; j++) {
             const struct gateway_collection_result_entry *prior = &collection->results[j];
 
-            if (prior->valid && command_result_id_equal(&prior->id, &entry->id)) {
+            if (prior->valid &&
+                (gateway_collection_result_id_equal(&prior->id, &entry->id) ||
+                 prior->id.node_id == entry->id.node_id)) {
                 return PROTO_ERR_MALFORMED;
             }
         }
-        if (result_count >= collection->received_count) {
+        if (valid_count >= collection->received_count) {
             return PROTO_ERR_MALFORMED;
         }
-        tmp.results[i] = *entry;
-        result_count++;
+        valid_count++;
     }
-    if (result_count != collection->received_count) {
+    if (valid_count != collection->received_count) {
         return PROTO_ERR_MALFORMED;
     }
-    tmp.result_count = result_count;
 
-    *snapshot = tmp;
+    *result_count = valid_count;
     return PROTO_OK;
+}
+
+int gateway_collection_state_validate(
+    const struct gateway_collection_state *collection)
+{
+    uint16_t result_count = 0u;
+
+    return gateway_collection_validate(collection, &result_count);
+}
+
+int gateway_collection_export_snapshot(
+    const struct gateway_collection_state *collection,
+    struct gateway_collection_state_snapshot *snapshot)
+{
+    uint16_t result_count = 0u;
+    int ret;
+
+    if (collection == NULL || snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = gateway_collection_validate(collection, &result_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->version = GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION;
+    snapshot->valid = true;
+    snapshot->gateway_id = collection->gateway_id;
+    snapshot->gateway_epoch = collection->gateway_epoch;
+    snapshot->command_seq = collection->command_seq;
+    snapshot->collection_epoch_id = collection->collection_epoch_id;
+    snapshot->membership_epoch = collection->membership_epoch;
+    snapshot->expected_count = collection->expected_count;
+    snapshot->received_count = collection->received_count;
+    snapshot->result_count = result_count;
+    snapshot->retry_round = collection->retry_round;
+    snapshot->eack_sequence = collection->eack_sequence;
+    snapshot->next_retry_spread_ms = collection->next_retry_spread_ms;
+    snapshot->collection_open = collection->collection_open;
+    snapshot->eack_pending = collection->eack_pending;
+    snapshot->expected_node_id_count = collection->expected_node_id_count;
+    memcpy(snapshot->expected_node_ids,
+           collection->expected_node_ids,
+           collection->expected_node_id_count *
+               sizeof(snapshot->expected_node_ids[0]));
+
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_entry *entry = &collection->results[i];
+        struct gateway_collection_result_snapshot_entry *stored = &snapshot->results[i];
+
+        if (!entry->valid) {
+            continue;
+        }
+        stored->id.gateway_id = collection->gateway_id;
+        stored->id.gateway_epoch = collection->gateway_epoch;
+        stored->id.command_seq = collection->command_seq;
+        stored->id.node_id = entry->id.node_id;
+        stored->id.node_boot_counter = entry->id.node_boot_counter;
+        stored->id.result_seq = entry->id.result_seq;
+        stored->previous_hop_id = entry->previous_hop_id;
+        stored->payload_crc = entry->payload_crc;
+        stored->payload_len = entry->payload_len;
+        stored->valid = true;
+    }
+
+    return gateway_collection_snapshot_validate(snapshot);
 }
 
 int gateway_collection_restore_snapshot(
@@ -1692,10 +2077,35 @@ int gateway_collection_restore_snapshot(
     collection->expected_count = snapshot->expected_count;
     collection->received_count = snapshot->received_count;
     collection->retry_round = snapshot->retry_round;
+    collection->eack_sequence = snapshot->eack_sequence;
     collection->next_retry_spread_ms = snapshot->next_retry_spread_ms;
     collection->collection_open = snapshot->collection_open;
-    memcpy(collection->results, snapshot->results, sizeof(collection->results));
-    return PROTO_OK;
+    collection->eack_pending = snapshot->eack_pending;
+    collection->expected_node_id_count = snapshot->expected_node_id_count;
+    memcpy(collection->expected_node_ids,
+           snapshot->expected_node_ids,
+           snapshot->expected_node_id_count *
+               sizeof(collection->expected_node_ids[0]));
+    for (size_t i = 0u; i < GATEWAY_COLLECTION_RESULT_CACHE_SIZE; i++) {
+        const struct gateway_collection_result_snapshot_entry *stored =
+            &snapshot->results[i];
+        struct gateway_collection_result_entry *entry = &collection->results[i];
+
+        if (!stored->valid) {
+            continue;
+        }
+        entry->id.node_id = stored->id.node_id;
+        entry->id.node_boot_counter = stored->id.node_boot_counter;
+        entry->id.result_seq = stored->id.result_seq;
+        entry->previous_hop_id = stored->previous_hop_id;
+        entry->payload_crc = stored->payload_crc;
+        entry->payload_len = stored->payload_len;
+        entry->valid = true;
+    }
+    collection->persistence_version =
+        GATEWAY_COLLECTION_STATE_PERSISTENCE_VERSION;
+    collection->persistence_valid = true;
+    return gateway_collection_state_validate(collection);
 }
 
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,
@@ -1709,7 +2119,8 @@ int gateway_collection_build_eack(const struct gateway_collection_state *collect
         collection->command_seq == 0u ||
         collection->collection_epoch_id == 0u ||
         collection->membership_epoch == 0u ||
-        collection->expected_count == 0u) {
+        collection->expected_count == 0u ||
+        collection->eack_sequence == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -1721,6 +2132,7 @@ int gateway_collection_build_eack(const struct gateway_collection_state *collect
     eack->membership_epoch = collection->membership_epoch;
     eack->expected_count = collection->expected_count;
     eack->received_count = collection->received_count;
+    eack->packet_sequence = collection->eack_sequence;
     eack->eack_format = eack_format;
     eack->retry_round = collection->retry_round;
     eack->next_retry_spread_ms = collection->next_retry_spread_ms;
@@ -1773,7 +2185,7 @@ int gateway_collection_prepare_eack_outbound(const struct gateway_collection_sta
     out->packet.src_id = collection->gateway_id;
     out->packet.dst_id = MESH_BROADCAST_ID;
     out->packet.session_id = collection->command_seq;
-    out->packet.seq = collection->retry_round == 0u ? 1u : collection->retry_round;
+    out->packet.seq = collection->eack_sequence;
     out->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
@@ -1847,7 +2259,7 @@ int gateway_collection_prepare_missing_eack_outbound(
     out->packet.src_id = collection->gateway_id;
     out->packet.dst_id = MESH_BROADCAST_ID;
     out->packet.session_id = collection->command_seq;
-    out->packet.seq = collection->retry_round == 0u ? 1u : collection->retry_round;
+    out->packet.seq = collection->eack_sequence;
     out->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
@@ -1860,6 +2272,63 @@ int gateway_collection_prepare_missing_eack_outbound(
     return PROTO_OK;
 }
 
+int gateway_collection_eack_custody_capture(
+    struct gateway_collection_eack_custody_snapshot *snapshot,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    int ret;
+
+    if (snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (packet == NULL || payload == NULL ||
+        payload_len > GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN ||
+        packet->dst_id != MESH_BROADCAST_ID) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = gateway_collection_eack_packet_validate(packet,
+                                                  payload,
+                                                  payload_len,
+                                                  NULL);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->packet = *packet;
+    memcpy(snapshot->payload, payload, payload_len);
+    snapshot->version = GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_VERSION;
+    snapshot->payload_len = (uint16_t)payload_len;
+    snapshot->payload_crc = proto_crc16_ccitt_false(payload, payload_len);
+    snapshot->valid = true;
+    return PROTO_OK;
+}
+
+int gateway_collection_eack_custody_validate(
+    const struct gateway_collection_eack_custody_snapshot *snapshot)
+{
+    if (snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (snapshot->version != GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_VERSION) {
+        return PROTO_ERR_BAD_VERSION;
+    }
+    if (!snapshot->valid ||
+        snapshot->payload_len == 0u ||
+        snapshot->payload_len > GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN ||
+        snapshot->packet.dst_id != MESH_BROADCAST_ID ||
+        snapshot->payload_crc != proto_crc16_ccitt_false(snapshot->payload,
+                                                         snapshot->payload_len)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return gateway_collection_eack_packet_validate(&snapshot->packet,
+                                                   snapshot->payload,
+                                                   snapshot->payload_len,
+                                                   NULL);
+}
+
 int gateway_collection_advance_retry_round(struct gateway_collection_state *collection)
 {
     if (collection == NULL) {
@@ -1869,10 +2338,13 @@ int gateway_collection_advance_retry_round(struct gateway_collection_state *coll
         collection->command_seq == 0u ||
         collection->collection_epoch_id == 0u ||
         collection->membership_epoch == 0u ||
-        collection->expected_count == 0u) {
+        collection->expected_count == 0u ||
+        collection->eack_sequence == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
+    collection->eack_sequence = collection->eack_sequence == UINT16_MAX ?
+                                1u : (uint16_t)(collection->eack_sequence + 1u);
     if (collection->retry_round < UINT8_MAX) {
         collection->retry_round++;
     }

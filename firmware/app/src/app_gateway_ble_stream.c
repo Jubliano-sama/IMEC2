@@ -13,6 +13,8 @@ _Static_assert(sizeof(struct gateway_ble_stream_state) <=
 _Static_assert(GATEWAY_BLE_STREAM_RECORD_POOL_BYTES >=
                GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES,
                "gateway BLE stream pool must hold one click and both CIR records");
+_Static_assert(GATEWAY_BLE_STREAM_QUEUE_DEPTH > 0u,
+               "gateway BLE stream reservation requires a queue slot");
 
 #define STREAM_FLAG_TRUNCATED 0x01u
 
@@ -231,6 +233,48 @@ static bool drop_one_lower_priority(struct gateway_ble_stream_state *state,
     return true;
 }
 
+static struct gateway_ble_stream_item *reservation_item(
+    struct gateway_ble_stream_state *state)
+{
+    return &state->items[GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u];
+}
+
+static const struct gateway_ble_stream_item *reservation_item_const(
+    const struct gateway_ble_stream_state *state)
+{
+    return &state->items[GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u];
+}
+
+static bool queue_capacity_available(
+    const struct gateway_ble_stream_state *state,
+    uint16_t record_len)
+{
+    size_t occupied_pool;
+    uint8_t occupied_slots;
+
+    occupied_slots = state->count + (state->reservation_active ? 1u : 0u);
+    occupied_pool = state->pool_used;
+    if (state->reservation_active) {
+        occupied_pool += reservation_item_const(state)->len;
+    }
+    return occupied_slots < GATEWAY_BLE_STREAM_QUEUE_DEPTH &&
+           occupied_pool + record_len <= sizeof(state->record_pool);
+}
+
+static bool packet_identity_matches(const struct proto_packet *left,
+                                    const struct proto_packet *right)
+{
+    return left->msg_type == right->msg_type &&
+           left->flags == right->flags &&
+           left->src_id == right->src_id &&
+           left->dst_id == right->dst_id &&
+           left->session_id == right->session_id &&
+           left->seq == right->seq &&
+           left->ttl == right->ttl &&
+           left->payload_len == right->payload_len &&
+           left->message_age_ms == right->message_age_ms;
+}
+
 static int build_record(const struct proto_packet *packet,
                         const uint8_t *payload,
                         size_t payload_len,
@@ -299,6 +343,7 @@ static int build_record(const struct proto_packet *packet,
     item->packet_type = packet->msg_type;
     item->priority = priority;
     item->queued_at_ms = now_ms;
+    item->received_at_ms = received_at_ms;
     item->packet = *packet;
     return 0;
 }
@@ -344,12 +389,10 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
         return ret;
     }
 
-    while ((state->count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
-            state->pool_used + item.len > sizeof(state->record_pool)) &&
+    while (!queue_capacity_available(state, item.len) &&
            drop_one_lower_priority(state, item.priority)) {
     }
-    if (state->count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
-        state->pool_used + item.len > sizeof(state->record_pool)) {
+    if (!queue_capacity_available(state, item.len)) {
         note_drop(state,
                   packet->msg_type,
                   ble_ready ? GATEWAY_BLE_STREAM_DROP_QUEUE_FULL :
@@ -378,6 +421,165 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
         state->diagnostics.max_queue_depth_observed = state->count;
     }
     return 1;
+}
+
+int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
+                                      const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t received_at_ms,
+                                      uint32_t now_ms,
+                                      bool ble_ready)
+{
+    enum gateway_ble_stream_class packet_class;
+    struct gateway_ble_stream_item item;
+    int ret;
+
+    if (state == NULL || packet == NULL ||
+        (payload == NULL && payload_len != 0u)) {
+        return -EINVAL;
+    }
+    state->diagnostics.enqueue_attempts++;
+    if (state->reservation_active) {
+        return -EBUSY;
+    }
+    if (payload_len > UINT16_MAX) {
+        note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
+        return -EMSGSIZE;
+    }
+
+    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
+                                                      packet->flags);
+    if (!gateway_ble_should_stream_packet(packet->msg_type,
+                                          packet->flags,
+                                          packet_class)) {
+        return 0;
+    }
+    ret = build_record(packet,
+                       payload,
+                       payload_len,
+                       packet_class,
+                       received_at_ms,
+                       now_ms,
+                       NULL,
+                       0u,
+                       &item);
+    if (ret == -EMSGSIZE) {
+        note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
+        return ret;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+
+    while (!queue_capacity_available(state, item.len) &&
+           drop_one_lower_priority(state, item.priority)) {
+    }
+    if (!queue_capacity_available(state, item.len)) {
+        note_drop(state,
+                  packet->msg_type,
+                  ble_ready ? GATEWAY_BLE_STREAM_DROP_QUEUE_FULL :
+                              GATEWAY_BLE_STREAM_DROP_NOT_READY);
+        return ble_ready ? -ENOSPC : -ENOTCONN;
+    }
+
+    *reservation_item(state) = item;
+    state->reservation_payload_len = (uint16_t)payload_len;
+    state->reservation_payload_crc =
+        proto_crc16_ccitt_false(payload, payload_len);
+    state->reservation_active = true;
+    return 1;
+}
+
+int gateway_ble_stream_commit_reservation(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    const struct gateway_ble_stream_item *reserved;
+    enum gateway_ble_stream_class packet_class;
+    struct gateway_ble_stream_item item;
+    uint8_t insert_index;
+    int ret;
+
+    if (state == NULL || packet == NULL ||
+        (payload == NULL && payload_len != 0u)) {
+        return -EINVAL;
+    }
+    if (!state->reservation_active) {
+        return -ENOENT;
+    }
+    reserved = reservation_item_const(state);
+    if (payload_len != state->reservation_payload_len ||
+        !packet_identity_matches(packet, &reserved->packet) ||
+        proto_crc16_ccitt_false(payload, payload_len) !=
+            state->reservation_payload_crc) {
+        return -ESTALE;
+    }
+
+    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
+                                                      packet->flags);
+    ret = build_record(packet,
+                       payload,
+                       payload_len,
+                       packet_class,
+                       reserved->received_at_ms,
+                       reserved->queued_at_ms,
+                       NULL,
+                       0u,
+                       &item);
+    if (ret < 0 || item.len != reserved->len ||
+        item.packet_type != reserved->packet_type ||
+        item.priority != reserved->priority) {
+        return ret < 0 ? ret : -ESTALE;
+    }
+    if (state->count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
+        state->pool_used + item.len > sizeof(state->record_pool)) {
+        return -ENOSPC;
+    }
+
+    item.offset = state->pool_used;
+    ret = build_record(packet,
+                       payload,
+                       payload_len,
+                       packet_class,
+                       reserved->received_at_ms,
+                       reserved->queued_at_ms,
+                       &state->record_pool[state->pool_used],
+                       sizeof(state->record_pool) - state->pool_used,
+                       &item);
+    if (ret < 0) {
+        return ret;
+    }
+
+    insert_index = state->count;
+    item.offset = state->pool_used;
+    state->pool_used += item.len;
+    state->items[insert_index] = item;
+    state->count++;
+    state->reservation_active = false;
+    state->reservation_payload_len = 0u;
+    state->reservation_payload_crc = 0u;
+    if (insert_index != GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u) {
+        memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
+    }
+    if (state->count > state->diagnostics.max_queue_depth_observed) {
+        state->diagnostics.max_queue_depth_observed = state->count;
+    }
+    return 1;
+}
+
+void gateway_ble_stream_cancel_reservation(
+    struct gateway_ble_stream_state *state)
+{
+    if (state == NULL || !state->reservation_active) {
+        return;
+    }
+    memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
+    state->reservation_payload_len = 0u;
+    state->reservation_payload_crc = 0u;
+    state->reservation_active = false;
 }
 
 unsigned int gateway_ble_stream_drain(struct gateway_ble_stream_state *state,

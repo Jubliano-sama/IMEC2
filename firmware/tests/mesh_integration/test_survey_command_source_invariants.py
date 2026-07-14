@@ -43,6 +43,23 @@ assert reject.count("gateway_observe_host_terminal(") == 1
 
 reachability = function_body(ANCHOR, "gateway_route_survey_reachability")
 assert "gateway_command_survey_sample_admission(" in reachability
+assert re.search(
+    r"gateway_command_budget_window_ms\s*\(\s*true\s*,\s*"
+    r"command_budget_ms\s*,\s*1u\s*,\s*collection_delay_ms\s*\)",
+    reachability,
+), "survey collection must remain one indivisible phase under an explicit budget"
+
+control_timeout = function_body(ANCHOR, "gateway_survey_control_timeout_ms")
+assert "gateway_survey_remaining_control_phases" not in ANCHOR, (
+    "survey control deadlines must not be divided across future pair phases"
+)
+assert re.search(
+    r"gateway_command_budget_window_ms\s*\(\s*true\s*,\s*"
+    r"remaining_ms\s*,\s*1u\s*,\s*"
+    r"SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS\s*\)",
+    control_timeout,
+), "each survey control must use the natural timeout clipped by the global deadline"
+
 assert reachability.count("gateway_emit_host_command_result(") == 1
 assert re.search(
     r"gateway_emit_host_command_result\s*\(\s*host_packet,\s*"
@@ -62,5 +79,21 @@ assert re.search(
     r"item\.command_id\s*!=\s*CMD_SURVEY_REACHABILITY",
     worker,
 ), "worker must not synthesize a second reachability terminal"
+
+survey_worker = function_body(ANCHOR, "gateway_survey_work_handler")
+deadline_check = survey_worker.index("gateway_survey_operation_deadline_ms")
+pair_planning = survey_worker.index("survey_gateway_plan_pairs(")
+assert deadline_check < pair_planning, (
+    "an explicit operation deadline must win before collection can be closed "
+    "or pairs planned"
+)
+assert re.search(
+    r"if\s*\(\s*ret\s*==\s*-ETIMEDOUT\s*&&\s*"
+    r"gateway_survey_budget_explicit\s*\)\s*\{.*?"
+    r"gateway_survey_auto_finish_status\s*\(\s*COMMAND_TIMEOUT\s*,\s*"
+    r"GATEWAY_COMMAND_EVENT_REASON_TIMEOUT\s*\)",
+    survey_worker,
+    re.DOTALL,
+), "an exhausted global budget must terminate the survey as a global timeout"
 
 print("survey command source invariants passed")

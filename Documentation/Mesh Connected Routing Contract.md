@@ -156,6 +156,19 @@ will prove the new behavior.
   load source transmitting while the real anchor exercises click priority.
 - Hop-level ACK and gateway-level ACK are separate. Hop ACK proves next-hop
   reception. Gateway ACK proves final gateway acceptance.
+- For gateway-local command results, result bundles, survey discovery reports,
+  and survey pair results, final acceptance is delayed until the owning
+  protocol validates the complete message and durably commits any required
+  state. The gateway reserves capacity for the complete host record before that
+  mutation, commits a newly accepted record to the BLE stream before sending
+  its semantic completion response, and cancels the reservation for an exact
+  duplicate so the host sees one record. Before those commits, the gateway must
+  neither remember the packet as a duplicate nor emit its gateway ACK. A full
+  host queue, rejected message, or failed persistence attempt therefore remains
+  retryable end to end. After the commits, duplicate reception is ACK-sticky and
+  must not apply the protocol mutation or BLE delivery twice. Collection results
+  remain in collection-EACK custody, so a generic gateway ACK cannot complete
+  their sender-side transaction.
 - For relay paths, ACKs are sent in the sender's next channel 9 transmit
   window. This applies to hop-level ACKs and to gateway-level ACKs that are
   bubbling back through anchors.
@@ -682,6 +695,49 @@ channel-9 send merely because its target is explicit.
 The present mesh envelope uses network identity and CRC checks, not keyed STS or
 a packet MAC, so this rule prevents stale and accidental identity poisoning but
 must not be described as hostile-RF authentication.
+
+Collection start freezes the exact expected-node roster, with a supported
+maximum of 50 anchors, as part of the durable collection state. The gateway
+rejects a result from a node outside that roster and accepts at most one payload
+identity per expected node. An exact retry may re-arm a missed collection EACK
+but cannot create a second host record or replace the accepted result. A closed
+collection with unfinished EACK custody blocks a new collection so the old
+senders cannot be orphaned by command reuse.
+
+Every gateway collection EACK has an explicit nonzero 16-bit packet sequence.
+That sequence appears both in the mesh header and in the mandatory encoded EACK
+payload field, and a receiver accepts the EACK only when those values match the
+decoded gateway and collection-command identity. A transport retry keeps the
+same sequence and bytes. A later logical EACK update advances the independent
+packet sequence, wrapping from 65535 to 1; the 8-bit `retry_round` saturates and
+is only a backoff hint, never the EACK deduplication identity.
+
+Before any EACK RF attempt, the gateway freezes and durably stores the exact
+mesh header and encoded payload. Channel 9 attempts, channel 5 recovery, and a
+retry resumed after reset all reuse those bytes. A persistence refusal is a
+pre-RF deferral, so it cannot be reported as a successful EACK round or consume
+the frozen custody. Results accepted while an older EACK is in flight belong to
+the following logical update and cannot mutate that snapshot.
+
+Channel 5 EACK recovery completes only after four actual EACK frames have
+started on air for the frozen packet identity. A busy radio, protocol preemption,
+quiet-channel refusal, or other pre-RF deferral preserves the current
+opportunity and resumes it with randomized exponential scheduling; it cannot
+advance or release EACK custody. The EACK builder therefore uses one resumable
+four-frame flood and no outer flood repetition, preventing both partial-burst
+success and accidental multiplication to sixteen frames.
+
+After the frozen EACK is delivered, the gateway advances the collection round
+only as a transaction: it first durably stores the next collection identity and
+state, then clears the old EACK custody. A reset or persistence failure before
+that commit must therefore resume the old exact EACK safely. Result mutation,
+EACK preparation and retry, and collection persistence all share the serialized
+mesh-route queue owner so separate workqueues cannot race those state changes.
+The persisted `eack_pending` bit distinguishes a closed collection whose final
+EACK is still owed from one whose final EACK was committed: collection start and
+every accepted result set it, and only the durable closed-round commit clears
+it. Boot creates a fresh EACK only when that bit is set, while a later duplicate
+result re-arms it so a node that missed the final broadcast can still finish.
 
 Gateway commands must not be blocked behind ordinary packet retries. If a
 local-origin payload, a transit payload, a retry, and a gateway command all need

@@ -61,6 +61,10 @@ extern "C" {
 #define REVERSE_PATH_CANDIDATE_COUNT 2u
 #define RELAY_BUSY_RETRY_MIN_MS 500u
 #define RELAY_BUSY_RETRY_MAX_MS 5000u
+#define MESH_RELAY_RESULT_OFFER_RETRY_BASE_MS 500u
+#define MESH_RELAY_RESULT_OFFER_RETRY_MAX_MS 8000u
+#define MESH_RELAY_RESULT_OFFER_MAX_RF_ATTEMPTS 6u
+#define MESH_RELAY_RESULT_OFFER_EXPIRY_S 60u
 #define RELAY_CAPACITY_HINT_VALIDITY_MS 5000u
 #define COLLECTION_INITIAL_SPREAD_MIN_MS 30000u
 #define COLLECTION_INITIAL_SPREAD_PER_NODE_MS 300u
@@ -173,6 +177,12 @@ enum mesh_relay_delivery_state {
     MESH_RELAY_DELIVERY_GATEWAY_ACKED = 5,
     MESH_RELAY_DELIVERY_EXPIRED = 6,
     MESH_RELAY_DELIVERY_COLLECTION_CLOSED = 7,
+    MESH_RELAY_DELIVERY_RESULT_GRANT_ATTEMPTS_EXHAUSTED = 8,
+};
+
+enum mesh_relay_status {
+    MESH_RELAY_ERR_RESULT_GRANT_ATTEMPTS_EXHAUSTED = -2000,
+    MESH_RELAY_ERR_RESULT_GRANT_DEADLINE_EXPIRED = -2001,
 };
 
 struct persistent_outbox_record {
@@ -226,6 +236,7 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_TX_COLLECTION_RETRY = 1u << 24,
     MESH_RELAY_ACTION_TX_COLLECTION_CLOSED = 1u << 25,
     MESH_RELAY_ACTION_UPDATE_ROUTE_REQ = 1u << 26,
+    MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL = 1u << 27,
 };
 
 enum mesh_relay_tx_state {
@@ -272,14 +283,20 @@ struct mesh_downlink_entry {
 };
 
 struct mesh_duplicate_entry {
-    uint8_t msg_type;
     uint64_t src_id;
     uint64_t dst_id;
     uint32_t session_id;
     uint32_t last_seen_ms;
     uint16_t seq;
+    uint16_t payload_len;
+    uint16_t payload_crc;
+    uint8_t msg_type;
+    bool payload_identity_valid;
     bool valid;
 };
+
+_Static_assert(sizeof(struct mesh_duplicate_entry) == 40u,
+               "payload-bound duplicate identity must not increase relay RAM");
 
 struct mesh_relay_event_timing_entry {
     uint64_t next_hop_id;
@@ -324,6 +341,7 @@ struct mesh_pending_tx {
     uint32_t retry_after_ms;
     uint32_t queued_at_ms;
     bool result_offer_active;
+    uint8_t busy_retry_round;
 };
 
 struct mesh_relay_outbox_snapshot {
@@ -421,6 +439,7 @@ struct mesh_relay_result {
         struct mesh_outbound route_reply;
         struct mesh_outbound gateway_route_adv;
         struct mesh_outbound retransmit;
+        struct mesh_outbound terminal;
     };
     /* Exactly one immediate response is produced for the same input frame. */
     union {
@@ -611,7 +630,9 @@ int mesh_relay_restore_child_custody_snapshot(
     const struct mesh_relay_child_custody_snapshot *snapshot,
     uint32_t now_ms);
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
-bool mesh_relay_defer_tx(struct mesh_relay *relay, uint32_t now_ms);
+bool mesh_relay_defer_tx(struct mesh_relay *relay,
+                         uint32_t now_ms,
+                         uint32_t random_value);
 bool mesh_relay_can_defer_tx(const struct mesh_relay *relay);
 int mesh_relay_defer_pending_retry(struct mesh_relay *relay,
                                    uint32_t retry_at_ms);
@@ -681,6 +702,20 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                          uint8_t link_quality,
                          uint32_t now_ms,
                          struct mesh_relay_result *result);
+/*
+ * Commit a gateway-local delivery only after the protocol owner has durably
+ * accepted it. On success, result contains the exact gateway ACK action and
+ * binds duplicate handling to the accepted payload length and CRC. Exact
+ * survey retries are ACK-sticky; collection result and bundle retries return
+ * to the semantic owner so it can re-arm a missed collection EACK.
+ */
+int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
+                                       const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint64_t previous_hop_id,
+                                       uint32_t now_ms,
+                                       struct mesh_relay_result *result);
 int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                      const struct proto_packet *packet,
                                      const uint8_t *payload,

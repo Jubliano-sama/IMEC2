@@ -113,6 +113,39 @@ target_include_directories(test_app_node_comm_adapter PRIVATE
 target_link_libraries(test_app_node_comm_adapter PRIVATE core Threads::Threads)
 add_test(NAME app_node_comm_adapter COMMAND test_app_node_comm_adapter)
 
+add_executable(test_app_node_comm_gateway_adapter
+    tests/test_app_node_comm_adapter.c
+    app/src/app_node_comm.c
+    app/src/app_node_comm_sync.c)
+target_compile_definitions(test_app_node_comm_gateway_adapter PRIVATE
+    DEVICE_ROLE=ROLE_GATEWAY)
+target_include_directories(test_app_node_comm_gateway_adapter PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src)
+target_link_libraries(test_app_node_comm_gateway_adapter PRIVATE
+    core Threads::Threads)
+add_test(NAME app_node_comm_gateway_adapter
+    COMMAND test_app_node_comm_gateway_adapter)
+set_tests_properties(app_node_comm_gateway_adapter PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication")
+
+add_executable(test_app_node_comm_transmitter_adapter
+    tests/test_app_node_comm_adapter.c
+    app/src/app_node_comm.c
+    app/src/app_node_comm_sync.c)
+target_compile_definitions(test_app_node_comm_transmitter_adapter PRIVATE
+    DEVICE_ROLE=ROLE_ANCHOR
+    CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER=1)
+target_include_directories(test_app_node_comm_transmitter_adapter PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src)
+target_link_libraries(test_app_node_comm_transmitter_adapter PRIVATE
+    core Threads::Threads)
+add_test(NAME app_node_comm_transmitter_adapter
+    COMMAND test_app_node_comm_transmitter_adapter)
+set_tests_properties(app_node_comm_transmitter_adapter PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;forcedhop")
+
 add_executable(test_app_node_comm_gateway_route_refresh
     tests/test_app_node_comm_gateway_route_refresh.c
     app/src/app_node_comm_sync.c
@@ -189,6 +222,34 @@ add_executable(test_gateway_collection_eack
 target_include_directories(test_gateway_collection_eack PRIVATE app/src)
 target_link_libraries(test_gateway_collection_eack PRIVATE core)
 add_test(NAME gateway_collection_eack COMMAND test_gateway_collection_eack)
+
+add_executable(test_app_gateway_eack_retry
+    tests/test_app_gateway_eack_retry.c
+    app/src/app_gateway_eack_retry.c
+    app/src/app_mesh_rf_retry.c
+    app/src/app_wake_train_politeness.c
+)
+target_include_directories(test_app_gateway_eack_retry PRIVATE app/src)
+target_link_libraries(test_app_gateway_eack_retry PRIVATE core)
+add_test(NAME app_gateway_eack_retry COMMAND test_app_gateway_eack_retry)
+set_tests_properties(app_gateway_eack_retry PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;gateway")
+
+add_test(NAME gateway_eack_retry_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_eack_retry_source_invariants.py)
+set_tests_properties(gateway_eack_retry_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;gateway;static_analysis")
+add_test(NAME gateway_durable_accept_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_durable_accept_source_invariants.py)
+set_tests_properties(gateway_durable_accept_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;gateway;survey;static_analysis")
+add_test(NAME assignment_claim_semantic_acceptance
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py)
+set_tests_properties(assignment_claim_semantic_acceptance PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;gateway;assignment;static_analysis")
 
 add_executable(test_app_gateway_ble_stream
     tests/test_app_gateway_ble_stream.c
@@ -389,6 +450,37 @@ target_include_directories(test_app_wake_train_politeness PRIVATE app/src)
 target_link_libraries(test_app_wake_train_politeness PRIVATE core)
 add_test(NAME app_wake_train_politeness COMMAND test_app_wake_train_politeness)
 
+add_executable(test_app_mesh_rf_retry
+    tests/test_app_mesh_rf_retry.c
+    app/src/app_mesh_rf_retry.c
+    app/src/app_mesh_route_request_policy.c
+    app/src/app_wake_train_politeness.c)
+target_include_directories(test_app_mesh_rf_retry PRIVATE app/src)
+target_link_libraries(test_app_mesh_rf_retry PRIVATE core)
+add_test(NAME app_mesh_rf_retry COMMAND test_app_mesh_rf_retry)
+set_tests_properties(app_mesh_rf_retry PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication")
+add_executable(test_app_mesh_event_retry
+    tests/test_app_mesh_event_retry.c
+    app/src/app_mesh_event_retry.c
+    app/src/app_mesh_rf_retry.c
+    app/src/app_wake_train_politeness.c)
+target_include_directories(test_app_mesh_event_retry PRIVATE app/src)
+target_link_libraries(test_app_mesh_event_retry PRIVATE core)
+add_test(NAME app_mesh_event_retry COMMAND test_app_mesh_event_retry)
+set_tests_properties(app_mesh_event_retry PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;route")
+add_test(NAME mesh_c5_control_lane_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_c5_control_lane_invariants.py)
+set_tests_properties(mesh_c5_control_lane_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;static_analysis")
+add_test(NAME mesh_rf_retry_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_rf_retry_source_invariants.py)
+set_tests_properties(mesh_rf_retry_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;static_analysis")
+
 add_executable(test_app_mesh_rx_policy
     tests/test_app_mesh_rx_policy.c
     app/src/app_mesh_rx_policy.c
@@ -530,6 +622,14 @@ set_tests_properties(dwm3000_receive_source_invariants
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)
+
+add_executable(test_mesh_result_grant_retry_scenarios
+    tests/mesh_integration/test_mesh_result_grant_retry_scenarios.c)
+target_link_libraries(test_mesh_result_grant_retry_scenarios PRIVATE core)
+add_test(NAME mesh_result_grant_retry_scenarios
+    COMMAND test_mesh_result_grant_retry_scenarios)
+set_tests_properties(mesh_result_grant_retry_scenarios PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;network_stress")
 
 add_executable(test_serial_frame tests/test_serial_frame.c)
 target_link_libraries(test_serial_frame PRIVATE core)
@@ -692,7 +792,7 @@ endif()
 add_test(NAME mesh_discovery_assignment_adversarial_scenarios
     COMMAND test_mesh_discovery_assignment_adversarial_scenarios)
 set_tests_properties(mesh_discovery_assignment_adversarial_scenarios
-    PROPERTIES LABELS "mesh_integration;assignment;network_stress")
+    PROPERTIES LABELS "mesh_integration;hardware_models;assignment;network_stress")
 
 add_executable(test_mesh_gateway_control_stress_scenarios
     tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c
@@ -788,14 +888,17 @@ set_tests_properties(mesh_route_formation_scenarios
 add_executable(test_mesh_forcedhop_connection_scenarios
     tests/mesh_integration/test_mesh_forcedhop_connection_scenarios.c
     app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_ch9_ack.c
     app/src/app_mesh_route_request_policy.c
 )
+target_compile_definitions(test_mesh_forcedhop_connection_scenarios PRIVATE
+    CONFIG_IMEC_MESH_ROUTE_TEST=1)
 target_include_directories(test_mesh_forcedhop_connection_scenarios PRIVATE app/src)
 target_link_libraries(test_mesh_forcedhop_connection_scenarios PRIVATE mesh_sim)
 add_test(NAME mesh_forcedhop_connection_scenarios
     COMMAND test_mesh_forcedhop_connection_scenarios)
 set_tests_properties(mesh_forcedhop_connection_scenarios
-    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;route;connection;forcedhop")
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;route;connection;forcedhop;communication;delivery;network_stress")
 
 add_executable(test_mesh_network_stress_scenarios
     tests/mesh_integration/test_mesh_network_stress_scenarios.c

@@ -23,6 +23,7 @@ struct app_mesh_collection_deferral_result {
 bool app_mesh_collection_defer_active_result(
     struct mesh_relay *relay,
     uint32_t now_ms,
+    uint32_t random_value,
     const struct app_mesh_collection_deferral_ops *ops,
     struct app_mesh_collection_deferral_result *result);
 

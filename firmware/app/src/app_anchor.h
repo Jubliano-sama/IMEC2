@@ -13,10 +13,10 @@ const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void);
 int app_anchor_init(void);
 int app_anchor_start_anchor_role(void);
 int app_anchor_start_gateway_role(void);
-bool gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
-                                             const uint8_t *payload,
-                                             size_t payload_len,
-                                             uint64_t previous_hop_id);
+int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
+                                            const uint8_t *payload,
+                                            size_t payload_len,
+                                            uint64_t previous_hop_id);
 bool gateway_survey_auto_preflight_result(const struct proto_packet *packet,
                                           const uint8_t *payload,
                                           size_t payload_len);

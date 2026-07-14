@@ -15,6 +15,10 @@
 #include <limits.h>
 #include <string.h>
 
+#ifndef DEVICE_ROLE
+#define DEVICE_ROLE ROLE_CLICKER
+#endif
+
 struct app_node_comm_delivery_record {
     struct proto_packet packet;
     uint8_t payload[APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN];
@@ -30,6 +34,8 @@ struct app_node_comm_delivery_record {
     bool auto_reap_terminal;
     bool track_control_response_health;
     bool gateway_confirmed;
+    bool backend_released;
+    bool backend_attempt_outstanding;
 };
 
 static struct node_comm node_comm_policy;
@@ -37,6 +43,7 @@ static struct app_node_comm_delivery_record
     node_comm_delivery_records[APP_NODE_COMM_MAX_DELIVERIES];
 static struct k_work_delayable node_comm_lifecycle_watchdog_work;
 static struct k_work_delayable node_comm_delivery_work;
+static struct k_work_delayable node_comm_delivery_due_kick_work;
 static uint64_t node_comm_lifecycle_recovery_deadline_ms;
 static bool node_comm_backend_ready;
 static bool node_comm_delivery_backend_active;
@@ -46,6 +53,7 @@ static struct app_node_comm_control_response_health
 
 #define NODE_COMM_LIFECYCLE_RECOVERY_POLL_MS 10u
 #define NODE_COMM_LIFECYCLE_RECOVERY_TIMEOUT_MS 1000u
+#define NODE_COMM_GATEWAY_DUE_KICK_RETRY_MS 1u
 
 _Static_assert(sizeof(node_comm_delivery_records) /
                    sizeof(node_comm_delivery_records[0]) ==
@@ -60,8 +68,14 @@ _Static_assert(APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES > 0u &&
 _Static_assert(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN <=
                    UWB_MESH_MAX_PAYLOAD_LEN,
                "frozen delivery payload exceeds mesh envelope capacity");
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+_Static_assert(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ==
+                   UWB_MESH_MAX_PAYLOAD_LEN,
+               "synthetic transmitter must freeze full mesh payloads");
+#else
 _Static_assert(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN == 192u,
                "generic frozen payload bound changed");
+#endif
 
 static uint64_t app_node_comm_now_ms(void)
 {
@@ -77,6 +91,8 @@ static bool app_node_comm_transport_quiesced(void)
 
 static bool app_node_comm_lifecycle_service_locked(void);
 static void app_node_comm_schedule_delivery_locked(uint64_t now_ms);
+static void app_node_comm_delivery_due_kick_handler(struct k_work *work);
+static size_t app_node_comm_service_policy_locked(uint64_t now_ms);
 
 static struct app_node_comm_delivery_record *
 app_node_comm_delivery_record_for_handle(uint32_t handle)
@@ -100,6 +116,14 @@ static bool app_node_comm_protocol_priority_profile(
            profile == NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
            profile == NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE ||
            profile == NODE_COMM_PROFILE_CONTROL_RESPONSE;
+}
+
+static bool app_node_comm_reliable_backend_profile(
+    enum node_comm_delivery_profile profile)
+{
+    return profile == NODE_COMM_PROFILE_RELIABLE_UPLINK ||
+           profile == NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+           profile == NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE;
 }
 
 static struct app_node_comm_delivery_record *
@@ -200,14 +224,54 @@ static void app_node_comm_clear_delivery_record(uint32_t handle)
     }
 }
 
+static void app_node_comm_reconcile_terminal_backends_locked(void)
+{
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+        struct node_comm_terminal_event terminal;
+        int ret;
+
+        if (!record->occupied || record->backend_released ||
+            record->backend_attempt_outstanding ||
+            !app_node_comm_reliable_backend_profile(record->profile) ||
+            !node_comm_peek_terminal_event_for(&node_comm_policy,
+                                               record->handle,
+                                               &terminal)) {
+            continue;
+        }
+        ret = mesh_cancel_reliable_uplink(&record->packet);
+        record->backend_released = true;
+        if (node_comm_reliable_uplink_inflight_handle == record->handle) {
+            node_comm_reliable_uplink_inflight_handle = 0u;
+        }
+        status_debug_printf(
+            "DBG_NODE_COMM_TERMINAL_BACKEND_RELEASE handle=%u reason=%u attempts=%u ret=%d\n",
+            record->handle,
+            (unsigned int)terminal.reason,
+            terminal.attempts_started,
+            ret);
+    }
+}
+
+static size_t app_node_comm_service_policy_locked(uint64_t now_ms)
+{
+    size_t terminalized = node_comm_service(&node_comm_policy, now_ms);
+
+    app_node_comm_reconcile_terminal_backends_locked();
+    return terminalized;
+}
+
 static void app_node_comm_reap_auto_terminal_events_locked(void)
 {
+    app_node_comm_reconcile_terminal_backends_locked();
     for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
         struct app_node_comm_delivery_record *record =
             &node_comm_delivery_records[i];
         struct node_comm_terminal_event event;
 
         if (!record->occupied || !record->auto_reap_terminal ||
+            record->backend_attempt_outstanding ||
             !node_comm_take_terminal_event_for(&node_comm_policy,
                                                record->handle,
                                                &event)) {
@@ -277,10 +341,22 @@ static bool app_node_comm_backend_error_retryable(int ret)
            ret == -EIO || ret == -ECANCELED || ret == -ETIME;
 }
 
+static uint32_t app_node_comm_retry_jitter_seed_words(
+    const uint32_t *identity_words,
+    size_t identity_word_count)
+{
+    uint32_t seed = UINT32_C(0x811c9dc5);
+
+    for (size_t i = 0u; i < identity_word_count; i++) {
+        seed ^= identity_words[i];
+        seed *= UINT32_C(0x01000193);
+    }
+    return seed == 0u ? UINT32_C(0x6d2b79f5) : seed;
+}
+
 static uint32_t app_node_comm_retry_jitter_seed(
     const app_node_comm_envelope *envelope)
 {
-    uint32_t seed = UINT32_C(0x811c9dc5);
     const uint32_t identity_words[] = {
         (uint32_t)envelope->packet.src_id,
         (uint32_t)(envelope->packet.src_id >> 32),
@@ -291,42 +367,191 @@ static uint32_t app_node_comm_retry_jitter_seed(
         envelope->packet.msg_type,
     };
 
-    for (size_t i = 0u;
-         i < sizeof(identity_words) / sizeof(identity_words[0]); i++) {
-        seed ^= identity_words[i];
-        seed *= UINT32_C(0x01000193);
-    }
-    return seed == 0u ? UINT32_C(0x6d2b79f5) : seed;
+    return app_node_comm_retry_jitter_seed_words(
+        identity_words,
+        sizeof(identity_words) / sizeof(identity_words[0]));
 }
 
 static void app_node_comm_delivery_work_handler(struct k_work *work)
 {
     (void)work;
+    if (DEVICE_ROLE == ROLE_GATEWAY &&
+        !mesh_node_comm_gateway_delivery_due_ready()) {
+        return;
+    }
     (void)app_node_comm_service_deliveries();
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        (void)mesh_node_comm_gateway_delivery_due_end();
+        if (app_node_comm_sync_lock() == 0) {
+            app_node_comm_schedule_delivery_locked(app_node_comm_now_ms());
+            app_node_comm_sync_unlock();
+        }
+        mesh_restart_role_scan();
+    }
 }
 
 static void app_node_comm_schedule_delivery_locked(uint64_t now_ms)
 {
     uint64_t delay_ms;
     uint64_t due_ms;
+    uint32_t queue_delay_ms;
 
     if (!node_comm_backend_ready || node_comm_delivery_backend_active ||
         node_comm_state(&node_comm_policy) != NODE_COMM_RUNNING ||
         !node_comm_next_service_due_ms(&node_comm_policy, now_ms, &due_ms)) {
         return;
     }
+    if (DEVICE_ROLE == ROLE_GATEWAY &&
+        mesh_node_comm_gateway_delivery_due_pending()) {
+        return;
+    }
     delay_ms = due_ms > now_ms ? due_ms - now_ms : 0u;
     if (delay_ms > INT64_MAX) {
         delay_ms = INT64_MAX;
     }
-    (void)k_work_reschedule(&node_comm_delivery_work,
-                            K_MSEC((int64_t)delay_ms));
+    queue_delay_ms = delay_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)delay_ms;
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        /*
+         * The gateway's mesh-route queue may be inside a 30 s continuous RX
+         * call.  A tiny system-workqueue kick requests the handoff at the
+         * exact due time; only the real delivery worker executes on
+         * mesh-route.
+         */
+        (void)k_work_reschedule(&node_comm_delivery_due_kick_work,
+                                K_MSEC(queue_delay_ms));
+    } else {
+        (void)mesh_route_work_reschedule(&node_comm_delivery_work,
+                                         queue_delay_ms);
+    }
+}
+
+static void app_node_comm_delivery_due_kick_handler(struct k_work *work)
+{
+    bool keep_pending_for_retry = false;
+    bool release_pending = false;
+    bool wait_for_scan_boundary = false;
+    uint64_t due_ms = 0u;
+    uint64_t now_ms;
+    int ret = 0;
+
+    (void)work;
+    if (app_node_comm_sync_lock() < 0) {
+        return;
+    }
+    now_ms = app_node_comm_now_ms();
+    if (!node_comm_backend_ready || node_comm_delivery_backend_active ||
+        node_comm_state(&node_comm_policy) != NODE_COMM_RUNNING ||
+        !node_comm_next_service_due_ms(&node_comm_policy, now_ms, &due_ms)) {
+        release_pending = mesh_node_comm_gateway_delivery_due_end();
+        app_node_comm_sync_unlock();
+        if (release_pending) {
+            mesh_restart_role_scan();
+        }
+        return;
+    }
+    if (due_ms > now_ms) {
+        release_pending = mesh_node_comm_gateway_delivery_due_end();
+        app_node_comm_schedule_delivery_locked(now_ms);
+        app_node_comm_sync_unlock();
+        if (release_pending) {
+            mesh_restart_role_scan();
+        }
+        return;
+    }
+    if (mesh_node_comm_gateway_delivery_due_pending()) {
+        wait_for_scan_boundary =
+            !mesh_node_comm_gateway_delivery_due_ready();
+    } else {
+        ret = mesh_node_comm_gateway_delivery_due_begin(
+            &wait_for_scan_boundary);
+    }
+
+    if (ret == 0 && !wait_for_scan_boundary) {
+        /* A host command already awaiting a boundary keeps queue priority. */
+        ret = mesh_gateway_command_priority_safe_boundary();
+        if (ret < 0) {
+            /* Keep the gate and retry without starting an RF opportunity. */
+            keep_pending_for_retry = true;
+            (void)k_work_reschedule(
+                &node_comm_delivery_due_kick_work,
+                K_MSEC(NODE_COMM_GATEWAY_DUE_KICK_RETRY_MS));
+        } else {
+            ret = mesh_route_work_reschedule(&node_comm_delivery_work, 0u);
+        }
+    }
+    if (ret < 0 && !keep_pending_for_retry) {
+        release_pending = mesh_node_comm_gateway_delivery_due_end();
+        if (release_pending) {
+            (void)k_work_reschedule(
+                &node_comm_delivery_due_kick_work,
+                K_MSEC(NODE_COMM_GATEWAY_DUE_KICK_RETRY_MS));
+        }
+    }
+    app_node_comm_sync_unlock();
+
+    if (release_pending) {
+        mesh_restart_role_scan();
+    }
+}
+
+int app_node_comm_gateway_delivery_safe_boundary(void)
+{
+    bool release_pending = false;
+    uint64_t due_ms = 0u;
+    uint64_t now_ms;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return 0;
+    }
+    ret = mesh_gateway_command_priority_safe_boundary();
+
+    if (ret < 0) {
+        if (mesh_node_comm_gateway_delivery_due_ready()) {
+            (void)k_work_reschedule(
+                &node_comm_delivery_due_kick_work,
+                K_MSEC(NODE_COMM_GATEWAY_DUE_KICK_RETRY_MS));
+        }
+        return ret;
+    }
+    if (!mesh_node_comm_gateway_delivery_due_ready()) {
+        return 0;
+    }
+    ret = app_node_comm_sync_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    now_ms = app_node_comm_now_ms();
+    if (!node_comm_backend_ready || node_comm_delivery_backend_active ||
+        node_comm_state(&node_comm_policy) != NODE_COMM_RUNNING ||
+        !node_comm_next_service_due_ms(&node_comm_policy, now_ms, &due_ms)) {
+        release_pending = mesh_node_comm_gateway_delivery_due_end();
+    } else if (due_ms > now_ms) {
+        release_pending = mesh_node_comm_gateway_delivery_due_end();
+        app_node_comm_schedule_delivery_locked(now_ms);
+    } else {
+        ret = mesh_route_work_reschedule(&node_comm_delivery_work, 0u);
+        if (ret < 0) {
+            release_pending = mesh_node_comm_gateway_delivery_due_end();
+            app_node_comm_schedule_delivery_locked(now_ms);
+        }
+    }
+    app_node_comm_sync_unlock();
+
+    if (release_pending) {
+        mesh_restart_role_scan();
+    }
+    return ret < 0 ? ret : 0;
 }
 
 static void app_node_comm_begin_recovery(void)
 {
     uint32_t now_ms = (uint32_t)app_node_comm_now_ms();
 
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        (void)k_work_cancel_delayable(&node_comm_delivery_due_kick_work);
+        (void)mesh_node_comm_gateway_delivery_due_end();
+    }
     (void)k_work_cancel_delayable(&node_comm_delivery_work);
     app_node_comm_gateway_route_refresh_pause(now_ms);
     (void)mesh_transport_pause_preserving_queued();
@@ -380,7 +605,7 @@ static bool app_node_comm_lifecycle_service_locked(void)
         &node_comm_policy, &recovery_lease);
     uint64_t now_ms = app_node_comm_now_ms();
 
-    (void)node_comm_service(&node_comm_policy, now_ms);
+    (void)app_node_comm_service_policy_locked(now_ms);
     app_node_comm_reap_auto_terminal_events_locked();
     app_node_comm_schedule_delivery_locked(now_ms);
     if (!recovery_before && node_comm_pause_recovery_lease(
@@ -463,6 +688,10 @@ int app_node_comm_init(const app_node_comm_callbacks *callbacks)
                           app_node_comm_lifecycle_watchdog_handler);
     k_work_init_delayable(&node_comm_delivery_work,
                           app_node_comm_delivery_work_handler);
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        k_work_init_delayable(&node_comm_delivery_due_kick_work,
+                              app_node_comm_delivery_due_kick_handler);
+    }
     ret = node_comm_start(&node_comm_policy, app_node_comm_now_ms());
     if (ret < 0) {
         app_node_comm_sync_unlock();
@@ -607,6 +836,33 @@ int app_node_comm_retry_backoff_ms(
                                       app_node_comm_retry_jitter_seed(envelope),
                                       retry_round,
                                       delay_ms_out);
+}
+
+int app_node_comm_retry_identity_backoff_ms(
+    uint64_t node_id,
+    uint32_t session_id,
+    uint32_t opportunity,
+    enum node_comm_delivery_profile profile,
+    uint16_t retry_round,
+    uint32_t *delay_ms_out)
+{
+    const uint32_t identity_words[] = {
+        (uint32_t)node_id,
+        (uint32_t)(node_id >> 32),
+        session_id,
+        opportunity,
+    };
+
+    if (node_id == 0u || session_id == 0u) {
+        return -EINVAL;
+    }
+    return node_comm_retry_backoff_ms(
+        profile,
+        app_node_comm_retry_jitter_seed_words(
+            identity_words,
+            sizeof(identity_words) / sizeof(identity_words[0])),
+        retry_round,
+        delay_ms_out);
 }
 
 int app_node_comm_queue_local_delivery(const app_node_comm_envelope *envelope)
@@ -986,7 +1242,7 @@ int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet)
         return ret;
     }
     now_ms = app_node_comm_now_ms();
-    (void)node_comm_service(&node_comm_policy, now_ms);
+    (void)app_node_comm_service_policy_locked(now_ms);
     record = app_node_comm_delivery_record_for_packet(packet);
     if (record == NULL ||
         (record->profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
@@ -1005,9 +1261,6 @@ int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet)
             ret = -ESTALE;
         } else if (ret == 0) {
             record->gateway_confirmed = true;
-            if (node_comm_reliable_uplink_inflight_handle == record->handle) {
-                node_comm_reliable_uplink_inflight_handle = 0u;
-            }
             app_node_comm_reap_auto_terminal_events_locked();
             app_node_comm_schedule_delivery_locked(now_ms);
         }
@@ -1016,10 +1269,129 @@ int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet)
     return ret;
 }
 
-int app_node_comm_cancel_delivery(uint32_t handle)
+int app_node_comm_note_gateway_failed(
+    const struct proto_packet *packet,
+    enum node_comm_terminal_reason reason)
 {
     struct app_node_comm_delivery_record *record;
-    int backend_ret = -ENOENT;
+    uint64_t now_ms;
+    int ret;
+
+    if (packet == NULL) {
+        return -EINVAL;
+    }
+    ret = app_node_comm_sync_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    now_ms = app_node_comm_now_ms();
+    (void)app_node_comm_service_policy_locked(now_ms);
+    record = app_node_comm_delivery_record_for_packet(packet);
+    if (record == NULL ||
+        (record->profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
+         record->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+         record->profile !=
+             NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE)) {
+        ret = -ENOENT;
+    } else {
+        ret = node_comm_fail_delivery(&node_comm_policy,
+                                      record->handle,
+                                      reason,
+                                      now_ms);
+        if (ret == 0 || ret == -EALREADY) {
+            app_node_comm_reap_auto_terminal_events_locked();
+            app_node_comm_schedule_delivery_locked(now_ms);
+        }
+    }
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+int app_node_comm_backend_retry_preflight(const struct proto_packet *packet)
+{
+    struct app_node_comm_delivery_record *record;
+    struct node_comm_terminal_event terminal;
+    uint64_t now_ms;
+    int ret;
+
+    if (packet == NULL) {
+        return -EINVAL;
+    }
+    ret = app_node_comm_sync_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    now_ms = app_node_comm_now_ms();
+    (void)app_node_comm_service_policy_locked(now_ms);
+    record = app_node_comm_delivery_record_for_packet(packet);
+    if (record == NULL) {
+        /* Most mesh retransmits are not owned by the facade. */
+        ret = 0;
+    } else if (node_comm_peek_terminal_event_for(&node_comm_policy,
+                                                 record->handle,
+                                                 &terminal)) {
+        ret = terminal.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ?
+              -ETIMEDOUT : -ECANCELED;
+    } else if (record->backend_attempt_outstanding) {
+        ret = -EBUSY;
+    } else {
+        record->backend_attempt_outstanding = true;
+        ret = 0;
+    }
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+int app_node_comm_complete_backend_attempt(const struct proto_packet *packet,
+                                           bool rf_started)
+{
+    struct app_node_comm_delivery_record *record;
+    struct node_comm_terminal_event terminal;
+    uint64_t now_ms;
+    int ret;
+
+    if (packet == NULL) {
+        return -EINVAL;
+    }
+    ret = app_node_comm_sync_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    now_ms = app_node_comm_now_ms();
+    record = app_node_comm_delivery_record_for_packet(packet);
+    if (record == NULL) {
+        ret = -ENOENT;
+    } else if (!record->backend_attempt_outstanding) {
+        ret = -EAGAIN;
+    } else {
+        record->backend_attempt_outstanding = false;
+        ret = rf_started ?
+              node_comm_note_backend_rf_started(&node_comm_policy,
+                                                record->handle,
+                                                now_ms) : 0;
+        (void)app_node_comm_service_policy_locked(now_ms);
+        if (node_comm_peek_terminal_event_for(&node_comm_policy,
+                                              record->handle,
+                                              &terminal)) {
+            ret = terminal.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ?
+                  -ETIMEDOUT : -ECANCELED;
+        }
+        app_node_comm_reap_auto_terminal_events_locked();
+        app_node_comm_schedule_delivery_locked(now_ms);
+    }
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+int app_node_comm_note_backend_rf_started(const struct proto_packet *packet)
+{
+    return app_node_comm_complete_backend_attempt(packet, true);
+}
+
+int app_node_comm_cancel_delivery(uint32_t handle)
+{
+    bool restart_scan = false;
+    uint64_t next_due_ms = 0u;
     uint64_t now_ms;
     int ret = app_node_comm_sync_lock();
 
@@ -1027,24 +1399,22 @@ int app_node_comm_cancel_delivery(uint32_t handle)
         return ret;
     }
     now_ms = app_node_comm_now_ms();
-    record = app_node_comm_delivery_record_for_handle(handle);
-    if (record != NULL &&
-        (record->profile == NODE_COMM_PROFILE_RELIABLE_UPLINK ||
-         record->profile == NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
-         record->profile == NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE)) {
-        backend_ret = mesh_cancel_reliable_uplink(&record->packet);
-    }
     ret = node_comm_cancel(&node_comm_policy, handle, now_ms);
-    if (node_comm_reliable_uplink_inflight_handle == handle) {
-        node_comm_reliable_uplink_inflight_handle = 0u;
+    app_node_comm_reconcile_terminal_backends_locked();
+    if (DEVICE_ROLE == ROLE_GATEWAY &&
+        !node_comm_delivery_backend_active &&
+        mesh_node_comm_gateway_delivery_due_pending() &&
+        (!node_comm_next_service_due_ms(&node_comm_policy, now_ms,
+                                        &next_due_ms) ||
+         next_due_ms > now_ms)) {
+        (void)k_work_cancel_delayable(&node_comm_delivery_due_kick_work);
+        (void)k_work_cancel_delayable(&node_comm_delivery_work);
+        restart_scan = mesh_node_comm_gateway_delivery_due_end();
     }
     app_node_comm_schedule_delivery_locked(now_ms);
     app_node_comm_sync_unlock();
-    if (backend_ret < 0 && backend_ret != -ENOENT) {
-        status_debug_printf(
-            "DBG_NODE_COMM_CANCEL_BACKEND handle=%u ret=%d\n",
-            handle,
-            backend_ret);
+    if (restart_scan) {
+        mesh_restart_role_scan();
     }
     return ret;
 }
@@ -1093,10 +1463,20 @@ bool app_node_comm_take_delivery_event(
     if (event_out == NULL || app_node_comm_sync_lock() < 0) {
         return false;
     }
-    (void)node_comm_service(&node_comm_policy, app_node_comm_now_ms());
-    have_event = node_comm_take_terminal_event(&node_comm_policy, event_out);
-    if (have_event) {
+    (void)app_node_comm_service_policy_locked(app_node_comm_now_ms());
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+
+        if (!record->occupied || record->backend_attempt_outstanding ||
+            !node_comm_take_terminal_event_for(&node_comm_policy,
+                                               record->handle,
+                                               event_out)) {
+            continue;
+        }
         app_node_comm_clear_delivery_record(event_out->handle);
+        have_event = true;
+        break;
     }
     app_node_comm_sync_unlock();
     return have_event;
@@ -1106,16 +1486,20 @@ bool app_node_comm_take_delivery_event_for(
     uint32_t handle,
     struct node_comm_terminal_event *event_out)
 {
+    struct app_node_comm_delivery_record *record;
     bool have_event = false;
 
     if (event_out == NULL || handle == 0u ||
         app_node_comm_sync_lock() < 0) {
         return false;
     }
-    (void)node_comm_service(&node_comm_policy, app_node_comm_now_ms());
-    have_event = node_comm_take_terminal_event_for(&node_comm_policy,
-                                                   handle,
-                                                   event_out);
+    (void)app_node_comm_service_policy_locked(app_node_comm_now_ms());
+    record = app_node_comm_delivery_record_for_handle(handle);
+
+    have_event = record != NULL && !record->backend_attempt_outstanding &&
+        node_comm_take_terminal_event_for(&node_comm_policy,
+                                          handle,
+                                          event_out);
     if (have_event) {
         app_node_comm_clear_delivery_record(handle);
     }
@@ -1128,7 +1512,7 @@ size_t app_node_comm_pending_delivery_count(void)
     size_t count = 0u;
 
     if (app_node_comm_sync_lock() == 0) {
-        (void)node_comm_service(&node_comm_policy, app_node_comm_now_ms());
+        (void)app_node_comm_service_policy_locked(app_node_comm_now_ms());
         count = node_comm_pending_count(&node_comm_policy);
         app_node_comm_sync_unlock();
     }
@@ -1169,7 +1553,7 @@ void app_node_comm_control_response_health_get(
     if (app_node_comm_sync_lock() < 0) {
         return;
     }
-    (void)node_comm_service(&node_comm_policy, app_node_comm_now_ms());
+    (void)app_node_comm_service_policy_locked(app_node_comm_now_ms());
     app_node_comm_reap_auto_terminal_events_locked();
     *health = node_comm_control_response_health;
     app_node_comm_sync_unlock();
@@ -1210,6 +1594,10 @@ int app_node_comm_pause_request(uint32_t owner,
     app_node_comm_sync_unlock();
 
     if (ret == 0) {
+        if (DEVICE_ROLE == ROLE_GATEWAY) {
+            (void)k_work_cancel_delayable(&node_comm_delivery_due_kick_work);
+            (void)mesh_node_comm_gateway_delivery_due_end();
+        }
         (void)k_work_cancel_delayable(&node_comm_delivery_work);
         app_node_comm_gateway_route_refresh_pause((uint32_t)now_ms);
         (void)mesh_transport_pause_preserving_queued();
@@ -1343,6 +1731,10 @@ int app_node_comm_stop_preserving_queued(void)
     }
 
     (void)k_work_cancel_delayable(&node_comm_lifecycle_watchdog_work);
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        (void)k_work_cancel_delayable(&node_comm_delivery_due_kick_work);
+        (void)mesh_node_comm_gateway_delivery_due_end();
+    }
     (void)k_work_cancel_delayable(&node_comm_delivery_work);
     app_node_comm_gateway_route_refresh_pause((uint32_t)now_ms);
     (void)mesh_transport_pause_preserving_queued();

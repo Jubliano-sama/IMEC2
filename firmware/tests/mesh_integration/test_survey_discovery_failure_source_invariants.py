@@ -8,6 +8,9 @@ import re
 ROOT = Path(__file__).resolve().parents[2]
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
 RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
+DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
+DRIVER_HEADER = (ROOT / "app/src/dwm3000_driver.h").read_text()
+CORE_SURVEY = (ROOT / "src/survey.c").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -52,23 +55,66 @@ def braced_block_at(source: str, marker_index: int) -> str:
 
 
 run = function_body(DISCOVERY, "app_anchor_survey_discovery_run")
-missed_window_index = run.index("if (should_tx &&")
-missed_window_block = braced_block_at(run, missed_window_index)
-tx_guard_index = run.index("if (should_tx) {", missed_window_index)
-tx_guard_block = braced_block_at(run, tx_guard_index)
-send_index = run.index("dwm3000_driver_send_frame(")
-attempt_index = run.index("actual_attempt_count++", send_index)
-assert "should_tx = false" in missed_window_block
-assert "actual_attempt_count++" not in missed_window_block, (
-    "a missed or busy nominal window must not consume a discovery attempt"
+assert run.count("send_local_survey_probe(") == 2
+assert run.count("if (rf_started)") == 2
+for match in re.finditer(r"if \(rf_started\)", run):
+    rf_started_block = braced_block_at(run, match.start())
+    assert "survey_discovery_probe_attempt_note_rf_started(" in rf_started_block, (
+        "every accepted RF start must consume exactly one probe opportunity"
+    )
+assert "dwm3000_driver_send_frame(" not in run
+assert "while (deferred_mask != 0u" in run
+assert run.count("schedule_survey_probe_retry(") == 2
+assert "return -EBUSY" not in run, (
+    "a second pre-RF refusal must remain pending until the shared deadline"
 )
-assert "dwm3000_driver_send_frame(" in tx_guard_block
-assert "actual_attempt_count++" in tx_guard_block
-assert send_index < attempt_index
-assert run.count("actual_attempt_count++") == 1, (
-    "discovery attempts must be counted at one explicit RF outcome boundary"
+assert "survey_discovery_probe_real_attempt_count(" in run
+deficit_index = run.index(
+    "survey_discovery_probe_real_attempt_count("
 )
-assert "actual_attempt_count != SURVEY_DISCOVERY_OPPORTUNITY_COUNT" in run
+deficit_guard_index = run.rfind("if (", 0, deficit_index)
+deficit_block = braced_block_at(run, deficit_guard_index)
+report_index = run.index("prepare_discovery_report(", deficit_index)
+assert "return" not in deficit_block and deficit_index < report_index, (
+    "deadline exhaustion must still emit the report containing heard peers"
+)
+
+probe_retry = function_body(DISCOVERY, "schedule_survey_probe_retry")
+assert "survey_discovery_probe_attempt_defer(" in probe_retry
+assert "attempt->due_ms - retry_origin_ms" in probe_retry
+
+core_probe_retry = function_body(
+    CORE_SURVEY, "survey_discovery_probe_attempt_defer"
+)
+assert "node_comm_retry_backoff_ms(" in core_probe_retry
+assert "NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE" in core_probe_retry
+assert "attempt->retry_round++" in core_probe_retry
+assert "retry_origin_ms - absolute_deadline_ms" in core_probe_retry
+assert "attempt->pending = true" in core_probe_retry
+
+core_rf_started = function_body(
+    CORE_SURVEY, "survey_discovery_probe_attempt_note_rf_started"
+)
+assert "attempt->rf_started" in core_rf_started
+assert "return PROTO_ERR_STALE" in core_rf_started
+assert "attempt->pending = false" in core_rf_started
+
+probe_send = function_body(DISCOVERY, "send_local_survey_probe")
+assert "dwm3000_driver_send_frame_tracked(" in probe_send
+assert "rf_started" in probe_send
+assert "dwm3000_driver_send_frame_tracked" in DRIVER_HEADER
+
+tracked_send = function_body(DRIVER, "dwm3000_driver_send_frame_tracked")
+clear_index = tracked_send.index("*rf_started = false")
+start_call_index = tracked_send.index("send_range_frame(")
+started_index = tracked_send.index("*rf_started = true")
+completion_index = tracked_send.index("wait_tx_complete(")
+assert clear_index < start_call_index < started_index < completion_index, (
+    "RF-start accounting must be committed after immediate TX acceptance and "
+    "before completion polling"
+)
+legacy_send = function_body(DRIVER, "dwm3000_driver_send_frame")
+assert "dwm3000_driver_send_frame_tracked(" in legacy_send
 
 worker = function_body(RUNTIME, "survey_work_handler")
 run_call_index = worker.index("app_anchor_survey_discovery_run(")
@@ -85,6 +131,43 @@ assert worker.count("app_anchor_survey_discovery_stage_empty_report(") == 1, (
     "one failed, non-aborted discovery run must stage exactly one fail-safe report"
 )
 assert failure_block.count("app_anchor_survey_discovery_stage_empty_report(") == 1
+
+retry_helper = function_body(RUNTIME, "survey_rf_retry_delay_ms")
+assert "app_node_comm_retry_identity_backoff_ms(" in retry_helper
+assert "state->retry_round++" in retry_helper
+assert "uptime_deadline_reached(now_ms, absolute_deadline_ms)" in retry_helper
+assert "uptime_ms_until_deadline(now_ms, absolute_deadline_ms)" in retry_helper
+assert "*delay_ms_out = remaining_ms" in retry_helper
+
+discovery_guard_index = worker.index(
+    'radio_guard_uwb_start("survey discovery")'
+)
+discovery_defer_index = worker.index("if (ret < 0)", discovery_guard_index)
+discovery_defer_block = braced_block_at(worker, discovery_defer_index)
+assert "survey_rf_retry_delay_ms(" in discovery_defer_block
+assert "app_node_comm_restart_role_scan()" in discovery_defer_block
+assert "REPORT_TX_RETRY_DELAY_MS" not in discovery_defer_block
+
+pair_owner_busy_index = worker.index("if (anchor_uwb_window_active()")
+pair_owner_busy_block = braced_block_at(worker, pair_owner_busy_index)
+assert "schedule_pair_rf_retry(" in pair_owner_busy_block
+assert "REPORT_TX_RETRY_DELAY_MS" not in pair_owner_busy_block
+
+report_queue_index = worker.index("if (runtime_ops.report_queue_used()")
+report_queue_block = braced_block_at(worker, report_queue_index)
+assert "SURVEY_NON_RF_SERVICE_POLL_MS" in report_queue_block
+assert "schedule_pair_rf_retry(" not in report_queue_block
+
+pair_guard_index = worker.index(
+    'radio_guard_uwb_start(as_responder ? "survey responder DS-TWR"'
+)
+pair_defer_index = worker.index("if (ret < 0)", pair_guard_index)
+pair_defer_block = braced_block_at(worker, pair_defer_index)
+assert "schedule_pair_rf_retry(" in pair_defer_block
+assert "REPORT_TX_RETRY_DELAY_MS" not in pair_defer_block
+assert worker.count("schedule_pair_rf_retry(") == 2
+assert "REPORT_TX_RETRY_DELAY_MS" not in worker
+assert worker.count("SURVEY_NON_RF_SERVICE_POLL_MS") == 1
 
 empty_report = function_body(
     DISCOVERY, "app_anchor_survey_discovery_stage_empty_report"

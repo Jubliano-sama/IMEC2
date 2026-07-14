@@ -201,6 +201,156 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
                 protocol_source = (APP_SRC / name).read_text(encoding="utf-8")
                 self.assertNotIn("node_comm_submit(", protocol_source)
 
+    def test_synthetic_transmitter_uses_terminal_communication_custody(self):
+        source = (APP_SRC / "app_mesh_test.c").read_text(encoding="utf-8")
+        header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
+        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn('#include "app_node_comm.h"', source)
+        self.assertIn("app_node_comm_submit_reliable_uplink(", source)
+        self.assertIn("app_node_comm_take_delivery_event_for(", source)
+        self.assertIn("NODE_COMM_TERMINAL_DELIVERED", source)
+        self.assertIn("mesh_test_pending_admission_valid", source)
+        self.assertNotIn("queue_anchor_report(&outbound)", source)
+        self.assertNotIn("report_tx_queue_used()", source)
+        self.assertNotIn("mesh_report_ch9_ack_wait_active()", source)
+
+        self.assertIn(
+            "APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN PACKET_EXT_MAX_PAYLOAD_LEN",
+            header,
+        )
+        self.assertIn("#define APP_NODE_COMM_MAX_DELIVERIES 5u", header)
+        self.assertIn("NODE_COMM_MAX_REQUESTS=5", cmake)
+
+        queue_definition = report[
+            report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") - 60 :
+            report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") + 120
+        ]
+        self.assertIn("#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)", queue_definition)
+        self.assertNotIn(
+            "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER", queue_definition
+        )
+
+    def test_facade_terminal_releases_backend_without_owning_retry_policy(self):
+        facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+
+        reconcile_start = facade.index(
+            "static void app_node_comm_reconcile_terminal_backends_locked(void)"
+        )
+        reconcile_end = facade.index(
+            "static size_t app_node_comm_service_policy_locked", reconcile_start
+        )
+        reconcile = facade[reconcile_start:reconcile_end]
+        peek = reconcile.index("node_comm_peek_terminal_event_for")
+        cancel = reconcile.index("mesh_cancel_reliable_uplink")
+        self.assertLess(peek, cancel)
+        self.assertIn("record->backend_attempt_outstanding", reconcile[:peek])
+        self.assertIn("record->backend_released = true", reconcile[cancel:])
+
+        account_start = facade.index("int app_node_comm_complete_backend_attempt")
+        account_end = facade.index(
+            "int app_node_comm_note_backend_rf_started", account_start
+        )
+        account = facade[account_start:account_end]
+        self.assertIn("record->backend_attempt_outstanding = false", account)
+        self.assertIn("rf_started ?", account)
+        self.assertIn("node_comm_note_backend_rf_started", account)
+        self.assertIn("node_comm_peek_terminal_event_for", account)
+        self.assertIn("-ETIMEDOUT : -ECANCELED", account)
+        self.assertIn("app_node_comm_service_policy_locked", account)
+        self.assertIn("app_node_comm_reap_auto_terminal_events_locked", account)
+
+        retransmit = report.index("app_node_comm_backend_retry_preflight")
+        send = report.index("mesh_send_outbound_with_release", retransmit)
+        complete = report.index("app_node_comm_complete_backend_attempt", send)
+        self.assertLess(retransmit, send)
+        self.assertLess(send, complete)
+        self.assertIn("backend_rf_started", report[send:complete + 160])
+        self.assertNotIn("if (backend_rf_started)", report[send:complete])
+        self.assertNotIn("max_attempt", report[retransmit:complete])
+
+    def test_gateway_due_kick_keeps_rf_worker_on_mesh_route_queue(self):
+        facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+
+        schedule_start = facade.index(
+            "static void app_node_comm_schedule_delivery_locked"
+        )
+        schedule_end = facade.index(
+            "static void app_node_comm_begin_recovery", schedule_start
+        )
+        schedule = facade[schedule_start:schedule_end]
+        if "mesh_route_work_reschedule(&node_comm_delivery_work" not in schedule:
+            self.fail(
+                "node communication delivery work is not assigned to the "
+                "dedicated mesh route queue"
+            )
+
+        self.assertIn("node_comm_delivery_due_kick_work", schedule)
+        kick_start = facade.index(
+            "static void app_node_comm_delivery_due_kick_handler"
+        )
+        kick_end = facade.index(
+            "int app_node_comm_gateway_delivery_safe_boundary", kick_start
+        )
+        kick = facade[kick_start:kick_end]
+        self.assertIn("mesh_node_comm_gateway_delivery_due_begin", kick)
+        self.assertIn("mesh_route_work_reschedule(&node_comm_delivery_work", kick)
+        for forbidden in (
+            "mesh_try_send_",
+            "dwm3000_driver_configure",
+            "dwm3000_driver_receive",
+            "dwm3000_driver_transmit",
+        ):
+            self.assertNotIn(forbidden, kick)
+
+        default_queue_call = re.search(
+            r"\bk_work_(?:reschedule|schedule|submit)\s*\(\s*"
+            r"&node_comm_delivery_work\b",
+            facade,
+        )
+        if default_queue_call is not None:
+            self.fail(
+                "node communication delivery work can fall back to the "
+                "default system workqueue"
+            )
+
+        helper_start = report.index("static int mesh_reschedule_delayable")
+        helper_end = report.index(
+            "int mesh_route_work_reschedule", helper_start
+        )
+        helper = report[helper_start:helper_end]
+        if (
+            "k_work_reschedule_for_queue(&mesh_route_work_q, work" not in helper
+        ):
+            self.fail(
+                "mesh route rescheduler no longer targets its dedicated "
+                "workqueue"
+            )
+
+    def test_mesh_clicker_syswork_queue_gap_remains_explicit(self):
+        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        clicker_start = cmake.index(
+            'elseif(IMEC_BUILD_PRESET STREQUAL "mesh_clicker")'
+        )
+        clicker_end = cmake.index(
+            'elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_', clicker_start
+        )
+        clicker_preset = cmake[clicker_start:clicker_end]
+        self.assertNotIn("IMEC_MESH_ROUTE_TEST_BUILD ON", clicker_preset)
+
+        helper_start = report.index("static int mesh_reschedule_delayable")
+        helper_end = report.index(
+            "int mesh_route_work_reschedule", helper_start
+        )
+        helper = report[helper_start:helper_end]
+        self.assertIn("Known queue gap: mesh_clicker", helper)
+        self.assertIn("return k_work_reschedule(work", helper)
+
     def test_gateway_single_ack_uses_bounded_communication_response(self):
         report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")

@@ -7,6 +7,7 @@
 #include "dwm3000_driver.h"
 
 struct app_mesh_rx_handoff_state {
+    bool scheduled_control_pending;
     bool control_active;
     bool scan_radio_active;
 };
@@ -26,6 +27,15 @@ uint32_t app_mesh_rx_policy_gateway_ch9_window_ms(
     uint32_t control_wait_ms);
 
 void app_mesh_rx_handoff_reset(struct app_mesh_rx_handoff_state *state);
+bool app_mesh_rx_handoff_request_scheduled_control(
+    struct app_mesh_rx_handoff_state *state,
+    bool *abort_scan);
+bool app_mesh_rx_handoff_scheduled_control_pending(
+    const struct app_mesh_rx_handoff_state *state);
+bool app_mesh_rx_handoff_scheduled_control_ready(
+    const struct app_mesh_rx_handoff_state *state);
+bool app_mesh_rx_handoff_end_scheduled_control(
+    struct app_mesh_rx_handoff_state *state);
 bool app_mesh_rx_handoff_begin_control(
     struct app_mesh_rx_handoff_state *state,
     bool *abort_scan);

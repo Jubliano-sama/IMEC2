@@ -8,6 +8,7 @@
 #include "app_board.h"
 #include "app_config.h"
 #include "app_gateway_collection_eack.h"
+#include "app_gateway_eack_retry.h"
 #include "app_gateway_eack_policy.h"
 #include "app_gateway_command_observability.h"
 #include "app_gateway_ble_stream.h"
@@ -346,6 +347,54 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
     return -ENOTSUP;
 }
 
+int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t received_at_ms)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(received_at_ms);
+
+    return -ENOTSUP;
+}
+
+int gateway_ble_commit_stream_reservation(const struct proto_packet *packet,
+                                          const uint8_t *payload,
+                                          size_t payload_len)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+
+    return -ENOTSUP;
+}
+
+void gateway_ble_cancel_stream_reservation(void)
+{
+}
+
+int gateway_finalize_semantic_delivery(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint8_t received_radio_channel,
+    const struct mesh_event_plan *current_channel9_plan,
+    int semantic_acceptance)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(previous_hop_id);
+    ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
+    ARG_UNUSED(semantic_acceptance);
+
+    return -ENOTSUP;
+}
+
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics)
 {
     if (diagnostics != NULL) {
@@ -435,12 +484,12 @@ void gateway_clear_registered_membership_roster(void)
 {
 }
 
-void gateway_note_command_result(const struct proto_packet *packet,
-                                 const uint8_t *payload,
-                                 size_t payload_len,
-                                 uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel,
-                                 const struct mesh_event_plan *current_channel9_plan)
+int gateway_note_command_result(const struct proto_packet *packet,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                uint64_t previous_hop_id,
+                                uint8_t received_radio_channel,
+                                const struct mesh_event_plan *current_channel9_plan)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
@@ -448,14 +497,15 @@ void gateway_note_command_result(const struct proto_packet *packet,
     ARG_UNUSED(previous_hop_id);
     ARG_UNUSED(received_radio_channel);
     ARG_UNUSED(current_channel9_plan);
+    return -ENOTSUP;
 }
 
-void gateway_note_command_result_bundle(const struct proto_packet *packet,
-                                        const uint8_t *payload,
-                                        size_t payload_len,
-                                        uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel,
-                                        const struct mesh_event_plan *current_channel9_plan)
+int gateway_note_command_result_bundle(const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint64_t previous_hop_id,
+                                       uint8_t received_radio_channel,
+                                       const struct mesh_event_plan *current_channel9_plan)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
@@ -463,6 +513,7 @@ void gateway_note_command_result_bundle(const struct proto_packet *packet,
     ARG_UNUSED(previous_hop_id);
     ARG_UNUSED(received_radio_channel);
     ARG_UNUSED(current_channel9_plan);
+    return -ENOTSUP;
 }
 
 void gateway_command_result_tracking_init(void)
@@ -473,10 +524,10 @@ void gateway_command_result_tracking_init(void)
 static struct gateway_command_pending gateway_command_pending_state;
 static struct gateway_collection_state gateway_collection_state;
 static struct gateway_membership_roster gateway_membership_roster_state;
-static uint64_t gateway_collection_expected_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
-static uint16_t gateway_collection_expected_node_id_count;
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_work_delayable gateway_collection_eack_work;
+static struct app_gateway_eack_retry_state gateway_collection_eack_retry_state;
+static bool gateway_collection_eack_round_dirty;
 static struct k_work_delayable gateway_persistence_retry_work;
 static bool gateway_collection_persistence_dirty;
 static bool gateway_membership_persistence_dirty;
@@ -500,8 +551,13 @@ static void gateway_schedule_persistence_retry(const char *reason)
     if (gateway_persistence_retry_round < UINT8_MAX) {
         gateway_persistence_retry_round++;
     }
-    (void)k_work_reschedule(&gateway_persistence_retry_work,
-                            K_MSEC(delay_ms));
+    /*
+     * Collection persistence reads the same mutable snapshot as EACK
+     * generation.  Keep it on the mesh-route owner instead of allowing the
+     * system workqueue to race result ingestion or round advancement.
+     */
+    (void)mesh_route_work_reschedule(&gateway_persistence_retry_work,
+                                     delay_ms);
     LOG_WRN("gateway persistence retry scheduled: reason=%s round=%u delay_ms=%u",
             reason == NULL ? "unknown" : reason,
             gateway_persistence_retry_round,
@@ -572,6 +628,74 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
     return ret < 0 ? ret : 0;
 }
 
+int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t received_at_ms)
+{
+    k_spinlock_key_t key;
+    bool ready;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return 0;
+    }
+    if (!gateway_ble_transport_enabled()) {
+        return -ENOTSUP;
+    }
+
+    ready = gateway_ble_stream_ready();
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_reserve_packet(&gateway_ble_stream_state,
+                                            packet,
+                                            payload,
+                                            payload_len,
+                                            received_at_ms,
+                                            k_uptime_get_32(),
+                                            ready);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    return ret;
+}
+
+int gateway_ble_commit_stream_reservation(const struct proto_packet *packet,
+                                          const uint8_t *payload,
+                                          size_t payload_len)
+{
+    k_spinlock_key_t key;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return 0;
+    }
+    if (!gateway_ble_transport_enabled()) {
+        return -ENOTSUP;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_commit_reservation(&gateway_ble_stream_state,
+                                                packet,
+                                                payload,
+                                                payload_len);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret > 0) {
+        gateway_ble_schedule_stream_drain();
+    }
+    return ret;
+}
+
+void gateway_ble_cancel_stream_reservation(void)
+{
+    k_spinlock_key_t key;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || !gateway_ble_transport_enabled()) {
+        return;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    gateway_ble_stream_cancel_reservation(&gateway_ble_stream_state);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+}
+
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics)
 {
     k_spinlock_key_t key;
@@ -588,12 +712,12 @@ void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagno
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-static void gateway_persist_collection_state(const char *reason)
+static int gateway_persist_collection_state(const char *reason)
 {
     int ret;
 
     if (!gateway_collection_tracking_active()) {
-        return;
+        return -ENOENT;
     }
 
     ret = app_mesh_persistence_save_gateway_collection(&gateway_collection_state);
@@ -603,10 +727,12 @@ static void gateway_persist_collection_state(const char *reason)
         LOG_WRN("gateway collection snapshot save failed: ret=%d reason=%s",
                 ret,
                 reason == NULL ? "" : reason);
+        return ret;
     } else {
         gateway_collection_persistence_dirty = false;
         gateway_persistence_retry_round = 0u;
     }
+    return 0;
 }
 
 static bool gateway_collection_tracking_active(void)
@@ -617,16 +743,78 @@ static bool gateway_collection_tracking_active(void)
            gateway_collection_state.collection_epoch_id != 0u;
 }
 
+static bool gateway_collection_work_pending(void)
+{
+    return gateway_collection_tracking_active() &&
+           (gateway_collection_state.collection_open ||
+            gateway_collection_state.eack_pending ||
+            gateway_collection_eack_retry_state.active ||
+            gateway_collection_eack_round_dirty ||
+            gateway_collection_persistence_dirty);
+}
+
+static void gateway_collection_rollback_failed_start(void)
+{
+    int ret;
+
+    gateway_collection_persistence_dirty = false;
+    gateway_collection_eack_round_dirty = false;
+    gateway_persistence_retry_round = 0u;
+    ret = app_mesh_persistence_restore_gateway_collection(
+        &gateway_collection_state);
+    if (ret < 0) {
+        gateway_collection_clear(&gateway_collection_state);
+        LOG_WRN("gateway collection start rollback found no durable snapshot: ret=%d",
+                ret);
+    }
+}
+
 static void gateway_schedule_collection_eack_round(void)
 {
     if (!gateway_collection_tracking_active() ||
-        !gateway_collection_state.collection_open) {
+        !gateway_collection_state.eack_pending) {
         (void)k_work_cancel_delayable(&gateway_collection_eack_work);
         return;
     }
 
-    (void)k_work_reschedule(&gateway_collection_eack_work,
-                            K_MSEC(gateway_collection_state.next_retry_spread_ms));
+    (void)mesh_route_work_reschedule(
+        &gateway_collection_eack_work,
+        gateway_collection_state.next_retry_spread_ms);
+}
+
+static void gateway_schedule_collection_eack_retry(const char *reason,
+                                                   int ret,
+                                                   uint64_t failed_next_hop_id)
+{
+    uint32_t retry_delay_ms;
+
+    retry_delay_ms = app_gateway_eack_retry_note_failure(
+        &gateway_collection_eack_retry_state,
+        &gateway_collection_state,
+        sys_rand32_get());
+    app_gateway_eack_retry_note_failed_channel9_target(
+        &gateway_collection_eack_retry_state,
+        &gateway_collection_state,
+        failed_next_hop_id);
+    if (retry_delay_ms == 0u) {
+        LOG_ERR("gateway collection EACK retry state invalid: command_seq=%u collection=%u ret=%d reason=%s",
+                gateway_collection_state.command_seq,
+                gateway_collection_state.collection_epoch_id,
+                ret,
+                reason == NULL ? "" : reason);
+        return;
+    }
+
+    (void)mesh_route_work_reschedule(&gateway_collection_eack_work,
+                                     retry_delay_ms);
+    LOG_WRN("gateway collection EACK send failure retry: command_seq=%u collection=%u eack_round=%u rf_retry_round=%u delay_ms=%u ret=%d reason=%s",
+            gateway_collection_state.command_seq,
+            gateway_collection_state.collection_epoch_id,
+            gateway_collection_state.retry_round,
+            gateway_collection_eack_retry_state.rf_retry.retry_round,
+            retry_delay_ms,
+            ret,
+            reason == NULL ? "" : reason);
 }
 
 static int gateway_eack_plan_channel9(uint64_t next_hop_id,
@@ -673,22 +861,44 @@ static int gateway_eack_prepare_channel9(struct mesh_outbound *out,
 }
 
 struct gateway_eack_send_context {
-    bool c5_sent_now;
+    bool c5_rf_started;
 };
 
 static int gateway_eack_send_c5_flood(const struct mesh_outbound *out, void *ctx)
 {
     struct gateway_eack_send_context *send_context = ctx;
+    struct app_mesh_flood_result flood_result = {0};
+    struct app_mesh_flood_progress *progress =
+        &gateway_collection_eack_retry_state.c5_flood_progress;
+    int ret;
 
     if (send_context == NULL) {
         return -EINVAL;
     }
-    send_context->c5_sent_now = false;
+    send_context->c5_rf_started = false;
 
-    return mesh_send_c5_flood(out,
-                              C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
-                              "collection-eack-c5",
-                              &send_context->c5_sent_now);
+    /*
+     * EACK retry state is the sole custody owner.  Retain resumable progress
+     * across busy periods and release the frozen datagram only after all four
+     * real EACK transmissions complete.
+     */
+    ret = mesh_try_send_c5_flood_resume(
+        out,
+        C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
+        "collection-eack-c5",
+        progress,
+        &flood_result,
+        &send_context->c5_rf_started);
+    if (progress->initialized && !progress->complete) {
+        gateway_collection_eack_retry_state.force_c5_recovery = true;
+    }
+    if (ret == 0 &&
+        (!progress->complete ||
+         progress->next_opportunity != app_mesh_flood_repeat_limit() ||
+         flood_result.sent_count != app_mesh_flood_repeat_limit())) {
+        return -EAGAIN;
+    }
+    return ret;
 }
 
 static void gateway_eack_note_tx_sent(const struct mesh_outbound *out, void *ctx)
@@ -696,7 +906,7 @@ static void gateway_eack_note_tx_sent(const struct mesh_outbound *out, void *ctx
     const struct gateway_eack_send_context *send_context = ctx;
 
     if (out != NULL && out->radio_channel == UWB_CHANNEL_WAKE_CONTACT &&
-        (send_context == NULL || !send_context->c5_sent_now)) {
+        (send_context == NULL || !send_context->c5_rf_started)) {
         return;
     }
 
@@ -730,20 +940,29 @@ static uint32_t gateway_eack_now_ms(void *ctx)
 static int gateway_send_collection_eack(const char *reason,
                                         uint64_t previous_hop_id,
                                         uint8_t received_radio_channel,
-                                        const struct mesh_event_plan *current_channel9_plan)
+                                        const struct mesh_event_plan *current_channel9_plan,
+                                        uint64_t *failed_next_hop_id,
+                                        bool *used_frozen_snapshot)
 {
     struct mesh_outbound eack = {0};
     struct gateway_eack_send_context send_context = {
-        .c5_sent_now = true,
+        .c5_rf_started = false,
     };
     struct app_gateway_collection_eack_input input = {
         .collection = &gateway_collection_state,
-        .expected_node_ids = gateway_collection_expected_node_ids,
-        .expected_node_id_count = gateway_collection_expected_node_id_count,
+        .expected_node_ids = gateway_collection_state.expected_node_ids,
+        .expected_node_id_count =
+            gateway_collection_state.expected_node_id_count,
         .previous_hop_id = previous_hop_id,
         .received_radio_channel = received_radio_channel,
         .current_channel9_plan = current_channel9_plan,
         .self_id = DEVICE_ID,
+        .excluded_channel9_next_hop_ids =
+            gateway_collection_eack_retry_state.failed_channel9_next_hop_ids,
+        .excluded_channel9_next_hop_count =
+            gateway_collection_eack_retry_state.failed_channel9_next_hop_count,
+        .force_c5_recovery =
+            gateway_collection_eack_retry_state.force_c5_recovery,
     };
     const struct app_gateway_eack_policy_ops ops = {
         .plan_channel9 = gateway_eack_plan_channel9,
@@ -758,8 +977,83 @@ static int gateway_send_collection_eack(const char *reason,
     struct app_gateway_collection_eack_result result;
     int ret;
 
+    if (failed_next_hop_id != NULL) {
+        *failed_next_hop_id = 0u;
+    }
+    if (used_frozen_snapshot != NULL) {
+        *used_frozen_snapshot = false;
+    }
     if (!gateway_collection_tracking_active()) {
         return -ENOENT;
+    }
+    if (!gateway_collection_state.eack_pending) {
+        return -EALREADY;
+    }
+    if (gateway_collection_persistence_dirty) {
+        /*
+         * An EACK is a durable acceptance statement.  Never put it on RF
+         * while the collection update it describes is still RAM-only.
+         */
+        return -EAGAIN;
+    }
+
+    ret = app_gateway_eack_retry_restore(
+        &gateway_collection_eack_retry_state,
+        &gateway_collection_state,
+        &eack);
+    if (ret == PROTO_OK) {
+        input.use_prebuilt_eack = true;
+        if (used_frozen_snapshot != NULL) {
+            *used_frozen_snapshot = true;
+        }
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        LOG_ERR("gateway collection EACK snapshot restore failed: ret=%d command_seq=%u collection=%u round=%u",
+                ret,
+                gateway_collection_state.command_seq,
+                gateway_collection_state.collection_epoch_id,
+                gateway_collection_state.retry_round);
+        return -EBADMSG;
+    }
+
+    if (!input.use_prebuilt_eack) {
+        ret = app_gateway_collection_eack_prepare(&eack, &input, &result);
+        if (ret < 0) {
+            LOG_WRN("gateway collection EACK build failed before custody: ret=%d command_seq=%u collection=%u round=%u",
+                    ret,
+                    gateway_collection_state.command_seq,
+                    gateway_collection_state.collection_epoch_id,
+                    gateway_collection_state.retry_round);
+            return ret;
+        }
+        ret = app_gateway_eack_retry_freeze(
+            &gateway_collection_eack_retry_state,
+            &gateway_collection_state,
+            &eack);
+        if (ret != PROTO_OK) {
+            LOG_ERR("gateway collection EACK snapshot freeze failed: ret=%d command_seq=%u collection=%u round=%u",
+                    ret,
+                    gateway_collection_state.command_seq,
+                    gateway_collection_state.collection_epoch_id,
+                    gateway_collection_state.retry_round);
+            return -EBADMSG;
+        }
+        input.use_prebuilt_eack = true;
+    }
+
+    /*
+     * Store the exact datagram before every RF attempt.  Repeating an
+     * identical NVS write is harmless, and it closes the reset window after
+     * an earlier persistence failure without rebuilding mutable payload.
+     */
+    ret = app_mesh_persistence_save_gateway_eack_custody(
+        &gateway_collection_eack_retry_state.snapshot);
+    if (ret < 0) {
+        LOG_WRN("gateway collection EACK custody save failed before RF: ret=%d command_seq=%u collection=%u round=%u",
+                ret,
+                gateway_collection_state.command_seq,
+                gateway_collection_state.collection_epoch_id,
+                gateway_collection_state.retry_round);
+        return ret;
     }
 
     ret = app_gateway_collection_eack_send(
@@ -768,6 +1062,10 @@ static int gateway_send_collection_eack(const char *reason,
         &ops,
         &result);
     if (ret < 0) {
+        if (failed_next_hop_id != NULL &&
+            result.policy.channel9_attempt_count != 0u) {
+            *failed_next_hop_id = result.policy.channel9_next_hop_id;
+        }
         LOG_WRN("gateway collection EACK build/send failed: ret=%d candidates=%u mode=%u c9_candidates=%u c9_attempts=%u c9_plan=%d c9_prepare=%d c9_send=%d c5_send=%d",
                 ret,
                 (unsigned int)result.return_target_count,
@@ -794,49 +1092,186 @@ static int gateway_send_collection_eack(const char *reason,
     return 0;
 }
 
-static void gateway_collection_eack_work_handler(struct k_work *work)
+static void gateway_complete_collection_eack_round(
+    const char *reason,
+    bool used_frozen_snapshot)
 {
+    bool send_updated_round =
+        used_frozen_snapshot && gateway_collection_eack_round_dirty;
+    uint32_t previous_retry_spread_ms =
+        gateway_collection_state.next_retry_spread_ms;
+    uint16_t previous_eack_sequence = gateway_collection_state.eack_sequence;
+    uint8_t previous_retry_round = gateway_collection_state.retry_round;
+    bool previous_eack_pending = gateway_collection_state.eack_pending;
     int ret;
 
-    ARG_UNUSED(work);
-
-    if (!gateway_collection_tracking_active()) {
-        return;
-    }
-
-    ret = gateway_send_collection_eack("collection-eack-round", 0u, 0u, NULL);
-    if (ret < 0) {
-        (void)k_work_reschedule(&gateway_collection_eack_work,
-                                K_MSEC(RELAY_BUSY_RETRY_MIN_MS));
-        return;
-    }
-    if (!gateway_collection_state.collection_open) {
-        return;
+    if (!used_frozen_snapshot) {
+        gateway_collection_eack_round_dirty = false;
     }
 
     ret = gateway_collection_advance_retry_round(&gateway_collection_state);
     if (ret != PROTO_OK) {
         LOG_WRN("gateway collection retry round advance failed: ret=%d", ret);
+        gateway_schedule_collection_eack_retry(reason, -EBADMSG, 0u);
         return;
     }
-    gateway_persist_collection_state("collection-eack-round");
+    gateway_collection_state.eack_pending =
+        gateway_collection_state.collection_open || send_updated_round;
+    ret = gateway_persist_collection_state(reason);
+    if (ret < 0) {
+        /*
+         * The previously persisted collection identity still owns the
+         * frozen EACK.  Roll RAM back to that identity and retry the exact
+         * datagram instead of exposing a half-committed next round.
+         */
+        gateway_collection_state.retry_round = previous_retry_round;
+        gateway_collection_state.eack_sequence = previous_eack_sequence;
+        gateway_collection_state.next_retry_spread_ms =
+            previous_retry_spread_ms;
+        gateway_collection_state.eack_pending = previous_eack_pending;
+        gateway_collection_persistence_dirty = false;
+        gateway_schedule_collection_eack_retry(reason, ret, 0u);
+        return;
+    }
+
+    ret = app_gateway_eack_retry_commit_success(
+        &gateway_collection_eack_retry_state);
+    if (ret != PROTO_OK) {
+        LOG_ERR("gateway collection EACK RAM custody commit failed after durable round advance: ret=%d",
+                ret);
+        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    }
+    app_mesh_persistence_clear_gateway_eack_custody();
+
+    if (send_updated_round) {
+        gateway_collection_eack_round_dirty = false;
+        (void)mesh_route_work_reschedule(&gateway_collection_eack_work, 0u);
+        return;
+    }
+
+    gateway_collection_eack_round_dirty = false;
     gateway_schedule_collection_eack_round();
 }
 
-static void gateway_note_collection_result(const struct proto_packet *packet,
+static void gateway_collection_eack_work_handler(struct k_work *work)
+{
+    uint64_t failed_next_hop_id = 0u;
+    bool used_frozen_snapshot = false;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    if (!gateway_collection_tracking_active()) {
+        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+        app_mesh_persistence_clear_gateway_eack_custody();
+        return;
+    }
+    if (!gateway_collection_state.eack_pending) {
+        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+        app_mesh_persistence_clear_gateway_eack_custody();
+        return;
+    }
+
+    ret = gateway_send_collection_eack("collection-eack-round",
+                                       0u,
+                                       0u,
+                                       NULL,
+                                       &failed_next_hop_id,
+                                       &used_frozen_snapshot);
+    if (ret < 0) {
+        gateway_schedule_collection_eack_retry("collection-eack-round",
+                                               ret,
+                                               failed_next_hop_id);
+        return;
+    }
+    gateway_complete_collection_eack_round("collection-eack-round",
+                                           used_frozen_snapshot);
+}
+
+static int gateway_accept_collection_record(
+    const char *reason,
+    bool collection_changed)
+{
+    bool reopened = !gateway_collection_state.eack_pending;
+    int ret;
+
+    if (reopened) {
+        gateway_collection_state.eack_pending = true;
+    }
+    if (collection_changed || reopened || gateway_collection_persistence_dirty) {
+        ret = gateway_persist_collection_state(reason);
+        if (ret < 0) {
+            if (reopened) {
+                gateway_collection_state.eack_pending = false;
+                gateway_collection_persistence_dirty = false;
+            }
+            return ret;
+        }
+    }
+
+    if (gateway_collection_eack_retry_state.active) {
+        if (collection_changed) {
+            gateway_collection_eack_round_dirty = true;
+        }
+        LOG_DBG("gateway collection EACK retry already pending after record: command_seq=%u collection=%u rf_retry_round=%u",
+                gateway_collection_state.command_seq,
+                gateway_collection_state.collection_epoch_id,
+                gateway_collection_eack_retry_state.rf_retry.retry_round);
+    }
+
+    return 0;
+}
+
+static int gateway_drive_collection_eack_after_record(
+    const char *reason,
+    uint64_t previous_hop_id,
+    uint8_t received_radio_channel,
+    const struct mesh_event_plan *current_channel9_plan)
+{
+    bool used_frozen_snapshot = false;
+    uint64_t failed_next_hop_id = 0u;
+    int ret;
+
+    if (!gateway_collection_tracking_active() ||
+        !gateway_collection_state.eack_pending) {
+        return -ESTALE;
+    }
+    if (gateway_collection_eack_retry_state.active) {
+        return 0;
+    }
+
+    ret = gateway_send_collection_eack(reason,
+                                       previous_hop_id,
+                                       received_radio_channel,
+                                       current_channel9_plan,
+                                       &failed_next_hop_id,
+                                       &used_frozen_snapshot);
+    if (ret < 0) {
+        gateway_schedule_collection_eack_retry(reason,
+                                               ret,
+                                               failed_next_hop_id);
+    } else {
+        gateway_complete_collection_eack_round(reason,
+                                               used_frozen_snapshot);
+    }
+
+    /* The result itself is safely accepted once its collection is durable. */
+    return 0;
+}
+
+static int gateway_note_collection_result(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
-                                           uint64_t previous_hop_id,
-                                           uint8_t received_radio_channel,
-                                           const struct mesh_event_plan *current_channel9_plan)
+                                           uint64_t previous_hop_id)
 {
     bool duplicate = false;
+    int accept_ret;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
         packet == NULL ||
         packet->msg_type != MSG_COMMAND_RESULT) {
-        return;
+        return -ENOENT;
     }
 
     ret = gateway_collection_record_result_from_hop(&gateway_collection_state,
@@ -849,7 +1284,7 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
         LOG_DBG("gateway collection result ignored: src=0x%016llx ret=%d",
                 packet == NULL ? 0ull : (unsigned long long)packet->src_id,
                 ret);
-        return;
+        return mesh_errno_from_proto(ret);
     }
 
     LOG_INF("gateway collection result recorded: src=0x%016llx command_seq=%u received=%u expected=%u duplicate=%u",
@@ -858,31 +1293,31 @@ static void gateway_note_collection_result(const struct proto_packet *packet,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count,
             duplicate ? 1u : 0u);
-    if (!duplicate) {
-        gateway_persist_collection_state("collection-result");
-        (void)gateway_send_collection_eack("collection-eack-result",
-                                           previous_hop_id,
-                                           received_radio_channel,
-                                           current_channel9_plan);
-        gateway_schedule_collection_eack_round();
+    accept_ret = gateway_accept_collection_record(
+        duplicate ? "collection-eack-result-duplicate" :
+                    "collection-eack-result",
+        !duplicate);
+    if (accept_ret < 0) {
+        return accept_ret;
     }
+    return duplicate ? APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE :
+                       APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
 
-static void gateway_note_collection_bundle(const struct proto_packet *packet,
+static int gateway_note_collection_bundle(const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len,
-                                           uint64_t previous_hop_id,
-                                           uint8_t received_radio_channel,
-                                           const struct mesh_event_plan *current_channel9_plan)
+                                           uint64_t previous_hop_id)
 {
     uint16_t accepted_count = 0u;
     uint16_t duplicate_count = 0u;
+    int accept_ret;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
         packet == NULL ||
         packet->msg_type != MSG_RESULT_BUNDLE) {
-        return;
+        return -ENOENT;
     }
 
     ret = gateway_collection_record_bundle_from_hop(&gateway_collection_state,
@@ -896,7 +1331,7 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
         LOG_DBG("gateway collection bundle ignored: src=0x%016llx ret=%d",
                 packet == NULL ? 0ull : (unsigned long long)packet->src_id,
                 ret);
-        return;
+        return mesh_errno_from_proto(ret);
     }
 
     LOG_INF("gateway collection bundle recorded: src=0x%016llx command_seq=%u accepted=%u duplicate=%u received=%u expected=%u",
@@ -906,16 +1341,81 @@ static void gateway_note_collection_bundle(const struct proto_packet *packet,
             (unsigned int)duplicate_count,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count);
-    if (accepted_count != 0u) {
-        gateway_persist_collection_state("collection-bundle");
-        (void)gateway_send_collection_eack("collection-eack-bundle",
-                                           previous_hop_id,
-                                           received_radio_channel,
-                                           current_channel9_plan);
-        gateway_schedule_collection_eack_round();
+    if (accepted_count == 0u && duplicate_count == 0u) {
+        return -EBADMSG;
     }
+    accept_ret = gateway_accept_collection_record(
+        accepted_count == 0u ? "collection-eack-bundle-duplicate" :
+                               "collection-eack-bundle",
+        accepted_count != 0u);
+    if (accept_ret < 0) {
+        return accept_ret;
+    }
+    return accepted_count == 0u ? APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE :
+                                  APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
 #endif
+
+int gateway_finalize_semantic_delivery(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint8_t received_radio_channel,
+    const struct mesh_event_plan *current_channel9_plan,
+    int semantic_acceptance)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    const uint8_t *collection_epoch_raw = NULL;
+    uint8_t collection_epoch_len = 0u;
+    uint32_t collection_epoch_id;
+    bool collection_packet = false;
+
+    if (packet == NULL || (payload == NULL && payload_len != 0u) ||
+        packet->payload_len != payload_len ||
+        (semantic_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+         semantic_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE)) {
+        return -EINVAL;
+    }
+    if (packet->msg_type == MSG_RESULT_BUNDLE) {
+        collection_packet = true;
+    } else if (packet->msg_type == MSG_COMMAND_RESULT &&
+               tlv_find(payload,
+                        payload_len,
+                        TLV_COLLECTION_EPOCH_ID,
+                        &collection_epoch_raw,
+                        &collection_epoch_len) == PROTO_OK &&
+               collection_epoch_len == sizeof(uint32_t)) {
+        collection_epoch_id = proto_get_u32_le(collection_epoch_raw);
+        collection_packet =
+            collection_epoch_id == gateway_collection_state.collection_epoch_id;
+    }
+    if (!collection_packet) {
+        return 0;
+    }
+    if (!gateway_collection_tracking_active() ||
+        packet->session_id != gateway_collection_state.command_seq) {
+        return -ESTALE;
+    }
+
+    return gateway_drive_collection_eack_after_record(
+        semantic_acceptance == APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE ?
+            "collection-eack-semantic-duplicate" :
+            "collection-eack-semantic-new",
+        previous_hop_id,
+        received_radio_channel,
+        current_channel9_plan);
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(previous_hop_id);
+    ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
+    ARG_UNUSED(semantic_acceptance);
+    return -ENOTSUP;
+#endif
+}
 
 int gateway_encode_host_packet_frame(const struct proto_packet *packet,
                                      const uint8_t *payload,
@@ -1068,20 +1568,21 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
 {
     enum gateway_command_collection_roster_source roster_source =
         GATEWAY_COMMAND_COLLECTION_ROSTER_NONE;
+    uint64_t resolved_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP] = {0};
     size_t resolved_node_count = 0u;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY || options == NULL || !options->collection_required) {
         return -EINVAL;
     }
-    if (gateway_command_pending_state.active || gateway_collection_state.collection_open) {
+    if (gateway_command_pending_state.active || gateway_collection_work_pending()) {
         return -EBUSY;
     }
 
     ret = gateway_command_resolve_collection_roster(options,
                                                     &gateway_membership_roster_state,
-                                                    gateway_collection_expected_node_ids,
-                                                    ARRAY_SIZE(gateway_collection_expected_node_ids),
+                                                    resolved_node_ids,
+                                                    ARRAY_SIZE(resolved_node_ids),
                                                     &resolved_node_count,
                                                     &roster_source);
     if (ret != PROTO_OK) {
@@ -1106,15 +1607,33 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
-    gateway_collection_expected_node_id_count = (uint16_t)resolved_node_count;
+    ret = gateway_collection_set_expected_roster(&gateway_collection_state,
+                                                 resolved_node_ids,
+                                                 resolved_node_count);
+    if (ret != PROTO_OK) {
+        gateway_collection_rollback_failed_start();
+        return mesh_errno_from_proto(ret);
+    }
 
-    LOG_INF("gateway collection tracking started: command_seq=%u collection=%u epoch=%u expected=%u roster_source=%u",
+    LOG_INF("gateway collection tracking started: command_seq=%u collection=%u epoch=%u expected=%u roster_count=%u roster_source=%u",
             gateway_collection_state.command_seq,
             gateway_collection_state.collection_epoch_id,
             gateway_collection_state.gateway_epoch,
             gateway_collection_state.expected_count,
+            gateway_collection_state.expected_node_id_count,
             (unsigned int)roster_source);
-    gateway_persist_collection_state("collection-start");
+    ret = gateway_persist_collection_state("collection-start");
+    if (ret < 0) {
+        /*
+         * The previous closed collection remains the durable snapshot.  Do
+         * not expose or schedule a new collection that exists only in RAM.
+         */
+        gateway_collection_rollback_failed_start();
+        return ret;
+    }
+    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    app_mesh_persistence_clear_gateway_eack_custody();
+    gateway_collection_eack_round_dirty = false;
     gateway_schedule_collection_eack_round();
     return 0;
 }
@@ -1171,7 +1690,10 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
     }
 
     gateway_collection_clear(&gateway_collection_state);
-    gateway_collection_expected_node_id_count = 0u;
+    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    app_mesh_persistence_clear_gateway_eack_custody();
+    gateway_collection_eack_round_dirty = false;
+    gateway_collection_persistence_dirty = false;
     app_mesh_persistence_clear_gateway_collection();
     (void)k_work_cancel_delayable(&gateway_collection_eack_work);
 }
@@ -1204,38 +1726,41 @@ static void gateway_command_result_timeout_handler(struct k_work *work)
     gateway_emit_host_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
 }
 
-void gateway_note_command_result(const struct proto_packet *packet,
-                                 const uint8_t *payload,
-                                 size_t payload_len,
-                                 uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel,
-                                 const struct mesh_event_plan *current_channel9_plan)
+int gateway_note_command_result(const struct proto_packet *packet,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                uint64_t previous_hop_id,
+                                uint8_t received_radio_channel,
+                                const struct mesh_event_plan *current_channel9_plan)
 {
     struct proto_packet command;
     enum command_id pending_command_id;
     enum gateway_command_result_admission admission;
     bool auto_transaction_owned;
+    int claim_ret;
     bool pending_matches;
     bool survey_transaction_result;
-    enum command_status status = COMMAND_INTERNAL_ERROR;
-    uint8_t reason = 0u;
+    int collection_ret;
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
-        return;
+        return -ENOTSUP;
+    }
+    ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
+
+    claim_ret = gateway_discovery_assignment_note_claim(packet,
+                                                        payload,
+                                                        payload_len,
+                                                        previous_hop_id);
+    if (claim_ret != -ENOENT && claim_ret != -ENOTSUP) {
+        return claim_ret;
     }
 
-    (void)gateway_discovery_assignment_note_claim(packet,
-                                                  payload,
-                                                  payload_len,
-                                                  previous_hop_id);
-
-    gateway_note_collection_result(packet,
-                                   payload,
-                                   payload_len,
-                                   previous_hop_id,
-                                   received_radio_channel,
-                                   current_channel9_plan);
+    collection_ret = gateway_note_collection_result(packet,
+                                                     payload,
+                                                     payload_len,
+                                                     previous_hop_id);
 
     auto_transaction_owned = gateway_survey_auto_owns_pending_command(
         &gateway_command_pending_state.command,
@@ -1260,7 +1785,11 @@ void gateway_note_command_result(const struct proto_packet *packet,
                     packet == NULL ? 0u : packet->session_id,
                     packet == NULL ? 0u : packet->seq);
         }
-        return;
+        if (collection_ret >= 0) {
+            return collection_ret;
+        }
+        return survey_transaction_result ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE : -ENOENT;
     }
     if (admission == GATEWAY_COMMAND_RESULT_WAIT) {
         LOG_WRN("gateway survey result identity rejected while wait remains active: src=0x%016llx session=%u seq=%u",
@@ -1268,13 +1797,11 @@ void gateway_note_command_result(const struct proto_packet *packet,
                 (unsigned long long)packet->src_id,
                 packet == NULL ? 0u : packet->session_id,
                 packet == NULL ? 0u : packet->seq);
-        return;
+        return collection_ret >= 0 ? collection_ret : -EAGAIN;
     }
 
     command = gateway_command_pending_state.command;
     pending_command_id = gateway_command_pending_state.command_id;
-    gateway_command_pending_clear(&gateway_command_pending_state);
-    (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
     ret = app_mesh_command_orchestrator_gateway_deliver(
         &command,
         pending_command_id,
@@ -1287,37 +1814,37 @@ void gateway_note_command_result(const struct proto_packet *packet,
         LOG_WRN("gateway command result payload mismatch: pending=0x%04x ret=%d",
                 (unsigned int)pending_command_id,
                 ret);
-        status = COMMAND_INTERNAL_ERROR;
-        reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
     }
 
     if (ret == PROTO_OK) {
+        gateway_command_pending_clear(&gateway_command_pending_state);
+        (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
         LOG_INF("gateway command result received: src=0x%016llx session=%u seq=%u",
                 (unsigned long long)packet->src_id,
                 packet->session_id,
                 packet->seq);
-    } else {
-        gateway_command_result_side_effects(&command, pending_command_id, status, reason);
+        return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
+    return collection_ret >= 0 ? collection_ret : mesh_errno_from_proto(ret);
 }
 
-void gateway_note_command_result_bundle(const struct proto_packet *packet,
-                                        const uint8_t *payload,
-                                        size_t payload_len,
-                                        uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel,
-                                        const struct mesh_event_plan *current_channel9_plan)
+int gateway_note_command_result_bundle(const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint64_t previous_hop_id,
+                                       uint8_t received_radio_channel,
+                                       const struct mesh_event_plan *current_channel9_plan)
 {
     if (DEVICE_ROLE != ROLE_GATEWAY) {
-        return;
+        return -ENOTSUP;
     }
+    ARG_UNUSED(received_radio_channel);
+    ARG_UNUSED(current_channel9_plan);
 
-    gateway_note_collection_bundle(packet,
-                                   payload,
-                                   payload_len,
-                                   previous_hop_id,
-                                   received_radio_channel,
-                                   current_channel9_plan);
+    return gateway_note_collection_bundle(packet,
+                                          payload,
+                                          payload_len,
+                                          previous_hop_id);
 }
 
 int gateway_begin_command_result_wait(const struct proto_packet *command,
@@ -1336,7 +1863,7 @@ int gateway_begin_command_result_wait_for(const struct proto_packet *command,
     if (timeout_ms == 0u) {
         return -EINVAL;
     }
-    if (gateway_collection_state.collection_open) {
+    if (gateway_collection_work_pending()) {
         return -EBUSY;
     }
 
@@ -1356,11 +1883,13 @@ int gateway_begin_command_result_wait_for(const struct proto_packet *command,
 
 void gateway_command_result_tracking_init(void)
 {
+    struct gateway_collection_eack decoded_eack;
     int ret;
 
     gateway_collection_clear(&gateway_collection_state);
+    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    gateway_collection_eack_round_dirty = false;
     gateway_membership_clear(&gateway_membership_roster_state);
-    gateway_collection_expected_node_id_count = 0u;
     k_work_init_delayable(&gateway_command_result_timeout_work,
                           gateway_command_result_timeout_handler);
     k_work_init_delayable(&gateway_collection_eack_work,
@@ -1384,15 +1913,66 @@ void gateway_command_result_tracking_init(void)
     if (ret < 0) {
         gateway_collection_clear(&gateway_collection_state);
         LOG_WRN("gateway collection snapshot restore unavailable: ret=%d", ret);
+        app_mesh_persistence_clear_gateway_eack_custody();
         return;
     }
-    if (gateway_collection_tracking_active()) {
-        LOG_INF("gateway collection tracking restored: command_seq=%u collection=%u received=%u expected=%u open=%u",
-                gateway_collection_state.command_seq,
-                gateway_collection_state.collection_epoch_id,
-                gateway_collection_state.received_count,
-                gateway_collection_state.expected_count,
-                gateway_collection_state.collection_open ? 1u : 0u);
+    if (!gateway_collection_tracking_active()) {
+        app_mesh_persistence_clear_gateway_eack_custody();
+        return;
+    }
+
+    LOG_INF("gateway collection tracking restored: command_seq=%u collection=%u received=%u expected=%u open=%u eack_pending=%u",
+            gateway_collection_state.command_seq,
+            gateway_collection_state.collection_epoch_id,
+            gateway_collection_state.received_count,
+            gateway_collection_state.expected_count,
+            gateway_collection_state.collection_open ? 1u : 0u,
+            gateway_collection_state.eack_pending ? 1u : 0u);
+    if (!gateway_collection_state.eack_pending) {
+        app_mesh_persistence_clear_gateway_eack_custody();
+        return;
+    }
+
+    ret = app_mesh_persistence_restore_gateway_eack_custody(
+        &gateway_collection_eack_retry_state.snapshot);
+    if (ret < 0) {
+        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+        LOG_WRN("gateway collection EACK custody restore unavailable: ret=%d",
+                ret);
+    } else if (gateway_collection_eack_retry_state.snapshot.valid) {
+        ret = app_gateway_eack_retry_import_custody(
+            &gateway_collection_eack_retry_state,
+            &gateway_collection_state,
+            &gateway_collection_eack_retry_state.snapshot);
+        if (ret == PROTO_OK) {
+            ret = gateway_collection_eack_packet_validate(
+                &gateway_collection_eack_retry_state.snapshot.packet,
+                gateway_collection_eack_retry_state.snapshot.payload,
+                gateway_collection_eack_retry_state.snapshot.payload_len,
+                &decoded_eack);
+        }
+        if (ret == PROTO_OK) {
+            gateway_collection_eack_round_dirty =
+                decoded_eack.received_count !=
+                    gateway_collection_state.received_count ||
+                decoded_eack.collection_open !=
+                    gateway_collection_state.collection_open;
+            gateway_schedule_collection_eack_retry(
+                "collection-eack-reset-resume", -EAGAIN, 0u);
+            return;
+        }
+
+        LOG_WRN("gateway collection EACK custody is stale for restored collection: ret=%d",
+                ret);
+        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+        app_mesh_persistence_clear_gateway_eack_custody();
+    }
+
+    if (!gateway_collection_state.collection_open) {
+        /* A reset landed after the final result but before its EACK custody. */
+        gateway_schedule_collection_eack_retry(
+            "collection-eack-final-reset-gap", -EAGAIN, 0u);
+    } else {
         gateway_schedule_collection_eack_round();
     }
 }
@@ -1456,12 +2036,12 @@ void gateway_clear_registered_membership_roster(void)
 {
 }
 
-void gateway_note_command_result(const struct proto_packet *packet,
-                                 const uint8_t *payload,
-                                 size_t payload_len,
-                                 uint64_t previous_hop_id,
-                                 uint8_t received_radio_channel,
-                                 const struct mesh_event_plan *current_channel9_plan)
+int gateway_note_command_result(const struct proto_packet *packet,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                uint64_t previous_hop_id,
+                                uint8_t received_radio_channel,
+                                const struct mesh_event_plan *current_channel9_plan)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
@@ -1469,14 +2049,15 @@ void gateway_note_command_result(const struct proto_packet *packet,
     ARG_UNUSED(previous_hop_id);
     ARG_UNUSED(received_radio_channel);
     ARG_UNUSED(current_channel9_plan);
+    return -ENOTSUP;
 }
 
-void gateway_note_command_result_bundle(const struct proto_packet *packet,
-                                        const uint8_t *payload,
-                                        size_t payload_len,
-                                        uint64_t previous_hop_id,
-                                        uint8_t received_radio_channel,
-                                        const struct mesh_event_plan *current_channel9_plan)
+int gateway_note_command_result_bundle(const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint64_t previous_hop_id,
+                                       uint8_t received_radio_channel,
+                                       const struct mesh_event_plan *current_channel9_plan)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(payload);
@@ -1484,6 +2065,7 @@ void gateway_note_command_result_bundle(const struct proto_packet *packet,
     ARG_UNUSED(previous_hop_id);
     ARG_UNUSED(received_radio_channel);
     ARG_UNUSED(current_channel9_plan);
+    return -ENOTSUP;
 }
 
 void gateway_command_result_tracking_init(void)

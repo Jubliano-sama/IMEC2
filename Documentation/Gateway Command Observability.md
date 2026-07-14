@@ -175,11 +175,15 @@ Survey discovery runs four collision-diversified probe opportunities before
 the gateway closes collection. A terminal `NO_ANCHORS` reason therefore means
 that no unique eligible anchor report arrived across the complete expanded
 probe and report horizon; it must not be emitted after only the initial slot.
+An explicit host command limit is an overall cancellation deadline, not
+permission to divide and shorten that indivisible collection horizon. If the
+limit expires before collection can finish, the terminal reason is `TIMEOUT`;
+the gateway may emit `NO_ANCHORS` only after the natural horizon completes.
 
 ## Bounds And Scheduling
 
 Enumeration and survey discovery are capped at 50 anchors. Each survey report
-is capped at eight peers, and the planner caps each anchor at six pairs. Survey
+is capped at twelve peers, and the planner caps each anchor at six pairs. Survey
 runtime result accounting is capped at 16 samples per pair. Compile-time guards
 bind these capacities and keep the discovery table publisher below a 4 KiB
 local-frame budget.

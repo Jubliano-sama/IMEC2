@@ -1,4 +1,5 @@
 #include "app_mesh_c5_priority.h"
+#include "app_mesh_ch9_ack.h"
 #include "app_mesh_route_request_policy.h"
 #include "mesh_sim.h"
 
@@ -6,6 +7,7 @@
 #include "protocol.h"
 #include "uwb.h"
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,6 +22,17 @@
 #define ROUTE_REQUEST_START_MS UINT32_C(40)
 #define ROUTE_WAKE_START_US UINT64_C(20000)
 #define DATA_COUNT 3u
+#define FORCEDHOP_BURST_COUNT 4u
+#define FORCEDHOP_PAYLOAD_LEN 900u
+#define FORCEDHOP_BATCH_ID UINT32_C(0x54f09ced)
+#define FORCEDHOP_BATCH_FLAG_FINAL 0x01u
+#define DIRECT_TX_PREPARE_US UINT64_C(20000)
+#define DIRECT_PAYLOAD_SERVICE_US UINT64_C(50000)
+#define DIRECT_ACK_SERVICE_US UINT64_C(40000)
+#define LOSS_SWEEP_CASES 16u
+
+_Static_assert(FORCEDHOP_PAYLOAD_LEN <= UWB_MESH_MAX_PAYLOAD_LEN,
+               "forced-hop stress payload must fit one extended frame");
 
 #define CHECK(expression) do {                                               \
     if (!(expression)) {                                                     \
@@ -479,9 +492,597 @@ static int run_forcedhop_connection_scenario(void)
     return 0;
 }
 
+static size_t count_matching_receptions(const struct mesh_sim_world *world,
+                                         uint64_t receiver_id,
+                                         uint8_t msg_type,
+                                         uint32_t session_id,
+                                         uint16_t seq)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *reception = &world->receptions[i];
+
+        if (reception->receiver_id == receiver_id &&
+            reception->outcome == MESH_SIM_RX_DECODED &&
+            reception->packet.msg_type == msg_type &&
+            reception->packet.session_id == session_id &&
+            reception->packet.seq == seq) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static const struct mesh_sim_queued_tx *queued_packet_for_peer(
+    const struct mesh_sim_role_instance *node,
+    uint64_t peer_id,
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint16_t seq)
+{
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
+
+        if (queued->valid && queued->outbound.next_hop_id == peer_id &&
+            queued->outbound.packet.msg_type == msg_type &&
+            queued->outbound.packet.session_id == session_id &&
+            queued->outbound.packet.seq == seq) {
+            return queued;
+        }
+    }
+    return NULL;
+}
+
+static const struct mesh_sim_queued_tx *queued_gateway_ack_for_sender(
+    const struct mesh_sim_role_instance *gateway,
+    uint64_t sender_id,
+    uint64_t original_source_id,
+    uint32_t session_id)
+{
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &gateway->tx_queue[i];
+
+        if (queued->valid && queued->outbound.next_hop_id == sender_id &&
+            queued->outbound.packet.msg_type == MSG_GATEWAY_ACK &&
+            queued->outbound.packet.dst_id == original_source_id &&
+            queued->outbound.packet.session_id == session_id) {
+            return queued;
+        }
+    }
+    return NULL;
+}
+
+static int keep_connection_alive_until(struct mesh_sim_world *world,
+                                       uint16_t connection,
+                                       uint64_t target_us)
+{
+    for (size_t step = 0u; step < 64u; step++) {
+        struct mesh_sim_connection_action action;
+
+        if (world->now_us >= target_us) {
+            return mesh_sim_run_until(world, world->now_us);
+        }
+        CHECK(mesh_sim_connection_next_action(world, connection, &action) ==
+              MESH_SIM_OK);
+        if (action.kind == MESH_SIM_CONNECTION_ACTION_NONE ||
+            action.start_us > target_us) {
+            return mesh_sim_run_until(world, target_us);
+        }
+        CHECK(run_connection_action(world, connection, false) == MESH_SIM_OK);
+    }
+    return MESH_SIM_ERR_EVENT_ORDER;
+}
+
+static int schedule_origin_retry(struct mesh_sim_world *world,
+                                 uint8_t transmitter,
+                                 uint16_t connection)
+{
+    struct mesh_relay *relay = &world->roles[transmitter].relay;
+    uint64_t due_us;
+
+    CHECK(relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    due_us = (uint64_t)relay->pending.gateway_ack_deadline_ms * 1000u;
+    if (due_us < world->now_us) {
+        due_us = world->now_us;
+    }
+    CHECK(mesh_sim_schedule_relay_tick(world, transmitter, due_us) ==
+          MESH_SIM_OK);
+    CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
+    CHECK(relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+
+    due_us = (uint64_t)relay->pending.retry_after_ms * 1000u;
+    if (due_us < world->now_us) {
+        due_us = world->now_us;
+    }
+    CHECK(mesh_sim_schedule_relay_tick(world, transmitter, due_us) ==
+          MESH_SIM_OK);
+    CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
+    CHECK(world->roles[transmitter].tx_queue_count > 0u);
+    return 0;
+}
+
+static int drive_until_packet_reaches_relay(struct mesh_sim_world *world,
+                                            uint16_t connection,
+                                            uint32_t session_id,
+                                            uint16_t seq,
+                                            size_t expected_receptions)
+{
+    for (size_t step = 0u; step < 32u; step++) {
+        if (count_matching_receptions(world, ANCHOR_ID, MSG_MESH_DATA,
+                                      session_id, seq) >=
+            expected_receptions) {
+            return 0;
+        }
+        CHECK(run_connection_action(world, connection, false) == MESH_SIM_OK);
+    }
+    return MESH_SIM_ERR_EVENT_ORDER;
+}
+
+static int drive_until_transition_count(struct mesh_sim_world *world,
+                                        uint16_t connection,
+                                        enum mesh_sim_transition_kind kind,
+                                        uint64_t node_id,
+                                        size_t expected_count)
+{
+    for (size_t step = 0u; step < 32u; step++) {
+        if (mesh_sim_count_transitions(world, kind, node_id) >= expected_count) {
+            return 0;
+        }
+        CHECK(run_connection_action(world, connection, false) == MESH_SIM_OK);
+    }
+    return MESH_SIM_ERR_EVENT_ORDER;
+}
+
+static int run_relay_to_gateway_payload_attempt(
+    struct mesh_sim_world *world,
+    uint8_t anchor,
+    uint8_t gateway,
+    uint32_t session_id,
+    uint16_t seq,
+    bool lose_on_air)
+{
+    const struct mesh_sim_queued_tx *queued = queued_packet_for_peer(
+        &world->roles[anchor], GATEWAY_ID, MSG_MESH_DATA, session_id, seq);
+    uint64_t air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
+    uint64_t window_end_us = air_start_us + DIRECT_PAYLOAD_SERVICE_US;
+    bool reachable = world->reachable[anchor][gateway];
+
+    CHECK(queued != NULL);
+    CHECK(queued->outbound.payload_len == FORCEDHOP_PAYLOAD_LEN);
+    CHECK(app_mesh_ch9_timeout_pressure_decide(
+              &queued->outbound, true, true, false, ANCHOR_ID) ==
+          APP_MESH_CH9_TIMEOUT_RETRY);
+    CHECK(mesh_sim_direct_gateway_arm_rx(world, gateway,
+                                         air_start_us, window_end_us) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_direct_gateway_start_queued_tx(world, anchor,
+                                                  air_start_us, window_end_us,
+                                                  NULL) == MESH_SIM_OK);
+    if (lose_on_air) {
+        world->reachable[anchor][gateway] = false;
+    }
+    CHECK(mesh_sim_run_until(world, window_end_us) == MESH_SIM_OK);
+    world->reachable[anchor][gateway] = reachable;
+    if (world->roles[gateway].dwm3000.cpu_busy_until_us > world->now_us) {
+        CHECK(mesh_sim_run_until(
+                  world, world->roles[gateway].dwm3000.cpu_busy_until_us) ==
+              MESH_SIM_OK);
+    }
+    return 0;
+}
+
+static int run_gateway_to_relay_ack_attempt(struct mesh_sim_world *world,
+                                            uint8_t anchor,
+                                            uint8_t gateway,
+                                            bool lose_on_air)
+{
+    uint64_t air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
+    uint64_t window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
+    bool reachable = world->reachable[gateway][anchor];
+
+    CHECK(mesh_sim_direct_gateway_schedule_ack(world, gateway, anchor,
+                                                air_start_us, window_end_us,
+                                                NULL) == MESH_SIM_OK);
+    if (lose_on_air) {
+        world->reachable[gateway][anchor] = false;
+    }
+    CHECK(mesh_sim_run_until(world, window_end_us) == MESH_SIM_OK);
+    world->reachable[gateway][anchor] = reachable;
+    return 0;
+}
+
+static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
+                                           uint8_t ack_loss_mask)
+{
+    static struct mesh_sim_world world;
+    struct mesh_event_params params = connection_params(1000u);
+    uint8_t transmitter;
+    uint8_t anchor;
+    uint8_t gateway;
+    uint16_t connection;
+
+    mesh_sim_init(&world,
+                  UINT32_C(0xe2e00000) |
+                      ((uint32_t)payload_loss_mask << 8) |
+                      ack_loss_mask);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_TRANSMITTER,
+                            TRANSMITTER_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &transmitter) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            ANCHOR_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &anchor) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &gateway) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, transmitter, anchor, 98u, 2u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, anchor, gateway, 98u, 2u) == MESH_SIM_OK);
+    CHECK(!world.reachable[transmitter][gateway]);
+    CHECK(!world.reachable[gateway][transmitter]);
+    CHECK(mesh_sim_install_route(&world, transmitter, anchor, 2u,
+                                 ROUTE_EPOCH) == PROTO_OK);
+    CHECK(mesh_sim_install_route(&world, anchor, gateway, 1u,
+                                 ROUTE_EPOCH) == PROTO_OK);
+    CHECK(mesh_sim_install_downlink(&world, anchor, TRANSMITTER_ID,
+                                    transmitter, 1u, ROUTE_EPOCH) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_connection(&world, transmitter, anchor, &params, true,
+                                  &connection) == MESH_SIM_OK);
+    CHECK(world.connection_count == 1u);
+    CHECK(world.connections[connection].node_a == transmitter);
+    CHECK(world.connections[connection].node_b == anchor);
+
+    for (uint16_t packet_index = 0u;
+         packet_index < FORCEDHOP_BURST_COUNT;
+         packet_index++) {
+        struct proto_packet packet = {
+            .msg_type = MSG_MESH_DATA,
+            .flags = FLAG_GATEWAY_ACK_REQUIRED,
+            .src_id = TRANSMITTER_ID,
+            .dst_id = GATEWAY_ID,
+            .session_id = UINT32_C(0xe2e10000) |
+                          ((uint32_t)payload_loss_mask << 8) |
+                          ack_loss_mask,
+            .seq = (uint16_t)(packet_index + 1u),
+            .ttl = MESH_DEFAULT_TTL,
+            .payload_len = FORCEDHOP_PAYLOAD_LEN,
+        };
+        uint8_t payload[FORCEDHOP_PAYLOAD_LEN];
+        bool payload_loss_pending =
+            (payload_loss_mask & (uint8_t)(1u << packet_index)) != 0u;
+        bool ack_loss_pending =
+            (ack_loss_mask & (uint8_t)(1u << packet_index)) != 0u;
+        size_t relay_receptions = 0u;
+        size_t hop_progress = mesh_sim_count_transitions(
+            &world, MESH_SIM_TRANSITION_HOP_PROGRESS, TRANSMITTER_ID);
+        size_t gateway_confirms = mesh_sim_count_transitions(
+            &world, MESH_SIM_TRANSITION_GATEWAY_ACKED, TRANSMITTER_ID);
+        bool delivered = false;
+
+        memset(payload, (int)(0x20u + packet_index), sizeof(payload));
+        CHECK(mesh_sim_queue_originated(&world, transmitter, &packet,
+                                        payload, sizeof(payload)) ==
+              MESH_SIM_OK);
+        for (size_t attempt = 0u; attempt < 3u; attempt++) {
+            bool lose_payload = payload_loss_pending;
+            size_t delivery_count_before = world.roles[gateway].delivery_count;
+
+            relay_receptions++;
+            CHECK(drive_until_packet_reaches_relay(
+                      &world, connection, packet.session_id, packet.seq,
+                      relay_receptions) == 0);
+            hop_progress++;
+            CHECK(drive_until_transition_count(
+                      &world, connection, MESH_SIM_TRANSITION_HOP_PROGRESS,
+                      TRANSMITTER_ID, hop_progress) == 0);
+            CHECK(run_relay_to_gateway_payload_attempt(
+                      &world, anchor, gateway, packet.session_id, packet.seq,
+                      lose_payload) == 0);
+            if (lose_payload) {
+                payload_loss_pending = false;
+                CHECK(world.roles[gateway].delivery_count ==
+                      delivery_count_before);
+                CHECK(queued_gateway_ack_for_sender(
+                          &world.roles[gateway], ANCHOR_ID, TRANSMITTER_ID,
+                          packet.session_id) == NULL);
+                CHECK(schedule_origin_retry(&world, transmitter,
+                                            connection) == 0);
+                continue;
+            }
+
+            CHECK(world.roles[gateway].delivery_count ==
+                  (delivered ? delivery_count_before :
+                               delivery_count_before + 1u));
+            delivered = true;
+            CHECK(queued_gateway_ack_for_sender(
+                      &world.roles[gateway], ANCHOR_ID, TRANSMITTER_ID,
+                      packet.session_id) != NULL);
+            CHECK(run_gateway_to_relay_ack_attempt(
+                      &world, anchor, gateway, ack_loss_pending) == 0);
+            if (ack_loss_pending) {
+                ack_loss_pending = false;
+                CHECK(schedule_origin_retry(&world, transmitter,
+                                            connection) == 0);
+                continue;
+            }
+
+            gateway_confirms++;
+            CHECK(drive_until_transition_count(
+                      &world, connection, MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                      TRANSMITTER_ID, gateway_confirms) == 0);
+            CHECK(world.roles[transmitter].relay.pending.state ==
+                  MESH_RELAY_TX_IDLE);
+            break;
+        }
+
+        CHECK(delivered);
+        CHECK(!payload_loss_pending);
+        CHECK(!ack_loss_pending);
+        CHECK(world.roles[gateway].delivery_count == packet_index + 1u);
+        CHECK(world.roles[gateway].deliveries[packet_index].packet.src_id ==
+              TRANSMITTER_ID);
+        CHECK(world.roles[gateway].deliveries[packet_index].packet.session_id ==
+              packet.session_id);
+        CHECK(world.roles[gateway].deliveries[packet_index].packet.seq ==
+              packet.seq);
+        CHECK(world.roles[gateway].deliveries[packet_index].payload_len ==
+              FORCEDHOP_PAYLOAD_LEN);
+        CHECK(memcmp(world.roles[gateway].deliveries[packet_index].payload,
+                     payload, sizeof(payload)) == 0);
+    }
+
+    CHECK(world.roles[gateway].delivery_count == FORCEDHOP_BURST_COUNT);
+    CHECK(world.connection_count == 1u);
+    CHECK(world.roles[gateway].tx_queue_count == 0u);
+    CHECK(world.roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     TRANSMITTER_ID) ==
+          FORCEDHOP_BURST_COUNT);
+    return 0;
+}
+
+static int run_forcedhop_delivery_loss_sweep(void)
+{
+    for (uint8_t payload_mask = 0u;
+         payload_mask < LOSS_SWEEP_CASES;
+         payload_mask++) {
+        for (uint8_t ack_mask = 0u;
+             ack_mask < LOSS_SWEEP_CASES;
+             ack_mask++) {
+            phase = "unscheduled_gateway_loss_sweep";
+            if (run_forcedhop_delivery_loss_case(payload_mask, ack_mask) != 0) {
+                fprintf(stderr, " loss_masks payload=0x%x ack=0x%x\n",
+                        payload_mask, ack_mask);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+struct forcedhop_ack_flush_fixture {
+    struct mesh_outbound outbound;
+    int result;
+    uint8_t calls;
+};
+
+static int forcedhop_ack_flush(const struct mesh_outbound *outbound, void *ctx)
+{
+    struct forcedhop_ack_flush_fixture *fixture = ctx;
+
+    fixture->outbound = *outbound;
+    fixture->calls++;
+    return fixture->result;
+}
+
+static int run_forcedhop_batch_ack_scenario(void)
+{
+    struct app_mesh_ch9_ack_table gateway_table;
+    struct app_mesh_ch9_ack_table relay_table;
+    struct mesh_outbound frames[FORCEDHOP_BURST_COUNT];
+    struct app_mesh_ch9_tx_ack_entry tracked[FORCEDHOP_BURST_COUNT];
+    struct forcedhop_ack_flush_fixture gateway_flush = {.result = -EAGAIN};
+    struct forcedhop_ack_flush_fixture relay_flush = {.result = -EAGAIN};
+    struct app_mesh_ch9_tx_ack_result ack_result;
+    struct mesh_outbound ack_template = {
+        .packet = {
+            .msg_type = MSG_GATEWAY_ACK,
+            .flags = FLAG_GATEWAY_ACK,
+            .src_id = GATEWAY_ID,
+            .dst_id = TRANSMITTER_ID,
+            .session_id = UINT32_C(0xbac10001),
+            .seq = UINT16_C(0x7101),
+            .ttl = MESH_GATEWAY_ACK_TTL,
+        },
+        .next_hop_id = ANCHOR_ID,
+        .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+    };
+    uint8_t terminal_count[FORCEDHOP_BURST_COUNT] = {0};
+
+    phase = "four_frame_batch_ack";
+    CHECK(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX == FORCEDHOP_BURST_COUNT);
+    app_mesh_ch9_ack_table_init(&gateway_table);
+    app_mesh_ch9_ack_table_init(&relay_table);
+
+    for (uint8_t i = 0u; i < FORCEDHOP_BURST_COUNT; i++) {
+        struct app_mesh_ch9_ack_batch_entry entry = {
+            .session_id = UINT32_C(0x70000000) + i,
+            .packet_id = FORCEDHOP_BATCH_ID + i,
+            .seq = (uint16_t)(UINT16_C(0x4100) + i),
+            .has_packet_id = true,
+        };
+        enum app_mesh_ch9_ack_queue_result queue_result;
+        const uint8_t *value = NULL;
+        uint8_t encoded[UWB_MESH_MAX_FRAME_LEN];
+        uint8_t value_len = 0u;
+        size_t encoded_len = 0u;
+        size_t metadata_len = 0u;
+
+        memset(&frames[i], 0, sizeof(frames[i]));
+        frames[i].packet.msg_type = MSG_MESH_DATA;
+        frames[i].packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+        frames[i].packet.src_id = TRANSMITTER_ID;
+        frames[i].packet.dst_id = GATEWAY_ID;
+        frames[i].packet.session_id = entry.session_id;
+        frames[i].packet.seq = entry.seq;
+        frames[i].packet.ttl = MESH_DEFAULT_TTL;
+        frames[i].packet.payload_len = FORCEDHOP_PAYLOAD_LEN;
+        frames[i].payload_len = FORCEDHOP_PAYLOAD_LEN;
+        frames[i].next_hop_id = GATEWAY_ID;
+        frames[i].radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+        CHECK(tlv_append_u32(frames[i].payload,
+                             sizeof(frames[i].payload),
+                             &metadata_len,
+                             TLV_MESH_CH9_BATCH_ID,
+                             FORCEDHOP_BATCH_ID) == PROTO_OK);
+        CHECK(tlv_append_u8(frames[i].payload,
+                            sizeof(frames[i].payload),
+                            &metadata_len,
+                            TLV_MESH_CH9_BATCH_FLAGS,
+                            i + 1u == FORCEDHOP_BURST_COUNT ?
+                                FORCEDHOP_BATCH_FLAG_FINAL : 0u) == PROTO_OK);
+        memset(&frames[i].payload[metadata_len],
+               (int)(0x40u + i),
+               FORCEDHOP_PAYLOAD_LEN - metadata_len);
+        CHECK(proto_packet_encoded_len(frames[i].payload_len) > 0u);
+        CHECK(uwb_mesh_frame_encode(UINT32_C(0x10203040),
+                                    ANCHOR_ID,
+                                    GATEWAY_ID,
+                                    &frames[i].packet,
+                                    frames[i].payload,
+                                    encoded,
+                                    sizeof(encoded),
+                                    &encoded_len) == PROTO_OK);
+        CHECK(encoded_len <= UWB_PHY_EXTENDED_FRAME_MAX_LEN);
+        CHECK(tlv_find(frames[i].payload,
+                       frames[i].payload_len,
+                       TLV_MESH_CH9_BATCH_ID,
+                       &value,
+                       &value_len) == PROTO_OK);
+        CHECK(value_len == sizeof(uint32_t));
+        CHECK(proto_get_u32_le(value) == FORCEDHOP_BATCH_ID);
+        CHECK(tlv_find(frames[i].payload,
+                       frames[i].payload_len,
+                       TLV_MESH_CH9_BATCH_FLAGS,
+                       &value,
+                       &value_len) == PROTO_OK);
+        CHECK(value_len == sizeof(uint8_t));
+        CHECK(value[0] == (i + 1u == FORCEDHOP_BURST_COUNT ?
+                           FORCEDHOP_BATCH_FLAG_FINAL : 0u));
+
+        tracked[i].session_id = entry.session_id;
+        tracked[i].seq = entry.seq;
+        tracked[i].acked = false;
+
+        /* The first final frame is lost, so the gateway cannot ACK yet. */
+        if (i + 1u == FORCEDHOP_BURST_COUNT) {
+            CHECK(app_mesh_ch9_ack_table_get_peer(&gateway_table,
+                                                   ANCHOR_ID)->count ==
+                  FORCEDHOP_BURST_COUNT - 1u);
+            CHECK(gateway_flush.calls == 0u);
+        }
+        CHECK(app_mesh_ch9_ack_table_queue(&gateway_table,
+                                            &ack_template,
+                                            &entry,
+                                            &queue_result) == PROTO_OK);
+        CHECK(queue_result == APP_MESH_CH9_ACK_QUEUE_ADDED);
+
+        /* A duplicate retry must not create a second terminal identity. */
+        CHECK(app_mesh_ch9_ack_table_queue(&gateway_table,
+                                            &ack_template,
+                                            &entry,
+                                            &queue_result) == PROTO_OK);
+        CHECK(queue_result == APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+    }
+
+    CHECK(app_mesh_ch9_ack_table_get_peer(&gateway_table, ANCHOR_ID)->count ==
+          FORCEDHOP_BURST_COUNT);
+    CHECK(app_mesh_ch9_ack_table_flush_peer(&gateway_table,
+                                             ANCHOR_ID,
+                                             forcedhop_ack_flush,
+                                             &gateway_flush) == -EAGAIN);
+    CHECK(gateway_flush.calls == 1u);
+    CHECK(app_mesh_ch9_ack_table_pending_for_peer(&gateway_table, ANCHOR_ID));
+    for (uint8_t i = 0u; i < FORCEDHOP_BURST_COUNT; i++) {
+        CHECK(app_mesh_direct_gateway_ack_matches(
+                  &frames[i],
+                  &gateway_flush.outbound.packet,
+                  gateway_flush.outbound.payload,
+                  gateway_flush.outbound.payload_len,
+                  GATEWAY_ID,
+                  GATEWAY_ID));
+    }
+
+    gateway_flush.result = 0;
+    CHECK(app_mesh_ch9_ack_table_flush_peer(&gateway_table,
+                                             ANCHOR_ID,
+                                             forcedhop_ack_flush,
+                                             &gateway_flush) == 0);
+    CHECK(gateway_flush.calls == 2u);
+    CHECK(!app_mesh_ch9_ack_table_pending_for_peer(&gateway_table, ANCHOR_ID));
+
+    /* The relay preserves the complete gateway ACK while bubbling it down. */
+    gateway_flush.outbound.next_hop_id = TRANSMITTER_ID;
+    CHECK(app_mesh_ch9_ack_table_queue_forwarded(&relay_table,
+                                                  &gateway_flush.outbound,
+                                                  NULL) == PROTO_OK);
+    CHECK(app_mesh_ch9_ack_table_flush_peer(&relay_table,
+                                             TRANSMITTER_ID,
+                                             forcedhop_ack_flush,
+                                             &relay_flush) == -EAGAIN);
+    CHECK(relay_flush.calls == 1u);
+    CHECK(app_mesh_ch9_ack_table_pending_for_peer(&relay_table,
+                                                   TRANSMITTER_ID));
+    relay_flush.result = 0;
+    CHECK(app_mesh_ch9_ack_table_flush_peer(&relay_table,
+                                             TRANSMITTER_ID,
+                                             forcedhop_ack_flush,
+                                             &relay_flush) == 0);
+    CHECK(relay_flush.calls == 2u);
+    CHECK(!app_mesh_ch9_ack_table_pending_for_peer(&relay_table,
+                                                    TRANSMITTER_ID));
+    CHECK(app_mesh_ch9_tx_ack_apply(&relay_flush.outbound.packet,
+                                     relay_flush.outbound.payload,
+                                     relay_flush.outbound.payload_len,
+                                     tracked,
+                                     FORCEDHOP_BURST_COUNT,
+                                     &ack_result) == PROTO_OK);
+    CHECK(ack_result.acked_now == FORCEDHOP_BURST_COUNT);
+    CHECK(ack_result.unacked_count == 0u);
+    CHECK(ack_result.all_acked);
+    for (uint8_t i = 0u; i < FORCEDHOP_BURST_COUNT; i++) {
+        if (tracked[i].acked) {
+            terminal_count[i]++;
+        }
+    }
+
+    /* Replayed batch ACKs are harmless and produce no second completion. */
+    CHECK(app_mesh_ch9_tx_ack_apply(&relay_flush.outbound.packet,
+                                     relay_flush.outbound.payload,
+                                     relay_flush.outbound.payload_len,
+                                     tracked,
+                                     FORCEDHOP_BURST_COUNT,
+                                     &ack_result) == PROTO_OK);
+    CHECK(ack_result.acked_now == 0u);
+    CHECK(ack_result.unacked_count == 0u);
+    for (uint8_t i = 0u; i < FORCEDHOP_BURST_COUNT; i++) {
+        CHECK(tracked[i].acked);
+        CHECK(terminal_count[i] == 1u);
+    }
+    return 0;
+}
+
 int main(void)
 {
     if (run_forcedhop_connection_scenario() != 0) {
+        return 1;
+    }
+    if (run_forcedhop_batch_ack_scenario() != 0) {
+        return 1;
+    }
+    if (run_forcedhop_delivery_loss_sweep() != 0) {
         return 1;
     }
     printf("forced-hop over-air route and stable connection scenario passed\n");

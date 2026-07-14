@@ -549,6 +549,28 @@ static int start_route_discovery_for_waiting(struct mesh_sim_world *world,
                           node_index);
 }
 
+static bool gateway_semantic_delivery_requires_commit(
+    const struct mesh_sim_role_instance *node,
+    const struct proto_packet *packet)
+{
+    if (node == NULL || packet == NULL ||
+        node->role != MESH_SIM_ROLE_GATEWAY ||
+        packet->dst_id != node->id ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_SURVEY_DISCOVERY_REPORT:
+    case MSG_SURVEY_PAIR_RESULT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static int process_relay_actions(struct mesh_sim_world *world,
                                  uint8_t node_index,
                                  uint64_t previous_hop_id,
@@ -558,7 +580,12 @@ static int process_relay_actions(struct mesh_sim_world *world,
                                  const struct mesh_relay_result *result)
 {
     struct mesh_sim_role_instance *node = &world->roles[node_index];
+    struct mesh_relay_result semantic_commit = {0};
     uint32_t unsupported;
+    bool semantic_delivery = gateway_semantic_delivery_requires_commit(
+        node, received_packet);
+    bool semantic_committed = false;
+    bool semantic_rejected = false;
     int ret;
 
     if ((result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
@@ -579,14 +606,42 @@ static int process_relay_actions(struct mesh_sim_world *world,
     }
     if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
         received_packet != NULL) {
-        ret = append_delivery(world,
-                              node_index,
-                              previous_hop_id,
-                              received_packet,
-                              received_payload,
-                              received_payload_len);
-        if (ret != MESH_SIM_OK) {
-            return ret;
+        if (semantic_delivery &&
+            node->gateway_semantic_rejections_remaining != 0u) {
+            node->gateway_semantic_rejections_remaining--;
+            node->gateway_semantic_rejection_count++;
+            semantic_rejected = true;
+        } else if (semantic_delivery) {
+            if (node->delivery_count >= MESH_SIM_DELIVERY_CAPACITY) {
+                return mesh_sim_fail(world, MESH_SIM_ERR_CAPACITY);
+            }
+            ret = mesh_relay_commit_gateway_delivery(
+                &node->relay,
+                received_packet,
+                received_payload,
+                received_payload_len,
+                previous_hop_id,
+                mesh_sim_time_ms(world->now_us),
+                &semantic_commit);
+            if (ret != PROTO_OK ||
+                semantic_commit.status != PROTO_OK ||
+                semantic_commit.actions != MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
+                return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+            }
+            node->gateway_semantic_commit_count++;
+            semantic_committed = true;
+        }
+
+        if (!semantic_rejected) {
+            ret = append_delivery(world,
+                                  node_index,
+                                  previous_hop_id,
+                                  received_packet,
+                                  received_payload,
+                                  received_payload_len);
+            if (ret != MESH_SIM_OK) {
+                return ret;
+            }
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_FORWARD) != 0u) {
@@ -596,7 +651,23 @@ static int process_relay_actions(struct mesh_sim_world *world,
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) != 0u) {
+        if (semantic_rejected || semantic_committed) {
+            return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+        }
+        if (semantic_delivery &&
+            (result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) == 0u) {
+            node->gateway_semantic_duplicate_ack_count++;
+        }
         ret = queue_outbound(world, node_index, &result->gateway_ack, false);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    if (semantic_committed) {
+        ret = queue_outbound(world,
+                             node_index,
+                             &semantic_commit.gateway_ack,
+                             false);
         if (ret != MESH_SIM_OK) {
             return ret;
         }

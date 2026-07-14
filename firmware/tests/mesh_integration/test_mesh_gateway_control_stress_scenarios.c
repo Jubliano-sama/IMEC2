@@ -972,6 +972,74 @@ static void test_gateway_control_rx_handoff_stress_sweep(void)
     app_mesh_rx_handoff_end_scan(&handoff);
 }
 
+static void test_gateway_scheduled_delivery_due_handoff_sweep(void)
+{
+    struct app_mesh_rx_handoff_state handoff;
+    uint32_t completed = 0u;
+    uint32_t cancelled = 0u;
+
+    for (uint32_t cycle = 0u; cycle < 4096u; cycle++) {
+        const bool scan_active = (cycle % 8u) != 0u;
+        const bool host_control_first = (cycle % 5u) == 0u;
+        const bool cancel_before_delivery = (cycle % 13u) == 0u;
+        const uint32_t abort_latency_ms = cycle % 25u;
+        bool abort_scan = false;
+
+        app_mesh_rx_handoff_reset(&handoff);
+        if (scan_active) {
+            CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+        }
+        CHECK(app_mesh_rx_handoff_request_scheduled_control(
+            &handoff, &abort_scan));
+        CHECK(abort_scan == scan_active);
+        CHECK(!app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
+
+        /* Repeated due notifications coalesce behind the same gate. */
+        CHECK(app_mesh_rx_handoff_request_scheduled_control(
+            &handoff, &abort_scan));
+        CHECK(abort_scan == scan_active);
+        if (scan_active) {
+            for (uint32_t elapsed_ms = 0u; elapsed_ms <= 25u;
+                 elapsed_ms++) {
+                CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+                if (elapsed_ms == abort_latency_ms) {
+                    app_mesh_rx_handoff_end_scan(&handoff);
+                    break;
+                }
+            }
+        }
+        CHECK(app_mesh_rx_handoff_scheduled_control_ready(&handoff));
+
+        if (host_control_first) {
+            /* Host work may run first, but it cannot release the due gate. */
+            CHECK(app_mesh_rx_handoff_begin_control(&handoff, &abort_scan));
+            CHECK(!abort_scan);
+            app_mesh_rx_handoff_end_control(&handoff);
+            CHECK(app_mesh_rx_handoff_scheduled_control_pending(&handoff));
+            CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+        }
+
+        if (cancel_before_delivery) {
+            CHECK(app_mesh_rx_handoff_end_scheduled_control(&handoff));
+            cancelled++;
+        } else {
+            CHECK(app_mesh_rx_handoff_begin_control(&handoff, &abort_scan));
+            CHECK(!abort_scan);
+            app_mesh_rx_handoff_end_control(&handoff);
+            CHECK(!app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
+            CHECK(app_mesh_rx_handoff_end_scheduled_control(&handoff));
+            completed++;
+        }
+        CHECK(app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
+        CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+        app_mesh_rx_handoff_end_scan(&handoff);
+    }
+
+    CHECK(completed + cancelled == 4096u);
+    CHECK(completed > 3700u);
+    CHECK(cancelled > 300u);
+}
+
 static void run_survey_pair_control_case(enum command_id command_id,
                                          bool relayed)
 {
@@ -1332,11 +1400,12 @@ int main(void)
     test_gateway_control_reverse_route_fifty_anchor_reply_sweep();
     test_gateway_control_click_and_busy_deferral();
     test_gateway_control_rx_handoff_stress_sweep();
+    test_gateway_scheduled_delivery_due_handoff_sweep();
     test_survey_pair_control_bounded_flood_lane();
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {
-        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/ttl8/radio survey-control=direct/relay handoff=512");
+        puts("mesh gateway control stress scenarios: PASS here-i-am=direct20/mixed50/ttl8/radio survey-control=direct/relay handoff=512 due-gate=4096");
     }
     return failures == 0 ? 0 : 1;
 }

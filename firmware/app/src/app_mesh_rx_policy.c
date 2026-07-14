@@ -67,6 +67,45 @@ void app_mesh_rx_handoff_reset(struct app_mesh_rx_handoff_state *state)
     }
 }
 
+bool app_mesh_rx_handoff_request_scheduled_control(
+    struct app_mesh_rx_handoff_state *state,
+    bool *abort_scan)
+{
+    if (state == NULL || abort_scan == NULL) {
+        return false;
+    }
+
+    state->scheduled_control_pending = true;
+    *abort_scan = state->scan_radio_active;
+    return true;
+}
+
+bool app_mesh_rx_handoff_scheduled_control_pending(
+    const struct app_mesh_rx_handoff_state *state)
+{
+    return state != NULL && state->scheduled_control_pending;
+}
+
+bool app_mesh_rx_handoff_scheduled_control_ready(
+    const struct app_mesh_rx_handoff_state *state)
+{
+    return state != NULL && state->scheduled_control_pending &&
+           !state->scan_radio_active;
+}
+
+bool app_mesh_rx_handoff_end_scheduled_control(
+    struct app_mesh_rx_handoff_state *state)
+{
+    bool was_pending;
+
+    if (state == NULL) {
+        return false;
+    }
+    was_pending = state->scheduled_control_pending;
+    state->scheduled_control_pending = false;
+    return was_pending;
+}
+
 bool app_mesh_rx_handoff_begin_control(
     struct app_mesh_rx_handoff_state *state,
     bool *abort_scan)
@@ -83,7 +122,8 @@ bool app_mesh_rx_handoff_begin_control(
 bool app_mesh_rx_handoff_try_begin_scan(
     struct app_mesh_rx_handoff_state *state)
 {
-    if (state == NULL || state->control_active || state->scan_radio_active) {
+    if (state == NULL || state->scheduled_control_pending ||
+        state->control_active || state->scan_radio_active) {
         return false;
     }
 
@@ -115,5 +155,6 @@ void app_mesh_rx_handoff_end_control(struct app_mesh_rx_handoff_state *state)
 bool app_mesh_rx_handoff_scan_rearm_allowed(
     const struct app_mesh_rx_handoff_state *state)
 {
-    return state != NULL && !state->control_active;
+    return state != NULL && !state->scheduled_control_pending &&
+           !state->control_active;
 }

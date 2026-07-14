@@ -8,9 +8,23 @@
 #include "node_comm.h"
 #include "protocol.h"
 
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+/* Four immutable stress datagrams plus the protocol-priority reserve. */
+#define APP_NODE_COMM_MAX_DELIVERIES 5u
+#else
 #define APP_NODE_COMM_MAX_DELIVERIES 4u
+#endif
 #define APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES 1u
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+/*
+ * The synthetic transmitter deliberately owns full-size extended-PHR stress
+ * frames.  Keep that RAM cost out of production roles while still freezing
+ * every accepted test datagram inside the communication service.
+ */
+#define APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN PACKET_EXT_MAX_PAYLOAD_LEN
+#else
 #define APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN 192u
+#endif
 #define APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS 120000u
 
 struct app_mesh_report_callbacks;
@@ -84,6 +98,13 @@ int app_node_comm_retry_backoff_ms(
     enum node_comm_delivery_profile profile,
     uint16_t retry_round,
     uint32_t *delay_ms_out);
+int app_node_comm_retry_identity_backoff_ms(
+    uint64_t node_id,
+    uint32_t session_id,
+    uint32_t opportunity,
+    enum node_comm_delivery_profile profile,
+    uint16_t retry_round,
+    uint32_t *delay_ms_out);
 int app_node_comm_queue_local_delivery(
     const app_node_comm_envelope *envelope);
 int app_node_comm_submit_delivery(
@@ -107,6 +128,7 @@ int app_node_comm_submit_protocol_response(
     uint32_t client_token,
     uint32_t *handle_out);
 int app_node_comm_service_deliveries(void);
+int app_node_comm_gateway_delivery_safe_boundary(void);
 int app_node_comm_cancel_delivery(uint32_t handle);
 int app_node_comm_abandon_delivery(uint32_t handle);
 int app_node_comm_auto_reap_delivery(uint32_t handle);
@@ -116,6 +138,13 @@ bool app_node_comm_take_delivery_event_for(
     uint32_t handle,
     struct node_comm_terminal_event *event_out);
 int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet);
+int app_node_comm_note_gateway_failed(
+    const struct proto_packet *packet,
+    enum node_comm_terminal_reason reason);
+int app_node_comm_backend_retry_preflight(const struct proto_packet *packet);
+int app_node_comm_complete_backend_attempt(const struct proto_packet *packet,
+                                           bool rf_started);
+int app_node_comm_note_backend_rf_started(const struct proto_packet *packet);
 size_t app_node_comm_pending_delivery_count(void);
 bool app_node_comm_delivery_backlog_active(void);
 bool app_node_comm_ack_wait_active(void);

@@ -18,6 +18,10 @@ struct app_gateway_collection_eack_input {
     uint8_t received_radio_channel;
     const struct mesh_event_plan *current_channel9_plan;
     uint64_t self_id;
+    const uint64_t *excluded_channel9_next_hop_ids;
+    size_t excluded_channel9_next_hop_count;
+    bool force_c5_recovery;
+    bool use_prebuilt_eack;
 };
 
 struct app_gateway_collection_eack_result {
@@ -37,6 +41,10 @@ uint64_t app_gateway_collection_eack_current_channel9_return_hop(
     uint8_t received_radio_channel,
     const struct mesh_event_plan *current_channel9_plan,
     uint64_t self_id);
+int app_gateway_collection_eack_prepare(
+    struct mesh_outbound *eack,
+    const struct app_gateway_collection_eack_input *input,
+    struct app_gateway_collection_eack_result *result);
 int app_gateway_collection_eack_send(
     struct mesh_outbound *eack,
     const struct app_gateway_collection_eack_input *input,

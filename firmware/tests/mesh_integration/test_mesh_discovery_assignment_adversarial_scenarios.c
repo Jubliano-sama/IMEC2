@@ -5,6 +5,7 @@
 #include "protocol.h"
 #include "uwb.h"
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -95,13 +96,13 @@ static bool build_result(uint64_t anchor_id,
     return ret == PROTO_OK;
 }
 
-static bool gateway_accept_result(struct gateway_model *gateway,
-                                  const struct proto_packet *packet,
-                                  const uint8_t *payload,
-                                  size_t payload_len,
-                                  enum discovery_assignment_phase expected_phase,
-                                  uint32_t expected_epoch,
-                                  uint32_t expected_session)
+static int gateway_accept_result(struct gateway_model *gateway,
+                                 const struct proto_packet *packet,
+                                 const uint8_t *payload,
+                                 size_t payload_len,
+                                 enum discovery_assignment_phase expected_phase,
+                                 uint32_t expected_epoch,
+                                 uint32_t expected_session)
 {
     enum discovery_assignment_phase phase = 0;
     enum command_id command_id = CMD_VENDOR_BASE;
@@ -111,22 +112,40 @@ static bool gateway_accept_result(struct gateway_model *gateway,
     uint8_t status_len = 0u;
     size_t index = SIZE_MAX;
 
-    if (packet == NULL || payload == NULL ||
-        packet->msg_type != MSG_COMMAND_RESULT ||
-        packet->dst_id != GATEWAY_ID || packet->src_id == 0u ||
-        packet->session_id != expected_session ||
-        gateway_command_extract_id(payload, payload_len, &command_id) !=
-            PROTO_OK || command_id != CMD_ASSIGN_DISCOVERY_SLOTS ||
-        tlv_find(payload, payload_len, TLV_COMMAND_STATUS, &status,
+    if (gateway == NULL || packet == NULL || payload == NULL) {
+        return -EINVAL;
+    }
+    if (packet->msg_type != MSG_COMMAND_RESULT ||
+        packet->dst_id != GATEWAY_ID) {
+        return -ENOENT;
+    }
+    if (packet->src_id == 0u) {
+        return -EBADMSG;
+    }
+    if (gateway_command_extract_id(payload, payload_len, &command_id) !=
+        PROTO_OK) {
+        return -EBADMSG;
+    }
+    if (command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
+        return -ENOENT;
+    }
+    if (tlv_find(payload, payload_len, TLV_COMMAND_STATUS, &status,
                  &status_len) != PROTO_OK ||
         status_len != sizeof(uint16_t) ||
         proto_get_u16_le(status) != COMMAND_OK ||
         discovery_assignment_extract_control_tlvs(payload, payload_len,
                                                    &phase, &epoch) != PROTO_OK ||
-        phase != expected_phase || epoch != expected_epoch ||
         discovery_assignment_extract_claim_hash(payload, payload_len, &hash) !=
             PROTO_OK || hash != discovery_assignment_hash(packet->src_id)) {
-        return false;
+        return -EBADMSG;
+    }
+    if (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
+        phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        return -EPROTO;
+    }
+    if (phase != expected_phase || epoch != expected_epoch ||
+        packet->session_id != expected_session) {
+        return -ESTALE;
     }
 
     for (size_t i = 0u; i < gateway->claim_count; i++) {
@@ -138,22 +157,22 @@ static bool gateway_accept_result(struct gateway_model *gateway,
     if (expected_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
         if (index != SIZE_MAX) {
             gateway->duplicate_claims++;
-            return true;
+            return 0;
         }
         if (gateway->claim_count >= MAX_ANCHORS) {
-            return false;
+            return -ENOSPC;
         }
         gateway->claim_ids[gateway->claim_count++] = packet->src_id;
-        return true;
+        return 0;
     }
     if (index == SIZE_MAX) {
-        return false;
+        return -ESTALE;
     }
     if ((gateway->ack_mask & (UINT64_C(1) << index)) != 0u) {
         gateway->duplicate_acks++;
     }
     gateway->ack_mask |= UINT64_C(1) << index;
-    return true;
+    return 0;
 }
 
 static bool build_table(const struct gateway_model *gateway,
@@ -328,7 +347,7 @@ static bool run_workflow(size_t anchor_count)
                   "claim build count=%zu anchor=%zu", anchor_count, i);
             CHECK(gateway_accept_result(&gateway, &packet, payload, payload_len,
                                         DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-                                        ASSIGNMENT_EPOCH, CLAIM_SESSION),
+                                        ASSIGNMENT_EPOCH, CLAIM_SESSION) == 0,
                   "claim reject count=%zu anchor=%zu round=%u",
                   anchor_count, i, round);
             anchors[i].claim_replies++;
@@ -336,7 +355,7 @@ static bool run_workflow(size_t anchor_count)
                 CHECK(gateway_accept_result(
                           &gateway, &packet, payload, payload_len,
                           DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-                          ASSIGNMENT_EPOCH, CLAIM_SESSION),
+                          ASSIGNMENT_EPOCH, CLAIM_SESSION) == 0,
                       "duplicate claim rejected count=%zu", anchor_count);
             }
         }
@@ -355,16 +374,16 @@ static bool run_workflow(size_t anchor_count)
                            ASSIGNMENT_EPOCH - 1u, CLAIM_SESSION,
                            &stale_packet, stale_payload, &stale_len),
               "stale build count=%zu", anchor_count);
-        CHECK(!gateway_accept_result(
+        CHECK(gateway_accept_result(
                   &gateway, &stale_packet, stale_payload, stale_len,
                   DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-                  ASSIGNMENT_EPOCH, CLAIM_SESSION),
+                  ASSIGNMENT_EPOCH, CLAIM_SESSION) == -ESTALE,
               "stale claim accepted count=%zu", anchor_count);
         stale_payload[stale_len - 1u] ^= 1u;
-        CHECK(!gateway_accept_result(
+        CHECK(gateway_accept_result(
                   &gateway, &stale_packet, stale_payload, stale_len,
                   DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-                  ASSIGNMENT_EPOCH - 1u, CLAIM_SESSION),
+                  ASSIGNMENT_EPOCH - 1u, CLAIM_SESSION) == -EBADMSG,
               "wrong hash accepted count=%zu", anchor_count);
     }
 
@@ -391,16 +410,16 @@ static bool run_workflow(size_t anchor_count)
                            ASSIGNMENT_EPOCH - 1u, TABLE_SESSION,
                            &wrong_ack, wrong_payload, &wrong_len),
               "wrong ACK build count=%zu", anchor_count);
-        CHECK(!gateway_accept_result(
+        CHECK(gateway_accept_result(
                   &gateway, &wrong_ack, wrong_payload, wrong_len,
                   DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                  ASSIGNMENT_EPOCH, TABLE_SESSION),
+                  ASSIGNMENT_EPOCH, TABLE_SESSION) == -ESTALE,
               "wrong-epoch ACK accepted count=%zu", anchor_count);
         wrong_ack.session_id = TABLE_SESSION - 1u;
-        CHECK(!gateway_accept_result(
+        CHECK(gateway_accept_result(
                   &gateway, &wrong_ack, wrong_payload, wrong_len,
                   DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                  ASSIGNMENT_EPOCH - 1u, TABLE_SESSION),
+                  ASSIGNMENT_EPOCH - 1u, TABLE_SESSION) == -ESTALE,
               "wrong-session ACK accepted count=%zu", anchor_count);
     }
 
@@ -445,14 +464,14 @@ static bool run_workflow(size_t anchor_count)
             }
             CHECK(gateway_accept_result(&gateway, &ack, ack_payload, ack_len,
                                         DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                                        ASSIGNMENT_EPOCH, TABLE_SESSION),
+                                        ASSIGNMENT_EPOCH, TABLE_SESSION) == 0,
                   "ack reject count=%zu anchor=%zu", anchor_count, i);
             anchors[i].acked = true;
             if (i == 1u && round == 0u) {
                 CHECK(gateway_accept_result(
                           &gateway, &ack, ack_payload, ack_len,
                           DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                          ASSIGNMENT_EPOCH, TABLE_SESSION),
+                          ASSIGNMENT_EPOCH, TABLE_SESSION) == 0,
                       "duplicate ack rejected count=%zu", anchor_count);
             }
         }
@@ -554,6 +573,147 @@ static bool test_conflicts_capacity_and_late_claim(void)
     return true;
 }
 
+static bool test_gateway_semantic_acceptance_categories(void)
+{
+    struct gateway_model gateway = {0};
+    struct proto_packet packet;
+    const uint8_t *command_raw = NULL;
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t command_len = 0u;
+    size_t payload_len = 0u;
+
+    CHECK(build_result(ANCHOR_BASE,
+                       DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                       ASSIGNMENT_EPOCH,
+                       CLAIM_SESSION,
+                       &packet,
+                       payload,
+                       &payload_len),
+          "semantic valid claim build failed");
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                ASSIGNMENT_EPOCH,
+                                CLAIM_SESSION) == 0,
+          "valid claim was not accepted");
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                ASSIGNMENT_EPOCH,
+                                CLAIM_SESSION) == 0 &&
+              gateway.duplicate_claims == 1u,
+          "duplicate valid claim was not idempotently accepted");
+
+    CHECK(tlv_find(payload,
+                   payload_len,
+                   TLV_COMMAND_ID,
+                   &command_raw,
+                   &command_len) == PROTO_OK &&
+              command_len == sizeof(uint16_t),
+          "semantic command TLV missing");
+    proto_put_u16_le(&payload[(size_t)(command_raw - payload)],
+                     CMD_FORCE_REDISCOVERY);
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                ASSIGNMENT_EPOCH,
+                                CLAIM_SESSION) == -ENOENT,
+          "unrelated command result was not classified as not applicable");
+    proto_put_u16_le(&payload[(size_t)(command_raw - payload)],
+                     CMD_ASSIGN_DISCOVERY_SLOTS);
+
+    payload[payload_len - 1u] ^= 1u;
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                ASSIGNMENT_EPOCH,
+                                CLAIM_SESSION) == -EBADMSG,
+          "hash-invalid claim was not classified as malformed");
+    payload[payload_len - 1u] ^= 1u;
+
+    CHECK(build_result(ANCHOR_BASE,
+                       DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                       ASSIGNMENT_EPOCH - 1u,
+                       CLAIM_SESSION,
+                       &packet,
+                       payload,
+                       &payload_len),
+          "semantic stale claim build failed");
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                ASSIGNMENT_EPOCH,
+                                CLAIM_SESSION) == -ESTALE,
+          "wrong-epoch claim was not classified as stale");
+
+    CHECK(build_result(ANCHOR_BASE,
+                       DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                       ASSIGNMENT_EPOCH,
+                       TABLE_SESSION,
+                       &packet,
+                       payload,
+                       &payload_len),
+          "semantic valid ACK build failed");
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                ASSIGNMENT_EPOCH,
+                                TABLE_SESSION) == 0,
+          "valid table ACK was not accepted");
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                ASSIGNMENT_EPOCH,
+                                TABLE_SESSION) == 0 &&
+              gateway.duplicate_acks == 1u,
+          "duplicate valid table ACK was not idempotently accepted");
+    packet.session_id--;
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                ASSIGNMENT_EPOCH,
+                                TABLE_SESSION) == -ESTALE,
+          "wrong-session table ACK was not classified as stale");
+
+    gateway.claim_count = MAX_ANCHORS;
+    for (size_t i = 0u; i < MAX_ANCHORS; i++) {
+        gateway.claim_ids[i] = ANCHOR_BASE + i;
+    }
+    CHECK(build_result(ANCHOR_BASE + MAX_ANCHORS,
+                       DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                       ASSIGNMENT_EPOCH,
+                       CLAIM_SESSION,
+                       &packet,
+                       payload,
+                       &payload_len),
+          "semantic capacity claim build failed");
+    CHECK(gateway_accept_result(&gateway,
+                                &packet,
+                                payload,
+                                payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                ASSIGNMENT_EPOCH,
+                                CLAIM_SESSION) == -ENOSPC,
+          "over-capacity claim was not rejected");
+    return true;
+}
+
 static bool test_explicit_budget_preserves_randomized_table_retries(void)
 {
     const uint32_t command_budget_ms = 60000u;
@@ -627,6 +787,9 @@ int main(void)
         }
     }
     if (!test_conflicts_capacity_and_late_claim()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_gateway_semantic_acceptance_categories()) {
         return EXIT_FAILURE;
     }
     if (!test_explicit_budget_preserves_randomized_table_retries()) {

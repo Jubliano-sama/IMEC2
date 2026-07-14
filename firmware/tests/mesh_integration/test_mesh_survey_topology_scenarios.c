@@ -587,6 +587,202 @@ static int schedule_mesh_payload_retry(uint8_t node, uint64_t *due_us)
     return MESH_SIM_OK;
 }
 
+static int test_gateway_semantic_rejection_retry_and_sticky_ack(void)
+{
+    uint8_t anchor;
+    uint8_t gateway;
+    struct proto_packet packet;
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    uint64_t due_us;
+    uint64_t air_start_us;
+    uint64_t window_end_us;
+    int ack_index;
+
+    mesh_sim_init(&world, UINT32_C(0x5a17f102));
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID_BASE,
+                              GATEWAY_ID, ROUTE_EPOCH, &anchor) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                              GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_set_link(&world, anchor, gateway, 96u, 1u) == MESH_SIM_OK);
+    REQUIRE(mesh_relay_note_direct_gateway_route(&world.roles[anchor].relay,
+                                                 0u) == PROTO_OK);
+    REQUIRE(mesh_sim_gateway_reject_next_semantic_deliveries(
+                &world, gateway, 1u) == MESH_SIM_OK);
+    REQUIRE(build_report(2u, 0u, 10u, &packet, payload, &payload_len) ==
+            PROTO_OK);
+    REQUIRE(mesh_sim_queue_originated(&world, anchor, &packet, payload,
+                                      payload_len) == MESH_SIM_OK);
+
+    air_start_us = UINT64_C(50000);
+    window_end_us = UINT64_C(100000);
+    REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
+                                           window_end_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
+                &world, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[gateway].delivery_count == 0u);
+    REQUIRE(world.roles[gateway].gateway_semantic_rejection_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 0u);
+    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
+    REQUIRE(gateway_ack_queue_index(gateway, ANCHOR_ID_BASE) < 0);
+    REQUIRE(world.roles[anchor].relay.pending.state ==
+            MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+
+    REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + UINT64_C(50000);
+    REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
+                                           window_end_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
+                &world, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[gateway].delivery_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_rejection_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
+    ack_index = gateway_ack_queue_index(gateway, ANCHOR_ID_BASE);
+    REQUIRE(ack_index >= 0);
+    discard_gateway_ack(gateway, (size_t)ack_index);
+
+    REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + UINT64_C(50000);
+    REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
+                                           window_end_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
+                &world, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[gateway].delivery_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 1u);
+    REQUIRE(gateway_ack_queue_index(gateway, ANCHOR_ID_BASE) >= 0);
+
+    if (world.roles[gateway].dwm3000.cpu_busy_until_us > world.now_us) {
+        REQUIRE(mesh_sim_run_until(
+                    &world, world.roles[gateway].dwm3000.cpu_busy_until_us) ==
+                MESH_SIM_OK);
+    }
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
+    REQUIRE(mesh_sim_direct_gateway_schedule_ack(
+                &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
+    REQUIRE(mesh_sim_count_transitions(&world,
+                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                       ANCHOR_ID_BASE) == 1u);
+    return 0;
+}
+
+static int test_gateway_collection_duplicate_redelivers_for_eack_rearm(void)
+{
+    uint8_t anchor;
+    uint8_t gateway;
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_ID_BASE,
+        .dst_id = GATEWAY_ID,
+        .session_id = UINT32_C(0x5a17f103),
+        .seq = 12u,
+        .ttl = 2u,
+    };
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = ROUTE_EPOCH,
+        .command_seq = UINT32_C(0x4a17f103),
+        .node_id = ANCHOR_ID_BASE,
+        .node_boot_counter = 17u,
+        .result_seq = 18u,
+    };
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+    uint64_t due_us;
+    uint64_t air_start_us;
+    uint64_t window_end_us;
+    int ack_index;
+
+    mesh_sim_init(&world, UINT32_C(0x5a17f103));
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID_BASE,
+                              GATEWAY_ID, ROUTE_EPOCH, &anchor) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                              GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_set_link(&world, anchor, gateway, 96u, 1u) == MESH_SIM_OK);
+    REQUIRE(mesh_relay_note_direct_gateway_route(&world.roles[anchor].relay,
+                                                 0u) == PROTO_OK);
+    REQUIRE(command_result_id_append_tlvs(payload,
+                                          sizeof(payload),
+                                          &payload_len,
+                                          &result_id) == PROTO_OK);
+    REQUIRE(tlv_append_u32(payload,
+                           sizeof(payload),
+                           &payload_len,
+                           TLV_COLLECTION_EPOCH_ID,
+                           UINT32_C(0x6a17f103)) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    REQUIRE(mesh_sim_queue_originated(&world, anchor, &packet, payload,
+                                      payload_len) == MESH_SIM_OK);
+
+    air_start_us = UINT64_C(50000);
+    window_end_us = UINT64_C(100000);
+    REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
+                                           window_end_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
+                &world, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[gateway].delivery_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
+    REQUIRE(world.roles[anchor].relay.outbox_record.delivery_state ==
+            MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+    ack_index = gateway_ack_queue_index(gateway, ANCHOR_ID_BASE);
+    REQUIRE(ack_index >= 0);
+    discard_gateway_ack(gateway, (size_t)ack_index);
+
+    REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + UINT64_C(50000);
+    REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
+                                           window_end_us) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
+                &world, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[gateway].delivery_count == 2u);
+    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 2u);
+    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
+    REQUIRE(gateway_ack_queue_index(gateway, ANCHOR_ID_BASE) >= 0);
+
+    if (world.roles[gateway].dwm3000.cpu_busy_until_us > world.now_us) {
+        REQUIRE(mesh_sim_run_until(
+                    &world, world.roles[gateway].dwm3000.cpu_busy_until_us) ==
+                MESH_SIM_OK);
+    }
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
+    REQUIRE(mesh_sim_direct_gateway_schedule_ack(
+                &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[anchor].relay.pending.state ==
+            MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    REQUIRE(world.roles[anchor].relay.outbox_record.delivery_state ==
+            MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+    REQUIRE(mesh_sim_count_transitions(&world,
+                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                       ANCHOR_ID_BASE) == 0u);
+    return 0;
+}
+
 static int test_direct_short_rx_and_mismatched_ack_retry(void)
 {
     uint8_t anchor;
@@ -1151,6 +1347,8 @@ int main(void)
     if (test_over_capacity_relay_topology_rejected() != 0 ||
         test_missing_route_fails_explicitly() != 0 ||
         test_unscheduled_direct_gateway_custody() != 0 ||
+        test_gateway_semantic_rejection_retry_and_sticky_ack() != 0 ||
+        test_gateway_collection_duplicate_redelivers_for_eack_rearm() != 0 ||
         test_direct_short_rx_and_mismatched_ack_retry() != 0 ||
         test_twenty_direct_reports_retry_to_exactly_once() != 0 ||
         test_multihop_route_loss_recovers_exactly_once() != 0 ||

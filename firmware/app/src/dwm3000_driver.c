@@ -3245,8 +3245,20 @@ int dwm3000_driver_send_frame(const uint8_t *frame,
                               size_t frame_len,
                               uint32_t timeout_ms)
 {
+    return dwm3000_driver_send_frame_tracked(frame, frame_len, timeout_ms,
+                                             NULL);
+}
+
+int dwm3000_driver_send_frame_tracked(const uint8_t *frame,
+                                      size_t frame_len,
+                                      uint32_t timeout_ms,
+                                      bool *rf_started)
+{
     int ret;
 
+    if (rf_started != NULL) {
+        *rf_started = false;
+    }
     if (frame == NULL || frame_len == 0u || frame_len > UINT16_MAX) {
         return -EINVAL;
     }
@@ -3269,6 +3281,9 @@ int dwm3000_driver_send_frame(const uint8_t *frame,
                 radio_awake ? 1u : 0u,
                 radio_restored_from_sleep ? 1u : 0u);
         return ret;
+    }
+    if (rf_started != NULL) {
+        *rf_started = true;
     }
 
     return wait_tx_complete(timeout_ms == 0u ? REPORT_RX_TIMEOUT_MS : timeout_ms);

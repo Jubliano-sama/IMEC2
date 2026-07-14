@@ -131,6 +131,73 @@ static void test_control_handoff_wins_before_scan_acquires_radio(void)
     assert(app_mesh_rx_handoff_try_begin_scan(&state));
 }
 
+static void test_scheduled_control_idle_gate_blocks_scan_until_delivery_ends(void)
+{
+    struct app_mesh_rx_handoff_state state;
+    bool abort_scan = true;
+
+    app_mesh_rx_handoff_reset(&state);
+    assert(app_mesh_rx_handoff_request_scheduled_control(&state,
+                                                          &abort_scan));
+    assert(!abort_scan);
+    assert(app_mesh_rx_handoff_scheduled_control_pending(&state));
+    assert(app_mesh_rx_handoff_scheduled_control_ready(&state));
+    assert(!app_mesh_rx_handoff_scan_rearm_allowed(&state));
+    assert(!app_mesh_rx_handoff_try_begin_scan(&state));
+
+    assert(app_mesh_rx_handoff_end_scheduled_control(&state));
+    assert(!app_mesh_rx_handoff_scheduled_control_pending(&state));
+    assert(app_mesh_rx_handoff_scan_rearm_allowed(&state));
+    assert(!app_mesh_rx_handoff_end_scheduled_control(&state));
+}
+
+static void test_scheduled_control_aborts_active_scan_and_coalesces(void)
+{
+    struct app_mesh_rx_handoff_state state;
+    bool abort_scan = false;
+
+    app_mesh_rx_handoff_reset(&state);
+    assert(app_mesh_rx_handoff_try_begin_scan(&state));
+    assert(app_mesh_rx_handoff_request_scheduled_control(&state,
+                                                          &abort_scan));
+    assert(abort_scan);
+    assert(!app_mesh_rx_handoff_scheduled_control_ready(&state));
+    assert(!app_mesh_rx_handoff_try_begin_scan(&state));
+
+    app_mesh_rx_handoff_end_scan(&state);
+    assert(app_mesh_rx_handoff_scheduled_control_ready(&state));
+    abort_scan = true;
+    assert(app_mesh_rx_handoff_request_scheduled_control(&state,
+                                                          &abort_scan));
+    assert(!abort_scan);
+    assert(app_mesh_rx_handoff_scheduled_control_pending(&state));
+    assert(app_mesh_rx_handoff_end_scheduled_control(&state));
+    assert(app_mesh_rx_handoff_scan_rearm_allowed(&state));
+}
+
+static void test_host_control_can_run_ahead_of_scheduled_control(void)
+{
+    struct app_mesh_rx_handoff_state state;
+    bool abort_scan = true;
+
+    app_mesh_rx_handoff_reset(&state);
+    assert(app_mesh_rx_handoff_begin_control(&state, &abort_scan));
+    assert(!abort_scan);
+    assert(app_mesh_rx_handoff_request_scheduled_control(&state,
+                                                          &abort_scan));
+    assert(!abort_scan);
+    assert(app_mesh_rx_handoff_scheduled_control_ready(&state));
+    assert(!app_mesh_rx_handoff_scan_rearm_allowed(&state));
+
+    app_mesh_rx_handoff_end_control(&state);
+    assert(app_mesh_rx_handoff_scheduled_control_pending(&state));
+    assert(!app_mesh_rx_handoff_scan_rearm_allowed(&state));
+    assert(app_mesh_rx_handoff_begin_control(&state, &abort_scan));
+    app_mesh_rx_handoff_end_control(&state);
+    assert(app_mesh_rx_handoff_end_scheduled_control(&state));
+    assert(app_mesh_rx_handoff_scan_rearm_allowed(&state));
+}
+
 int main(void)
 {
     test_transmitter_image_ignores_gateway_route_adv();
@@ -147,5 +214,8 @@ int main(void)
     test_gateway_ch9_rx_clips_only_for_control_work();
     test_control_handoff_aborts_active_scan_and_blocks_rearm();
     test_control_handoff_wins_before_scan_acquires_radio();
+    test_scheduled_control_idle_gate_blocks_scan_until_delivery_ends();
+    test_scheduled_control_aborts_active_scan_and_coalesces();
+    test_host_control_can_run_ahead_of_scheduled_control();
     return 0;
 }

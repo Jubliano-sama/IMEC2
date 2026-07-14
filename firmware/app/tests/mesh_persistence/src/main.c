@@ -119,6 +119,19 @@ static void assert_result_id_equal(const struct command_result_id *actual,
     zassert_equal(actual->result_seq, expected->result_seq);
 }
 
+static void assert_collection_result_id_equal(
+    const struct gateway_collection_state *collection,
+    const struct gateway_collection_result_id *actual,
+    const struct command_result_id *expected)
+{
+    zassert_equal(collection->gateway_id, expected->gateway_id);
+    zassert_equal(collection->gateway_epoch, expected->gateway_epoch);
+    zassert_equal(collection->command_seq, expected->command_seq);
+    zassert_equal(actual->node_id, expected->node_id);
+    zassert_equal(actual->node_boot_counter, expected->node_boot_counter);
+    zassert_equal(actual->result_seq, expected->result_seq);
+}
+
 static void assert_membership_roster_equal(
     const struct gateway_membership_roster *actual,
     const struct gateway_membership_roster *expected)
@@ -282,6 +295,11 @@ ZTEST(mesh_persistence, test_collection_result_snapshot_rejects_invalid_save)
 
 ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
 {
+    const uint64_t expected_roster[] = {
+        LOCAL_ID,
+        CHILD_ID,
+        MEMBER_A_ID,
+    };
     const struct command_result_id id_a = {
         .gateway_id = GATEWAY_ID,
         .gateway_epoch = 13u,
@@ -291,6 +309,7 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
         .result_seq = 102u,
     };
     struct command_result_id id_b = id_a;
+    struct command_result_id unknown_id = id_a;
     struct gateway_collection_state collection;
     struct gateway_collection_state restored;
     struct proto_packet packet_a = {0};
@@ -305,6 +324,9 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
     id_b.node_id = CHILD_ID;
     id_b.node_boot_counter = 201u;
     id_b.result_seq = 202u;
+    unknown_id.node_id = MEMBER_B_ID;
+    unknown_id.node_boot_counter = 301u;
+    unknown_id.result_seq = 302u;
 
     zassert_ok(app_mesh_persistence_init());
     app_mesh_persistence_clear_gateway_collection();
@@ -318,6 +340,10 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
                                         3u,
                                         1u,
                                         1200u));
+    zassert_ok(gateway_collection_set_expected_roster(
+        &collection,
+        expected_roster,
+        ARRAY_SIZE(expected_roster)));
     build_collection_command_result_payload(payload_a,
                                             sizeof(payload_a),
                                             64u,
@@ -373,8 +399,13 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
     zassert_equal(restored.retry_round, 1u);
     zassert_equal(restored.next_retry_spread_ms, 1200u);
     zassert_true(restored.collection_open);
-    assert_result_id_equal(&restored.results[0].id, &id_a);
-    assert_result_id_equal(&restored.results[1].id, &id_b);
+    zassert_true(restored.eack_pending);
+    zassert_equal(restored.expected_node_id_count, ARRAY_SIZE(expected_roster));
+    zassert_mem_equal(restored.expected_node_ids,
+                      expected_roster,
+                      sizeof(expected_roster));
+    assert_collection_result_id_equal(&restored, &restored.results[0].id, &id_a);
+    assert_collection_result_id_equal(&restored, &restored.results[1].id, &id_b);
     zassert_equal(restored.results[0].previous_hop_id, 0xAAAABBBBCCCC0001ull);
     zassert_equal(restored.results[1].previous_hop_id, 0xAAAABBBBCCCC0002ull);
     zassert_equal(gateway_collection_return_candidates(&restored,
@@ -383,6 +414,30 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
                   2u);
     zassert_equal(candidates[0], 0xAAAABBBBCCCC0002ull);
     zassert_equal(candidates[1], 0xAAAABBBBCCCC0001ull);
+
+    build_collection_command_result_payload(payload_a,
+                                            sizeof(payload_a),
+                                            64u,
+                                            &unknown_id,
+                                            restored.collection_epoch_id,
+                                            &payload_a_len);
+    zassert_ok(mesh_init_command_result(&packet_a,
+                                        unknown_id.node_id,
+                                        GATEWAY_ID,
+                                        unknown_id.command_seq,
+                                        unknown_id.result_seq,
+                                        (uint8_t)payload_a_len,
+                                        false));
+    duplicate = true;
+    zassert_equal(gateway_collection_record_result_from_hop(
+                      &restored,
+                      &packet_a,
+                      payload_a,
+                      payload_a_len,
+                      unknown_id.node_id,
+                      &duplicate),
+                  PROTO_ERR_NOT_FOUND);
+    zassert_equal(restored.received_count, 2u);
 
     app_mesh_persistence_clear_gateway_collection();
     memset(&restored, 0xA5, sizeof(restored));
@@ -412,6 +467,85 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_rejects_invalid_save)
                                         COLLECTION_RETRY_ROUND_0_MS));
     collection.received_count = 1u;
     zassert_equal(app_mesh_persistence_save_gateway_collection(&collection), -EINVAL);
+
+    zassert_ok(gateway_collection_start(&collection,
+                                        GATEWAY_ID,
+                                        13u,
+                                        0x1211u,
+                                        3021u,
+                                        4u,
+                                        1u,
+                                        0u,
+                                        COLLECTION_RETRY_ROUND_0_MS));
+    collection.eack_pending = false;
+    zassert_equal(app_mesh_persistence_save_gateway_collection(&collection), -EINVAL);
+}
+
+ZTEST(mesh_persistence, test_gateway_eack_custody_round_trip_and_clear)
+{
+    const struct gateway_collection_eack eack = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = 1001u,
+        .collection_epoch_id = 3003u,
+        .membership_epoch = 3u,
+        .expected_count = 12u,
+        .received_count = 0u,
+        .packet_sequence = 700u,
+        .eack_format = EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
+        .retry_round = 5u,
+        .next_retry_spread_ms = COLLECTION_RETRY_ROUND_STEADY_MS,
+        .collection_open = true,
+    };
+    struct gateway_collection_eack_custody_snapshot saved = {0};
+    struct gateway_collection_eack_custody_snapshot restored = {0};
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = GATEWAY_ID,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 1001u,
+        .seq = 700u,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+    };
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_gateway_eack_custody();
+    zassert_ok(gateway_collection_eack_append_tlvs(payload,
+                                                   sizeof(payload),
+                                                   &payload_len,
+                                                   &eack));
+    packet.payload_len = (uint16_t)payload_len;
+    zassert_ok(gateway_collection_eack_custody_capture(&saved,
+                                                       &packet,
+                                                       payload,
+                                                       payload_len));
+    zassert_ok(app_mesh_persistence_save_gateway_eack_custody(&saved));
+    zassert_ok(app_mesh_persistence_restore_gateway_eack_custody(&restored));
+    zassert_mem_equal(&restored, &saved, sizeof(saved));
+
+    app_mesh_persistence_clear_gateway_eack_custody();
+    memset(&restored, 0xA5, sizeof(restored));
+    zassert_ok(app_mesh_persistence_restore_gateway_eack_custody(&restored));
+    zassert_false(restored.valid);
+}
+
+ZTEST(mesh_persistence, test_gateway_eack_custody_rejects_corruption)
+{
+    struct gateway_collection_eack_custody_snapshot snapshot = {0};
+
+    zassert_ok(app_mesh_persistence_init());
+    snapshot.version = GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_VERSION;
+    snapshot.valid = true;
+    snapshot.payload_len = 1u;
+    snapshot.payload[0] = 0xA5u;
+    snapshot.payload_crc = proto_crc16_ccitt_false(snapshot.payload,
+                                                   snapshot.payload_len);
+    zassert_equal(app_mesh_persistence_save_gateway_eack_custody(&snapshot),
+                  -EINVAL);
+    zassert_equal(app_mesh_persistence_save_gateway_eack_custody(NULL),
+                  -EINVAL);
 }
 
 ZTEST(mesh_persistence, test_gateway_membership_snapshot_round_trip_and_clear)

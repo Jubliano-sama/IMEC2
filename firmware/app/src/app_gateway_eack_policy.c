@@ -123,12 +123,13 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
         eack->next_hop_id = current_channel9_next_hop_id;
         eack->radio_channel = MESH_EVENT_CHANNEL;
         eack->earliest_tx_ms = 0u;
-        result_note_channel9_attempt(result);
         ret = ops->prepare_channel9(eack, current_channel9_plan, ops->ctx);
         result_note_channel9_prepare(result, ret);
         if (ret != 0) {
             goto current_channel9_done;
         }
+        result_note_channel9_next_hop(result, current_channel9_next_hop_id);
+        result_note_channel9_attempt(result);
         ret = ops->send_channel9(eack, ops->ctx);
         result_note_channel9_send(result, ret);
         if (ret == 0) {
@@ -164,7 +165,6 @@ current_channel9_done:
             }
 
             result_note_channel9_candidate(result);
-            result_note_channel9_attempt(result);
             ret = ops->plan_channel9(return_next_hop_id, &plan, ops->ctx);
             result_note_channel9_plan(result, ret);
             if (ret != 0) {
@@ -179,6 +179,8 @@ current_channel9_done:
             if (ret != 0) {
                 continue;
             }
+            result_note_channel9_next_hop(result, return_next_hop_id);
+            result_note_channel9_attempt(result);
             ret = ops->send_channel9(eack, ops->ctx);
             result_note_channel9_send(result, ret);
             if (ret == 0) {
@@ -194,6 +196,15 @@ current_channel9_done:
                 }
                 return 0;
             }
+
+            /*
+             * This callback may have started real RF.  Preserve the exact
+             * EACK and return the failure so the shared communication retry
+             * gate inserts randomized exponential backoff before any
+             * alternate Channel 9 lane or Channel 5 recovery attempt.
+             */
+            *eack = original_eack;
+            return ret;
         }
     }
 

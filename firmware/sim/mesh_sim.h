@@ -263,9 +263,13 @@ struct mesh_sim_role_instance {
     uint32_t decoded_frames;
     uint32_t partial_frames;
     uint32_t collision_frames;
+    uint32_t gateway_semantic_commit_count;
+    uint32_t gateway_semantic_rejection_count;
+    uint32_t gateway_semantic_duplicate_ack_count;
     uint32_t runtime_action_duration_us[4];
     uint32_t next_relay_random;
     uint32_t work_epoch;
+    uint16_t gateway_semantic_rejections_remaining;
     uint8_t node_index;
     uint8_t route_request_flags;
     bool relay_initialized;
@@ -444,6 +448,11 @@ int mesh_sim_set_link(struct mesh_sim_world *world,
 int mesh_sim_set_route_request_flags(struct mesh_sim_world *world,
                                      uint8_t node_index,
                                      uint8_t flags);
+/* Reject the next count application-level gateway deliveries without ACKing. */
+int mesh_sim_gateway_reject_next_semantic_deliveries(
+    struct mesh_sim_world *world,
+    uint8_t gateway_index,
+    uint16_t count);
 int mesh_sim_set_directed_rx_failures(
     struct mesh_sim_world *world,
     uint8_t sender_index,

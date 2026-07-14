@@ -1,6 +1,7 @@
 #include "survey.h"
 
 #include "dwm3000_timing.h"
+#include "node_comm.h"
 #include "uwb.h"
 
 #include <string.h>
@@ -155,9 +156,10 @@ uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *conf
         return 0u;
     }
     /*
-     * The second, equally sized horizon is receive time for idle anchors and
-     * deterministic reserve slots for anchors whose nominal opportunity was
-     * blocked. This keeps four real TX attempts without unbounded extension.
+     * The second, equally sized horizon is continuous receive time and the
+     * bounded retry envelope for nominal opportunities refused before RF.
+     * Runtime retries use identity-seeded exponential jitter inside this
+     * envelope; the fixed end keeps gateway collection timing deterministic.
      */
     return nominal_duration_ms * 2u;
 }
@@ -344,6 +346,109 @@ int survey_discovery_schedule_attempt(
         }
     }
     return PROTO_OK;
+}
+
+static uint32_t survey_discovery_probe_retry_seed(
+    uint64_t anchor_id,
+    uint32_t survey_id,
+    uint8_t opportunity)
+{
+    uint64_t mixed = survey_mix64(
+        anchor_id ^ ((uint64_t)survey_id << 21) ^
+        ((uint64_t)MSG_UWB_SURVEY_DISCOVERY_PROBE << 48) ^
+        ((uint64_t)(opportunity + 1u) *
+         UINT64_C(0x9e3779b97f4a7c15)));
+    uint32_t seed = (uint32_t)mixed ^ (uint32_t)(mixed >> 32);
+
+    return seed == 0u ? UINT32_C(0x6d2b79f5) : seed;
+}
+
+int survey_discovery_probe_attempt_begin(
+    struct survey_discovery_probe_attempt *attempt,
+    uint8_t opportunity)
+{
+    if (attempt == NULL ||
+        opportunity >= SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+        return PROTO_ERR_ARG;
+    }
+    memset(attempt, 0, sizeof(*attempt));
+    attempt->opportunity = opportunity;
+    attempt->initialized = true;
+    return PROTO_OK;
+}
+
+int survey_discovery_probe_attempt_defer(
+    struct survey_discovery_probe_attempt *attempt,
+    const struct survey_discovery_config *config,
+    uint64_t anchor_id,
+    uint32_t retry_origin_ms,
+    uint32_t absolute_deadline_ms)
+{
+    uint32_t delay_ms = 0u;
+    uint32_t remaining_ms;
+    int ret;
+
+    if (attempt == NULL || anchor_id == 0u ||
+        survey_discovery_config_validate(config) != PROTO_OK ||
+        !attempt->initialized ||
+        attempt->opportunity >= SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+        return PROTO_ERR_ARG;
+    }
+    if (attempt->rf_started ||
+        (int32_t)(retry_origin_ms - absolute_deadline_ms) >= 0) {
+        return PROTO_ERR_BUSY;
+    }
+    if (attempt->retry_round < UINT16_MAX) {
+        attempt->retry_round++;
+    }
+    ret = node_comm_retry_backoff_ms(
+        NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+        survey_discovery_probe_retry_seed(anchor_id, config->survey_id,
+                                          attempt->opportunity),
+        attempt->retry_round,
+        &delay_ms);
+    if (ret < 0) {
+        return PROTO_ERR_BUSY;
+    }
+    remaining_ms = absolute_deadline_ms - retry_origin_ms;
+    if (delay_ms > remaining_ms) {
+        delay_ms = remaining_ms;
+    }
+    attempt->due_ms = retry_origin_ms + delay_ms;
+    attempt->pending = true;
+    return PROTO_OK;
+}
+
+int survey_discovery_probe_attempt_note_rf_started(
+    struct survey_discovery_probe_attempt *attempt)
+{
+    if (attempt == NULL ||
+        !attempt->initialized ||
+        attempt->opportunity >= SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+        return PROTO_ERR_ARG;
+    }
+    if (attempt->rf_started) {
+        return PROTO_ERR_STALE;
+    }
+    attempt->rf_started = true;
+    attempt->pending = false;
+    return PROTO_OK;
+}
+
+size_t survey_discovery_probe_real_attempt_count(
+    const struct survey_discovery_probe_attempt *attempts,
+    size_t attempt_count)
+{
+    size_t count = 0u;
+
+    if (attempts == NULL ||
+        attempt_count > SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+        return 0u;
+    }
+    for (size_t i = 0u; i < attempt_count; i++) {
+        count += attempts[i].rf_started ? 1u : 0u;
+    }
+    return count;
 }
 
 static bool survey_time_reached(uint32_t now_ms, uint32_t deadline_ms)
