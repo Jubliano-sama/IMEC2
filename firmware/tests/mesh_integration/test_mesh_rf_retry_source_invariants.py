@@ -228,6 +228,22 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("gateway-ack-channel5-deferral", result_handler)
         self.assertIn("mesh_rf_retry_next_delay_ms", result_handler)
 
+    def test_low_duty_scan_cannot_defer_past_an_unarmed_channel9_ack(self):
+        body = function_body(
+            REPORT, "mesh_anchor_low_duty_scan_should_defer"
+        )
+        conflict = body.index(
+            "if (!found || selected_delay_ms > min_gap_ms)"
+        )
+        rearm = body.index("mesh_schedule_uwb_rx(selected_delay_ms)", conflict)
+        retry = body.index("*retry_ms = selected_delay_ms", rearm)
+        success = body.index("return true", retry)
+
+        self.assertLess(conflict, rearm)
+        self.assertLess(rearm, retry)
+        self.assertLess(retry, success)
+        self.assertIn("DBG_ANCHOR_CH9_REARM", body)
+
     def test_first_deferred_control_flood_uses_identity_backoff(self):
         body = function_body(REPORT, "mesh_c5_flood_store_deferred")
 

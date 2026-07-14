@@ -838,6 +838,11 @@ randomized exponential backoff applies to contention and failed attempts, not
 to polling for a deterministic connection slot. Dropping this boundary can make
 every service poll arrive too late for an otherwise healthy connection.
 
+Likewise, an anchor's low-duty channel 5 scanner may defer for an approaching
+channel 9 event only after re-arming the channel 9 worker at that event's exact
+prepare boundary. Deferral without an armed owner can silently skip every ACK
+transmit window until unrelated work happens to restart the worker.
+
 Duplicate payload reception must be ACK-sticky. If an anchor receives a packet
 that it has already accepted within the packet deduplication window, it may
 suppress duplicate processing and must not forward the payload twice. It must

@@ -15597,6 +15597,7 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
     uint32_t now_ms = k_uptime_get_32();
     uint32_t selected_delay_ms = 0u;
     uint32_t min_gap_ms;
+    int rearm_ret;
     bool found = false;
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
@@ -15623,6 +15624,20 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
     }
     if (!found || selected_delay_ms > min_gap_ms) {
         return false;
+    }
+
+    /*
+     * Deferring the low-duty scanner is safe only if the channel-9 owner is
+     * actually armed.  The ACK may have been queued while this worker was
+     * inactive, so merely waiting past the event can skip every TX slot.
+     */
+    rearm_ret = mesh_schedule_uwb_rx(selected_delay_ms);
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf(
+            "DBG_ANCHOR_CH9_REARM delay=%u ret=%d ack=%u\n",
+            selected_delay_ms,
+            rearm_ret,
+            app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table) ? 1u : 0u);
     }
 
     if (retry_ms != NULL) {
