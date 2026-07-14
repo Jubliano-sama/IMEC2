@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
+SURVEY_ID = 0x778899AA
 
 
 def _load(name: str, path: Path):
@@ -29,6 +29,7 @@ provision = _load(
     "provision_mesh_anchor_test",
     REPO_ROOT / "firmware" / "scripts" / "provision_mesh_anchor.py",
 )
+from tools.gateway_gui.protocol import encode_cobs_packet, parse_cobs_packet
 
 
 def command_event(
@@ -54,6 +55,7 @@ def command_event(
     reason: int = 0,
     hop_count: int = 0,
     discovery_slot: int = 0,
+    gateway_sequence: int | None = None,
 ):
     pair_stage = stage in (9, 10, 11)
     return provision.GatewayCommandEvent(
@@ -70,7 +72,9 @@ def command_event(
         ),
         route_epoch=0,
         correlation_id=correlation_id,
-        gateway_sequence=event_sequence,
+        gateway_sequence=(
+            SURVEY_ID if command_kind == 2 else event_sequence
+        ) if gateway_sequence is None else gateway_sequence,
         host_session_id=host_session_id,
         host_sequence=host_sequence,
         event_sequence=event_sequence,
@@ -87,6 +91,38 @@ def command_event(
         hop_count=hop_count,
         discovery_slot=discovery_slot,
     )
+
+
+def pair_packet(
+    initiator_id: int,
+    responder_id: int,
+    distance_mm: int,
+    sequence: int,
+    *,
+    survey_id: int = SURVEY_ID,
+):
+    def tlv(type_id: int, value: bytes) -> bytes:
+        return bytes((type_id, len(value))) + value
+
+    payload = b"".join((
+        tlv(0x15, survey_id.to_bytes(4, "little")),
+        tlv(0x1F, initiator_id.to_bytes(8, "little")),
+        tlv(0x20, responder_id.to_bytes(8, "little")),
+        tlv(0x0F, (1).to_bytes(2, "little")),
+        tlv(0x0E, (0).to_bytes(2, "little")),
+        tlv(0x0C, distance_mm.to_bytes(4, "little", signed=True)),
+        tlv(0x21, b"\x00"),
+    ))
+    return parse_cobs_packet(encode_cobs_packet(
+        msg_type=0x53,
+        flags=0x24,
+        src_id=initiator_id,
+        dst_id=0x9999888877776666,
+        session_id=survey_id,
+        seq=sequence,
+        ttl=4,
+        payload=payload,
+    ))
 
 
 def successful_events() -> list[object]:
@@ -280,12 +316,20 @@ class SurveyQualificationTests(unittest.TestCase):
             correlation_id=0xDEADBEEF,
         )
         self.assertFalse(qualification.observe(unrelated))
+        for sequence, (pair, distance_mm) in enumerate((
+            ((0x10, 0x20), 1000),
+            ((0x10, 0x30), 1200),
+            ((0x20, 0x30), 1500),
+        ), 1):
+            qualification.observe_packet(pair_packet(*pair, distance_mm, sequence))
         for event in successful_events():
             qualification.observe(event)
         qualification.validate()
         self.assertEqual(1, qualification.retries)
         self.assertEqual({0x10, 0x20, 0x30}, qualification.anchors)
         self.assertEqual(3, len(qualification.pair_successes))
+        self.assertEqual(3, len(qualification.geometry_model.pairs))
+        self.assertIsNotNone(qualification.geometry_rmse_m)
 
     def test_loss_pair_order_and_terminal_counters_are_hard_failures(self) -> None:
         qualification = provision.SurveyQualification(
@@ -525,6 +569,7 @@ class FakeServices:
 
 class FakeDecoder:
     events: list[object] = []
+    packets: list[object] = []
     errors: list[str] = []
 
     def __init__(self) -> None:
@@ -533,7 +578,9 @@ class FakeDecoder:
     def feed(self, _raw: bytes) -> object:
         errors = list(self.errors) if self.index == 0 else []
         packets = []
-        if self.index < len(self.events):
+        if self.index < len(self.packets):
+            packets.append(self.packets[self.index])
+        elif self.index < len(self.events):
             packets.append(
                 types.SimpleNamespace(
                     msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
@@ -627,6 +674,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         FakeBleakClient.operations = []
         FakeDecoder.events = []
+        FakeDecoder.packets = []
         FakeDecoder.errors = []
         FakeBleakClient.notification_count = 0
         FakeBleakClient.write_notification_counts = []
@@ -634,7 +682,22 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
     async def test_qualification_writes_then_holds_then_enables_and_drains(self) -> None:
         events = successful_events()
         FakeDecoder.events = events
-        FakeBleakClient.notification_count = len(events)
+        FakeDecoder.packets = [
+            pair_packet(0x10, 0x20, 1000, 1),
+            pair_packet(0x10, 0x30, 1200, 2),
+            pair_packet(0x20, 0x30, 1500, 3),
+        ] + [
+            types.SimpleNamespace(
+                msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
+                src_id=1,
+                dst_id=1,
+                session_id=index + 1,
+                seq=index + 1,
+                payload=bytes([index]),
+            )
+            for index in range(len(events))
+        ]
+        FakeBleakClient.notification_count = len(FakeDecoder.packets)
         sleeps: list[float] = []
         command_args: dict[str, object] = {}
         real_build_anchor_discovery_command = (

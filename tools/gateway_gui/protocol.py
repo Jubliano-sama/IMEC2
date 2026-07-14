@@ -34,6 +34,8 @@ GATEWAY_STREAM_FLAG_TRUNCATED = 0x01
 
 MESH_BROADCAST_ID = 0
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
+GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
+GATEWAY_COMMAND_BUDGET_MAX_MS = 600000
 
 MSG_CLICK_REPORT = 0x20
 MSG_MESH_DATA = 0x30
@@ -1087,8 +1089,15 @@ def build_anchor_discovery_command(
         raise ValueError("discovery slot count must be in 1..50")
     if not 1 <= sample_count <= 1000:
         raise ValueError("sample count must be in 1..1000")
-    if command_budget_ms is not None and not 1000 <= command_budget_ms <= 600000:
-        raise ValueError("command budget must be in 1000..600000 ms")
+    if command_budget_ms is not None and not (
+        GATEWAY_COMMAND_BUDGET_MIN_MS
+        <= command_budget_ms
+        <= GATEWAY_COMMAND_BUDGET_MAX_MS
+    ):
+        raise ValueError(
+            f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
+            f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
+        )
 
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_REACHABILITY.to_bytes(2, "little"))
@@ -1123,8 +1132,15 @@ def build_here_i_am_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
-    if command_budget_ms is not None and not 1000 <= command_budget_ms <= 600000:
-        raise ValueError("command budget must be in 1000..600000 ms")
+    if command_budget_ms is not None and not (
+        GATEWAY_COMMAND_BUDGET_MIN_MS
+        <= command_budget_ms
+        <= GATEWAY_COMMAND_BUDGET_MAX_MS
+    ):
+        raise ValueError(
+            f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
+            f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
+        )
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_FORCE_REDISCOVERY.to_bytes(2, "little"))
     if command_budget_ms is not None:
@@ -1154,8 +1170,15 @@ def build_assign_discovery_slots_command(
         raise ValueError("gateway ID must be non-zero")
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
-    if command_budget_ms is not None and not 1000 <= command_budget_ms <= 600000:
-        raise ValueError("command budget must be in 1000..600000 ms")
+    if command_budget_ms is not None and not (
+        GATEWAY_COMMAND_BUDGET_MIN_MS
+        <= command_budget_ms
+        <= GATEWAY_COMMAND_BUDGET_MAX_MS
+    ):
+        raise ValueError(
+            f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
+            f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
+        )
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little"))
     if command_budget_ms is not None:

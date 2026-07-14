@@ -17,6 +17,8 @@ from .protocol import (
     CMD_FORCE_REDISCOVERY,
     COMMAND_NAMES,
     DEFAULT_HOST_ID,
+    GATEWAY_COMMAND_BUDGET_MAX_MS,
+    GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_STREAM_FLAG_TRUNCATED,
     MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
@@ -92,6 +94,7 @@ ERROR = "#a72b2b"
 ERROR_BG = "#fbe9e8"
 HEADER = "#252b30"
 SELECTION = "#d8ebe6"
+DEFAULT_COMMAND_BUDGET_TEXT = ""
 
 
 class Tooltip:
@@ -164,7 +167,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.status_text = tk.StringVar(value="Ready")
         self.error_text = tk.StringVar()
         self.host_id_text = tk.StringVar(value=f"0x{DEFAULT_HOST_ID:016x}")
-        self.command_budget_text = tk.StringVar(value="20000")
+        self.command_budget_text = tk.StringVar(value=DEFAULT_COMMAND_BUDGET_TEXT)
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
         survey_id_seed = (time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1
@@ -292,7 +295,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         command_budget_entry.grid(row=1, column=1, sticky="ew", pady=(6, 0))
         Tooltip(
             command_budget_entry,
-            "Total firmware time budget. Use 20000 for fast three-anchor bench work; clear it to use the robust worst-case default.",
+            "Optional total firmware deadline. Leave blank for the robust command-specific default; a short limit can intentionally end before all retries finish.",
         )
 
         discovery = ttk.LabelFrame(parent, text="Anchor-Pair Survey", padding=10)
@@ -667,9 +670,25 @@ class GatewayGui(GatewayDiagnosticsMixin):
         if not raw:
             return None
         budget_ms = self._parse_int("Command limit", raw)
-        if not 1000 <= budget_ms <= 600000:
-            raise ValueError("Command limit must be in 1000..600000 ms, or blank")
+        if not (
+            GATEWAY_COMMAND_BUDGET_MIN_MS
+            <= budget_ms
+            <= GATEWAY_COMMAND_BUDGET_MAX_MS
+        ):
+            raise ValueError(
+                f"Command limit must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
+                f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms, or blank"
+            )
         return budget_ms
+
+    @staticmethod
+    def _command_timeout_s(command_budget_ms: int | None) -> float:
+        effective_budget_ms = (
+            GATEWAY_COMMAND_BUDGET_MAX_MS
+            if command_budget_ms is None
+            else command_budget_ms
+        )
+        return effective_budget_ms / 1000.0 + 2.0
 
     def _survey_id_for_send(self) -> int:
         if not self.survey_id_auto.get():
@@ -721,9 +740,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         if not self._begin_gateway_command(
                 2, session_id, seq,
-                timeout_s=None if command_budget_ms is None else
-                command_budget_ms / 1000.0 + 2.0):
+                timeout_s=self._command_timeout_s(command_budget_ms)):
             return
+        self._prepare_anchor_geometry_survey(survey_id, session_id, seq)
         self.status_text.set("Writing anchor-pair survey command over BLE...")
         self.transport.send_frame(command.frame, command.label)
 
@@ -745,8 +764,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         if not self._begin_gateway_command(
                 3, session_id, seq,
-                timeout_s=None if command_budget_ms is None else
-                command_budget_ms / 1000.0 + 2.0):
+                timeout_s=self._command_timeout_s(command_budget_ms)):
             return
         self.status_text.set("Writing Here I Am route-refresh request over BLE...")
         self.transport.send_frame(command.frame, command.label)
@@ -769,8 +787,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         if not self._begin_gateway_command(
                 1, session_id, seq,
-                timeout_s=None if command_budget_ms is None else
-                command_budget_ms / 1000.0 + 2.0):
+                timeout_s=self._command_timeout_s(command_budget_ms)):
             return
         self.status_text.set("Writing anchor enumeration and discovery-slot assignment request over BLE...")
         self.transport.send_frame(command.frame, command.label)

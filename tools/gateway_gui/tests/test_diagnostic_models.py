@@ -32,17 +32,45 @@ def click(anchor, distance_m, *, event=1, session=7, sequence=1, clicker=0xC1):
     return packet(0x20, payload, session=session, sequence=sequence)
 
 
+def pair_result(
+    a, b, distance, status, sequence, *, survey=10, sample_index=0,
+    sample_count=1, reporter=None,
+):
+    payload = b"".join((
+        tlv(0x15, survey.to_bytes(4, "little")),
+        tlv(0x1F, a.to_bytes(8, "little")),
+        tlv(0x20, b.to_bytes(8, "little")),
+        tlv(0x0F, sample_count.to_bytes(2, "little")),
+        tlv(0x0E, sample_index.to_bytes(2, "little")),
+        tlv(0x0C, distance.to_bytes(4, "little", signed=True)),
+        tlv(0x21, bytes((status,))),
+    ))
+    result = packet(0x53, payload, session=survey, sequence=sequence)
+    return replace(result, src_id=a if reporter is None else reporter)
+
+
 def event(*, kind=1, stage=6, flags=0, status=0, reason=0, event_seq=1, anchor=0, total=0, lost=0, correlation=9, gateway_sequence=5):
     success = total if stage == 12 and status == 0 and reason == 0 else 0
     return GatewayCommandEvent(kind, stage, flags, 1, status, reason, 0x104, 2, correlation, gateway_sequence, 7, 8, event_seq, anchor, 0, 0, 0, 1, total, success, 0, 0, lost, 0, 255)
 
 
+def survey_pair_event(stage, a, b, survey, event_seq, *, host_session=1, host_sequence=2):
+    return replace(
+        event(
+            kind=2, stage=stage, gateway_sequence=survey,
+            event_seq=event_seq,
+        ),
+        command_id=0x0102,
+        host_session_id=host_session,
+        host_sequence=host_sequence,
+        pair_initiator_id=a,
+        pair_responder_id=b,
+    )
+
+
 class SurveyAndClickTests(unittest.TestCase):
     def test_survey_success_only_and_missing_requires_complete_opportunity(self):
         model = SurveyGeometryModel()
-        def pair_result(a, b, distance, status, seq):
-            payload = b"".join((tlv(0x15, (10).to_bytes(4, "little")), tlv(0x1F, a.to_bytes(8, "little")), tlv(0x20, b.to_bytes(8, "little")), tlv(0x0C, distance.to_bytes(4, "little", signed=True)), tlv(0x21, bytes((status,)))))
-            return packet(0x53, payload, sequence=seq)
         model.observe_pair_packet(pair_result(1, 2, 3000, 0, 1))
         model.observe_pair_packet(pair_result(1, 3, 0, 2, 2))
         self.assertEqual(len(model.pairs), 1)
@@ -50,6 +78,314 @@ class SurveyAndClickTests(unittest.TestCase):
         model.observe_command_event(event(kind=2, stage=8, total=2, gateway_sequence=10))
         model.observe_command_event(event(kind=2, stage=12, flags=1, total=2, event_seq=2, gateway_sequence=10))
         self.assertEqual(len(model.missing_pairs), 1)
+
+    def test_live_pair_payloads_parse_and_provisional_event_cannot_erase_them(self):
+        model = SurveyGeometryModel()
+        survey_id = 0x60572B4F
+        model.begin_survey(survey_id, host_session_id=7, host_sequence=8)
+        live_payloads = (
+            (
+                0xC1E090585A85AB56,
+                "15044f2b57601f08b319ddd561dddda7200856ab855a5890e0c"
+                "10f0201000e0200000c042c0400000d0164210100070884a44400"
+                "000000002401a34d0221004e0463030000531801000c2044cf86"
+                "fb011aff197c4d843e0198fc5c57657738",
+            ),
+            (
+                0x6E8E6A1C97671F6F,
+                "15044f2b57601f086f1f67971c6a8e6e200856ab855a5890e0c"
+                "10f0201000e0200000c04aa0700000d01642101000708cecd4400"
+                "000000002401a34d020e004e04a501000053180130b01e0708c0"
+                "eb0154380ab77f283d01cca05b19a3b028",
+            ),
+        )
+        for sequence, (reporter, raw) in enumerate(live_payloads, 1):
+            payload = bytes.fromhex(raw)
+            live_packet = replace(
+                packet(0x53, payload, session=survey_id, sequence=sequence),
+                src_id=reporter,
+            )
+            self.assertTrue(model.observe_pair_packet(live_packet).successful)
+
+        distances = sorted(pair.distance_m for pair in model.pairs.values())
+        self.assertEqual(distances, [1.068, 1.962])
+        generation = model.generation
+        provisional = event(
+            kind=2, stage=2, correlation=40, gateway_sequence=0,
+            event_seq=99,
+        )
+        provisional = replace(provisional, host_session_id=7, host_sequence=8)
+        model.observe_command_event(provisional)
+        self.assertEqual(model.survey_id, survey_id)
+        self.assertEqual(len(model.pairs), 2)
+        self.assertEqual(model.generation, generation)
+
+    def test_explicit_survey_binding_rejects_stale_pairs_and_events(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(20, host_session_id=100, host_sequence=4)
+        for sequence, pair_ids in enumerate(((1, 2), (1, 3), (2, 3)), 1):
+            model.observe_command_event(survey_pair_event(
+                9, *pair_ids, 20, 10 + sequence,
+                host_session=100, host_sequence=4,
+            ))
+            model.observe_pair_packet(
+                pair_result(*pair_ids, 1000 + sequence, 0, sequence, survey=20)
+            )
+            model.observe_command_event(survey_pair_event(
+                10, *pair_ids, 20, 20 + sequence,
+                host_session=100, host_sequence=4,
+            ))
+        model.observe_command_event(replace(
+            event(kind=2, stage=12, flags=1, total=3, gateway_sequence=20),
+            host_session_id=100, host_sequence=4,
+        ))
+        self.assertEqual(len(model.pairs), 3)
+        self.assertTrue(model.terminal_complete)
+        self.assertTrue(model.solve_readiness()[0])
+
+        model.observe_pair_packet(pair_result(4, 5, 9000, 0, 10, survey=19))
+        model.observe_command_event(event(
+            kind=2, stage=12, flags=1, total=0, gateway_sequence=19,
+            correlation=8, event_seq=200,
+        ))
+        self.assertEqual(model.survey_id, 20)
+        self.assertEqual(len(model.pairs), 3)
+
+        model.begin_survey(21, host_session_id=101, host_sequence=5)
+        self.assertEqual(model.survey_id, 21)
+        self.assertEqual(model.pairs, {})
+        self.assertFalse(model.terminal_complete)
+
+    def test_multi_sample_result_is_complete_and_reporter_order_independent(self):
+        for reverse in (False, True):
+            model = SurveyGeometryModel()
+            model.begin_survey(30, host_session_id=1, host_sequence=2)
+            records = [
+                pair_result(1, 2, 1000, 0, 1, survey=30, sample_index=0,
+                            sample_count=2, reporter=2),
+                pair_result(1, 2, 1200, 0, 2, survey=30, sample_index=1,
+                            sample_count=2, reporter=2),
+                pair_result(1, 2, 1000, 0, 3, survey=30, sample_index=0,
+                            sample_count=2, reporter=1),
+                pair_result(1, 2, 1200, 0, 4, survey=30, sample_index=1,
+                            sample_count=2, reporter=1),
+            ]
+            for record in reversed(records) if reverse else records:
+                model.observe_pair_packet(record)
+            self.assertEqual(len(model.pairs), 1)
+            self.assertAlmostEqual(next(iter(model.pairs.values())).distance_m, 1.1)
+            self.assertTrue(model.solve_readiness()[0])
+
+            duplicate_failure = pair_result(
+                1, 2, 0, 2, 5, survey=30, sample_index=1,
+                sample_count=2, reporter=2,
+            )
+            model.observe_pair_packet(duplicate_failure)
+            self.assertEqual(len(model.pairs), 1)
+
+    def test_pair_mutation_invalidates_existing_solution_generation(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(40, host_session_id=1, host_sequence=2)
+        model.observe_pair_packet(
+            pair_result(1, 2, 1000, 0, 1, survey=40, reporter=2)
+        )
+        model.positions_m = {"old": (0.0, 0.0)}
+        generation = model.generation
+        model.observe_pair_packet(
+            pair_result(1, 2, 1500, 0, 2, survey=40, reporter=1)
+        )
+        self.assertEqual(model.positions_m, {})
+        self.assertGreater(model.generation, generation)
+
+    def test_three_anchor_geometry_waits_for_rigid_distance_count(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(50, host_session_id=1, host_sequence=2)
+        model.observe_command_event(replace(
+            event(kind=2, stage=8, total=3, gateway_sequence=50),
+            host_session_id=1, host_sequence=2,
+        ))
+        model.observe_pair_packet(pair_result(1, 2, 1000, 0, 1, survey=50))
+        model.observe_command_event(survey_pair_event(9, 1, 2, 50, 10))
+        model.observe_command_event(survey_pair_event(10, 1, 2, 50, 11))
+        model.observe_pair_packet(pair_result(2, 3, 1000, 0, 2, survey=50))
+        model.observe_command_event(survey_pair_event(9, 2, 3, 50, 12))
+        model.observe_command_event(survey_pair_event(10, 2, 3, 50, 13))
+        ready, reason = model.solve_readiness()
+        self.assertFalse(ready)
+        self.assertIn("2/3 pair results", reason)
+        model.observe_pair_packet(pair_result(1, 3, 1400, 0, 3, survey=50))
+        model.observe_command_event(survey_pair_event(9, 1, 3, 50, 14))
+        model.observe_command_event(survey_pair_event(10, 1, 3, 50, 15))
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=12, flags=1, total=3,
+                gateway_sequence=50, event_seq=16,
+            ),
+            host_session_id=1, host_sequence=2,
+        ))
+        self.assertTrue(model.solve_readiness()[0])
+
+    def test_foreign_reporter_and_incomplete_multi_sample_pair_do_not_count(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(60, host_session_id=1, host_sequence=2)
+        model.observe_command_event(replace(
+            event(kind=2, stage=8, total=1, gateway_sequence=60),
+            host_session_id=1, host_sequence=2,
+        ))
+        foreign = pair_result(
+            1, 2, 1000, 0, 1, survey=60, reporter=3,
+        )
+        self.assertIsNone(model.observe_pair_packet(foreign))
+        self.assertEqual(model.observed_opportunities, set())
+        partial = pair_result(
+            1, 2, 1000, 0, 2, survey=60, sample_index=0,
+            sample_count=2, reporter=1,
+        )
+        model.observe_pair_packet(partial)
+        self.assertEqual(model.observed_opportunities, set())
+        ready, reason = model.solve_readiness()
+        self.assertFalse(ready)
+        self.assertIn("0/1 pair results", reason)
+
+    def test_locally_rigid_flip_ambiguity_is_not_ready_to_solve(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(70, host_session_id=1, host_sequence=2)
+        edges = (
+            (1, 2), (1, 3), (2, 3), (1, 4), (2, 4),
+        )
+        model.observe_command_event(replace(
+            event(kind=2, stage=8, total=len(edges), gateway_sequence=70),
+            host_session_id=1, host_sequence=2,
+        ))
+        for sequence, edge in enumerate(edges, 1):
+            model.observe_command_event(survey_pair_event(
+                9, *edge, 70, 20 + sequence * 2,
+            ))
+            model.observe_pair_packet(
+                pair_result(*edge, 1000 + sequence, 0, sequence, survey=70)
+            )
+            model.observe_command_event(survey_pair_event(
+                10, *edge, 70, 21 + sequence * 2,
+            ))
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=12, flags=1, total=len(edges),
+                gateway_sequence=70, event_seq=100,
+            ),
+            host_session_id=1, host_sequence=2,
+        ))
+        ready, reason = model.solve_readiness()
+        self.assertFalse(ready)
+        self.assertIn("reflected layouts", reason)
+
+    def test_rigid_survey_graph_readiness_sweeps_two_to_fifty_anchors(self):
+        for anchor_count in (2, 3, 10, 50):
+            with self.subTest(anchor_count=anchor_count):
+                survey_id = 100 + anchor_count
+                model = SurveyGeometryModel()
+                model.begin_survey(
+                    survey_id, host_session_id=1, host_sequence=2
+                )
+                if anchor_count == 2:
+                    edges = [(1, 2)]
+                elif anchor_count == 3:
+                    edges = [(1, 2), (1, 3), (2, 3)]
+                else:
+                    outer = list(range(2, anchor_count + 1))
+                    edges = [(1, anchor) for anchor in outer]
+                    edges.extend(
+                        (outer[index], outer[(index + 1) % len(outer)])
+                        for index in range(len(outer))
+                    )
+                model.observe_command_event(replace(
+                    event(
+                        kind=2, stage=8, total=len(edges),
+                        gateway_sequence=survey_id,
+                    ),
+                    host_session_id=1, host_sequence=2,
+                ))
+                for sequence, edge in enumerate(edges, 1):
+                    model.observe_command_event(survey_pair_event(
+                        9, *edge, survey_id, 1000 + sequence * 2,
+                    ))
+                    model.observe_pair_packet(pair_result(
+                        *edge, 1000 + sequence, 0, sequence,
+                        survey=survey_id,
+                    ))
+                    model.observe_command_event(survey_pair_event(
+                        10, *edge, survey_id, 1001 + sequence * 2,
+                    ))
+                model.observe_command_event(replace(
+                    event(
+                        kind=2, stage=12, flags=1, total=len(edges),
+                        gateway_sequence=survey_id, event_seq=5000,
+                    ),
+                    host_session_id=1, host_sequence=2,
+                ))
+                ready, reason = model.solve_readiness()
+                self.assertTrue(ready, reason)
+                self.assertEqual(len(model.observed_opportunities), len(edges))
+
+    def test_expected_pair_identity_set_rejects_unscheduled_replacement(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(75, host_session_id=1, host_sequence=2)
+        planned = ((1, 2), (1, 3), (2, 3))
+        model.observe_command_event(replace(
+            event(kind=2, stage=8, total=3, gateway_sequence=75),
+            host_session_id=1, host_sequence=2,
+        ))
+        for sequence, edge in enumerate(planned, 1):
+            model.observe_command_event(survey_pair_event(
+                9, *edge, 75, 10 + sequence,
+            ))
+            if edge != (2, 3):
+                model.observe_command_event(survey_pair_event(
+                    10, *edge, 75, 20 + sequence,
+                ))
+        for sequence, edge in enumerate(((1, 2), (1, 3), (3, 4)), 1):
+            model.observe_pair_packet(pair_result(
+                *edge, 1000, 0, sequence, survey=75,
+            ))
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=12, flags=1, total=3,
+                gateway_sequence=75, event_seq=30,
+            ),
+            host_session_id=1, host_sequence=2,
+        ))
+        ready, reason = model.solve_readiness()
+        self.assertFalse(ready)
+        self.assertIn("do not match", reason)
+
+    def test_first_authoritative_sample_wins_and_malformed_index_is_rejected(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(80, host_session_id=1, host_sequence=2)
+        model.observe_pair_packet(pair_result(1, 2, 1000, 0, 1, survey=80))
+        model.observe_pair_packet(pair_result(1, 2, 0, 2, 2, survey=80))
+        self.assertEqual(next(iter(model.pairs.values())).distance_m, 1.0)
+
+        payload = b"".join((
+            tlv(0x15, (80).to_bytes(4, "little")),
+            tlv(0x1F, (2).to_bytes(8, "little")),
+            tlv(0x20, (3).to_bytes(8, "little")),
+            tlv(0x0C, (1000).to_bytes(4, "little", signed=True)),
+            tlv(0x21, b"\x00"),
+        ))
+        malformed = replace(packet(0x53, payload, session=80), src_id=2)
+        self.assertIsNone(model.observe_pair_packet(malformed))
+        self.assertEqual(len(model.pairs), 1)
+
+        count_model = SurveyGeometryModel()
+        count_model.begin_survey(81, host_session_id=1, host_sequence=2)
+        count_model.observe_pair_packet(pair_result(
+            1, 2, 900, 0, 1, survey=81, sample_count=2,
+            sample_index=0, reporter=2,
+        ))
+        count_model.observe_pair_packet(pair_result(
+            1, 2, 1100, 0, 2, survey=81, sample_count=1,
+            sample_index=0, reporter=1,
+        ))
+        self.assertEqual(next(iter(count_model.pairs.values())).distance_m, 1.1)
 
     def test_exact_noisy_rapid_and_degenerate_clicks(self):
         positions = {f"0x{value:016x}": point for value, point in {1:(0,0), 2:(5,0), 3:(0,4), 4:(5,4)}.items()}

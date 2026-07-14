@@ -20,6 +20,7 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     GATEWAY_IDENTITY_UUID,
     GatewayReceiveBuffer,
     MSG_GATEWAY_COMMAND_EVENT,
+    Packet,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     build_anchor_discovery_command,
@@ -31,6 +32,8 @@ from tools.gateway_gui.command_telemetry import (  # noqa: E402
     GatewayCommandEvent,
     decode_gateway_command_event,
 )
+from tools.gateway_gui.anchor_geometry import solve_anchor_layout  # noqa: E402
+from tools.gateway_gui.diagnostic_models import SurveyGeometryModel  # noqa: E402
 from tools.gateway_gui.protocol import COMMAND_STATUS_NAMES  # noqa: E402
 
 
@@ -372,6 +375,16 @@ class SurveyQualification:
     terminal_event: GatewayCommandEvent | None = None
     retries: int = 0
     errors: list[str] = field(default_factory=list)
+    geometry_model: SurveyGeometryModel = field(init=False)
+    geometry_rmse_m: float | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self.geometry_model = SurveyGeometryModel()
+        self.geometry_model.begin_survey(
+            self.survey_id,
+            host_session_id=self.host_session_id,
+            host_sequence=self.host_sequence,
+        )
 
     def _matches(self, event: GatewayCommandEvent) -> bool:
         return (
@@ -389,6 +402,7 @@ class SurveyQualification:
         """Record one correlated event and return true at terminal."""
         if not self._matches(event):
             return False
+        self.geometry_model.observe_command_event(event)
         if event.lost_event_count != 0:
             self._error(
                 f"event stage {event.stage} reports {event.lost_event_count} lost events"
@@ -437,6 +451,9 @@ class SurveyQualification:
             return True
         return False
 
+    def observe_packet(self, packet: Packet) -> None:
+        self.geometry_model.observe_pair_packet(packet)
+
     def validate(self) -> None:
         terminal = self.terminal_event
         if len(self.anchors) != self.expected_anchors:
@@ -453,6 +470,20 @@ class SurveyQualification:
             )
         if self.pair_successes != self.pair_starts:
             self._error("pair-success set does not exactly match the pair-start set")
+        if len(self.geometry_model.pairs) != self.expected_pairs:
+            self._error(
+                f"expected {self.expected_pairs} usable GUI pair distances, got "
+                f"{len(self.geometry_model.pairs)}"
+            )
+        expected_geometry_pairs = {
+            tuple(sorted((f"0x{left:016x}", f"0x{right:016x}")))
+            for left, right in self.pair_successes
+        }
+        if set(self.geometry_model.pairs) != expected_geometry_pairs:
+            self._error(
+                "usable GUI distance identities do not exactly match the "
+                "gateway pair-success identities"
+            )
         if terminal is None:
             self._error("matching survey terminal event was not received")
         elif (
@@ -469,6 +500,21 @@ class SurveyQualification:
                 f"total={terminal.total_count} success={terminal.success_count} "
                 f"failure={terminal.failure_count} lost={terminal.lost_event_count})"
             )
+        ready, reason = self.geometry_model.solve_readiness()
+        if not ready:
+            self._error(f"GUI geometry is not solvable: {reason}")
+        else:
+            try:
+                result = solve_anchor_layout(self.geometry_model.pairs.values())
+            except (RuntimeError, ValueError) as exc:
+                self._error(f"GUI geometry solver rejected live pair data: {exc}")
+            else:
+                self.geometry_rmse_m = result.rmse_m
+                if len(result.positions_m) != self.expected_anchors:
+                    self._error(
+                        f"expected solved positions for {self.expected_anchors} anchors, "
+                        f"got {len(result.positions_m)}"
+                    )
         if self.errors:
             raise RuntimeError("survey qualification failed: " + "; ".join(self.errors))
 
@@ -522,6 +568,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"seq={packet.seq} payload={packet.payload.hex()}",
                 flush=True,
             )
+            if isinstance(qualification, SurveyQualification):
+                qualification.observe_packet(packet)
             if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
                 try:
                     event = decode_gateway_command_event(
@@ -747,6 +795,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"survey={qualification.survey_id} "
                 f"anchors={len(qualification.anchors)} "
                 f"pairs={len(qualification.pair_successes)} "
+                f"distances={len(qualification.geometry_model.pairs)} "
+                f"geometry_rmse_m={qualification.geometry_rmse_m:.6f} "
                 f"retries={qualification.retries}",
                 flush=True,
             )

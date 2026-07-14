@@ -4,12 +4,15 @@ import unittest
 from typing import Any
 from unittest.mock import Mock, patch
 
-from tools.gateway_gui.app import GatewayGui
+from tools.gateway_gui.app import DEFAULT_COMMAND_BUDGET_TEXT, GatewayGui
 from tools.gateway_gui.cir_reassembly import CirReassembler
+from tools.gateway_gui.command_telemetry import GatewayCommandRequestTracker
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     DEFAULT_HOST_ID,
     MSG_COMMAND_RESULT,
+    MSG_GATEWAY_COMMAND_EVENT,
+    Packet,
     TLV_COMMAND_ID,
     TLV_COMMAND_STATUS,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
@@ -18,6 +21,7 @@ from tools.gateway_gui.protocol import (
     append_tlv,
     encode_cobs_packet,
     parse_cobs_packet,
+    parse_tlvs,
 )
 
 
@@ -180,6 +184,12 @@ class AppModelTests(unittest.TestCase):
         gui.sample_count_text = FakeVariable("1")  # type: ignore[assignment]
         gui.status_text = FakeVariable()  # type: ignore[assignment]
         gui.transport = Mock()
+        gui.geometry_model = Mock()
+        gui.geometry_model.generation = 1
+        gui.click_location_model = Mock()
+        gui.click_location_model.state = Mock()
+        gui.anchor_geometry_view = Mock()
+        gui.click_diagnostics_view = Mock()
         gui.__dict__["_begin_gateway_command"] = Mock(return_value=True)
         gui.__dict__["_show_error"] = Mock()
         command = Mock(frame=b"frame", label="survey")
@@ -197,6 +207,53 @@ class AppModelTests(unittest.TestCase):
         self.assertTrue(all(1 <= survey_id <= 0xFFFFFFFF for survey_id in survey_ids))
         self.assertEqual(gui.survey_id_text.get(), str(survey_ids[-1]))
         self.assertEqual(gui.transport.send_frame.call_count, 2)
+        armed_ids = [call.args[0] for call in gui.geometry_model.begin_survey.call_args_list]
+        self.assertEqual(armed_ids, survey_ids)
+
+    def test_accepted_survey_telemetry_refreshes_geometry_view(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.command_timeline_model = Mock()
+        gui.command_request_tracker = Mock()
+        gui.command_request_tracker.observe_event.return_value = False
+        gui.mesh_diagnostics_view = Mock()
+        gui.geometry_model = Mock()
+        gui.geometry_model.observe_command_event.return_value = True
+        gui.anchor_geometry_view = Mock()
+        gui.topology_model = Mock()
+        gui.topology_model.observe.return_value = None
+        gui.__dict__["_show_error"] = Mock()
+        telemetry_event = Mock()
+        payload = b""
+        telemetry_packet = Packet(
+            "test", payload, None, MSG_GATEWAY_COMMAND_EVENT, 0, 1, 2, 3, 4,
+            None, 0, "gateway_queue_age_ms", payload, parse_tlvs(payload),
+        )
+
+        with patch(
+            "tools.gateway_gui.diagnostics_integration.decode_gateway_command_event",
+            return_value=telemetry_event,
+        ):
+            gui._observe_diagnostic_packet(telemetry_packet)
+
+        gui.geometry_model.observe_command_event.assert_called_once_with(telemetry_event)
+        gui.anchor_geometry_view.show_model.assert_called_once_with(gui.geometry_model)
+
+    def test_immediate_ok_result_does_not_release_command_before_typed_terminal(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.command_request_tracker = GatewayCommandRequestTracker()
+        gui.command_request_tracker.begin(2, 0x11223344, 7, now=0.0)
+        gui.geometry_model = Mock()
+        gui.geometry_model.observe_pair_packet.return_value = None
+        gui.__dict__["_update_command_state"] = Mock()
+
+        gui._observe_diagnostic_packet(assignment_result_packet(status=0, reason=0))
+
+        self.assertIsNotNone(gui.command_request_tracker.pending)
+        gui._update_command_state.assert_not_called()
+
+        gui._observe_diagnostic_packet(assignment_result_packet(status=2, reason=2))
+        self.assertIsNone(gui.command_request_tracker.pending)
+        gui._update_command_state.assert_called_once()
 
     def test_auto_survey_id_wraps_past_zero(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
@@ -208,6 +265,17 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(gui._survey_id_for_send(), 1)
         self.assertEqual(gui._survey_id_for_send(), 2)
         self.assertEqual(gui.survey_id_text.get(), "2")
+
+    def test_blank_command_limit_uses_full_robust_gui_wait(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        self.assertEqual(DEFAULT_COMMAND_BUDGET_TEXT, "")
+        gui.command_budget_text = FakeVariable(  # type: ignore[assignment]
+            DEFAULT_COMMAND_BUDGET_TEXT
+        )
+
+        self.assertIsNone(gui._command_budget_ms())
+        self.assertEqual(gui._command_timeout_s(None), 602.0)
+        self.assertEqual(gui._command_timeout_s(20000), 22.0)
 
     def test_manual_survey_id_mode_honors_exact_entry(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)

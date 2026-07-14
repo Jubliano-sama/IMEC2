@@ -5,14 +5,15 @@ from __future__ import annotations
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import combinations
 import json
 import math
 import os
 from pathlib import Path
-from typing import Protocol
+import random
+from typing import Iterable, Protocol
 
 from .anchor_geometry import AnchorPairDistance, AnchorLayoutResult, solve_anchor_layout
-from .anchor_geometry_visibility import solve_visibility_branching_tuned
 from .localization import LocalizationReading, LocalizationResult, solve_position
 from .command_telemetry import (
     GatewayCommandEvent, GATEWAY_COMMAND_REASON_NAMES,
@@ -59,6 +60,13 @@ class SurveyPairObservation:
     sample_count: int | None
 
 
+@dataclass(frozen=True)
+class _SurveySampleOutcome:
+    successful: bool
+    distance_mm: int | None
+    reporter_priority: int
+
+
 class SurveyGeometryModel:
     """Accept successful pair rows and infer missing pairs only after complete coverage."""
 
@@ -68,9 +76,18 @@ class SurveyGeometryModel:
         self.failures: set[tuple[str, str]] = set()
         self.observed_opportunities: set[tuple[str, str]] = set()
         self.expected_opportunities: int | None = None
+        self.planned_opportunities: set[tuple[str, str]] = set()
+        self.successful_opportunities: set[tuple[str, str]] = set()
+        self.terminal_seen = False
         self.terminal_complete = False
         self.positions_m: dict[str, tuple[float, float]] = {}
         self.generation = 0
+        self._command_identity: tuple[int, int] | None = None
+        self._sample_counts: dict[tuple[str, str], int] = {}
+        self._sample_count_priorities: dict[tuple[str, str], int] = {}
+        self._sample_outcomes: dict[
+            tuple[str, str], dict[int, _SurveySampleOutcome]
+        ] = {}
 
     @property
     def missing_pairs(self) -> frozenset[tuple[str, str]]:
@@ -79,6 +96,85 @@ class SurveyGeometryModel:
         if len(self.observed_opportunities) != self.expected_opportunities:
             return frozenset()
         return frozenset(self.failures)
+
+    def solve_readiness(self) -> tuple[bool, str]:
+        successful = len(self.pairs)
+        observed = len(self.observed_opportunities)
+        expected = self.expected_opportunities
+        if expected is not None and observed != expected:
+            disposition = "waiting for the remaining results" if observed < expected else "unexpected pair results were received"
+            return False, (
+                f"Received {observed}/{expected} pair results "
+                f"({successful} successful); {disposition}."
+            )
+        if expected is not None and self._command_identity is not None:
+            if not self.terminal_seen:
+                return False, (
+                    f"Received {successful} successful pair distance(s); waiting "
+                    "for the survey terminal result."
+                )
+            if not self.terminal_complete:
+                return False, (
+                    f"Retained {successful} successful pair distance(s), but the "
+                    "survey did not end successfully."
+                )
+            if len(self.planned_opportunities) != expected:
+                return False, (
+                    f"Received {len(self.planned_opportunities)}/{expected} planned "
+                    "pair identities from command telemetry."
+                )
+            if self.observed_opportunities != self.planned_opportunities:
+                return False, "Received pair identities do not match the planned survey pairs."
+            if set(self.pairs) != self.successful_opportunities:
+                return False, "Usable distances do not match the gateway's successful pair set."
+        if not self.pairs:
+            suffix = f"; {len(self.failures)} pair attempt(s) failed" if self.failures else ""
+            return False, f"No successful pair distances received{suffix}."
+
+        anchor_ids = {
+            anchor_id
+            for pair in self.observed_opportunities
+            for anchor_id in pair
+        }
+        neighbors = {anchor_id: set() for anchor_id in anchor_ids}
+        for left, right in self.pairs:
+            neighbors[left].add(right)
+            neighbors[right].add(left)
+        seen = {next(iter(anchor_ids))}
+        pending = list(seen)
+        while pending:
+            current = pending.pop()
+            for neighbor in neighbors[current] - seen:
+                seen.add(neighbor)
+                pending.append(neighbor)
+        if seen != anchor_ids:
+            return False, (
+                f"{successful} successful pair distance(s) received, but the "
+                "successful-distance graph is disconnected."
+            )
+
+        anchor_count = len(anchor_ids)
+        minimum_rigid_pair_count = max(1, 2 * anchor_count - 3)
+        if successful < minimum_rigid_pair_count:
+            return False, (
+                f"{successful} successful pair distance(s) received; at least "
+                f"{minimum_rigid_pair_count} are needed for {anchor_count} anchors."
+            )
+        rigidity_rank = _generic_rigidity_rank(anchor_ids, self.pairs)
+        if rigidity_rank < minimum_rigid_pair_count:
+            return False, (
+                f"{successful} successful pair distance(s) received, but their "
+                f"graph has rigidity rank {rigidity_rank}/{minimum_rigid_pair_count}."
+            )
+        if not _is_generically_globally_rigid(anchor_ids, self.pairs):
+            return False, (
+                f"{successful} successful pair distance(s) are locally rigid, but "
+                "the graph still permits non-equivalent reflected layouts."
+            )
+        return True, (
+            f"{successful} successful pair distance(s) received; ready to solve "
+            f"the {anchor_count}-anchor geometry."
+        )
 
     def observe_pair_packet(self, packet: Packet) -> SurveyPairObservation | None:
         if packet.msg_type != MSG_SURVEY_PAIR_RESULT:
@@ -91,35 +187,144 @@ class SurveyGeometryModel:
         assert isinstance(survey_id, int) and isinstance(initiator, int) and isinstance(responder, int)
         if initiator == 0 or responder == 0 or initiator == responder:
             return None
-        if self.survey_id != survey_id:
+        if packet.src_id not in (initiator, responder):
+            return None
+        if self.survey_id is None:
             self.reset(survey_id)
+        elif self.survey_id != survey_id:
+            return None
         left, right = anchor_label(initiator), anchor_label(responder)
         pair = (left, right) if left < right else (right, left)
-        self.observed_opportunities.add(pair)
+        before = (self.pairs.get(pair), pair in self.failures,
+                  pair in self.observed_opportunities)
         distance_mm = packet.value(TLV_DISTANCE_MM)
         success = packet.value(TLV_RANGE_STATUS) == 0 and isinstance(distance_mm, int) and distance_mm > 50
-        if success:
-            assert isinstance(distance_mm, int)
-            self.pairs[pair] = AnchorPairDistance(pair[0], pair[1], distance_mm / 1000.0, source=f"survey {survey_id}")
+        sample_count = packet.value(TLV_SAMPLE_COUNT)
+        sample_index = packet.value(TLV_SAMPLE_INDEX)
+        if (
+            not isinstance(sample_count, int)
+            or not 1 <= sample_count <= 1000
+            or not isinstance(sample_index, int)
+            or not 0 <= sample_index < sample_count
+        ):
+            return None
+        reporter_priority = 2 if packet.src_id == initiator else 1 if packet.src_id == responder else 0
+        known_sample_count = self._sample_counts.get(pair)
+        known_count_priority = self._sample_count_priorities.get(pair, -1)
+        if known_sample_count is None:
+            self._sample_counts[pair] = sample_count
+            self._sample_count_priorities[pair] = reporter_priority
+        elif known_sample_count != sample_count:
+            if reporter_priority <= known_count_priority:
+                return None
+            self._sample_counts[pair] = sample_count
+            self._sample_count_priorities[pair] = reporter_priority
+            self._sample_outcomes.pop(pair, None)
+            self.pairs.pop(pair, None)
+            self.failures.discard(pair)
+            self.observed_opportunities.discard(pair)
+        elif reporter_priority > known_count_priority:
+            self._sample_count_priorities[pair] = reporter_priority
+        candidate = _SurveySampleOutcome(
+            success,
+            distance_mm if success and isinstance(distance_mm, int) else None,
+            reporter_priority,
+        )
+        samples = self._sample_outcomes.setdefault(pair, {})
+        previous = samples.get(sample_index)
+        if previous is None or candidate.reporter_priority > previous.reporter_priority:
+            samples[sample_index] = candidate
+
+        complete = all(index in samples for index in range(sample_count))
+        if complete:
+            self.observed_opportunities.add(pair)
+        all_successful = complete and all(
+            samples[index].successful for index in range(sample_count)
+        )
+        if all_successful:
+            mean_distance_mm = sum(
+                samples[index].distance_mm or 0 for index in range(sample_count)
+            ) / sample_count
+            self.pairs[pair] = AnchorPairDistance(
+                pair[0], pair[1], mean_distance_mm / 1000.0,
+                source=f"survey {survey_id}",
+            )
             self.failures.discard(pair)
         else:
             self.pairs.pop(pair, None)
-            self.failures.add(pair)
+            if any(not outcome.successful for outcome in samples.values()):
+                self.failures.add(pair)
+            else:
+                self.failures.discard(pair)
+        after = (self.pairs.get(pair), pair in self.failures,
+                 pair in self.observed_opportunities)
+        if after != before:
+            self._invalidate_solution()
         return SurveyPairObservation(
             survey_id, pair[0], pair[1], distance_mm / 1000.0 if success else None,
-            success, packet.value(TLV_SAMPLE_INDEX), packet.value(TLV_SAMPLE_COUNT),
+            success, sample_index, sample_count,
         )
 
-    def observe_command_event(self, event: GatewayCommandEvent) -> None:
+    def begin_survey(
+        self,
+        survey_id: int,
+        *,
+        host_session_id: int | None = None,
+        host_sequence: int | None = None,
+    ) -> None:
+        if not 1 <= survey_id <= 0xFFFFFFFF:
+            raise ValueError("survey ID must be in 1..4294967295")
+        if (host_session_id is None) != (host_sequence is None):
+            raise ValueError("host session and sequence must be provided together")
+        self.reset(survey_id)
+        if host_session_id is not None and host_sequence is not None:
+            self._command_identity = (host_session_id, host_sequence)
+
+    def observe_command_event(self, event: GatewayCommandEvent) -> bool:
         if event.command_kind != 2:
-            return
-        if self.survey_id != event.gateway_sequence:
+            return False
+        event_identity = (event.host_session_id, event.host_sequence)
+        if self._command_identity is not None and event_identity != self._command_identity:
+            return False
+        event_survey_id = event.gateway_sequence or None
+        if self.survey_id is None:
+            if event_survey_id is None:
+                return False
             self.reset(event.gateway_sequence)
+            self._command_identity = event_identity
+        elif event_survey_id is not None and event_survey_id != self.survey_id:
+            return False
+        elif self._command_identity is None:
+            self._command_identity = event_identity
+        before = (
+            self.expected_opportunities, frozenset(self.planned_opportunities),
+            frozenset(self.successful_opportunities), self.terminal_seen,
+            self.terminal_complete, self.missing_pairs,
+        )
         if event.stage == 8 and event.total_count:
             self.expected_opportunities = event.total_count
+        if event.stage in (9, 10, 11):
+            pair = _anchor_pair_key(
+                event.pair_initiator_id, event.pair_responder_id
+            )
+            if pair is not None:
+                self.planned_opportunities.add(pair)
+                if event.stage == 10:
+                    self.successful_opportunities.add(pair)
+                elif event.stage == 11:
+                    self.successful_opportunities.discard(pair)
         if event.terminal:
             self.expected_opportunities = event.total_count or self.expected_opportunities
+            self.terminal_seen = True
             self.terminal_complete = event.command_status == 0 and event.reason == 0
+        after = (
+            self.expected_opportunities, frozenset(self.planned_opportunities),
+            frozenset(self.successful_opportunities), self.terminal_seen,
+            self.terminal_complete, self.missing_pairs,
+        )
+        if after != before:
+            self._invalidate_solution()
+        return True
 
     def reset(self, survey_id: int | None = None) -> None:
         self.survey_id = survey_id
@@ -127,13 +332,194 @@ class SurveyGeometryModel:
         self.failures.clear()
         self.observed_opportunities.clear()
         self.expected_opportunities = None
+        self.planned_opportunities.clear()
+        self.successful_opportunities.clear()
+        self.terminal_seen = False
         self.terminal_complete = False
+        self.positions_m.clear()
+        self._command_identity = None
+        self._sample_counts.clear()
+        self._sample_count_priorities.clear()
+        self._sample_outcomes.clear()
+        self.generation += 1
+
+    def _invalidate_solution(self) -> None:
         self.positions_m.clear()
         self.generation += 1
 
     def apply_solution(self, result: AnchorLayoutResult) -> None:
         self.positions_m = dict(result.positions_m)
         self.generation += 1
+
+
+def _generic_rigidity_rank(
+    anchor_ids: set[str],
+    pairs: dict[tuple[str, str], AnchorPairDistance],
+) -> int:
+    """Return the generic 2D rigidity-matrix rank for the successful graph."""
+    ordered = sorted(anchor_ids)
+    best_rank = 0
+    for seed in (0x1A2B3C4D, 0xC001D00D):
+        best_rank = max(
+            best_rank,
+            _matrix_rank(_rigidity_rows(ordered, pairs, seed)),
+        )
+    return best_rank
+
+
+def _anchor_pair_key(left_id: int, right_id: int) -> tuple[str, str] | None:
+    if left_id == 0 or right_id == 0 or left_id == right_id:
+        return None
+    left, right = anchor_label(left_id), anchor_label(right_id)
+    return (left, right) if left < right else (right, left)
+
+
+def _rigidity_rows(
+    ordered: list[str],
+    pairs: dict[tuple[str, str], AnchorPairDistance],
+    seed: int,
+) -> list[list[float]]:
+    columns = {anchor_id: 2 * index for index, anchor_id in enumerate(ordered)}
+    rng = random.Random(seed)
+    coordinates = {
+        anchor_id: (rng.uniform(-10.0, 10.0), rng.uniform(-10.0, 10.0))
+        for anchor_id in ordered
+    }
+    rows = []
+    for left, right in pairs:
+        left_x, left_y = coordinates[left]
+        right_x, right_y = coordinates[right]
+        dx, dy = left_x - right_x, left_y - right_y
+        row = [0.0] * (2 * len(ordered))
+        left_column, right_column = columns[left], columns[right]
+        row[left_column:left_column + 2] = (dx, dy)
+        row[right_column:right_column + 2] = (-dx, -dy)
+        rows.append(row)
+    return rows
+
+
+def _is_generically_globally_rigid(
+    anchor_ids: set[str],
+    pairs: dict[tuple[str, str], AnchorPairDistance],
+) -> bool:
+    anchor_count = len(anchor_ids)
+    if anchor_count == 2:
+        return len(pairs) == 1
+    if anchor_count == 3:
+        return len(pairs) == 3
+    if not _is_three_vertex_connected(anchor_ids, pairs):
+        return False
+    target_rank = 2 * anchor_count - 3
+    ordered = sorted(anchor_ids)
+    for seed in (0x1A2B3C4D, 0xC001D00D):
+        rows = _rigidity_rows(ordered, pairs, seed)
+        if _matrix_rank(rows) != target_rank:
+            continue
+        supported = _row_dependency_support(rows)
+        if len(supported) == len(rows):
+            return True
+    return False
+
+
+def _is_three_vertex_connected(
+    anchor_ids: set[str],
+    pairs: dict[tuple[str, str], AnchorPairDistance],
+) -> bool:
+    neighbors = {anchor_id: set() for anchor_id in anchor_ids}
+    for left, right in pairs:
+        neighbors[left].add(right)
+        neighbors[right].add(left)
+    ordered = sorted(anchor_ids)
+    for removed_count in (0, 1, 2):
+        for removed_tuple in combinations(ordered, removed_count):
+            removed = set(removed_tuple)
+            remaining = anchor_ids - removed
+            start = next(iter(remaining))
+            seen = {start}
+            pending = [start]
+            while pending:
+                current = pending.pop()
+                for neighbor in neighbors[current] - removed - seen:
+                    seen.add(neighbor)
+                    pending.append(neighbor)
+            if seen != remaining:
+                return False
+    return True
+
+
+def _row_dependency_support(
+    rows: list[list[float]], *, epsilon: float = 1e-9
+) -> set[int]:
+    """Return row indices participating in at least one linear dependency."""
+    if not rows:
+        return set()
+    matrix = [list(column) for column in zip(*rows)]
+    variable_count = len(rows)
+    pivot_columns: list[int] = []
+    rank = 0
+    for column in range(variable_count):
+        pivot = max(
+            range(rank, len(matrix)),
+            key=lambda row_index: abs(matrix[row_index][column]),
+            default=rank,
+        )
+        if pivot >= len(matrix) or abs(matrix[pivot][column]) <= epsilon:
+            continue
+        matrix[rank], matrix[pivot] = matrix[pivot], matrix[rank]
+        divisor = matrix[rank][column]
+        matrix[rank] = [value / divisor for value in matrix[rank]]
+        for row_index in range(len(matrix)):
+            if row_index == rank:
+                continue
+            factor = matrix[row_index][column]
+            if abs(factor) <= epsilon:
+                continue
+            matrix[row_index] = [
+                value - factor * pivot_value
+                for value, pivot_value in zip(matrix[row_index], matrix[rank])
+            ]
+        pivot_columns.append(column)
+        rank += 1
+        if rank == len(matrix):
+            break
+    free_columns = set(range(variable_count)) - set(pivot_columns)
+    supported = set(free_columns)
+    for row_index, pivot_column in enumerate(pivot_columns):
+        if any(abs(matrix[row_index][free]) > epsilon for free in free_columns):
+            supported.add(pivot_column)
+    return supported
+
+
+def _matrix_rank(rows: list[list[float]], *, epsilon: float = 1e-9) -> int:
+    if not rows:
+        return 0
+    matrix = [row[:] for row in rows]
+    rank = 0
+    for column in range(len(matrix[0])):
+        pivot = max(
+            range(rank, len(matrix)),
+            key=lambda row_index: abs(matrix[row_index][column]),
+            default=rank,
+        )
+        if pivot >= len(matrix) or abs(matrix[pivot][column]) <= epsilon:
+            continue
+        matrix[rank], matrix[pivot] = matrix[pivot], matrix[rank]
+        divisor = matrix[rank][column]
+        matrix[rank] = [value / divisor for value in matrix[rank]]
+        for row_index in range(len(matrix)):
+            if row_index == rank:
+                continue
+            factor = matrix[row_index][column]
+            if abs(factor) <= epsilon:
+                continue
+            matrix[row_index] = [
+                value - factor * pivot_value
+                for value, pivot_value in zip(matrix[row_index], matrix[rank])
+            ]
+        rank += 1
+        if rank == len(matrix):
+            break
+    return rank
 
 
 @dataclass(frozen=True)
@@ -543,6 +929,18 @@ def command_step_sentence(event: GatewayCommandEvent) -> str:
 
 def solve_visibility(model: SurveyGeometryModel) -> AnchorLayoutResult:
     return solve_visibility_branching_tuned(model.pairs.values(), missing_pairs=model.missing_pairs)
+
+
+def solve_visibility_branching_tuned(
+    pairs: Iterable[AnchorPairDistance],
+    *,
+    missing_pairs: Iterable[tuple[str, str]] = (),
+) -> AnchorLayoutResult:
+    from .anchor_geometry_visibility import (
+        solve_visibility_branching_tuned as implementation,
+    )
+
+    return implementation(pairs, missing_pairs=missing_pairs)
 
 
 def solve_geometry(

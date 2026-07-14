@@ -96,7 +96,8 @@ class GatewayDiagnosticsMixin:
             if released:
                 self._update_command_state()
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
-            self.geometry_model.observe_command_event(event)
+            if self.geometry_model.observe_command_event(event):
+                self.anchor_geometry_view.show_model(self.geometry_model)
             comparison = self.topology_model.observe(event)
             if comparison is not None:
                 anchors = self.command_timeline_model.enumerated_anchors.get(
@@ -105,7 +106,7 @@ class GatewayDiagnosticsMixin:
             return
         if packet.msg_type == MSG_COMMAND_RESULT:
             status = packet.value(TLV_COMMAND_STATUS)
-            if isinstance(status, int) and self.command_request_tracker.observe_command_result(
+            if isinstance(status, int) and status != 0 and self.command_request_tracker.observe_command_result(
                 packet.session_id, packet.seq, status
             ):
                 self._update_command_state()
@@ -124,6 +125,18 @@ class GatewayDiagnosticsMixin:
         state = self.click_location_model.observe(packet, diagnostic)
         if state is not None:
             self.click_diagnostics_view.show(state, self.click_location_model.positions_m)
+
+    def _prepare_anchor_geometry_survey(
+        self, survey_id: int, host_session_id: int, host_sequence: int
+    ) -> None:
+        self.geometry_model.begin_survey(
+            survey_id,
+            host_session_id=host_session_id,
+            host_sequence=host_sequence,
+        )
+        self.click_location_model.set_geometry({}, self.geometry_model.generation)
+        self.anchor_geometry_view.show_model(self.geometry_model)
+        self.click_diagnostics_view.show(self.click_location_model.state, {})
 
     def _begin_gateway_command(self, command_kind: int, session_id: int,
                                sequence: int,
@@ -195,8 +208,9 @@ class GatewayDiagnosticsMixin:
     def _solve_anchor_geometry(self) -> None:
         if self._geometry_solving:
             return
-        if len(self.geometry_model.pairs) < 3:
-            self.anchor_geometry_view.status_var.set("Need at least three successful connected pair constraints")
+        ready, reason = self.geometry_model.solve_readiness()
+        if not ready:
+            self.anchor_geometry_view.status_var.set(reason)
             return
         self._geometry_solving = True
         self.anchor_geometry_view.solve_button.configure(state="disabled")

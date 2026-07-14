@@ -80,6 +80,10 @@ class AnchorGeometryView(ttk.Frame):
         self.model = model
         if result is not None:
             self.result = result
+        elif not model.positions_m:
+            self.result = None
+            _ready, reason = model.solve_readiness()
+            self.status_var.set(reason)
         self.pair_tree.delete(*self.pair_tree.get_children())
         all_pairs = sorted(set(model.pairs) | model.failures)
         for pair in all_pairs:
