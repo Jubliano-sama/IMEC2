@@ -198,6 +198,7 @@ if(IMEC_BUILD_PRESET)
     elseif(IMEC_BUILD_PRESET STREQUAL "mesh_anchor")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
+        set(IMEC_PRESET_EXTRA_CONF "mesh-anchor.conf")
         set(IMEC_HIGH_DEBUG_ANCHOR_SLOT "" CACHE STRING
             "Override deterministic flashed high-debug anchor slot" FORCE)
         set(IMEC_BENCH_STAGE 3)
