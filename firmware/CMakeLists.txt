@@ -118,7 +118,8 @@ add_executable(test_app_node_comm_gateway_adapter
     app/src/app_node_comm.c
     app/src/app_node_comm_sync.c)
 target_compile_definitions(test_app_node_comm_gateway_adapter PRIVATE
-    DEVICE_ROLE=ROLE_GATEWAY)
+    DEVICE_ROLE=ROLE_GATEWAY
+    APP_NODE_COMM_GATEWAY_ROLE=1)
 target_include_directories(test_app_node_comm_gateway_adapter PRIVATE
     tests/mesh_integration/zephyr_shim
     app/src)
@@ -249,6 +250,11 @@ add_test(NAME assignment_claim_semantic_acceptance
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py)
 set_tests_properties(assignment_claim_semantic_acceptance PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;gateway;assignment;static_analysis")
+add_test(NAME assignment_state_serialization_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_state_serialization_source_invariants.py)
+set_tests_properties(assignment_state_serialization_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway;assignment;static_analysis")
 
 add_executable(test_app_gateway_ble_stream
@@ -433,6 +439,8 @@ target_include_directories(test_app_mesh_gateway_command_flow PRIVATE app/src)
 target_link_libraries(test_app_mesh_gateway_command_flow PRIVATE core)
 add_test(NAME app_mesh_gateway_command_flow
     COMMAND test_app_mesh_gateway_command_flow)
+set_tests_properties(app_mesh_gateway_command_flow
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;survey")
 
 add_executable(test_app_mesh_flood
     tests/test_app_mesh_flood.c
@@ -613,6 +621,18 @@ add_test(NAME survey_discovery_failure_source_invariants
 set_tests_properties(survey_discovery_failure_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing")
 
+add_test(NAME survey_active_generation_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_active_generation_source_invariants.py)
+set_tests_properties(survey_active_generation_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing")
+
+add_test(NAME survey_pair_control_lifecycle_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_pair_control_lifecycle_source_invariants.py)
+set_tests_properties(survey_pair_control_lifecycle_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
+
 add_test(NAME dwm3000_receive_source_invariants
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_dwm3000_receive_source_invariants.py)
@@ -694,6 +714,12 @@ add_test(NAME verify_stack_evidence
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_verify_stack_evidence.py)
 set_tests_properties(verify_stack_evidence PROPERTIES LABELS "hardware_models")
+
+add_test(NAME forcedhop_ram_policy
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_forcedhop_ram_policy.py)
+set_tests_properties(forcedhop_ram_policy
+    PROPERTIES LABELS "mesh_integration;hardware_models;stack;forcedhop;static_analysis")
 
 add_test(NAME flash_verified_mesh
     COMMAND ${Python3_EXECUTABLE}

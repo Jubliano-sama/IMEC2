@@ -9,6 +9,7 @@
 _Static_assert(sizeof(struct survey_pair) == 24u,
                "survey pair public layout changed");
 _Static_assert(PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +
+                   PROTO_TLV_U16_ENCODED_LEN +
                    SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *
                        (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN) <=
                    UWB_MESH_MAX_PAYLOAD_LEN,

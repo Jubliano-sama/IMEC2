@@ -491,6 +491,39 @@ int discovery_assignment_parse_table_tlvs(
     return PROTO_OK;
 }
 
+uint32_t discovery_assignment_table_fingerprint(
+    const struct discovery_assignment_entry *entries,
+    size_t entry_count,
+    uint8_t slot_count)
+{
+    uint32_t hash = UINT32_C(2166136261);
+
+    if (entries == NULL || entry_count == 0u ||
+        entry_count > UWB_DISCOVERY_SLOT_COUNT || slot_count == 0u ||
+        slot_count > UWB_DISCOVERY_SLOT_COUNT || entry_count > slot_count) {
+        return 0u;
+    }
+    hash = (hash ^ slot_count) * UINT32_C(16777619);
+    hash = (hash ^ (uint8_t)entry_count) * UINT32_C(16777619);
+    for (size_t i = 0u; i < entry_count; i++) {
+        const struct discovery_assignment_entry *entry = &entries[i];
+        uint8_t encoded[DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN];
+
+        if (entry->anchor_id == 0u ||
+            entry->hash != discovery_assignment_hash(entry->anchor_id) ||
+            entry->slot != i || entry->slot >= slot_count) {
+            return 0u;
+        }
+        proto_put_u64_le(encoded, entry->anchor_id);
+        proto_put_u64_le(&encoded[8], entry->hash);
+        encoded[16] = entry->slot;
+        for (size_t j = 0u; j < sizeof(encoded); j++) {
+            hash = (hash ^ encoded[j]) * UINT32_C(16777619);
+        }
+    }
+    return hash == 0u ? 1u : hash;
+}
+
 int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint8_t slot_count,
                                            uint8_t hop_count,

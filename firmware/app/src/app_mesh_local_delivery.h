@@ -82,6 +82,9 @@ int app_mesh_local_delivery_stage(struct app_mesh_local_delivery *delivery,
 int app_mesh_local_delivery_restore(
     struct app_mesh_local_delivery *delivery,
     const struct app_mesh_local_delivery_snapshot *snapshot);
+int app_mesh_local_delivery_rebase_after_boot(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t now_ms);
 int app_mesh_local_delivery_recover(
     struct app_mesh_local_delivery *delivery,
     const struct app_mesh_local_delivery_snapshot *snapshot,
@@ -121,9 +124,6 @@ int app_mesh_local_delivery_note_failed(
     struct app_mesh_local_delivery *delivery);
 int app_mesh_local_delivery_discard_failed(
     struct app_mesh_local_delivery *delivery);
-int app_mesh_local_delivery_supersede(
-    struct app_mesh_local_delivery *delivery,
-    uint32_t replacement_generation);
 bool app_mesh_local_delivery_active(const struct app_mesh_local_delivery *delivery);
 const struct mesh_outbound *app_mesh_local_delivery_outbound(
     const struct app_mesh_local_delivery *delivery);

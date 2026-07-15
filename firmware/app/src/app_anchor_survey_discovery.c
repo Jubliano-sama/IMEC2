@@ -18,12 +18,20 @@
 #include <zephyr/sys/util.h>
 
 #include <errno.h>
+#include <string.h>
 
 LOG_MODULE_DECLARE(app_anchor, LOG_LEVEL_DBG);
 
 static struct app_anchor_survey_discovery_ops discovery_ops;
 static bool discovery_initialized;
 static uint16_t survey_delivery_retry_round;
+static uint32_t survey_delivery_handle;
+static bool survey_delivery_comm_owned;
+static struct app_mesh_local_delivery_identity survey_delivery_comm_identity;
+static bool survey_delivery_comm_identity_valid;
+static struct mesh_outbound survey_report_stage_retry_outbound;
+static uint32_t survey_report_stage_retry_generation;
+static bool survey_report_stage_retry_valid;
 
 #define SURVEY_DELIVERY_EVENT_POLL_MS 100u
 
@@ -86,6 +94,18 @@ static bool abort_requested(void)
            discovery_ops.abort_requested();
 }
 
+static bool survey_delivery_identity_equal(
+    const struct app_mesh_local_delivery_identity *left,
+    const struct app_mesh_local_delivery_identity *right)
+{
+    return left != NULL && right != NULL &&
+           left->src_id == right->src_id &&
+           left->dst_id == right->dst_id &&
+           left->session_id == right->session_id &&
+           left->seq == right->seq &&
+           left->msg_type == right->msg_type;
+}
+
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int survey_delivery_save(
     void *ctx,
@@ -100,6 +120,87 @@ static int survey_delivery_clear(void *ctx)
     ARG_UNUSED(ctx);
     return app_mesh_persistence_clear_local_delivery();
 }
+
+static int survey_delivery_attempt_begin(const struct proto_packet *packet,
+                                         uint8_t *attempt_token)
+{
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    struct app_mesh_local_delivery_identity identity;
+    int ret;
+
+    if (packet == NULL || attempt_token == NULL || delivery == NULL) {
+        return -EINVAL;
+    }
+    SURVEY_DELIVERY_LOCK();
+    if (!app_mesh_local_delivery_active(delivery) ||
+        app_mesh_local_delivery_outbound(delivery) == NULL) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ENOENT;
+    }
+    app_mesh_local_delivery_identity_from_outbound(
+        app_mesh_local_delivery_outbound(delivery), &identity);
+    if (!app_mesh_local_delivery_identity_matches(&identity, packet)) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
+    if (delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_STARTING ||
+        delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_TRACKED) {
+        ret = app_mesh_local_delivery_note_attempt_released(
+            delivery,
+            delivery->snapshot.attempt_token,
+            APP_MESH_LOCAL_DELIVERY_RETRY);
+        if (ret < 0) {
+            SURVEY_DELIVERY_UNLOCK();
+            return ret;
+        }
+    }
+    ret = app_mesh_local_delivery_begin_attempt(delivery, attempt_token);
+    SURVEY_DELIVERY_UNLOCK();
+    return ret;
+}
+
+static int survey_delivery_attempt_complete(const struct proto_packet *packet,
+                                            uint8_t attempt_token,
+                                            bool rf_started)
+{
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    struct app_mesh_local_delivery_identity identity;
+    uint16_t attempts_remaining;
+    int ret;
+
+    if (packet == NULL || attempt_token == 0u || delivery == NULL) {
+        return -EINVAL;
+    }
+    SURVEY_DELIVERY_LOCK();
+    if (!app_mesh_local_delivery_active(delivery) ||
+        app_mesh_local_delivery_outbound(delivery) == NULL) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ENOENT;
+    }
+    app_mesh_local_delivery_identity_from_outbound(
+        app_mesh_local_delivery_outbound(delivery), &identity);
+    if (!app_mesh_local_delivery_identity_matches(&identity, packet) ||
+        delivery->snapshot.attempt_token != attempt_token) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
+    ret = rf_started ?
+        app_mesh_local_delivery_note_attempt_sent(delivery, attempt_token) :
+        app_mesh_local_delivery_note_attempt_not_sent(
+            delivery, attempt_token, APP_MESH_LOCAL_DELIVERY_RETRY);
+    attempts_remaining = app_mesh_local_delivery_attempts_available(delivery);
+    SURVEY_DELIVERY_UNLOCK();
+    if (ret == 0 && rf_started) {
+        app_stack_workload_diag_anchor_survey_sample(packet, 1u, 1u);
+        status_debug_printf(
+            "DBG_SURVEY_REPORT_RF_ATTEMPT survey=%u seq=%u token=%u remaining=%u\n",
+            packet->session_id,
+            packet->seq,
+            attempt_token,
+            attempts_remaining);
+    }
+    return ret;
+}
 #endif
 
 int app_anchor_survey_discovery_init(
@@ -107,8 +208,9 @@ int app_anchor_survey_discovery_init(
 {
     if (ops == NULL || ops->abort_requested == NULL ||
         ops->abort_pair == NULL || ops->preempt_radio == NULL ||
-        ops->queue_start == NULL || ops->schedule_work_ms == NULL ||
-        ops->next_sequence == NULL) {
+        ops->admit_start == NULL || ops->queue_start == NULL ||
+        ops->schedule_work_ms == NULL ||
+        ops->next_sequence == NULL || ops->seed_sequence == NULL) {
         return -EINVAL;
     }
 
@@ -124,7 +226,26 @@ int app_anchor_survey_discovery_init(
         SURVEY_DELIVERY_LOCK();
         app_mesh_local_delivery_init(survey_delivery_instance(), &delivery_ops);
         survey_delivery_retry_round = 0u;
+        survey_delivery_handle = 0u;
+        survey_delivery_comm_owned = false;
+        memset(&survey_delivery_comm_identity, 0,
+               sizeof(survey_delivery_comm_identity));
+        survey_delivery_comm_identity_valid = false;
+        memset(&survey_report_stage_retry_outbound, 0,
+               sizeof(survey_report_stage_retry_outbound));
+        survey_report_stage_retry_generation = 0u;
+        survey_report_stage_retry_valid = false;
         SURVEY_DELIVERY_UNLOCK();
+        {
+            const struct app_node_comm_durable_attempt_ops attempt_ops = {
+                .begin = survey_delivery_attempt_begin,
+                .complete = survey_delivery_attempt_complete,
+            };
+
+            if (app_node_comm_register_durable_attempt_ops(&attempt_ops) < 0) {
+                return -EIO;
+            }
+        }
     }
 #endif
     return 0;
@@ -148,16 +269,36 @@ int app_anchor_survey_discovery_restore(bool *restored)
     }
 
     SURVEY_DELIVERY_LOCK();
+    survey_delivery_handle = 0u;
+    survey_delivery_comm_owned = false;
+    memset(&survey_delivery_comm_identity, 0,
+           sizeof(survey_delivery_comm_identity));
+    survey_delivery_comm_identity_valid = false;
     ret = app_mesh_persistence_restore_local_delivery(&delivery->snapshot);
     ret = app_mesh_local_delivery_recover(delivery,
                                           &delivery->snapshot,
                                           ret,
                                           &recovery);
     if (recovery.restored) {
+        const struct mesh_outbound *outbound =
+            app_mesh_local_delivery_outbound(delivery);
         uint16_t attempts_used = APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS -
             delivery->snapshot.attempts_remaining;
+        int rebase_ret = app_mesh_local_delivery_rebase_after_boot(
+            delivery, k_uptime_get_32());
 
         survey_delivery_retry_round = attempts_used;
+        if (outbound != NULL) {
+            discovery_ops.seed_sequence(outbound->packet.seq);
+        }
+        if (rebase_ret < 0) {
+            LOG_WRN("survey delivery boot-time rebase persistence deferred: ret=%d",
+                    rebase_ret);
+            status_debug_printf(
+                "DBG_SURVEY_DELIVERY_REBASE_DEFER ret=%d now=%u\n",
+                rebase_ret,
+                k_uptime_get_32());
+        }
     }
     *restored = recovery.restored || recovery.retry_required;
     if (recovery.quarantined) {
@@ -175,6 +316,8 @@ int app_anchor_survey_discovery_restore(bool *restored)
 void app_anchor_survey_delivery_gateway_confirmed(const struct proto_packet *packet)
 {
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    uint32_t completed_handle = 0u;
+    bool ack_committed = false;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || packet == NULL || delivery == NULL) {
         return;
@@ -187,6 +330,18 @@ void app_anchor_survey_delivery_gateway_confirmed(const struct proto_packet *pac
     if (app_mesh_local_delivery_note_ack(delivery, packet) < 0) {
         LOG_ERR("survey delivery ACK journal commit failed");
     } else {
+        ack_committed = true;
+        if (survey_delivery_comm_owned &&
+            survey_delivery_comm_identity_valid &&
+            app_mesh_local_delivery_identity_matches(
+                &survey_delivery_comm_identity, packet)) {
+            completed_handle = survey_delivery_handle;
+            survey_delivery_handle = 0u;
+            survey_delivery_comm_owned = false;
+            memset(&survey_delivery_comm_identity, 0,
+                   sizeof(survey_delivery_comm_identity));
+            survey_delivery_comm_identity_valid = false;
+        }
         survey_delivery_retry_round = 0u;
         app_stack_workload_diag_anchor_survey_sample(packet, 0u, 0u);
         app_stack_workload_diag_anchor_survey_release(packet, 0, 0u, 0u);
@@ -198,6 +353,12 @@ void app_anchor_survey_delivery_gateway_confirmed(const struct proto_packet *pac
                 packet->session_id, packet->seq);
     }
     SURVEY_DELIVERY_UNLOCK();
+    if (completed_handle != 0u) {
+        (void)app_node_comm_auto_reap_delivery(completed_handle);
+    }
+    if (ack_committed) {
+        schedule_work_ms(0u);
+    }
 }
 
 void app_anchor_survey_delivery_transport_released(
@@ -223,11 +384,14 @@ void app_anchor_survey_delivery_transport_released(
         SURVEY_DELIVERY_UNLOCK();
         return;
     }
-    attempt_token = delivery->snapshot.attempt_token;
-    (void)app_mesh_local_delivery_note_attempt_released(
-        delivery, attempt_token,
-        preempted ? APP_MESH_LOCAL_DELIVERY_PREEMPTED :
-                    APP_MESH_LOCAL_DELIVERY_RETRY);
+    if (delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_STARTING ||
+        delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_TRACKED) {
+        attempt_token = delivery->snapshot.attempt_token;
+        (void)app_mesh_local_delivery_note_attempt_released(
+            delivery, attempt_token,
+            preempted ? APP_MESH_LOCAL_DELIVERY_PREEMPTED :
+                        APP_MESH_LOCAL_DELIVERY_RETRY);
+    }
     retry_delay_ms = survey_delivery_next_retry_delay_ms(
         app_mesh_local_delivery_outbound(delivery));
     SURVEY_DELIVERY_UNLOCK();
@@ -238,7 +402,8 @@ static int prepare_discovery_report(
     uint32_t survey_id,
     const struct survey_reachability_entry *entries,
     size_t entry_count,
-    uint32_t earliest_tx_ms)
+    uint32_t earliest_tx_ms,
+    enum command_status status)
 {
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
     struct mesh_outbound outbound = {0};
@@ -260,6 +425,14 @@ static int prepare_discovery_report(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
+    ret = tlv_append_u16(outbound.payload,
+                         sizeof(outbound.payload),
+                         &report_payload_len,
+                         TLV_COMMAND_STATUS,
+                         (uint16_t)status);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
     ret = survey_init_discovery_report_packet(&outbound.packet,
                                               DEVICE_ID,
                                               GATEWAY_ID,
@@ -273,7 +446,16 @@ static int prepare_discovery_report(
     outbound.earliest_tx_ms = earliest_tx_ms;
 
     SURVEY_DELIVERY_LOCK();
-    ret = app_mesh_local_delivery_stage(delivery, &outbound, survey_id);
+    if (survey_report_stage_retry_valid) {
+        ret = -EBUSY;
+    } else {
+        ret = app_mesh_local_delivery_stage(delivery, &outbound, survey_id);
+        if (ret < 0 && !app_mesh_local_delivery_active(delivery)) {
+            survey_report_stage_retry_outbound = outbound;
+            survey_report_stage_retry_generation = survey_id;
+            survey_report_stage_retry_valid = true;
+        }
+    }
     if (ret == 0) {
         survey_delivery_retry_round = 0u;
     }
@@ -309,7 +491,8 @@ int app_anchor_survey_discovery_stage_empty_report(
         return mesh_errno_from_proto(ret);
     }
     ret = prepare_discovery_report(config->survey_id, NULL, 0u,
-                                   start_ms + report_delay_ms);
+                                   start_ms + report_delay_ms,
+                                   COMMAND_RADIO_ERROR);
     if (ret == 0) {
         status_debug_printf(
             "DBG_SURVEY_EMPTY_REPORT_STAGED survey=%u run_retained=1\n",
@@ -318,21 +501,194 @@ int app_anchor_survey_discovery_stage_empty_report(
     return ret;
 }
 
+/* Caller holds survey_delivery_lock when the anchor role is active. */
+static bool survey_delivery_matches_locked(
+    const struct app_mesh_local_delivery *delivery,
+    const struct mesh_outbound *outbound)
+{
+    struct app_mesh_local_delivery_identity identity;
+
+    if (!app_mesh_local_delivery_active(delivery) || outbound == NULL ||
+        app_mesh_local_delivery_outbound(delivery) == NULL) {
+        return false;
+    }
+    app_mesh_local_delivery_identity_from_outbound(
+        app_mesh_local_delivery_outbound(delivery), &identity);
+    return app_mesh_local_delivery_identity_matches(&identity,
+                                                     &outbound->packet);
+}
+
+static uint64_t survey_delivery_deadline_ms(
+    const struct mesh_outbound *outbound)
+{
+    uint64_t now_ms = (uint64_t)k_uptime_get();
+    uint64_t delay_ms = 0u;
+
+    if (outbound != NULL && outbound->earliest_tx_ms != 0u &&
+        !uptime_deadline_reached((uint32_t)now_ms,
+                                 outbound->earliest_tx_ms)) {
+        delay_ms = uptime_ms_until_deadline((uint32_t)now_ms,
+                                            outbound->earliest_tx_ms);
+    }
+    if (UINT64_MAX - now_ms < delay_ms ||
+        UINT64_MAX - now_ms - delay_ms <
+            SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS) {
+        return UINT64_MAX;
+    }
+    return now_ms + delay_ms + SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS;
+}
+
+static int survey_delivery_poll_comm_result(void)
+{
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    struct app_mesh_local_delivery_identity owned_identity = {0};
+    struct node_comm_terminal_event event;
+    struct mesh_outbound outbound = {0};
+    uint32_t handle;
+    uint32_t retry_delay_ms = 0u;
+    bool current_delivery = false;
+    bool discard_complete = false;
+    int persist_ret = 0;
+
+    SURVEY_DELIVERY_LOCK();
+    if (!survey_delivery_comm_owned) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ENOENT;
+    }
+    handle = survey_delivery_handle;
+    owned_identity = survey_delivery_comm_identity;
+    SURVEY_DELIVERY_UNLOCK();
+
+    if (handle == 0u) {
+        schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
+        return -EINPROGRESS;
+    }
+    if (!app_node_comm_take_delivery_event_for(handle, &event)) {
+        SURVEY_DELIVERY_LOCK();
+        current_delivery = survey_delivery_comm_owned &&
+                           survey_delivery_handle == handle &&
+                           survey_delivery_comm_identity_valid;
+        SURVEY_DELIVERY_UNLOCK();
+        if (current_delivery) {
+            schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
+            return -EINPROGRESS;
+        }
+        return 0;
+    }
+
+    SURVEY_DELIVERY_LOCK();
+    if (!survey_delivery_comm_owned || survey_delivery_handle != handle ||
+        !survey_delivery_comm_identity_valid ||
+        !survey_delivery_identity_equal(&survey_delivery_comm_identity,
+                                        &owned_identity)) {
+        SURVEY_DELIVERY_UNLOCK();
+        return 0;
+    }
+    survey_delivery_comm_owned = false;
+    survey_delivery_handle = 0u;
+    if (app_mesh_local_delivery_active(delivery) &&
+        app_mesh_local_delivery_outbound(delivery) != NULL &&
+        app_mesh_local_delivery_identity_matches(
+            &owned_identity,
+            &app_mesh_local_delivery_outbound(delivery)->packet)) {
+        outbound = *app_mesh_local_delivery_outbound(delivery);
+        current_delivery = true;
+    }
+    memset(&survey_delivery_comm_identity, 0,
+           sizeof(survey_delivery_comm_identity));
+    survey_delivery_comm_identity_valid = false;
+    if (current_delivery && event.reason == NODE_COMM_TERMINAL_CANCELLED) {
+        retry_delay_ms = survey_delivery_next_retry_delay_ms(&outbound);
+    } else if (current_delivery &&
+               event.reason != NODE_COMM_TERMINAL_DELIVERED) {
+        persist_ret = app_mesh_local_delivery_note_failed(delivery);
+        if (persist_ret == 0) {
+            persist_ret = app_mesh_local_delivery_discard_failed(delivery);
+            discard_complete = persist_ret == 0;
+        }
+    }
+    SURVEY_DELIVERY_UNLOCK();
+
+    if (!current_delivery) {
+        return event.reason == NODE_COMM_TERMINAL_DELIVERED ? 0 : -ESTALE;
+    }
+    if (event.reason == NODE_COMM_TERMINAL_DELIVERED) {
+        app_anchor_survey_delivery_gateway_confirmed(&outbound.packet);
+        return 0;
+    }
+    if (event.reason == NODE_COMM_TERMINAL_CANCELLED) {
+        schedule_work_ms(retry_delay_ms);
+        return -EAGAIN;
+    }
+    if (persist_ret < 0) {
+        LOG_ERR("survey delivery terminal journal release failed: survey=%u seq=%u reason=%u ret=%d",
+                outbound.packet.session_id, outbound.packet.seq,
+                (unsigned int)event.reason, persist_ret);
+        schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
+        return -EAGAIN;
+    }
+    if (discard_complete) {
+        survey_delivery_retry_round = 0u;
+        app_stack_workload_diag_anchor_survey_release(
+            &outbound.packet, -ETIMEDOUT, event.attempts_started, 0u);
+        status_debug_printf(
+            "DBG_SURVEY_REPORT_TERMINAL survey=%u seq=%u reason=%u attempts=%u\n",
+            outbound.packet.session_id,
+            outbound.packet.seq,
+            (unsigned int)event.reason,
+            event.attempts_started);
+    }
+    return -ETIMEDOUT;
+}
+
 int app_anchor_survey_discovery_retry_report(void)
 {
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
     struct mesh_outbound outbound;
-    uint8_t attempt_token = 0u;
-    uint16_t attempts_remaining = 0u;
+    uint32_t delivery_handle = 0u;
+    uint32_t stale_handle = 0u;
     uint32_t retry_delay_ms = 0u;
-    bool rf_sent = false;
-    int persist_ret = 0;
+    uint64_t absolute_deadline_ms;
+    bool submission_owned;
+    bool still_current;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || delivery == NULL) {
         return 0;
     }
+    ret = survey_delivery_poll_comm_result();
+    if (ret != -ENOENT) {
+        return ret;
+    }
     SURVEY_DELIVERY_LOCK();
+    if (survey_report_stage_retry_valid &&
+        !app_mesh_local_delivery_active(delivery)) {
+        ret = app_mesh_local_delivery_stage(
+            delivery,
+            &survey_report_stage_retry_outbound,
+            survey_report_stage_retry_generation);
+        if (ret == 0) {
+            status_debug_printf(
+                "DBG_SURVEY_REPORT_STAGE_RETRY_OK survey=%u seq=%u\n",
+                survey_report_stage_retry_outbound.packet.session_id,
+                survey_report_stage_retry_outbound.packet.seq);
+            memset(&survey_report_stage_retry_outbound, 0,
+                   sizeof(survey_report_stage_retry_outbound));
+            survey_report_stage_retry_generation = 0u;
+            survey_report_stage_retry_valid = false;
+            survey_delivery_retry_round = 0u;
+        } else {
+            uint32_t survey_id = survey_report_stage_retry_generation;
+
+            SURVEY_DELIVERY_UNLOCK();
+            status_debug_printf(
+                "DBG_SURVEY_REPORT_STAGE_RETRY_WAIT survey=%u ret=%d\n",
+                survey_id,
+                ret);
+            schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
+            return -EAGAIN;
+        }
+    }
     if (!app_mesh_local_delivery_active(delivery)) {
         SURVEY_DELIVERY_UNLOCK();
         return 0;
@@ -384,11 +740,6 @@ int app_anchor_survey_discovery_retry_report(void)
     }
     if (delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_STARTING ||
         delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_TRACKED) {
-        if (mesh_relay_tx_active(&mesh_runtime) || anchor_uwb_window_active()) {
-            SURVEY_DELIVERY_UNLOCK();
-            schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
-            return -EINPROGRESS;
-        }
         ret = app_mesh_local_delivery_note_attempt_released(
             delivery, delivery->snapshot.attempt_token,
             APP_MESH_LOCAL_DELIVERY_RETRY);
@@ -398,12 +749,6 @@ int app_anchor_survey_discovery_retry_report(void)
         }
         retry_delay_ms = survey_delivery_next_retry_delay_ms(
             app_mesh_local_delivery_outbound(delivery));
-        SURVEY_DELIVERY_UNLOCK();
-        schedule_work_ms(retry_delay_ms);
-        return -EAGAIN;
-    }
-    if (mesh_relay_tx_active(&mesh_runtime) || anchor_uwb_window_active()) {
-        retry_delay_ms = survey_delivery_next_retry_delay_ms(&outbound);
         SURVEY_DELIVERY_UNLOCK();
         schedule_work_ms(retry_delay_ms);
         return -EAGAIN;
@@ -429,95 +774,84 @@ int app_anchor_survey_discovery_retry_report(void)
                                                        -ETIMEDOUT, 0u, 0u);
         return -ETIMEDOUT;
     }
+    survey_delivery_comm_owned = true;
+    survey_delivery_handle = 0u;
+    app_mesh_local_delivery_identity_from_outbound(
+        &outbound, &survey_delivery_comm_identity);
+    survey_delivery_comm_identity_valid = true;
     SURVEY_DELIVERY_UNLOCK();
 
-    ret = mesh_owned_tracked_tx_preflight(&outbound,
-                                          "survey-discovery-report",
-                                          APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL,
-                                          outbound.packet.session_id);
-    if (ret < 0) {
-        SURVEY_DELIVERY_LOCK();
-        if (app_mesh_local_delivery_active(delivery)) {
-            retry_delay_ms = survey_delivery_next_retry_delay_ms(
-                app_mesh_local_delivery_outbound(delivery));
-        }
-        SURVEY_DELIVERY_UNLOCK();
-        schedule_work_ms(retry_delay_ms == 0u ?
-                         SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS :
-                         retry_delay_ms);
-        return -EAGAIN;
-    }
+    absolute_deadline_ms = survey_delivery_deadline_ms(&outbound);
+    ret = app_node_comm_submit_delivery(
+        &outbound,
+        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        absolute_deadline_ms,
+        outbound.packet.session_id,
+        &delivery_handle);
 
     SURVEY_DELIVERY_LOCK();
-    if (!app_mesh_local_delivery_active(delivery)) {
-        SURVEY_DELIVERY_UNLOCK();
-        return 0;
-    }
-    if (delivery->snapshot.outbound.packet.session_id !=
-            outbound.packet.session_id ||
-        delivery->snapshot.outbound.packet.seq != outbound.packet.seq) {
-        SURVEY_DELIVERY_UNLOCK();
-        return -ESTALE;
-    }
-    if (mesh_relay_tx_active(&mesh_runtime) || anchor_uwb_window_active()) {
-        retry_delay_ms = survey_delivery_next_retry_delay_ms(
-            app_mesh_local_delivery_outbound(delivery));
-        SURVEY_DELIVERY_UNLOCK();
-        schedule_work_ms(retry_delay_ms);
-        return -EAGAIN;
-    }
-    if (delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_BLOCKED_LIVE) {
-        ret = app_mesh_local_delivery_resume_blocked_attempt(
-            delivery, &attempt_token);
+    submission_owned = survey_delivery_comm_owned &&
+                       survey_delivery_handle == 0u &&
+                       survey_delivery_comm_identity_valid &&
+                       app_mesh_local_delivery_identity_matches(
+                           &survey_delivery_comm_identity,
+                           &outbound.packet);
+    still_current = submission_owned &&
+                    survey_delivery_matches_locked(delivery, &outbound);
+    if (ret == 0 && still_current) {
+        survey_delivery_handle = delivery_handle;
     } else {
-        ret = app_mesh_local_delivery_begin_attempt(delivery, &attempt_token);
-    }
-    if (ret < 0) {
-        SURVEY_DELIVERY_UNLOCK();
-        return ret;
-    }
-    outbound = *app_mesh_local_delivery_outbound(delivery);
-    SURVEY_DELIVERY_UNLOCK();
-
-    ret = app_node_comm_start_owned_delivery(&outbound,
-                                             "survey-discovery-report",
-                                             &rf_sent);
-
-    SURVEY_DELIVERY_LOCK();
-    if (!app_mesh_local_delivery_active(delivery)) {
-        SURVEY_DELIVERY_UNLOCK();
-        return 0;
-    }
-    if (delivery->snapshot.attempt_token != attempt_token) {
-        SURVEY_DELIVERY_UNLOCK();
-        return -ESTALE;
-    }
-    if (rf_sent) {
-        persist_ret = app_mesh_local_delivery_note_attempt_sent(
-            delivery, attempt_token);
-    } else {
-        persist_ret = app_mesh_local_delivery_note_attempt_blocked(
-            delivery, attempt_token);
-        if (persist_ret == 0) {
-            retry_delay_ms = survey_delivery_next_retry_delay_ms(
-                app_mesh_local_delivery_outbound(delivery));
+        if (ret == 0) {
+            stale_handle = delivery_handle;
+        }
+        if (submission_owned) {
+            survey_delivery_comm_owned = false;
+            memset(&survey_delivery_comm_identity, 0,
+                   sizeof(survey_delivery_comm_identity));
+            survey_delivery_comm_identity_valid = false;
+            if (still_current) {
+                retry_delay_ms = survey_delivery_next_retry_delay_ms(
+                    app_mesh_local_delivery_outbound(delivery));
+            }
         }
     }
-    attempts_remaining = app_mesh_local_delivery_attempts_available(delivery);
     SURVEY_DELIVERY_UNLOCK();
 
-    if (persist_ret < 0) {
-        LOG_ERR("survey delivery attempt resolution failed: %d", persist_ret);
-        return persist_ret;
+    if (stale_handle != 0u) {
+        (void)app_node_comm_abandon_delivery(stale_handle);
+        return 0;
     }
-    if (rf_sent) {
-        app_stack_workload_diag_anchor_survey_sample(&outbound.packet, 1u, 1u);
-        LOG_INF("survey discovery report RF attempt started: survey=%u seq=%u remaining=%u",
-                outbound.packet.session_id, outbound.packet.seq,
-                attempts_remaining);
+    if (ret < 0) {
+        if (still_current) {
+            schedule_work_ms(retry_delay_ms == 0u ?
+                             SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS :
+                             retry_delay_ms);
+        }
+        return still_current ? -EAGAIN : 0;
     }
-    schedule_work_ms(rf_sent ? SURVEY_DELIVERY_EVENT_POLL_MS : retry_delay_ms);
-    return ret == 0 ? 0 : -EAGAIN;
+    status_debug_printf(
+        "DBG_SURVEY_REPORT_COMM_SUBMIT survey=%u seq=%u handle=%u deadline=%llu\n",
+        outbound.packet.session_id,
+        outbound.packet.seq,
+        delivery_handle,
+        (unsigned long long)absolute_deadline_ms);
+    schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
+    return 0;
+}
+
+bool app_anchor_survey_discovery_report_staged(uint32_t survey_id)
+{
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    bool staged = false;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || delivery == NULL || survey_id == 0u) {
+        return false;
+    }
+    SURVEY_DELIVERY_LOCK();
+    staged = app_mesh_local_delivery_active(delivery) &&
+             delivery->snapshot.generation == survey_id;
+    SURVEY_DELIVERY_UNLOCK();
+    return staged;
 }
 
 void app_anchor_survey_discovery_handle_start(
@@ -528,12 +862,11 @@ void app_anchor_survey_discovery_handle_start(
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
     struct survey_discovery_config config = {0};
     struct survey_discovery_timing timing = {0};
-    struct proto_packet superseded_packet = {0};
-    bool superseded_packet_valid = false;
     uint32_t received_at_ms;
     uint32_t now_ms;
     uint32_t schedule_delay_ms;
     uint32_t start_at_ms;
+    enum app_anchor_survey_discovery_admission admission;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || !discovery_initialized ||
@@ -565,45 +898,33 @@ void app_anchor_survey_discovery_handle_start(
 
     SURVEY_DELIVERY_LOCK();
     if (app_mesh_local_delivery_active(delivery)) {
-        const struct mesh_outbound *pending =
-            app_mesh_local_delivery_outbound(delivery);
         uint32_t pending_survey_id = delivery->snapshot.generation;
 
-        if (pending != NULL) {
-            superseded_packet = pending->packet;
-            superseded_packet_valid = true;
-        }
-        ret = app_mesh_local_delivery_supersede(delivery, config.survey_id);
-        if (ret == 0) {
-            survey_delivery_retry_round = 0u;
-        }
-
         SURVEY_DELIVERY_UNLOCK();
-        if (ret == -EALREADY) {
+        if (pending_survey_id == config.survey_id) {
             LOG_INF("duplicate survey discovery start retained pending report custody: survey=%u",
                     config.survey_id);
             schedule_work_ms(0u);
             return;
         }
-        if (ret < 0) {
-            LOG_ERR("survey discovery start could not supersede obsolete report custody: requested=%u pending=%u ret=%d",
-                    config.survey_id, pending_survey_id, ret);
-            schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
-            return;
-        }
-        if (superseded_packet_valid) {
-            app_stack_workload_diag_anchor_survey_release(
-                &superseded_packet, -ESTALE, 0u, 0u);
-            status_debug_printf("DBG_SURVEY_REPORT_SUPERSEDED anchor=0x%016llx old_survey=%u old_seq=%u new_survey=%u\n",
-                                (unsigned long long)DEVICE_ID,
-                                superseded_packet.session_id,
-                                superseded_packet.seq,
-                                config.survey_id);
-        }
-        LOG_WRN("obsolete survey report custody superseded by new gateway survey: requested=%u pending=%u",
+        LOG_WRN("survey discovery start rejected while earlier report custody is pending: requested=%u pending=%u",
                 config.survey_id, pending_survey_id);
+        schedule_work_ms(0u);
+        return;
     } else {
         SURVEY_DELIVERY_UNLOCK();
+    }
+
+    admission = discovery_ops.admit_start(config.survey_id);
+    if (admission == APP_ANCHOR_SURVEY_DISCOVERY_DUPLICATE) {
+        LOG_INF("duplicate survey discovery start ignored while generation is active: survey=%u",
+                config.survey_id);
+        return;
+    }
+    if (admission != APP_ANCHOR_SURVEY_DISCOVERY_ACCEPTED) {
+        LOG_WRN("survey discovery start rejected while another generation is active: survey=%u",
+                config.survey_id);
+        return;
     }
 
     discovery_ops.abort_pair();
@@ -1031,11 +1352,27 @@ int app_anchor_survey_discovery_run(
             survey_discovery_probe_real_attempt_count(
                 retry_states, ARRAY_SIZE(retry_states)) !=
                 SURVEY_DISCOVERY_OPPORTUNITY_COUNT) {
+            uint8_t real_attempt_count =
+                survey_discovery_probe_real_attempt_count(
+                    retry_states, ARRAY_SIZE(retry_states));
+
             LOG_ERR("survey discovery deadline ended before four real attempts: survey=%u attempted=%u deferred_mask=0x%02x",
                     config->survey_id,
-                    (unsigned int)survey_discovery_probe_real_attempt_count(
-                        retry_states, ARRAY_SIZE(retry_states)),
+                    (unsigned int)real_attempt_count,
                     deferred_mask);
+            ret = survey_discovery_report_delay_ms(
+                config, report_slot, SURVEY_RESULT_MESH_SLOT_MS,
+                &report_delay_ms);
+            if (ret != PROTO_OK) {
+                return mesh_errno_from_proto(ret);
+            }
+            ret = prepare_discovery_report(
+                config->survey_id,
+                entries,
+                entry_count,
+                start_ms + report_delay_ms,
+                COMMAND_RADIO_ERROR);
+            return ret < 0 ? ret : -ETIMEDOUT;
         }
     }
 
@@ -1046,7 +1383,8 @@ int app_anchor_survey_discovery_run(
         return mesh_errno_from_proto(ret);
     }
     ret = prepare_discovery_report(config->survey_id, entries, entry_count,
-                                   start_ms + report_delay_ms);
+                                   start_ms + report_delay_ms,
+                                   COMMAND_OK);
     if (ret < 0) {
         return ret;
     }

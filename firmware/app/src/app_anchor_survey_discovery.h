@@ -8,14 +8,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum app_anchor_survey_discovery_admission {
+    APP_ANCHOR_SURVEY_DISCOVERY_ACCEPTED = 0,
+    APP_ANCHOR_SURVEY_DISCOVERY_DUPLICATE,
+    APP_ANCHOR_SURVEY_DISCOVERY_BUSY,
+};
+
 struct app_anchor_survey_discovery_ops {
     bool (*abort_requested)(void);
     void (*abort_pair)(void);
     void (*preempt_radio)(uint32_t survey_id);
+    enum app_anchor_survey_discovery_admission (*admit_start)(
+        uint32_t survey_id);
     void (*queue_start)(const struct survey_discovery_config *config,
                         uint32_t start_ms);
     void (*schedule_work_ms)(uint32_t delay_ms);
     uint16_t (*next_sequence)(void);
+    void (*seed_sequence)(uint16_t observed_sequence);
 };
 
 int app_anchor_survey_discovery_init(
@@ -32,6 +41,7 @@ int app_anchor_survey_discovery_stage_empty_report(
     const struct survey_discovery_config *config,
     uint32_t start_ms);
 int app_anchor_survey_discovery_retry_report(void);
+bool app_anchor_survey_discovery_report_staged(uint32_t survey_id);
 void app_anchor_survey_delivery_gateway_confirmed(
     const struct proto_packet *packet);
 void app_anchor_survey_delivery_transport_released(

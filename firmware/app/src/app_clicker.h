@@ -120,6 +120,7 @@ uint8_t app_clicker_debug_session_flags(void);
 void app_clicker_prepare_startup_idle(enum button_action *boot_action);
 int app_clicker_button_init(void);
 void app_clicker_handle_button_action(enum button_action action);
+void app_clicker_submit_button_action(enum button_action action);
 void app_clicker_enter_idle(void);
 int app_clicker_attempt_gate(struct uwb_clicker_session *session,
                              uint32_t event_seq,

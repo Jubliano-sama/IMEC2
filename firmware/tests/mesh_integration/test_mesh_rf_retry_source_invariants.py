@@ -149,6 +149,67 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             waiting_body[attempt_branch:policy_decision],
         )
 
+    def test_route_wait_retry_has_a_separate_work_owner_from_tx_timeout(self):
+        schedule = function_body(
+            REPORT, "mesh_schedule_route_waiting_retry_after"
+        )
+        route_wait_handler = function_body(
+            REPORT, "mesh_route_waiting_work_handler"
+        )
+        tx_timeout_handler = function_body(REPORT, "mesh_tx_timeout_handler")
+        init = function_body(REPORT, "app_mesh_report_init")
+
+        self.assertIn(
+            "mesh_reschedule_delayable(&mesh_route_waiting_work, delay_ms)",
+            schedule,
+        )
+        self.assertNotIn("mesh_tx_timeout_work", schedule)
+        self.assertIn("mesh_try_route_waiting_tx()", route_wait_handler)
+        self.assertNotIn("mesh_tx_timeout_handler", route_wait_handler)
+        self.assertNotIn("mesh_try_route_waiting_tx()", tx_timeout_handler)
+        self.assertIn(
+            "k_work_init_delayable(&mesh_tx_timeout_work, "
+            "mesh_tx_timeout_handler)",
+            init,
+        )
+        self.assertIn(
+            "k_work_init_delayable(&mesh_route_waiting_work,\n"
+            "                          mesh_route_waiting_work_handler)",
+            init,
+        )
+
+    def test_synchronous_route_request_is_owned_only_by_route_workers(self):
+        discovery_worker = function_body(
+            REPORT, "mesh_route_discovery_work_handler"
+        )
+        route_wait = function_body(REPORT, "mesh_try_route_waiting_tx")
+        async_submit = function_body(REPORT, "mesh_schedule_route_request")
+        init = function_body(REPORT, "app_mesh_report_init")
+
+        self.assertEqual(REPORT.count("mesh_request_route("), 3)
+        self.assertEqual(discovery_worker.count("mesh_request_route("), 1)
+        self.assertEqual(route_wait.count("mesh_request_route("), 1)
+        self.assertNotIn("mesh_request_route(", async_submit)
+        self.assertEqual(
+            REPORT.count("mesh_try_route_waiting_tx("),
+            3,
+            "only the declaration, definition, and route-wait worker may name it",
+        )
+        self.assertIn(
+            "mesh_reschedule_delayable(&mesh_route_discovery_work, 0u)",
+            async_submit,
+        )
+        self.assertIn(
+            "k_work_init_delayable(&mesh_route_discovery_work, "
+            "mesh_route_discovery_work_handler)",
+            init,
+        )
+        self.assertIn(
+            "k_work_init_delayable(&mesh_route_waiting_work,\n"
+            "                          mesh_route_waiting_work_handler)",
+            init,
+        )
+
     def test_first_gateway_ack_send_failures_enter_identity_backoff(self):
         body = function_body(REPORT, "mesh_handle_result_actions")
         current_start = body.index(
@@ -243,6 +304,15 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(rearm, retry)
         self.assertLess(retry, success)
         self.assertIn("DBG_ANCHOR_CH9_REARM", body)
+
+    def test_route_reply_listener_hands_event_control_to_the_worker(self):
+        body = function_body(REPORT, "mesh_listen_for_route_reply")
+        radio_stop = body.index("radio_guard_uwb_stop()")
+        submit = body.index("mesh_submit_work(&mesh_rx_work)", radio_stop)
+
+        self.assertLess(radio_stop, submit)
+        self.assertIn("DBG_EVENT_CTRL_POST_RX_QUEUED", body)
+        self.assertNotIn("mesh_process_queued_rx_now", body)
 
     def test_first_deferred_control_flood_uses_identity_backoff(self):
         body = function_body(REPORT, "mesh_c5_flood_store_deferred")

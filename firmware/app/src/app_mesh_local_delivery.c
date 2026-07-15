@@ -155,6 +155,27 @@ int app_mesh_local_delivery_restore(
     return 0;
 }
 
+int app_mesh_local_delivery_rebase_after_boot(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t now_ms)
+{
+    struct app_mesh_local_delivery_snapshot candidate;
+    int ret;
+
+    if (!app_mesh_local_delivery_active(delivery)) {
+        return -ENOENT;
+    }
+    candidate = delivery->snapshot;
+    candidate.outbound.queued_at_ms = 0u;
+    candidate.outbound.earliest_tx_ms = now_ms;
+    candidate.checksum = delivery_checksum(&candidate);
+    ret = delivery->ops.save == NULL ? -ENOTSUP :
+          delivery->ops.save(delivery->ops.ctx, &candidate);
+    /* Boot-relative timing is never valid after reset, even if NVS is busy. */
+    delivery->snapshot = candidate;
+    return ret;
+}
+
 int app_mesh_local_delivery_recover(
     struct app_mesh_local_delivery *delivery,
     const struct app_mesh_local_delivery_snapshot *snapshot,
@@ -434,31 +455,6 @@ int app_mesh_local_delivery_discard_failed(
     if (delivery == NULL ||
         delivery->snapshot.state != APP_MESH_LOCAL_DELIVERY_FAILED) {
         return -EINVAL;
-    }
-    if (delivery->ops.clear == NULL) {
-        return -ENOTSUP;
-    }
-    ret = delivery->ops.clear(delivery->ops.ctx);
-    if (ret == 0) {
-        memset(&delivery->snapshot, 0, sizeof(delivery->snapshot));
-    }
-    return ret;
-}
-
-int app_mesh_local_delivery_supersede(
-    struct app_mesh_local_delivery *delivery,
-    uint32_t replacement_generation)
-{
-    int ret;
-
-    if (delivery == NULL || replacement_generation == 0u) {
-        return -EINVAL;
-    }
-    if (!app_mesh_local_delivery_active(delivery)) {
-        return 0;
-    }
-    if (delivery->snapshot.generation == replacement_generation) {
-        return -EALREADY;
     }
     if (delivery->ops.clear == NULL) {
         return -ENOTSUP;

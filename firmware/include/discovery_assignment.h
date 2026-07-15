@@ -87,6 +87,10 @@ int discovery_assignment_parse_table_tlvs(
     size_t entry_cap,
     size_t *entry_count,
     uint8_t *slot_count);
+uint32_t discovery_assignment_table_fingerprint(
+    const struct discovery_assignment_entry *entries,
+    size_t entry_count,
+    uint8_t slot_count);
 int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint8_t slot_count,
                                            uint8_t hop_count,

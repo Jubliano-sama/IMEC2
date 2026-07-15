@@ -40,9 +40,10 @@ KNOWN_WORKLOADS = frozenset({
     "gateway_priority_control",
 })
 THREAD_ROOTS = frozenset({
-    "main", "system_workqueue", "isr", "bt_rx", "fatal_context",
+    "main", "system_workqueue", "clicker_action", "anchor_uwb_scan", "mesh_route", "mesh_test", "isr", "bt_rx",
+    "fatal_context",
 })
-KNOWN_DYNAMIC_THREAD_NAMES = frozenset({"clicker_action", "anchor_uwb_scan", "mesh_route", "bt_rx", "shared_min", "system_workqueue", "unknown"})
+KNOWN_DYNAMIC_THREAD_NAMES = frozenset({"clicker_action", "anchor_uwb_scan", "mesh_route", "mesh_test", "bt_rx", "shared_min", "system_workqueue", "unknown"})
 CAPTURE_SCHEMA = 3
 CAPTURE_WORKFLOW = "pyocd-rtt-pre-reset-v1"
 MAX_CAPTURE_AGE = timedelta(hours=24)
@@ -56,6 +57,7 @@ class PresetPolicy:
     preset: str
     main_bytes: int
     system_workqueue_bytes: int
+    mesh_route_bytes: int
     isr_bytes: int
     idle_bytes: int
     log_processor_bytes: int
@@ -150,7 +152,7 @@ def load_policy(header: Path = POLICY_HEADER) -> tuple[dict[str, PresetPolicy], 
     policies: dict[str, PresetPolicy] = {}
     for match in re.finditer(r"\bX\(([^()]*)\)", policy_text, re.DOTALL):
         fields = _split_macro_args(match.group(1))
-        if len(fields) != 15:
+        if len(fields) != 16:
             raise EvidenceError("malformed stack policy row")
         role, preset = fields[:2]
         policy = PresetPolicy(
@@ -158,17 +160,18 @@ def load_policy(header: Path = POLICY_HEADER) -> tuple[dict[str, PresetPolicy], 
             preset=preset.strip('"'),
             main_bytes=_uint(fields[2]),
             system_workqueue_bytes=_uint(fields[3]),
-            isr_bytes=_uint(fields[4]),
-            idle_bytes=_uint(fields[5]),
-            log_processor_bytes=_uint(fields[6]),
-            bt_hci_tx_bytes=_uint(fields[7]),
-            bt_rx_bytes=_uint(fields[8]),
-            minimum_static_ram_headroom_bytes=_uint(fields[9]),
-            init_stacks=_bool(fields[10]),
-            hw_stack_protection=_bool(fields[11]),
-            mpu_stack_guard=_bool(fields[12]),
-            thread_stack_info=_bool(fields[13]),
-            stack_sentinel=_bool(fields[14]),
+            mesh_route_bytes=_uint(fields[4]),
+            isr_bytes=_uint(fields[5]),
+            idle_bytes=_uint(fields[6]),
+            log_processor_bytes=_uint(fields[7]),
+            bt_hci_tx_bytes=_uint(fields[8]),
+            bt_rx_bytes=_uint(fields[9]),
+            minimum_static_ram_headroom_bytes=_uint(fields[10]),
+            init_stacks=_bool(fields[11]),
+            hw_stack_protection=_bool(fields[12]),
+            mpu_stack_guard=_bool(fields[13]),
+            thread_stack_info=_bool(fields[14]),
+            stack_sentinel=_bool(fields[15]),
             deployable=preset.strip('"') in DEPLOYABLE_PRESETS,
         )
         if policy.preset in policies:
@@ -373,6 +376,10 @@ _CGRAPH_VARIABLE_PREFIX = "<variable>:"
 _CGRAPH_REFERENCE_PREFIX = "<reference>:"
 
 
+def _compiler_function_name_symbol(symbol: str) -> bool:
+    return symbol == "__func__" or symbol.startswith("__func__.")
+
+
 def _owner_capacity(policy: PresetPolicy, owner: str) -> int:
     if owner == "fatal_context":
         # A Zephyr fatal override runs on whichever context faulted, including
@@ -382,6 +389,10 @@ def _owner_capacity(policy: PresetPolicy, owner: str) -> int:
         capacities = (
             policy.main_bytes,
             policy.system_workqueue_bytes,
+            policy.mesh_route_bytes,
+            8192 if policy.preset in {
+                "mesh_transmitter", "mesh_transmitter_forcedhop",
+            } else 0,
             policy.isr_bytes,
             policy.idle_bytes,
             policy.log_processor_bytes,
@@ -392,6 +403,16 @@ def _owner_capacity(policy: PresetPolicy, owner: str) -> int:
     capacities = {
         "main": policy.main_bytes,
         "system_workqueue": policy.system_workqueue_bytes,
+        "clicker_action": 8192 if policy.preset == "mesh_clicker" else 0,
+        "anchor_uwb_scan": (
+            12288 if policy.preset == "mesh_anchor" else 0
+        ),
+        "mesh_route": policy.mesh_route_bytes,
+        "mesh_test": (
+            8192 if policy.preset in {
+                "mesh_transmitter", "mesh_transmitter_forcedhop",
+            } else 0
+        ),
         "isr": policy.isr_bytes,
         "bt_rx": policy.bt_rx_bytes,
     }
@@ -419,6 +440,12 @@ def _parse_cgraph(path: Path, source_name: str) -> dict[tuple[str, str], set[str
         if not function_definition and not immutable_variable:
             continue
         symbol = _canonical_function(match.group(1))
+        if immutable_variable and _compiler_function_name_symbol(symbol):
+            # Every C function may own a distinct compiler-generated
+            # `__func__` string with the same source-level symbol. Joining
+            # those constants would invent call edges between unrelated work
+            # queues; they can never contain a callback.
+            continue
         node_symbol = (_CGRAPH_VARIABLE_PREFIX + symbol
                        if immutable_variable else symbol)
         calls = re.search(r"^  Calls:\s*(.*)$", block, re.MULTILINE)
@@ -435,8 +462,11 @@ def _parse_cgraph(path: Path, source_name: str) -> dict[tuple[str, str], set[str
             # Preserve every compiler-proved reference so ownership can cross
             # that table without a source-wide fallback.
             targets.update(
-                _CGRAPH_REFERENCE_PREFIX + _canonical_function(target)
+                _CGRAPH_REFERENCE_PREFIX + canonical
                 for target in re.findall(r"([^\s/]+)/\d+", references.group(1))
+                if not _compiler_function_name_symbol(
+                    canonical := _canonical_function(target)
+                )
             )
         # GCC emits several IPA snapshots for one symbol.  Preserve every
         # compiler-proved edge; later optimization snapshots may legitimately
@@ -931,9 +961,16 @@ def _required_threads(build: BuildEvidence, policy: PresetPolicy) -> dict[str, i
     # sampled. The startup main thread has returned by then, while the
     # integrated controller's HCI TX size is a synchronous call-stack setting,
     # not a live thread. Both remain checked by exact config/compiler evidence.
-    required = {"sysworkq": policy.system_workqueue_bytes}
-    if policy.preset == "mesh_anchor":
-        required["anchor_uwb_scan"] = 12288
+    required = {
+        "sysworkq": policy.system_workqueue_bytes,
+        "mesh_route": policy.mesh_route_bytes,
+    }
+    clicker_action_bytes = _owner_capacity(policy, "clicker_action")
+    if clicker_action_bytes:
+        required["clicker_action"] = clicker_action_bytes
+    anchor_uwb_scan_bytes = _owner_capacity(policy, "anchor_uwb_scan")
+    if anchor_uwb_scan_bytes:
+        required["anchor_uwb_scan"] = anchor_uwb_scan_bytes
     if policy.idle_bytes:
         required["idle"] = policy.idle_bytes
     if policy.log_processor_bytes:

@@ -930,7 +930,7 @@ int node_comm_lease_complete(struct node_comm *comm,
     struct node_comm_request_slot *slot;
     int ret;
 
-    if (outcome > NODE_COMM_DELIVERY_FAILED) {
+    if (outcome > NODE_COMM_DELIVERY_ATTEMPTS_EXHAUSTED) {
         return -EINVAL;
     }
     (void)node_comm_service(comm, now_ms);
@@ -957,6 +957,10 @@ int node_comm_lease_complete(struct node_comm *comm,
     }
     if (outcome == NODE_COMM_DELIVERY_FAILED) {
         terminalize(comm, slot, NODE_COMM_TERMINAL_PERMANENT_FAILURE);
+        return 0;
+    }
+    if (outcome == NODE_COMM_DELIVERY_ATTEMPTS_EXHAUSTED) {
+        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
         return 0;
     }
     if (!slot->rf_started) {

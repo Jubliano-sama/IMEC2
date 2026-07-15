@@ -10,7 +10,8 @@ struct stack_budget_policy_entry {
 };
 
 #define STACK_BUDGET_POLICY_ENTRY(                                           \
-    role_name, preset, main_size, workqueue_size, isr_size, idle_size,        \
+    role_name, preset, main_size, workqueue_size, mesh_route_size, isr_size,  \
+    idle_size,                                                               \
     log_size, hci_tx_size, bt_rx_size, ram_headroom, init_enabled,           \
     hw_protection,                                                            \
     mpu_guard, stack_info, sentinel)                                         \
@@ -19,6 +20,7 @@ struct stack_budget_policy_entry {
         .config = {                                                          \
             .main_bytes = main_size,                                         \
             .system_workqueue_bytes = workqueue_size,                        \
+            .mesh_route_bytes = mesh_route_size,                             \
             .isr_bytes = isr_size,                                           \
             .idle_bytes = idle_size,                                         \
             .log_processor_bytes = log_size,                                 \
@@ -77,6 +79,7 @@ int stack_budget_validate_role_config(
     }
     if (config->main_bytes != expected.main_bytes ||
         config->system_workqueue_bytes != expected.system_workqueue_bytes ||
+        config->mesh_route_bytes != expected.mesh_route_bytes ||
         config->isr_bytes != expected.isr_bytes ||
         config->idle_bytes != expected.idle_bytes ||
         config->log_processor_bytes != expected.log_processor_bytes ||
@@ -172,6 +175,8 @@ uint32_t stack_budget_configured_for_owner(
         return config->main_bytes;
     case STACK_BUDGET_OWNER_SYSTEM_WORKQUEUE:
         return config->system_workqueue_bytes;
+    case STACK_BUDGET_OWNER_MESH_ROUTE:
+        return config->mesh_route_bytes;
     case STACK_BUDGET_OWNER_ISR:
         return config->isr_bytes;
     case STACK_BUDGET_OWNER_IDLE:

@@ -37,6 +37,11 @@ def function_body(source: str, name: str) -> str:
     raise AssertionError(f"function not found: {name}")
 
 
+def has_owned_return(fragment: str, value: str) -> bool:
+    return f"return {value};" in fragment or \
+        f"GATEWAY_ASSIGNMENT_RETURN({value})" in fragment
+
+
 class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
     def test_claim_handler_exposes_owned_tristate_contract(self):
         self.assertRegex(
@@ -60,7 +65,9 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertIn("return -ENOENT;", claim[:parse])
         self.assertIn("return -EBADMSG;", claim[parse:wrong_command])
         self.assertIn("return -ENOENT;", claim[wrong_command:inactive])
-        self.assertIn("return -ESTALE;", claim[inactive:decode])
+        self.assertTrue(has_owned_return(claim[inactive:decode], "-ESTALE"))
+        self.assertIn("k_mutex_lock(&gateway_discovery_assignment_mutex", claim)
+        self.assertIn("k_mutex_unlock(&gateway_discovery_assignment_mutex)", claim)
 
     def test_malformed_and_stale_claims_are_never_accepted(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
@@ -82,9 +89,9 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, validation)
-        self.assertIn("return -EBADMSG;", validation)
-        self.assertIn("return -EPROTO;", validation)
-        self.assertIn("return -ESTALE;", validation)
+        self.assertTrue(has_owned_return(validation, "-EBADMSG"))
+        self.assertTrue(has_owned_return(validation, "-EPROTO"))
+        self.assertTrue(has_owned_return(validation, "-ESTALE"))
 
     def test_valid_and_duplicate_claims_and_table_acks_are_distinguished(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
@@ -104,23 +111,23 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS",
             "table_command_seq",
             "anchor_index == SIZE_MAX",
-            "return -ESTALE;",
             "ack_mask |=",
             "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE",
             "APP_GATEWAY_SEMANTIC_ACCEPT_NEW",
         ):
             with self.subTest(ack_required=required):
                 self.assertIn(required, ack)
+        self.assertTrue(has_owned_return(ack, "-ESTALE"))
         self.assertIn("ack_mask &", ack)
         self.assertIn("duplicate_count", duplicate)
-        self.assertIn("return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;", duplicate)
-        self.assertIn("return -ENOSPC;", capacity_and_insert)
+        self.assertTrue(has_owned_return(
+            duplicate, "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE"
+        ))
+        self.assertTrue(has_owned_return(capacity_and_insert, "-ENOSPC"))
         self.assertIn("claim_count++", capacity_and_insert)
-        self.assertTrue(
-            capacity_and_insert.rstrip().endswith(
-                "return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;\n}"
-            )
-        )
+        self.assertTrue(has_owned_return(
+            capacity_and_insert, "APP_GATEWAY_SEMANTIC_ACCEPT_NEW"
+        ))
 
     def test_only_owned_acceptance_reaches_the_gateway_ack_gate(self):
         real_gateway = GATEWAY[

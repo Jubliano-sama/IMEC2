@@ -18,6 +18,9 @@
 #define ASSIGNMENT_EPOCH UINT32_C(0xd1500104)
 #define CLAIM_SESSION UINT32_C(0x41000001)
 #define TABLE_SESSION UINT32_C(0x42000001)
+#define TABLE_GENERATION_1 UINT32_C(0x42000001)
+#define TABLE_GENERATION_2 UINT32_C(0x42000002)
+#define TABLE_GENERATION_3 UINT32_C(0x42000003)
 #define OPERATION_DEADLINE_MS 90000u
 #define MAX_ROUNDS 4u
 
@@ -30,11 +33,14 @@ struct anchor_model {
     struct app_discovery_assignment_policy policy;
     uint64_t id;
     uint32_t persisted_epoch;
+    uint32_t persisted_table_seq;
+    uint32_t persisted_table_fingerprint;
     uint8_t persisted_slot;
     uint8_t assigned_slot;
     uint8_t claim_replies;
     uint8_t ack_replies;
     bool persisted;
+    bool persisted_provisioned;
     bool claimed;
     bool acked;
     bool table_applied;
@@ -208,12 +214,14 @@ static bool build_table(const struct gateway_model *gateway,
 static bool anchor_apply_table(struct anchor_model *anchor,
                                const uint8_t *payload,
                                size_t payload_len,
+                               uint32_t table_seq,
                                bool persist_ok)
 {
     struct discovery_assignment_entry decoded[MAX_ANCHORS];
     enum discovery_assignment_phase phase = 0;
     enum app_discovery_assignment_table_decision decision;
     uint32_t epoch = 0u;
+    uint32_t table_fingerprint;
     uint8_t slot_count = 0u;
     size_t count = 0u;
     size_t match = SIZE_MAX;
@@ -226,8 +234,13 @@ static bool anchor_apply_table(struct anchor_model *anchor,
             &count, &slot_count) != PROTO_OK) {
         return false;
     }
-    decision = app_discovery_assignment_policy_note_table(&anchor->policy,
-                                                           epoch);
+    table_fingerprint = discovery_assignment_table_fingerprint(
+        decoded, count, slot_count);
+    if (table_fingerprint == 0u) {
+        return false;
+    }
+    decision = app_discovery_assignment_policy_note_table(
+        &anchor->policy, epoch, table_seq, table_fingerprint);
     if (decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
         return false;
     }
@@ -242,7 +255,21 @@ static bool anchor_apply_table(struct anchor_model *anchor,
         }
     }
     if (match == SIZE_MAX) {
-        app_discovery_assignment_policy_note_unassigned(&anchor->policy, epoch);
+        if (!persist_ok) {
+            anchor->persistence_retried = true;
+            return false;
+        }
+        if (!app_discovery_assignment_policy_note_unassigned(
+                &anchor->policy, epoch, table_seq, table_fingerprint)) {
+            return false;
+        }
+        anchor->persisted = true;
+        anchor->persisted_provisioned = false;
+        anchor->persisted_epoch = epoch;
+        anchor->persisted_table_seq = table_seq;
+        anchor->persisted_table_fingerprint = table_fingerprint;
+        anchor->persisted_slot = UINT8_MAX;
+        anchor->assigned_slot = UINT8_MAX;
         return false;
     }
     if (!persist_ok) {
@@ -250,9 +277,13 @@ static bool anchor_apply_table(struct anchor_model *anchor,
         return false;
     }
     anchor->persisted = true;
+    anchor->persisted_provisioned = true;
     anchor->persisted_epoch = epoch;
+    anchor->persisted_table_seq = table_seq;
+    anchor->persisted_table_fingerprint = table_fingerprint;
     anchor->persisted_slot = decoded[match].slot;
-    if (!app_discovery_assignment_policy_commit(&anchor->policy, epoch)) {
+    if (!app_discovery_assignment_policy_commit(
+            &anchor->policy, epoch, table_seq, table_fingerprint)) {
         return false;
     }
     anchor->assigned_slot = decoded[match].slot;
@@ -300,7 +331,8 @@ static bool run_workflow(size_t anchor_count)
         anchors[i].id = ANCHOR_BASE + i;
         anchors[i].assigned_slot = UINT8_MAX;
         anchors[i].persisted_slot = UINT8_MAX;
-        app_discovery_assignment_policy_init(&anchors[i].policy, false, 0u);
+        app_discovery_assignment_policy_init(
+            &anchors[i].policy, false, false, 0u, 0u, 0u);
         CHECK(!app_discovery_assignment_policy_normal_click_reply_allowed(
                   &anchors[i].policy),
               "hash fallback provisioned anchor=%zu", i);
@@ -392,7 +424,11 @@ static bool run_workflow(size_t anchor_count)
     CHECK(compare_deterministic_order(&gateway, entries),
           "deterministic order count=%zu", anchor_count);
     CHECK(app_discovery_assignment_policy_note_table(
-              &anchors[0].policy, ASSIGNMENT_EPOCH - 1u) ==
+              &anchors[0].policy, ASSIGNMENT_EPOCH - 1u,
+              TABLE_GENERATION_1,
+              discovery_assignment_table_fingerprint(
+                  entries, gateway.claim_count,
+                  MAX_ANCHORS)) ==
               APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE,
           "stale table interrupted join count=%zu", anchor_count);
     for (size_t i = 0u; i < anchor_count; i++) {
@@ -449,6 +485,7 @@ static bool run_workflow(size_t anchor_count)
             }
             applied = anchor_apply_table(
                 &anchors[i], table_payload, table_payload_len,
+                TABLE_GENERATION_1,
                 !(round == 0u && i % 19u == 0u));
             if (!applied) {
                 continue;
@@ -500,12 +537,29 @@ static bool run_workflow(size_t anchor_count)
             }
         }
         CHECK(expected != SIZE_MAX && anchors[i].persisted &&
+              anchors[i].persisted_provisioned &&
               anchors[i].persisted_epoch == ASSIGNMENT_EPOCH &&
+              anchors[i].persisted_table_seq == TABLE_GENERATION_1 &&
+              anchors[i].persisted_table_fingerprint ==
+                  discovery_assignment_table_fingerprint(
+                      entries, anchor_count, MAX_ANCHORS) &&
               anchors[i].persisted_slot == entries[expected].slot &&
               anchors[i].assigned_slot == entries[expected].slot,
-              "persistence mismatch count=%zu anchor=%zu", anchor_count, i);
-        app_discovery_assignment_policy_init(&restored, true,
-                                              anchors[i].persisted_epoch);
+              "persistence mismatch count=%zu anchor=%zu persisted=%u provisioned=%u epoch=%u seq=%u fingerprint=0x%08x slot=%u assigned=%u expected_slot=%u expected_fingerprint=0x%08x",
+              anchor_count, i, anchors[i].persisted ? 1u : 0u,
+              anchors[i].persisted_provisioned ? 1u : 0u,
+              anchors[i].persisted_epoch,
+              anchors[i].persisted_table_seq,
+              anchors[i].persisted_table_fingerprint,
+              anchors[i].persisted_slot,
+              anchors[i].assigned_slot,
+              entries[expected].slot,
+              discovery_assignment_table_fingerprint(
+                  entries, anchor_count, MAX_ANCHORS));
+        app_discovery_assignment_policy_init(
+            &restored, true, anchors[i].persisted_provisioned,
+            anchors[i].persisted_epoch, anchors[i].persisted_table_seq,
+            anchors[i].persisted_table_fingerprint);
         CHECK(app_discovery_assignment_policy_normal_click_reply_allowed(
                   &restored),
               "reset lost provisioned state count=%zu anchor=%zu",
@@ -561,12 +615,16 @@ static bool test_conflicts_capacity_and_late_claim(void)
               PROTO_ERR_MALFORMED,
           "conflicting slot table encoded");
 
-    app_discovery_assignment_policy_init(&late, false, 0u);
+    app_discovery_assignment_policy_init(
+        &late, false, false, 0u, 0u, 0u);
     CHECK(app_discovery_assignment_policy_note_table(
-              &late, ASSIGNMENT_EPOCH) ==
+              &late, ASSIGNMENT_EPOCH, TABLE_GENERATION_1,
+              UINT32_C(0x7e57f001)) ==
               APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM,
           "late table did not require claim");
-    CHECK(!app_discovery_assignment_policy_commit(&late, ASSIGNMENT_EPOCH),
+    CHECK(!app_discovery_assignment_policy_commit(
+              &late, ASSIGNMENT_EPOCH, TABLE_GENERATION_1,
+              UINT32_C(0x7e57f001)),
           "late table committed without claim");
     CHECK(!app_discovery_assignment_policy_normal_click_reply_allowed(&late),
           "hash fallback hid missing assignment");
@@ -777,6 +835,158 @@ static bool test_explicit_budget_preserves_randomized_table_retries(void)
     return true;
 }
 
+static bool test_same_epoch_expansion_and_unassigned_reboot_are_monotonic(void)
+{
+    struct gateway_model expanded = {0};
+    struct gateway_model smaller = {0};
+    struct gateway_model omitted = {0};
+    struct discovery_assignment_entry expanded_entries[6];
+    struct discovery_assignment_entry smaller_entries[2];
+    struct discovery_assignment_entry omitted_entries[3];
+    struct anchor_model anchor = {0};
+    struct anchor_model restored = {0};
+    uint8_t expanded_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    uint8_t smaller_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    uint8_t omitted_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    size_t expanded_len = 0u;
+    size_t smaller_len = 0u;
+    size_t omitted_len = 0u;
+    uint32_t expanded_fingerprint;
+    uint32_t smaller_fingerprint;
+    uint32_t omitted_fingerprint;
+    uint8_t expanded_slot;
+
+    expanded.claim_count = 6u;
+    for (size_t i = 0u; i < expanded.claim_count; i++) {
+        expanded.claim_ids[i] = ANCHOR_BASE + i;
+    }
+    CHECK(build_table(&expanded, expanded_entries, expanded_payload,
+                      &expanded_len),
+          "expanded table build failed");
+
+    /* Pick two tail entries so expansion necessarily moves the target slot. */
+    smaller.claim_count = 2u;
+    smaller.claim_ids[0] = expanded_entries[4].anchor_id;
+    smaller.claim_ids[1] = expanded_entries[5].anchor_id;
+    CHECK(build_table(&smaller, smaller_entries, smaller_payload,
+                      &smaller_len),
+          "smaller table build failed");
+    CHECK(smaller_entries[0].anchor_id == expanded_entries[4].anchor_id &&
+              smaller_entries[0].slot == 0u &&
+              expanded_entries[4].slot == 4u,
+          "fixture does not force a slot move");
+
+    omitted.claim_count = 3u;
+    for (size_t i = 0u; i < omitted.claim_count; i++) {
+        omitted.claim_ids[i] = expanded_entries[i].anchor_id;
+    }
+    CHECK(build_table(&omitted, omitted_entries, omitted_payload,
+                      &omitted_len),
+          "omitted table build failed");
+
+    smaller_fingerprint = discovery_assignment_table_fingerprint(
+        smaller_entries, smaller.claim_count, MAX_ANCHORS);
+    expanded_fingerprint = discovery_assignment_table_fingerprint(
+        expanded_entries, expanded.claim_count, MAX_ANCHORS);
+    omitted_fingerprint = discovery_assignment_table_fingerprint(
+        omitted_entries, omitted.claim_count, MAX_ANCHORS);
+    CHECK(smaller_fingerprint != 0u && expanded_fingerprint != 0u &&
+              omitted_fingerprint != 0u &&
+              smaller_fingerprint != expanded_fingerprint &&
+              expanded_fingerprint != omitted_fingerprint,
+          "table fingerprints did not distinguish roster generations");
+
+    anchor.id = smaller_entries[0].anchor_id;
+    anchor.assigned_slot = UINT8_MAX;
+    anchor.persisted_slot = UINT8_MAX;
+    app_discovery_assignment_policy_init(
+        &anchor.policy, false, false, 0u, 0u, 0u);
+    CHECK(app_discovery_assignment_policy_note_claim(
+              &anchor.policy, ASSIGNMENT_EPOCH) ==
+              APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
+          "smaller generation claim rejected");
+    CHECK(anchor_apply_table(&anchor, smaller_payload, smaller_len,
+                             TABLE_GENERATION_1, true),
+          "smaller generation assignment failed");
+    CHECK(anchor.persisted_table_fingerprint == smaller_fingerprint,
+          "smaller fingerprint was not persisted");
+
+    CHECK(app_discovery_assignment_policy_note_claim(
+              &anchor.policy, ASSIGNMENT_EPOCH) ==
+              APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
+          "expanded generation claim rejected");
+    CHECK(anchor_apply_table(&anchor, expanded_payload, expanded_len,
+                             TABLE_GENERATION_2, true),
+          "expanded generation assignment failed");
+    expanded_slot = anchor.assigned_slot;
+    CHECK(expanded_slot == 4u &&
+              anchor.persisted_table_seq == TABLE_GENERATION_2 &&
+              anchor.persisted_table_fingerprint == expanded_fingerprint,
+          "expanded generation did not replace smaller assignment");
+
+    CHECK(app_discovery_assignment_policy_note_claim(
+              &anchor.policy, ASSIGNMENT_EPOCH) ==
+              APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
+          "post-expansion claim rejected");
+    CHECK(!anchor_apply_table(&anchor, smaller_payload, smaller_len,
+                              TABLE_GENERATION_1, true),
+          "older smaller generation reapplied");
+    CHECK(anchor.assigned_slot == expanded_slot &&
+              anchor.persisted_provisioned &&
+              anchor.persisted_table_seq == TABLE_GENERATION_2 &&
+              anchor.persisted_table_fingerprint == expanded_fingerprint,
+          "older smaller generation mutated expanded assignment");
+
+    CHECK(!anchor_apply_table(&anchor, omitted_payload, omitted_len,
+                              TABLE_GENERATION_2, true),
+          "same-sequence conflicting roster applied");
+    CHECK(anchor.persisted_provisioned &&
+              anchor.persisted_table_fingerprint == expanded_fingerprint,
+          "same-sequence conflict erased assignment");
+
+    CHECK(!anchor_apply_table(&anchor, omitted_payload, omitted_len,
+                              TABLE_GENERATION_3, true),
+          "authoritative omission unexpectedly returned assigned");
+    CHECK(anchor.persisted && !anchor.persisted_provisioned &&
+              anchor.persisted_epoch == ASSIGNMENT_EPOCH &&
+              anchor.persisted_table_seq == TABLE_GENERATION_3 &&
+              anchor.persisted_table_fingerprint == omitted_fingerprint &&
+              anchor.persisted_slot == UINT8_MAX,
+          "unassigned generation tombstone was not retained");
+
+    restored.id = anchor.id;
+    restored.assigned_slot = UINT8_MAX;
+    restored.persisted_slot = anchor.persisted_slot;
+    restored.persisted = anchor.persisted;
+    restored.persisted_provisioned = anchor.persisted_provisioned;
+    restored.persisted_epoch = anchor.persisted_epoch;
+    restored.persisted_table_seq = anchor.persisted_table_seq;
+    restored.persisted_table_fingerprint =
+        anchor.persisted_table_fingerprint;
+    app_discovery_assignment_policy_init(
+        &restored.policy, restored.persisted,
+        restored.persisted_provisioned, restored.persisted_epoch,
+        restored.persisted_table_seq,
+        restored.persisted_table_fingerprint);
+    CHECK(!app_discovery_assignment_policy_normal_click_reply_allowed(
+              &restored.policy),
+          "rebooted omission became provisioned");
+    CHECK(app_discovery_assignment_policy_note_claim(
+              &restored.policy, ASSIGNMENT_EPOCH) ==
+              APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
+          "rebooted omission claim rejected");
+    CHECK(!anchor_apply_table(&restored, expanded_payload, expanded_len,
+                              TABLE_GENERATION_2, true),
+          "pre-reboot generation resurrected assignment");
+    CHECK(restored.policy.committed_table_seq == TABLE_GENERATION_3 &&
+              restored.policy.committed_table_fingerprint ==
+                  omitted_fingerprint &&
+              !app_discovery_assignment_policy_normal_click_reply_allowed(
+                  &restored.policy),
+          "replay changed rebooted unassigned watermark");
+    return true;
+}
+
 int main(void)
 {
     static const size_t counts[] = {2u, 6u, 16u, 32u, 50u};
@@ -793,6 +1003,9 @@ int main(void)
         return EXIT_FAILURE;
     }
     if (!test_explicit_budget_preserves_randomized_table_retries()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_same_epoch_expansion_and_unassigned_reboot_are_monotonic()) {
         return EXIT_FAILURE;
     }
     printf("PASS discovery_assignment_adversarial counts=2,6,16,32,50 "

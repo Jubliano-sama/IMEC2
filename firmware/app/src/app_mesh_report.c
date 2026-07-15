@@ -316,6 +316,7 @@ static bool mesh_child_custody_persistence_dirty;
 static uint8_t mesh_persistence_retry_round;
 static struct mesh_delivery_health mesh_delivery_health;
 static struct k_work_delayable mesh_tx_timeout_work;
+static struct k_work_delayable mesh_route_waiting_work;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static struct k_work_delayable report_tx_work;
 static struct k_work_delayable mesh_route_request_action_work;
@@ -358,7 +359,7 @@ struct app_mesh_command_orchestrator *mesh_gateway_command_orchestrator_context(
     return app_node_comm_gateway_control_context();
 }
 
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
 K_THREAD_STACK_DEFINE(mesh_route_work_q_stack, MESH_ROUTE_WORKQUEUE_STACK_SIZE);
 static struct k_work_q mesh_route_work_q;
 static const struct k_work_queue_config mesh_route_work_q_config = {
@@ -522,7 +523,7 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
 static int mesh_schedule_tx_timeout(void);
 static void mesh_route_discovery_work_handler(struct k_work *work);
 static void mesh_event_negotiation_retry_work_handler(struct k_work *work);
-static void mesh_schedule_async_route_request(uint64_t target_id, const char *reason);
+int mesh_schedule_route_request(uint64_t target_id, const char *reason);
 static bool mesh_defer_active_collection_result(const char *reason);
 static bool mesh_channel9_next_required_activity(
     const struct mesh_relay_event_timing_entry *entry,
@@ -2446,6 +2447,7 @@ static void mesh_route_reply_handoff_after_capture(uint64_t target_id,
     if (!mesh_ch9_tx_pending.active &&
         !mesh_relay_tx_active(&mesh_runtime)) {
         (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
+        (void)mesh_cancel_delayable(&mesh_route_waiting_work);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_ROUTE_REPLY_CANCEL_RETRY\n");
         }
@@ -2701,7 +2703,7 @@ static void mesh_schedule_route_waiting_retry_after(const char *reason, uint32_t
         return;
     }
 
-    (void)mesh_reschedule_delayable(&mesh_tx_timeout_work, delay_ms);
+    (void)mesh_reschedule_delayable(&mesh_route_waiting_work, delay_ms);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_WAIT_RETRY reason=%s delay=%u msg=0x%02x dst=0x%llx seq=%u active=%u\n",
                             reason == NULL ? "route-wait" : reason,
@@ -3164,13 +3166,12 @@ static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t del
     if (mesh_transport_paused() && work != &mesh_persistence_retry_work) {
         return -ESHUTDOWN;
     }
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
     return k_work_reschedule_for_queue(&mesh_route_work_q, work, K_MSEC(delay_ms));
 #else
     /*
-     * Known queue gap: mesh_clicker does not yet enable the dedicated
-     * mesh-route queue, so its node-communication work remains on sysworkq.
-     * The gateway due-kick fix must not hide that role-specific limitation.
+     * Legacy and ML presets retain the system workqueue. Production mesh
+     * presets enable the dedicated communication queue explicitly.
      */
     return k_work_reschedule(work, K_MSEC(delay_ms));
 #endif
@@ -3190,19 +3191,19 @@ static int mesh_submit_work(struct k_work *work)
     if (mesh_transport_paused()) {
         return -ESHUTDOWN;
     }
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
     return k_work_submit_to_queue(&mesh_route_work_q, work);
 #else
     return k_work_submit(work);
 #endif
 }
 
-static void mesh_schedule_async_route_request(uint64_t target_id, const char *reason)
+int mesh_schedule_route_request(uint64_t target_id, const char *reason)
 {
     int ret;
 
     if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
-        return;
+        return -EINVAL;
     }
 
     k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
@@ -3217,6 +3218,7 @@ static void mesh_schedule_async_route_request(uint64_t target_id, const char *re
                             mesh_route_discovery_reason);
     }
     k_mutex_unlock(&mesh_route_discovery_lock);
+    return ret;
 }
 
 static void mesh_route_discovery_work_handler(struct k_work *work)
@@ -3255,6 +3257,11 @@ static void mesh_route_discovery_work_handler(struct k_work *work)
                             (unsigned long long)target_id,
                             ret,
                             reason);
+    }
+    if (ret == -ETIMEDOUT && mesh_route_waiting_tx_valid &&
+        !mesh_relay_tx_active(&mesh_runtime)) {
+        mesh_schedule_route_waiting_exhausted_retry(
+            "async-route-exhausted");
     }
 }
 
@@ -3804,6 +3811,7 @@ int mesh_transport_pause_preserving_queued(void)
     mesh_stop_role_scan();
     (void)k_work_cancel(&mesh_rx_work);
     (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
+    (void)mesh_cancel_delayable(&mesh_route_waiting_work);
     (void)mesh_cancel_delayable(&mesh_c5_flood_work);
     (void)mesh_cancel_delayable(&mesh_route_discovery_work);
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -3838,6 +3846,9 @@ void mesh_transport_resume(void)
         mesh_ch9_tx_pending.active ||
         mesh_relay_result_bundle_pending(&mesh_runtime)) {
         (void)mesh_schedule_tx_timeout();
+    }
+    if (mesh_route_waiting_tx_valid) {
+        mesh_schedule_route_waiting_retry_after("transport-resume", 0u);
     }
 #if DEVICE_ROLE == ROLE_ANCHOR
     if (report_tx_queue_used() > 0u) {
@@ -4431,7 +4442,7 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
                                                     &valid_mesh_frame,
                                                     NULL);
             if (valid_mesh_frame) {
-                (void)mesh_process_queued_rx_now("c5-flood-delay-listen");
+                (void)mesh_submit_work(&mesh_rx_work);
             }
         } else if (ret < 0 && ret != -ETIMEDOUT &&
                    IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -4837,6 +4848,7 @@ int mesh_try_send_c5_flood_resume(
 int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
+                                bool send_wake_train,
                                 bool *rf_started)
 {
     struct mesh_outbound out_storage;
@@ -4892,7 +4904,7 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     ret = mesh_send_c5_flood_now(out,
                                  purpose,
                                  reason,
-                                 true,
+                                 send_wake_train,
                                  mesh_c5_flood_purpose_is_priority(purpose),
                                  true,
                                  NULL,
@@ -7382,7 +7394,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     uint8_t *frame = mesh_uwb_rx_frame;
     size_t capture_count = 0u;
     bool captured_route_reply = false;
-    bool process_event_control_after_rx = false;
     bool rx_failure_diagnostic_logged = false;
     int64_t uwb_window_start_ms = -1;
     uint32_t deadline_ms;
@@ -7737,9 +7748,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 continue;
             }
             capture_count++;
-            process_event_control_after_rx =
-                app_mesh_c5_route_capture_requires_post_rx_response(
-                    parsed.packet.msg_type);
+            if (app_mesh_c5_route_capture_requires_post_rx_response(
+                    parsed.packet.msg_type)) {
+                status_debug_note("DBG_EVENT_CTRL_POST_RX_QUEUED\n");
+            }
             if (app_mesh_c5_route_capture_requires_ack_hold(parsed.packet.msg_type)) {
                 captured_route_reply = true;
             }
@@ -7816,10 +7828,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     (void)dwm3000_driver_standby();
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
     radio_guard_uwb_stop();
-    if (process_event_control_after_rx) {
-        status_debug_note("DBG_EVENT_CTRL_POST_RX_HANDOFF\n");
-        (void)mesh_process_queued_rx_now("route-reply-event-control");
-    }
     mesh_restart_role_scan();
 
     if (mesh_rx_pending_count() > 0u) {
@@ -11122,6 +11130,21 @@ static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
     mesh_schedule_route_waiting_retry_after("route-wait-store", 0u);
 }
 
+static void mesh_defer_route_for_outbound(const struct mesh_outbound *out,
+                                           const char *reason,
+                                           bool store_route_wait)
+{
+    if (out == NULL || !mesh_id_is_unicast(out->packet.dst_id) ||
+        out->packet.dst_id == DEVICE_ID) {
+        return;
+    }
+    if (store_route_wait) {
+        mesh_store_route_waiting_tx(out);
+    } else {
+        (void)mesh_schedule_route_request(out->packet.dst_id, reason);
+    }
+}
+
 static void mesh_drop_route_waiting_tx(const char *reason)
 {
     struct app_mesh_paused_delivery_store_result drop_result;
@@ -11234,7 +11257,7 @@ static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *t
     app_mesh_persistence_clear_outbox();
     mesh_store_route_waiting_tx(tx);
     mesh_direct_gateway_bulk_probe_suppress(now_ms, reason);
-    route_ret = mesh_request_route(tx->packet.dst_id, reason);
+    route_ret = -EINPROGRESS;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_DIRECT_GW_ROUTE_REPAIR action=%s seq=%u ret=%d route_ret=%d now=%u current=0x%llx reason=%s\n",
                             route_delivery_action_name(ROUTE_DELIVERY_DISCOVER),
@@ -11244,9 +11267,6 @@ static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *t
                             now_ms,
                             (unsigned long long)tx->next_hop_id,
                             reason == NULL ? "direct-gateway" : reason);
-    }
-    if (route_ret == -ETIMEDOUT) {
-        mesh_schedule_route_waiting_exhausted_retry("direct-gateway-route-exhausted");
     }
     return -EHOSTUNREACH;
 }
@@ -11686,6 +11706,16 @@ out_unlock:
     k_mutex_unlock(&mesh_route_wait_scratch_lock);
 }
 
+static void mesh_route_waiting_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (mesh_transport_paused()) {
+        return;
+    }
+    mesh_try_route_waiting_tx();
+}
+
 static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                             const char *reason,
                                             uint32_t *wait_retry_delay_ms,
@@ -11745,17 +11775,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
             goto send_prepared;
         }
         if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
-            int route_ret;
-
-            if (store_route_wait) {
-                mesh_store_route_waiting_tx(&aged_out);
-            }
-            route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
-            if (route_ret == -ETIMEDOUT) {
-                mesh_schedule_route_waiting_exhausted_retry(
-                    "result-offer-route-exhausted");
-                return -EHOSTUNREACH;
-            }
+            mesh_defer_route_for_outbound(&aged_out, reason,
+                                           store_route_wait);
             return -EHOSTUNREACH;
         }
         LOG_WRN("mesh result offer rejected for %s: ret=%d", reason, ret);
@@ -11807,17 +11828,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                 goto send_prepared;
             }
             if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
-                int route_ret;
-
-                if (store_route_wait) {
-                    mesh_store_route_waiting_tx(&aged_out);
-                }
-                route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
-                if (route_ret == -ETIMEDOUT) {
-                    mesh_schedule_route_waiting_exhausted_retry(
-                        "direct-gateway-route-exhausted");
-                    return -EHOSTUNREACH;
-                }
+                mesh_defer_route_for_outbound(&aged_out, reason,
+                                               store_route_wait);
                 return -EHOSTUNREACH;
             }
             return mesh_errno_from_proto(ret);
@@ -11922,8 +11934,6 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
             return -EBUSY;
         }
         if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
-            int route_ret;
-
             mesh_debug_channel9_unavailable("tx",
                                             reason,
                                             &aged_out.packet,
@@ -11935,15 +11945,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
             LOG_WRN("mesh channel-9 timing unavailable for %s; refreshing channel-5 contact: ret=%d",
                     reason,
                     ret);
-            if (store_route_wait) {
-                mesh_store_route_waiting_tx(&aged_out);
-            }
-            route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
-            if (route_ret == -ETIMEDOUT) {
-                mesh_schedule_route_waiting_exhausted_retry(
-                    "route-discovery-exhausted");
-                return -EHOSTUNREACH;
-            }
+            mesh_defer_route_for_outbound(&aged_out, reason,
+                                           store_route_wait);
             return -EHOSTUNREACH;
         }
         LOG_WRN("mesh channel-9 TX rejected for %s: ret=%d", reason, ret);
@@ -11959,17 +11962,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
     if (ret != PROTO_OK) {
         LOG_WRN("mesh could not start tracked TX for %s: %d", reason, ret);
         if (ret == PROTO_ERR_NOT_FOUND) {
-            int route_ret;
-
-            if (store_route_wait) {
-                mesh_store_route_waiting_tx(&aged_out);
-            }
-            route_ret = mesh_request_route(aged_out.packet.dst_id, reason);
-            if (route_ret == -ETIMEDOUT) {
-                mesh_schedule_route_waiting_exhausted_retry(
-                    "route-discovery-exhausted");
-                return -EHOSTUNREACH;
-            }
+            mesh_defer_route_for_outbound(&aged_out, reason,
+                                           store_route_wait);
         }
         return mesh_errno_from_proto(ret);
     }
@@ -12044,25 +12038,16 @@ send_prepared:
             if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
                 mesh_relay_note_delivery_failure(&mesh_runtime,
                                                  mesh_runtime.pending.packet.dst_id);
-                (void)mesh_request_route(mesh_runtime.pending.packet.dst_id, reason);
+                (void)mesh_schedule_route_request(
+                    mesh_runtime.pending.packet.dst_id, reason);
             }
             return 0;
         }
         mesh_relay_cancel_tx(&mesh_runtime);
         app_mesh_persistence_clear_outbox();
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
-            int route_ret;
-
             mesh_relay_note_delivery_failure(&mesh_runtime, tx.packet.dst_id);
-            if (store_route_wait) {
-                mesh_store_route_waiting_tx(&tx);
-            }
-            route_ret = mesh_request_route(tx.packet.dst_id, reason);
-            if (route_ret == -ETIMEDOUT) {
-                mesh_schedule_route_waiting_exhausted_retry(
-                    "send-failure-route-exhausted");
-                return -EHOSTUNREACH;
-            }
+            mesh_defer_route_for_outbound(&tx, reason, store_route_wait);
         }
         return ret;
     }
@@ -14280,7 +14265,7 @@ after_gateway_ack:
                             if (failure_ret == PROTO_OK &&
                                 (failure_actions &
                                  MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
-                                mesh_schedule_async_route_request(
+                                (void)mesh_schedule_route_request(
                                     retransmit->packet.dst_id,
                                     "retransmit-event-repair-failed");
                             } else if (failure_ret != PROTO_OK) {
@@ -14292,7 +14277,7 @@ after_gateway_ack:
                                     downstream_peers,
                                     downstream_peer_count,
                                     "parent-route-account-failed");
-                                mesh_schedule_async_route_request(
+                                (void)mesh_schedule_route_request(
                                     retransmit->packet.dst_id,
                                     "retransmit-event-repair-account-failed");
                             }
@@ -14313,7 +14298,7 @@ after_gateway_ack:
                                             defer_ret,
                                             mesh_runtime.pending.retry_after_ms);
                     } else {
-                        (void)mesh_request_route(
+                        (void)mesh_schedule_route_request(
                             retransmit->packet.dst_id,
                             "retransmit-channel9-refresh");
                     }
@@ -14419,8 +14404,9 @@ after_gateway_ack:
             status_debug_printf("DBG_ROUTE_REQ_UPSTREAM_REPAIR target=0x%llx\n",
                                 (unsigned long long)result->route_discovery_target_id);
             if (mesh_channel9_connection_count() == 0u) {
-                mesh_schedule_async_route_request(result->route_discovery_target_id,
-                                                  "rx-route-request-upstream");
+                (void)mesh_schedule_route_request(
+                    result->route_discovery_target_id,
+                    "rx-route-request-upstream");
             } else {
                 mesh_schedule_route_waiting_retry_after("rx-route-request-ch9-wait",
                                                         MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
@@ -14500,7 +14486,7 @@ after_gateway_ack:
             LOG_INF("mesh route ready deferred until queued RX control frames drain");
             mesh_schedule_route_waiting_retry("route-ready-rx-drain");
         } else if (route_ready_result.try_waiting_tx) {
-            mesh_try_route_waiting_tx();
+            mesh_schedule_route_waiting_retry_after("route-ready", 0u);
         }
     }
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
@@ -14581,7 +14567,7 @@ after_gateway_ack:
         report_tx_schedule(0u);
     }
     if (!mesh_relay_tx_active(&mesh_runtime)) {
-        mesh_try_route_waiting_tx();
+        mesh_schedule_route_waiting_retry_after("result-actions-complete", 0u);
     }
 }
 
@@ -14662,7 +14648,8 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         if (result->status == PROTO_ERR_NOT_FOUND &&
             pending->packet.dst_id != DEVICE_ID &&
             pending->packet.dst_id != MESH_BROADCAST_ID) {
-            (void)mesh_request_route(pending->packet.dst_id, "rx-forward-miss");
+            (void)mesh_schedule_route_request(pending->packet.dst_id,
+                                              "rx-forward-miss");
         }
         if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             mesh_packet_is_event_control_type(pending->packet.msg_type)) {
@@ -15054,8 +15041,9 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
             mesh_direct_gateway_bulk_probe_suppress(now_ms,
                                                     "ch9-gateway-ack-timeout");
         }
-        route_ret = mesh_request_route(failed->packet.dst_id,
-                                       "ch9-gateway-ack-timeout");
+        route_ret = mesh_schedule_route_request(
+            failed->packet.dst_id,
+            "ch9-gateway-ack-timeout");
     }
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -15318,22 +15306,16 @@ static void mesh_tx_timeout_handler(struct k_work *work)
 
     if (pending_route_waiting &&
         (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
-        int route_ret;
-
         if (!mesh_relay_tx_active(&mesh_runtime)) {
             mesh_store_route_waiting_tx(pending_waiting);
         }
-        route_ret = mesh_request_route(pending_waiting->packet.dst_id, "pending-tx-timeout");
+        (void)mesh_schedule_route_request(pending_waiting->packet.dst_id,
+                                          "pending-tx-timeout");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_TX_TIMEOUT_ROUTE_REQ ret=%d relay=%u route=%u dst=0x%llx\n",
-                                route_ret,
+            status_debug_printf("DBG_TX_TIMEOUT_ROUTE_REQ_ASYNC relay=%u route=%u dst=0x%llx\n",
                                 mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
                                 mesh_route_waiting_tx_valid ? 1u : 0u,
                                 (unsigned long long)pending_waiting->packet.dst_id);
-        }
-        if (route_ret == -ETIMEDOUT && !mesh_relay_tx_active(&mesh_runtime)) {
-            mesh_schedule_route_waiting_exhausted_retry(
-                "pending-tx-route-exhausted");
         }
     }
 
@@ -15729,6 +15711,7 @@ static bool mesh_handoff_anchor_click_claim(
                             quality);
     }
     if (!handled) {
+        anchor_click_window_set_active(false);
         LOG_ERR("anchor click wake handoff failed: clicker=0x%016llx event_seq=%u attempt=%u; claim not reclassified as route traffic",
                 (unsigned long long)claim->clicker_id,
                 claim->click_event_id,
@@ -16060,7 +16043,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         if (coordinator_decision.route_wait_allowed &&
             DEVICE_ROLE == ROLE_ANCHOR &&
             mesh_route_waiting_tx_valid) {
-            mesh_try_route_waiting_tx();
+            mesh_schedule_route_waiting_retry_after("rx-coordinator", 0u);
         }
         if (coordinator_decision.report_tx_allowed) {
             report_tx_schedule(0u);
@@ -16087,7 +16070,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             LOG_INF("mesh UWB RX suppressed while route-waiting TX owns channel-9 event");
         }
-        mesh_try_route_waiting_tx();
+        mesh_schedule_route_waiting_retry_after("rx-route-waiting", 0u);
         mesh_schedule_uwb_rx(MESH_ROUTE_WAIT_RX_SUPPRESS_MS);
         return;
     }
@@ -16938,7 +16921,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     atomic_set(&mesh_transport_paused_state, 0);
     app_mesh_rx_handoff_reset(&mesh_rx_handoff);
     app_mesh_paused_delivery_reset(&mesh_paused_delivery);
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
     k_work_queue_start(&mesh_route_work_q,
                        mesh_route_work_q_stack,
                        K_THREAD_STACK_SIZEOF(mesh_route_work_q_stack),
@@ -16960,6 +16943,8 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     memset(&mesh_delivery_health, 0, sizeof(mesh_delivery_health));
     app_mesh_ch9_ack_table_init(&mesh_ch9_ack_table);
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
+    k_work_init_delayable(&mesh_route_waiting_work,
+                          mesh_route_waiting_work_handler);
 #if DEVICE_ROLE == ROLE_ANCHOR
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
 #endif

@@ -950,9 +950,10 @@ int app_mesh_persistence_save_discovery_assignment(
 
     if (snapshot == NULL || !snapshot->valid ||
         snapshot->version != APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION ||
-        snapshot->epoch == 0u || snapshot->local_id == 0u ||
+        snapshot->epoch == 0u || snapshot->table_command_seq == 0u ||
+        snapshot->table_fingerprint == 0u || snapshot->local_id == 0u ||
         snapshot->gateway_id == 0u || snapshot->slot_count == 0u ||
-        snapshot->slot >= snapshot->slot_count) {
+        (snapshot->provisioned && snapshot->slot >= snapshot->slot_count)) {
         return -EINVAL;
     }
     ret = app_mesh_persistence_init();
@@ -989,8 +990,9 @@ int app_mesh_persistence_restore_discovery_assignment(
     if (read_len < 0 || (size_t)read_len != sizeof(*snapshot) ||
         !snapshot->valid ||
         snapshot->version != APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION ||
-        snapshot->epoch == 0u || snapshot->slot_count == 0u ||
-        snapshot->slot >= snapshot->slot_count) {
+        snapshot->epoch == 0u || snapshot->table_command_seq == 0u ||
+        snapshot->table_fingerprint == 0u || snapshot->slot_count == 0u ||
+        (snapshot->provisioned && snapshot->slot >= snapshot->slot_count)) {
         memset(snapshot, 0, sizeof(*snapshot));
         return read_len < 0 ? (int)read_len : -EINVAL;
     }

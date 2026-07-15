@@ -30,6 +30,8 @@ static bool pair_start_pending;
 static uint32_t pair_start_delivery_handle;
 static bool survey_running;
 static bool discovery_pending;
+static bool discovery_generation_active;
+static bool discovery_report_stage_pending;
 static atomic_t abort_requested;
 static struct k_work_delayable survey_work;
 static struct k_work_delayable pair_lease_work;
@@ -216,11 +218,28 @@ void app_anchor_survey_runtime_schedule_ms(uint32_t delay_ms)
 
 uint16_t app_anchor_survey_runtime_next_sequence(void)
 {
+    uint16_t sequence;
+    k_spinlock_key_t key = k_spin_lock(&survey_lock);
+
     survey_sequence++;
     if (survey_sequence == 0u) {
         survey_sequence = 1u;
     }
-    return survey_sequence;
+    sequence = survey_sequence;
+    k_spin_unlock(&survey_lock, key);
+    return sequence;
+}
+
+void app_anchor_survey_runtime_seed_sequence(uint16_t observed_sequence)
+{
+    k_spinlock_key_t key;
+
+    if (observed_sequence == 0u) {
+        return;
+    }
+    key = k_spin_lock(&survey_lock);
+    survey_sequence = observed_sequence;
+    k_spin_unlock(&survey_lock, key);
 }
 
 bool app_anchor_survey_runtime_discovery_is_pending(void)
@@ -243,21 +262,50 @@ bool app_anchor_survey_runtime_abort_requested(void)
     return atomic_get(&abort_requested) != 0;
 }
 
+enum app_anchor_survey_discovery_admission
+app_anchor_survey_runtime_admit_discovery(uint32_t survey_id)
+{
+    enum app_anchor_survey_discovery_admission admission;
+    k_spinlock_key_t key;
+
+    if (DEVICE_ROLE != ROLE_ANCHOR || survey_id == 0u) {
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+
+    key = k_spin_lock(&survey_lock);
+    if (!discovery_generation_active) {
+        discovery_generation_active = true;
+        discovery_config = (struct survey_discovery_config) {
+            .survey_id = survey_id,
+        };
+        admission = APP_ANCHOR_SURVEY_DISCOVERY_ACCEPTED;
+    } else if (discovery_config.survey_id == survey_id) {
+        admission = APP_ANCHOR_SURVEY_DISCOVERY_DUPLICATE;
+    } else {
+        admission = APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    k_spin_unlock(&survey_lock, key);
+    return admission;
+}
+
 void app_anchor_survey_runtime_queue_discovery(
     const struct survey_discovery_config *config,
     uint32_t start_ms)
 {
     k_spinlock_key_t key;
 
-    if (config == NULL) {
+    if (config == NULL || config->survey_id == 0u) {
         return;
     }
 
     key = k_spin_lock(&survey_lock);
-    discovery_config = *config;
-    discovery_start_ms = start_ms;
-    discovery_pending = true;
-    atomic_set(&abort_requested, 0);
+    if (discovery_generation_active &&
+        discovery_config.survey_id == config->survey_id) {
+        discovery_config = *config;
+        discovery_start_ms = start_ms;
+        discovery_pending = true;
+        atomic_set(&abort_requested, 0);
+    }
     k_spin_unlock(&survey_lock, key);
 }
 
@@ -630,7 +678,12 @@ static void finish_discovery_without_radio(
     survey_rf_retry_reset(&discovery_rf_retry);
     key = k_spin_lock(&survey_lock);
     survey_running = false;
+    discovery_report_stage_pending = report_ret < 0;
+    discovery_generation_active = report_ret < 0;
     k_spin_unlock(&survey_lock, key);
+    if (report_ret < 0) {
+        schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+    }
 }
 
 static void survey_work_handler(struct k_work *work)
@@ -641,7 +694,9 @@ static void survey_work_handler(struct k_work *work)
     uint32_t pending_discovery_start_ms = 0u;
     uint32_t pair_deadline_ms = 0u;
     bool as_responder;
+    bool report_durable = false;
     bool run_discovery = false;
+    bool retry_report_stage = false;
     int64_t uwb_window_start_ms;
     k_spinlock_key_t key;
     int low_power_ret;
@@ -654,6 +709,10 @@ static void survey_work_handler(struct k_work *work)
     }
     (void)app_anchor_survey_discovery_retry_report();
     key = k_spin_lock(&survey_lock);
+    if (discovery_report_stage_pending) {
+        pending_discovery = discovery_config;
+        retry_report_stage = true;
+    }
     if (discovery_pending) {
         pending_discovery = discovery_config;
         pending_discovery_start_ms = discovery_start_ms;
@@ -662,6 +721,24 @@ static void survey_work_handler(struct k_work *work)
         run_discovery = true;
     }
     k_spin_unlock(&survey_lock, key);
+
+    if (retry_report_stage) {
+        (void)app_anchor_survey_discovery_retry_report();
+        if (app_anchor_survey_discovery_report_staged(
+                pending_discovery.survey_id)) {
+            key = k_spin_lock(&survey_lock);
+            if (discovery_report_stage_pending &&
+                discovery_config.survey_id == pending_discovery.survey_id) {
+                discovery_report_stage_pending = false;
+                discovery_generation_active = false;
+            }
+            k_spin_unlock(&survey_lock, key);
+            runtime_ops.report_schedule(0u);
+        } else {
+            schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+        }
+        return;
+    }
 
     if (run_discovery) {
         uint32_t discovery_deadline_ms = survey_discovery_radio_deadline_ms(
@@ -700,6 +777,7 @@ static void survey_work_handler(struct k_work *work)
                     survey_rf_retry_reset(&discovery_rf_retry);
                     key = k_spin_lock(&survey_lock);
                     survey_running = false;
+                    discovery_generation_active = false;
                     k_spin_unlock(&survey_lock, key);
                 }
                 return;
@@ -717,11 +795,15 @@ static void survey_work_handler(struct k_work *work)
         uwb_window_start_ms = k_uptime_get();
         ret = app_anchor_survey_discovery_run(&pending_discovery,
                                               pending_discovery_start_ms);
+        report_durable = ret >= 0;
         if (ret < 0 &&
             !app_anchor_survey_runtime_abort_requested()) {
             int report_ret = app_anchor_survey_discovery_stage_empty_report(
                 &pending_discovery, pending_discovery_start_ms);
 
+            report_durable = report_ret == 0 ||
+                app_anchor_survey_discovery_report_staged(
+                    pending_discovery.survey_id);
             status_debug_printf(
                 "DBG_SURVEY_DISCOVERY_FAILSAFE_REPORT survey=%u run_ret=%d report_ret=%d\n",
                 pending_discovery.survey_id, ret, report_ret);
@@ -743,7 +825,12 @@ static void survey_work_handler(struct k_work *work)
         survey_rf_retry_reset(&discovery_rf_retry);
         key = k_spin_lock(&survey_lock);
         survey_running = false;
+        discovery_report_stage_pending = ret < 0 && !report_durable;
+        discovery_generation_active = discovery_report_stage_pending;
         k_spin_unlock(&survey_lock, key);
+        if (discovery_report_stage_pending) {
+            schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+        }
         LOG_INF("survey discovery run finished: survey=%u ret=%d",
                 pending_discovery.survey_id,
                 ret);
@@ -1109,7 +1196,8 @@ int app_anchor_survey_runtime_init(
         ops->connected_radio_active == NULL) {
         return -EINVAL;
     }
-#if DEVICE_ROLE == ROLE_ANCHOR
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     if (ops->work_queue == NULL) {
         return -EINVAL;
     }
@@ -1130,6 +1218,9 @@ int app_anchor_survey_runtime_start(void)
     survey_pair_lease_reset(&pair_lease);
     pair_start_pending = false;
     pair_start_delivery_handle = 0u;
+    discovery_pending = false;
+    discovery_generation_active = false;
+    discovery_report_stage_pending = false;
     survey_rf_retry_reset(&discovery_rf_retry);
     survey_rf_retry_reset(&pair_rf_retry);
     k_work_init_delayable(&pair_lease_work, pair_lease_work_handler);

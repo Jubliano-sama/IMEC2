@@ -1,6 +1,7 @@
 #ifndef APP_ANCHOR_SURVEY_RUNTIME_H
 #define APP_ANCHOR_SURVEY_RUNTIME_H
 
+#include "app_anchor_survey_discovery.h"
 #include "app_radio_low_power_policy.h"
 #include "gateway_command.h"
 #include "protocol.h"
@@ -44,8 +45,11 @@ int app_anchor_survey_runtime_init(
 int app_anchor_survey_runtime_start(void);
 
 uint16_t app_anchor_survey_runtime_next_sequence(void);
+void app_anchor_survey_runtime_seed_sequence(uint16_t observed_sequence);
 bool app_anchor_survey_runtime_discovery_is_pending(void);
 bool app_anchor_survey_runtime_abort_requested(void);
+enum app_anchor_survey_discovery_admission
+app_anchor_survey_runtime_admit_discovery(uint32_t survey_id);
 void app_anchor_survey_runtime_queue_discovery(
     const struct survey_discovery_config *config,
     uint32_t start_ms);

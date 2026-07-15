@@ -3058,7 +3058,7 @@ static void clicker_action_work_handler(struct k_work *work)
     atomic_set(&clicker_action_active, 0);
 }
 
-static void clicker_submit_button_action(enum button_action action)
+void app_clicker_submit_button_action(enum button_action action)
 {
     int ret;
 
@@ -3107,7 +3107,7 @@ static void click_button_handle_signal(enum button_signal signal, const char *so
                          source == NULL ? "unknown" : source,
                          (unsigned int)signal,
                          (unsigned int)action);
-    clicker_submit_button_action(action);
+    app_clicker_submit_button_action(action);
 }
 
 static void click_button_release_work_handler(struct k_work *work)
@@ -3190,7 +3190,7 @@ static void self_test_arm_timeout_handler(struct k_work *work)
 
     if (button_fsm_handle(&button_fsm, BUTTON_SIGNAL_TICK,
                                k_uptime_get_32(), &action) == PROTO_OK) {
-        clicker_submit_button_action(action);
+        app_clicker_submit_button_action(action);
     }
 }
 

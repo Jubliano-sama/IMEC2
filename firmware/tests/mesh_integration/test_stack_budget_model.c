@@ -52,7 +52,8 @@ struct expected_role {
 };
 
 #define EXPECTED_ROLE_ENTRY(                                                  \
-    role_name, preset, main_size, workqueue_size, isr_size, idle_size,       \
+    role_name, preset, main_size, workqueue_size, mesh_route_size, isr_size, \
+    idle_size,                                                               \
     log_size, hci_tx_size, bt_rx_size, ram_headroom, init_enabled,           \
     hw_protection,                                                            \
     mpu_guard, stack_info, sentinel)                                         \
@@ -62,6 +63,7 @@ struct expected_role {
         .config = {                                                          \
             .main_bytes = main_size,                                         \
             .system_workqueue_bytes = workqueue_size,                        \
+            .mesh_route_bytes = mesh_route_size,                             \
             .isr_bytes = isr_size,                                           \
             .idle_bytes = idle_size,                                         \
             .log_processor_bytes = log_size,                                 \
@@ -99,6 +101,8 @@ static void test_exact_role_baselines(void)
         CHECK_U32(config.main_bytes, expected->config.main_bytes);
         CHECK_U32(config.system_workqueue_bytes,
                   expected->config.system_workqueue_bytes);
+        CHECK_U32(config.mesh_route_bytes,
+                  expected->config.mesh_route_bytes);
         CHECK_U32(config.isr_bytes, expected->config.isr_bytes);
         CHECK_U32(config.idle_bytes, expected->config.idle_bytes);
         CHECK_U32(config.log_processor_bytes,
@@ -298,7 +302,7 @@ static void test_worst_combined_scenario(void)
                   STACK_BUDGET_ROLE_TRANSMITTER_FORCEDHOP,
                   &forcedhop),
               PROTO_OK);
-    CHECK_U32(forcedhop.system_workqueue_bytes, 16384u);
+    CHECK_U32(forcedhop.system_workqueue_bytes, 8192u);
     CHECK_INT(stack_budget_evaluate(
                   forcedhop.system_workqueue_bytes,
                   usage.measured_chain_bytes,
@@ -307,8 +311,8 @@ static void test_worst_combined_scenario(void)
                   &result),
               PROTO_OK);
     CHECK_TRUE(result.passes);
-    CHECK_U32(result.remaining_bytes, 9984u);
-    CHECK_U32(result.required_free_bytes, 3277u);
+    CHECK_U32(result.remaining_bytes, 1792u);
+    CHECK_U32(result.required_free_bytes, 1639u);
 
     CHECK_INT(stack_budget_evaluate(6144u,
                                     usage.measured_chain_bytes,

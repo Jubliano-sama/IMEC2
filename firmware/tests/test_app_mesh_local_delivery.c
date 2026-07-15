@@ -141,6 +141,29 @@ static void test_reboot_and_exact_ack_identity(void)
     assert(store.clear_count == 1u);
 }
 
+static void test_reboot_rebases_boot_relative_delivery_times(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct app_mesh_local_delivery rebooted;
+    const struct mesh_outbound outbound = make_report(211u, 20u);
+
+    assert(app_mesh_local_delivery_stage(&delivery, &outbound, 211u) == 0);
+    rebooted = make_delivery(&store);
+    assert(app_mesh_local_delivery_restore(&rebooted, &store.persisted) == 0);
+    assert(app_mesh_local_delivery_rebase_after_boot(&rebooted, 17u) == 0);
+    assert(rebooted.snapshot.outbound.queued_at_ms == 0u);
+    assert(rebooted.snapshot.outbound.earliest_tx_ms == 17u);
+    assert(store.persisted.outbound.queued_at_ms == 0u);
+    assert(store.persisted.outbound.earliest_tx_ms == 17u);
+
+    store.save_result = -EIO;
+    assert(app_mesh_local_delivery_rebase_after_boot(&rebooted, 33u) == -EIO);
+    assert(rebooted.snapshot.outbound.earliest_tx_ms == 33u);
+    assert(app_mesh_local_delivery_snapshot_valid(&rebooted.snapshot));
+    assert(store.persisted.outbound.earliest_tx_ms == 17u);
+}
+
 static void test_blocked_start_does_not_consume_attempt(void)
 {
     struct journal_store store = {0};
@@ -515,7 +538,7 @@ static void test_last_blocked_token_can_retry_send_and_ack(void)
     assert(!app_mesh_local_delivery_active(&delivery));
 }
 
-static void test_supersede_is_generation_exact_and_persistence_safe(void)
+static void test_pending_delivery_rejects_replacement_until_ack(void)
 {
     struct journal_store store = {0};
     struct app_mesh_local_delivery delivery = make_delivery(&store);
@@ -523,18 +546,8 @@ static void test_supersede_is_generation_exact_and_persistence_safe(void)
     const struct mesh_outbound new_report = make_report(802u, 82u);
 
     assert(app_mesh_local_delivery_stage(&delivery, &old_report, 801u) == 0);
-    assert(app_mesh_local_delivery_supersede(&delivery, 801u) == -EALREADY);
-    assert(app_mesh_local_delivery_active(&delivery));
-    assert(store.present);
-
-    store.clear_result = -EIO;
-    assert(app_mesh_local_delivery_supersede(&delivery, 802u) == -EIO);
-    assert(app_mesh_local_delivery_active(&delivery));
-    assert(store.present);
     assert(app_mesh_local_delivery_stage(&delivery, &new_report, 802u) == -EBUSY);
-
-    store.clear_result = 0;
-    assert(app_mesh_local_delivery_supersede(&delivery, 802u) == 0);
+    assert(app_mesh_local_delivery_note_ack(&delivery, &old_report.packet) == 0);
     assert(!app_mesh_local_delivery_active(&delivery));
     assert(!store.present);
     assert(app_mesh_local_delivery_stage(&delivery, &new_report, 802u) == 0);
@@ -572,9 +585,12 @@ static void test_fifty_anchors_survive_back_to_back_survey_and_lost_acks(void)
         if ((i % 4u) == 0u) {
             assert(app_mesh_local_delivery_note_ack(
                        &deliveries[i], &old_report.packet) == 0);
+        } else {
+            assert(app_mesh_local_delivery_stage(
+                       &deliveries[i], &new_report, new_survey_id) == -EBUSY);
+            assert(app_mesh_local_delivery_note_ack(
+                       &deliveries[i], &old_report.packet) == 0);
         }
-        assert(app_mesh_local_delivery_supersede(
-                   &deliveries[i], new_survey_id) == 0);
         assert(app_mesh_local_delivery_stage(
                    &deliveries[i], &new_report, new_survey_id) == 0);
         assert(app_mesh_local_delivery_note_ack(
@@ -606,6 +622,7 @@ int main(void)
 {
     test_transactional_stage_and_back_to_back_rejection();
     test_reboot_and_exact_ack_identity();
+    test_reboot_rebases_boot_relative_delivery_times();
     test_blocked_start_does_not_consume_attempt();
     test_ack_commit_survives_clear_failure();
     test_last_inflight_attempt_can_still_be_acked();
@@ -619,7 +636,7 @@ int main(void)
     test_persistence_mock_rejects_invalid_snapshot_like_production();
     test_sustained_pre_rf_contention_has_constant_write_bound();
     test_last_blocked_token_can_retry_send_and_ack();
-    test_supersede_is_generation_exact_and_persistence_safe();
+    test_pending_delivery_rejects_replacement_until_ack();
     test_fifty_anchors_survive_back_to_back_survey_and_lost_acks();
     puts("app mesh local delivery tests passed");
     return 0;

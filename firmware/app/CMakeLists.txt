@@ -312,7 +312,8 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_BT_BUF_ACL_TX_SIZE=251\n"
             "CONFIG_BT_CTLR_DATA_LENGTH_MAX=251\n"
             "CONFIG_BT_LOG_LEVEL_WRN=y\n"
-            "CONFIG_IMEC_GATEWAY_BLE=y\n")
+            "CONFIG_IMEC_GATEWAY_BLE=y\n"
+            "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4096\n")
     endif()
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
@@ -354,7 +355,9 @@ if(FIRMWARE_ROLE STREQUAL "clicker")
 elseif(FIRMWARE_ROLE STREQUAL "anchor")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=2)
 elseif(FIRMWARE_ROLE STREQUAL "gateway")
-    target_compile_definitions(app PRIVATE DEVICE_ROLE=3)
+    target_compile_definitions(app PRIVATE
+        DEVICE_ROLE=3
+        APP_NODE_COMM_GATEWAY_ROLE=1)
 else()
     message(FATAL_ERROR "FIRMWARE_ROLE must be clicker, anchor, or gateway")
 endif()

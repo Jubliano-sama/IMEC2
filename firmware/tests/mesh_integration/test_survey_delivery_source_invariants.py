@@ -174,9 +174,63 @@ assert ".anchor_survey_delivery_transport_released =" in ANCHOR
 assert "SURVEY_DELIVERY_LOCK()" in DISCOVERY
 assert "app_mesh_local_delivery_recover" in DISCOVERY
 retry = function_body(DISCOVERY, "app_anchor_survey_discovery_retry_report")
-assert retry.index("mesh_owned_tracked_tx_preflight") < retry.index(
-    "app_mesh_local_delivery_begin_attempt"
-), "route preflight must avoid STARTING/refund NVS churn while disconnected"
+assert retry.count("app_node_comm_submit_delivery(") == 1
+assert "NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK" in retry
+assert "outbound = *app_mesh_local_delivery_outbound(delivery);" in retry, (
+    "the communication facade must receive the exact persisted survey envelope"
+)
+assert "survey_delivery_deadline_ms(&outbound)" in retry
+assert "&delivery_handle" in retry
+assert "survey_delivery_handle = delivery_handle" in retry
+assert "app_node_comm_abandon_delivery(stale_handle)" in retry, (
+    "a submit that races with supersede must release its accepted handle"
+)
+for synchronous_or_inline_api in (
+    "app_node_comm_start_delivery(",
+    "app_node_comm_start_owned_delivery(",
+    "app_node_comm_request_path(",
+    "app_node_comm_service_deliveries(",
+    "mesh_start_tracked_tx(",
+    "mesh_start_owned_tracked_tx(",
+    "mesh_request_route(",
+    "dwm3000_driver_",
+):
+    assert synchronous_or_inline_api not in retry, (
+        "survey retry must submit immutable work without running RF inline: "
+        f"{synchronous_or_inline_api}"
+    )
+submit_index = retry.index("app_node_comm_submit_delivery(")
+assert retry.rfind("SURVEY_DELIVERY_UNLOCK();", 0, submit_index) >= 0, (
+    "submission must not run while the persistent-custody lock is held"
+)
+assert submit_index < retry.index("survey_delivery_handle = delivery_handle")
+
+poll = function_body(DISCOVERY, "survey_delivery_poll_comm_result")
+assert "app_node_comm_take_delivery_event_for(handle, &event)" in poll
+assert "survey_delivery_handle != handle" in poll, (
+    "a stale terminal event must not mutate current survey custody"
+)
+assert "outbound = *app_mesh_local_delivery_outbound(delivery);" in poll
+assert re.search(
+    r"event\.reason\s*==\s*NODE_COMM_TERMINAL_DELIVERED.*?"
+    r"app_anchor_survey_delivery_gateway_confirmed\(&outbound\.packet\)",
+    poll,
+    re.S,
+), "delivery success must commit the exact persisted packet ACK"
+failure_index = poll.index("app_mesh_local_delivery_note_failed(delivery)")
+release_index = poll.index("app_mesh_local_delivery_discard_failed(delivery)")
+assert failure_index < release_index, (
+    "terminal communication failure must first persist FAILED then release custody"
+)
+
+confirmed = function_body(
+    DISCOVERY, "app_anchor_survey_delivery_gateway_confirmed"
+)
+assert "app_mesh_local_delivery_note_ack(delivery, packet)" in confirmed
+assert confirmed.index("app_mesh_local_delivery_note_ack(delivery, packet)") < (
+    confirmed.index("app_stack_workload_diag_anchor_survey_release(packet")
+), "delivered custody clears transactionally before terminal diagnostics"
+
 assert "app_node_comm_retry_backoff_ms(" in DISCOVERY
 assert "NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK" in DISCOVERY
 assert "DBG_SURVEY_REPORT_BACKOFF" in DISCOVERY
@@ -190,7 +244,7 @@ assert "schedule_work_ms(0u)" not in released, (
 delivery_service = function_body(
     NODE_COMM_APP, "app_node_comm_service_deliveries"
 )
-assert delivery_service.count("node_comm_lease_defer_pre_rf_retry(") == 2
+assert delivery_service.count("node_comm_lease_defer_pre_rf_retry(") == 3
 assert delivery_service.count("node_comm_lease_defer_pre_rf(") == 1
 assert re.search(
     r"if\s*\(\s*scheduled_retry_delay_ms\s*>\s*0u\s*\).*?"
@@ -235,14 +289,17 @@ assert timing_index < start_at_index < queue_index, (
 )
 assert "discovery_ops.queue_start(&config, start_at_ms)" in start
 assert "uptime_ms_until_deadline(now_ms, start_at_ms)" in start
-supersede_index = start.index("app_mesh_local_delivery_supersede(")
-assert supersede_index < queue_index, (
-    "obsolete report custody must terminate before the next survey is queued"
+reject_index = start.index(
+    "survey discovery start rejected while earlier report custody is pending"
 )
+assert reject_index < queue_index, (
+    "pending report custody must reject a later survey before it can be queued"
+)
+assert "app_mesh_local_delivery_supersede(" not in start
+assert "app_node_comm_abandon_delivery(" not in start
 assert "schedule_work_ms(0u)" in start, (
     "a duplicate survey start must re-kick its packet-exact pending delivery"
 )
-assert "DBG_SURVEY_REPORT_SUPERSEDED" in start
 
 drain = function_body(REPORT, "mesh_drain_rx_queue_locked")
 actions_index = drain.index("mesh_handle_result_actions(")
@@ -334,6 +391,99 @@ restore = function_body(PERSISTENCE, "app_mesh_persistence_restore_local_deliver
 assert "app_mesh_local_delivery_snapshot_valid(snapshot)" in restore
 assert "return -EBADMSG" in restore
 
+prepare_report = function_body(DISCOVERY, "prepare_discovery_report")
+stage_call = prepare_report.index("app_mesh_local_delivery_stage(delivery, &outbound")
+inactive_guard = prepare_report.index(
+    "!app_mesh_local_delivery_active(delivery)", stage_call
+)
+retry_copy = prepare_report.index(
+    "survey_report_stage_retry_outbound = outbound", inactive_guard
+)
+retry_generation = prepare_report.index(
+    "survey_report_stage_retry_generation = survey_id", retry_copy
+)
+retry_valid = prepare_report.index(
+    "survey_report_stage_retry_valid = true", retry_generation
+)
+assert stage_call < inactive_guard < retry_copy < retry_generation < retry_valid, (
+    "a failed first journal write must retain the exact encoded report and its "
+    "survey generation before returning pressure to the runtime"
+)
+
+retry_report = function_body(
+    DISCOVERY, "app_anchor_survey_discovery_retry_report"
+)
+retry_guard = retry_report.index("if (survey_report_stage_retry_valid &&")
+retry_inactive = retry_report.index(
+    "!app_mesh_local_delivery_active(delivery)", retry_guard
+)
+retry_stage = retry_report.index(
+    "app_mesh_local_delivery_stage(", retry_inactive
+)
+retry_outbound = retry_report.index(
+    "&survey_report_stage_retry_outbound", retry_stage
+)
+retry_generation_arg = retry_report.index(
+    "survey_report_stage_retry_generation", retry_outbound
+)
+retry_success = retry_report.index("if (ret == 0)", retry_generation_arg)
+retry_clear_outbound = retry_report.index(
+    "memset(&survey_report_stage_retry_outbound", retry_success
+)
+retry_clear_generation = retry_report.index(
+    "survey_report_stage_retry_generation = 0u", retry_clear_outbound
+)
+retry_clear_valid = retry_report.index(
+    "survey_report_stage_retry_valid = false", retry_clear_generation
+)
+retry_failure = retry_report.index("} else {", retry_clear_valid)
+retry_reschedule = retry_report.index(
+    "schedule_work_ms(REPORT_TX_RETRY_DELAY_MS)", retry_failure
+)
+assert (
+    retry_guard
+    < retry_inactive
+    < retry_stage
+    < retry_outbound
+    < retry_generation_arg
+    < retry_success
+    < retry_clear_outbound
+    < retry_clear_generation
+    < retry_clear_valid
+    < retry_failure
+    < retry_reschedule
+), (
+    "stage retry must replay the exact cached packet and may clear it only after "
+    "durable journal admission; pressure must leave custody intact and reschedule"
+)
+retry_failure_slice = retry_report[retry_failure:retry_reschedule]
+for forbidden_clear in (
+    "memset(&survey_report_stage_retry_outbound",
+    "survey_report_stage_retry_generation = 0u",
+    "survey_report_stage_retry_valid = false",
+):
+    assert forbidden_clear not in retry_failure_slice, (
+        "stage pressure must not discard cached exact-report custody"
+    )
+
+staged_probe = function_body(
+    DISCOVERY, "app_anchor_survey_discovery_report_staged"
+)
+assert "app_mesh_local_delivery_active(delivery)" in staged_probe
+assert "delivery->snapshot.generation == survey_id" in staged_probe, (
+    "runtime release must observe durable custody for the exact survey generation"
+)
+
+discovery_restore = function_body(
+    DISCOVERY, "app_anchor_survey_discovery_restore"
+)
+assert "app_mesh_local_delivery_rebase_after_boot(" in discovery_restore, (
+    "persisted boot-relative report timing must be rebased after reset"
+)
+assert "discovery_ops.seed_sequence(outbound->packet.seq)" in discovery_restore, (
+    "restored report identity must advance the next local sequence"
+)
+
 bounded_control = function_body(REPORT, "mesh_try_send_c5_flood_view")
 handoff_begin = bounded_control.index("mesh_rx_handoff_begin_control(")
 handoff_wait = bounded_control.index("mesh_rx_handoff_wait_for_control(")
@@ -362,5 +512,32 @@ rx_schedule = function_body(REPORT, "mesh_schedule_uwb_rx")
 assert "mesh_rx_handoff_scan_rearm_allowed()" in rx_schedule, (
     "continuous RX must not rearm while bounded control owns the radio"
 )
+
+accepted_result = function_body(
+    ANCHOR, "gateway_survey_auto_note_command_result"
+)
+close_call = accepted_result.index("ret = gateway_survey_complete_accepted_delivery()")
+eagain = accepted_result.index("if (ret == -EAGAIN)")
+abandon = accepted_result.index("gateway_survey_abandon_current(", eagain)
+assert "k_work_reschedule(&gateway_survey_work" in accepted_result[eagain:abandon], (
+    "an accepted early result must wait for an active backend call to return"
+)
+assert "memset(&gateway_survey_result_preflight" not in accepted_result[close_call:eagain], (
+    "accepted result identity must remain cached while terminal take is deferred"
+)
+delivery_poll = function_body(ANCHOR, "gateway_survey_service_active_delivery")
+assert "gateway_survey_result_preflight.valid" in delivery_poll
+assert "gateway_survey_auto_note_command_result(" in delivery_poll, (
+    "terminal polling must resume the already accepted semantic result"
+)
+
+anchor_start = function_body(ANCHOR, "app_anchor_start_anchor_role")
+restore_journal = anchor_start.index("app_anchor_survey_discovery_restore(")
+bind_journal = anchor_start.index("app_anchor_survey_discovery_retry_report(")
+resume_outbox = anchor_start.index("mesh_report_resume_restored_outbox(")
+assert restore_journal < bind_journal < resume_outbox, (
+    "restored survey custody must bind to node communication before outbox RF resumes"
+)
+assert "if (!delivery_restored || delivery_bind_ret == 0)" in anchor_start
 
 print("survey delivery source invariants passed")

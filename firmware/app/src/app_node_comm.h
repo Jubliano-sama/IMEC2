@@ -25,6 +25,7 @@
 #else
 #define APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN 192u
 #endif
+#define APP_NODE_COMM_LARGE_CONTROL_PAYLOAD_MAX_LEN PACKET_EXT_MAX_PAYLOAD_LEN
 #define APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS 120000u
 
 struct app_mesh_report_callbacks;
@@ -57,6 +58,13 @@ struct app_node_comm_control_response_health {
     uint8_t last_attempts_started;
 };
 
+struct app_node_comm_durable_attempt_ops {
+    int (*begin)(const struct proto_packet *packet, uint8_t *attempt_token);
+    int (*complete)(const struct proto_packet *packet,
+                    uint8_t attempt_token,
+                    bool rf_started);
+};
+
 /*
  * Protocol-facing communication service boundary.
  *
@@ -74,6 +82,8 @@ enum app_node_comm_control_send_mode {
 };
 
 int app_node_comm_init(const app_node_comm_callbacks *callbacks);
+int app_node_comm_register_durable_attempt_ops(
+    const struct app_node_comm_durable_attempt_ops *ops);
 void app_node_comm_stop_role_scan(void);
 void app_node_comm_restart_role_scan(void);
 int app_node_comm_send(const app_node_comm_envelope *envelope,
@@ -87,12 +97,8 @@ int app_node_comm_send_control_flood(const app_node_comm_envelope *envelope,
                                      uint8_t purpose,
                                      const char *reason,
                                      bool *sent_now);
-int app_node_comm_request_path(uint64_t target_id, const char *reason);
-int app_node_comm_start_delivery(const app_node_comm_envelope *envelope,
-                                 const char *reason);
-int app_node_comm_start_owned_delivery(const app_node_comm_envelope *envelope,
-                                       const char *reason,
-                                       bool *rf_sent);
+int app_node_comm_schedule_path_refresh(uint64_t target_id,
+                                        const char *reason);
 int app_node_comm_retry_backoff_ms(
     const app_node_comm_envelope *envelope,
     enum node_comm_delivery_profile profile,
@@ -137,6 +143,8 @@ bool app_node_comm_take_delivery_event(
 bool app_node_comm_take_delivery_event_for(
     uint32_t handle,
     struct node_comm_terminal_event *event_out);
+int app_node_comm_delivery_attempts_started(uint32_t handle,
+                                            uint8_t *attempts_out);
 int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet);
 int app_node_comm_note_gateway_failed(
     const struct proto_packet *packet,

@@ -439,7 +439,7 @@ int main(void)
             LOG_WRN("click button unavailable: %d", ret);
         }
         if (boot_button_action != BUTTON_ACTION_NONE) {
-            app_clicker_handle_button_action(boot_button_action);
+            app_clicker_submit_button_action(boot_button_action);
         } else if (clicker_systemon_retained_idle_enabled() ||
                    IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE)) {
             app_clicker_enter_idle();

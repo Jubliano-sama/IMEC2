@@ -88,6 +88,14 @@ endmenu
 
 menu "IMEC mesh route test"
 
+config IMEC_DEDICATED_COMM_WORKQUEUE
+    bool "Run communication and mesh work on a dedicated queue"
+    default y if IMEC_MESH_ROUTE_TEST
+    help
+      Keeps route discovery, delivery retries, receive processing, and radio
+      work off the main and system workqueue stacks. Production mesh presets
+      enable this so protocol workers only admit immutable communication work.
+
 config IMEC_MESH_ROUTE_TEST
     bool "Build the isolated mesh-routing test firmware"
     help

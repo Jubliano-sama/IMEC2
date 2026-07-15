@@ -429,6 +429,10 @@ int survey_gateway_transaction_note_cleanup_complete(
          (context->cleanup_mask & peer_mask_value) != peer_mask_value)) {
         return -EINVAL;
     }
+    if (context->active.state != NODE_TRANSACTION_EMPTY &&
+        !context->active.request_delivery_terminal) {
+        return -EINPROGRESS;
+    }
     context->cleanup_mask &= (uint8_t)~peer_mask_value;
     if (context->cleanup_mask != 0u) {
         return 0;

@@ -66,17 +66,27 @@ uint16_t local_uwb_short_addr(void);
 uint32_t discovery_window_ms_for_slots(uint8_t slot_count);
 int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot);
 int local_anchor_restore_discovery_assignment(uint32_t epoch,
+                                              uint32_t table_seq,
+                                              uint32_t table_fingerprint,
                                               uint8_t anchor_slot,
-                                              uint8_t slot_count);
+                                              uint8_t slot_count,
+                                              bool provisioned);
 int local_anchor_commit_discovery_assignment(uint32_t epoch,
+                                             uint32_t table_seq,
+                                             uint32_t table_fingerprint,
                                              uint8_t anchor_slot,
                                              uint8_t slot_count);
 void local_anchor_reset_discovery_assignment(void);
-void local_anchor_mark_discovery_assignment_unprovisioned(uint32_t epoch);
+int local_anchor_mark_discovery_assignment_unprovisioned(
+    uint32_t epoch,
+    uint32_t table_seq,
+    uint32_t table_fingerprint);
 enum app_discovery_assignment_claim_decision
 local_anchor_discovery_assignment_note_claim(uint32_t epoch);
 enum app_discovery_assignment_table_decision
-local_anchor_discovery_assignment_note_table(uint32_t epoch);
+local_anchor_discovery_assignment_note_table(uint32_t epoch,
+                                             uint32_t table_seq,
+                                             uint32_t table_fingerprint);
 enum app_discovery_assignment_provisioning_state
 local_anchor_discovery_assignment_provisioning_state(void);
 bool local_anchor_discovery_assignment_get(uint32_t *epoch,

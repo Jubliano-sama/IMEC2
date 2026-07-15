@@ -51,6 +51,7 @@ extern "C" {
 #define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 12u
 #define SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN                              \
     (PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +           \
+     PROTO_TLV_U16_ENCODED_LEN +                                        \
      SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *                              \
          (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN))
 #if SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN > PACKET_MAX_PAYLOAD_LEN

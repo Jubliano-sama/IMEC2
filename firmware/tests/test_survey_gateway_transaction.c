@@ -145,6 +145,24 @@ static void complete_delivery(struct survey_gateway_transaction *context,
     assert(action == NODE_TRANSACTION_ACTION_TERMINAL_SUCCESS);
 }
 
+static void complete_abandon_delivery(
+    struct survey_gateway_transaction *context,
+    uint32_t delivery_handle,
+    uint8_t attempts_started)
+{
+    struct node_comm_terminal_event event = {
+        .handle = delivery_handle,
+        .client_token = delivery_handle + 100u,
+        .reason = NODE_COMM_TERMINAL_CANCELLED,
+        .attempts_started = attempts_started,
+    };
+    enum node_transaction_action action;
+
+    assert(survey_gateway_transaction_note_delivery_terminal(
+               context, &event, 100u, &action) == 0);
+    assert(action == NODE_TRANSACTION_ACTION_CLEANUP_REQUIRED);
+}
+
 static void test_four_phase_success_tracks_prepared_peers(void)
 {
     struct survey_gateway_transaction context;
@@ -228,6 +246,13 @@ static void test_prepare_failure_cleans_every_possible_peer(void)
            (SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
             SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK));
 
+    assert(survey_gateway_transaction_note_cleanup_complete(
+               &context, SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK,
+               300u) == -EINPROGRESS);
+    assert(survey_gateway_transaction_cleanup_mask(&context) ==
+           (SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
+            SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK));
+    complete_delivery(&context, 12u, 1u);
     assert(survey_gateway_transaction_note_cleanup_complete(
                &context, SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK,
                300u) == 0);
@@ -326,6 +351,12 @@ static void test_duplicate_and_conflicting_history_fail_closed(void)
            (SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
             SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK));
     assert(context.active.state == NODE_TRANSACTION_ABANDONING);
+    assert(survey_gateway_transaction_note_cleanup_complete(
+               &context,
+               SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
+               SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK,
+               202u) == -EINPROGRESS);
+    complete_abandon_delivery(&context, 52u, 1u);
     assert(survey_gateway_transaction_note_cleanup_complete(
                &context,
                SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
@@ -510,6 +541,78 @@ static void test_conflict_and_deadline_abandonment_free_scheduler_slot(void)
     assert(scheduler.max_occupied == TEST_SCHEDULER_SLOT_COUNT);
 }
 
+static void test_cleanup_cannot_retire_before_request_delivery_terminal(void)
+{
+    struct survey_gateway_transaction context;
+    struct survey_pair pair = test_pair();
+    struct node_comm_terminal_event event = {
+        .handle = 130u,
+        .client_token = 230u,
+        .reason = NODE_COMM_TERMINAL_CANCELLED,
+        .attempts_started = 1u,
+    };
+    enum node_transaction_action action;
+    uint8_t cleanup_mask;
+
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
+    begin_phase(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                230u, 330u, 130u, 5000u);
+
+    survey_gateway_transaction_require_cleanup(&context, false, 100u);
+    cleanup_mask = survey_gateway_transaction_cleanup_mask(&context);
+    assert(cleanup_mask == SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
+    assert(context.active.state == NODE_TRANSACTION_ABANDONING);
+    assert(!context.active.request_delivery_terminal);
+
+    /* Cleanup RF can finish while cancellation is still inside the backend. */
+    assert(survey_gateway_transaction_note_cleanup_complete(
+               &context, cleanup_mask, 101u) == -EINPROGRESS);
+    assert(survey_gateway_transaction_cleanup_mask(&context) == cleanup_mask);
+    assert(context.active.state == NODE_TRANSACTION_ABANDONING);
+    assert(context.abandoning);
+
+    assert(survey_gateway_transaction_note_delivery_terminal(
+               &context, &event, 102u, &action) == 0);
+    assert(context.active.request_delivery_terminal);
+    assert(action == NODE_TRANSACTION_ACTION_CLEANUP_REQUIRED);
+    assert(survey_gateway_transaction_note_cleanup_complete(
+               &context, cleanup_mask, 103u) == 0);
+    assert(context.active.state == NODE_TRANSACTION_EMPTY);
+    assert(!context.abandoning);
+    assert(survey_gateway_transaction_cleanup_mask(&context) == 0u);
+}
+
+static void test_duplicate_cannot_replace_accepted_result_before_terminal(void)
+{
+    struct survey_gateway_transaction context;
+    struct survey_pair pair = test_pair();
+    enum node_transaction_action action;
+
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
+    begin_phase(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                240u, 340u, 140u, 5000u);
+    assert(note_result(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                       240u, 340u, 440u, 540u, COMMAND_OK, 100u,
+                       &action) ==
+           SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
+    assert(context.active.state == NODE_TRANSACTION_SUCCEEDED);
+    assert(!context.active.request_delivery_terminal);
+    assert(context.active.accepted_result_fingerprint == 440u);
+    assert(context.active.result_token == 540u);
+
+    /* The retry can arrive while cancel/take is still inside the backend. */
+    assert(note_result(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                       240u, 340u, 440u, 540u, COMMAND_OK, 101u,
+                       &action) == SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE);
+    assert(context.active.state == NODE_TRANSACTION_SUCCEEDED);
+    assert(!context.active.request_delivery_terminal);
+    assert(context.active.accepted_result_fingerprint == 440u);
+    assert(context.active.result_token == 540u);
+    assert(context.prepared_mask == SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
+}
+
 int main(void)
 {
     test_four_phase_success_tracks_prepared_peers();
@@ -521,6 +624,8 @@ int main(void)
     test_early_results_release_exact_handle_with_two_slots();
     test_consecutive_early_abandons_do_not_leak_two_slots();
     test_conflict_and_deadline_abandonment_free_scheduler_slot();
+    test_cleanup_cannot_retire_before_request_delivery_terminal();
+    test_duplicate_cannot_replace_accepted_result_before_terminal();
     puts("survey gateway transaction tests passed");
     return 0;
 }

@@ -87,9 +87,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "mesh_send_outbound(envelope, reason)",
             "mesh_send_c5_flood(flood_envelope, purpose, reason, sent_now)",
             "mesh_try_send_control_response_view(",
-            "mesh_request_route(target_id, reason)",
-            "mesh_start_tracked_tx(envelope, reason)",
-            "mesh_start_owned_tracked_tx(envelope, reason, rf_sent)",
+            "mesh_schedule_route_request(target_id, reason)",
             "queue_anchor_report(envelope)",
             "mesh_delivery_health_get(health)",
         }
@@ -116,6 +114,16 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         )
         self.assertIn(
             "return app_node_comm_gateway_control_priority_submit(work);", report
+        )
+
+    def test_anchor_command_tracking_reuses_the_communication_context(self):
+        anchor = (APP_SRC / "app_anchor.c").read_text(encoding="utf-8")
+
+        self.assertNotIn("anchor_command_orchestrator", anchor)
+        self.assertIn(
+            "app_mesh_command_orchestrator_anchor_receive(\n"
+            "        mesh_gateway_command_orchestrator_context(),",
+            anchor,
         )
 
     def test_gateway_control_cannot_interpret_protocol_payloads(self):
@@ -201,6 +209,117 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
                 protocol_source = (APP_SRC / name).read_text(encoding="utf-8")
                 self.assertNotIn("node_comm_submit(", protocol_source)
 
+    def test_large_control_payload_has_one_gateway_only_exact_owner(self):
+        header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
+        source = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+        native_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        app_cmake = (ROOT / "app" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "#define APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN 192u", header
+        )
+        self.assertIn(
+            "#define APP_NODE_COMM_LARGE_CONTROL_PAYLOAD_MAX_LEN "
+            "PACKET_EXT_MAX_PAYLOAD_LEN",
+            header,
+        )
+        self.assertEqual(
+            1,
+            source.count(
+                "static uint8_t node_comm_large_control_payload["
+            ),
+        )
+        large_owner = source.index(
+            "static uint8_t node_comm_large_control_payload["
+        )
+        self.assertIn(
+            "#if APP_NODE_COMM_GATEWAY_ROLE",
+            source[max(0, large_owner - 80) : large_owner],
+        )
+        self.assertIn(
+            "#ifndef APP_NODE_COMM_GATEWAY_ROLE\n"
+            "#define APP_NODE_COMM_GATEWAY_ROLE 0",
+            source,
+        )
+        self.assertIn(
+            "DEVICE_ROLE=ROLE_GATEWAY\n"
+            "    APP_NODE_COMM_GATEWAY_ROLE=1",
+            native_cmake,
+        )
+        self.assertIn(
+            "DEVICE_ROLE=3\n"
+            "        APP_NODE_COMM_GATEWAY_ROLE=1",
+            app_cmake,
+        )
+
+        size_start = source.index(
+            "static bool app_node_comm_payload_size_supported("
+        )
+        size_end = source.index(
+            "static bool app_node_comm_frozen_delivery_matches(", size_start
+        )
+        size_policy = source[size_start:size_end]
+        self.assertIn(
+            "payload_len <= APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN",
+            size_policy,
+        )
+        self.assertIn(
+            "profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD",
+            size_policy,
+        )
+        self.assertIn("#if APP_NODE_COMM_GATEWAY_ROLE", size_policy)
+        self.assertNotIn("NODE_COMM_PROFILE_RELIABLE_UPLINK", size_policy)
+
+        freeze_start = source.index("static int app_node_comm_freeze_delivery(")
+        freeze_end = source.index(
+            "static bool app_node_comm_backend_error_retryable", freeze_start
+        )
+        freeze = source[freeze_start:freeze_end]
+        self.assertIn(
+            "node_comm_large_control_payload_handle != 0u", freeze
+        )
+        self.assertIn("return -ENOSPC", freeze)
+        self.assertIn(
+            "memcpy(node_comm_large_control_payload,", freeze
+        )
+        self.assertIn(
+            "node_comm_large_control_payload_handle = handle", freeze
+        )
+        self.assertIn("record->uses_large_control_payload = true", freeze)
+
+        attempt_start = source.index("int app_node_comm_service_deliveries(void)")
+        attempt_end = source.index(
+            "int app_node_comm_cancel_delivery", attempt_start
+        )
+        attempt = source[attempt_start:attempt_end]
+        self.assertIn(
+            "attempt_payload = app_node_comm_frozen_payload(&attempt_record)",
+            attempt,
+        )
+        self.assertIn(".payload = attempt_payload", attempt)
+
+        clear_start = source.index(
+            "static void app_node_comm_clear_delivery_record("
+        )
+        clear_end = source.index(
+            "static void app_node_comm_reconcile_terminal_backends_locked",
+            clear_start,
+        )
+        clear = source[clear_start:clear_end]
+        self.assertIn(
+            "node_comm_large_control_payload_handle == handle", clear
+        )
+        self.assertIn(
+            "node_comm_large_control_payload_handle = 0u", clear
+        )
+
+        init_start = source.index("int app_node_comm_init(")
+        init_end = source.index("void app_node_comm_stop_role_scan", init_start)
+        init = source[init_start:init_end]
+        self.assertIn("node_comm_large_control_payload_handle = 0u", init)
+
     def test_synthetic_transmitter_uses_terminal_communication_custody(self):
         source = (APP_SRC / "app_mesh_test.c").read_text(encoding="utf-8")
         header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
@@ -227,7 +346,10 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") - 60 :
             report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") + 120
         ]
-        self.assertIn("#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)", queue_definition)
+        self.assertIn(
+            "#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)",
+            queue_definition,
+        )
         self.assertNotIn(
             "CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER", queue_definition
         )
@@ -330,9 +452,12 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
                 "workqueue"
             )
 
-    def test_mesh_clicker_syswork_queue_gap_remains_explicit(self):
+    def test_mesh_clicker_uses_dedicated_communication_queue(self):
         report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
         cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
+        clicker_conf = (ROOT / "app" / "conf" / "mesh-clicker.conf").read_text(
+            encoding="utf-8"
+        )
 
         clicker_start = cmake.index(
             'elseif(IMEC_BUILD_PRESET STREQUAL "mesh_clicker")'
@@ -342,14 +467,30 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         )
         clicker_preset = cmake[clicker_start:clicker_end]
         self.assertNotIn("IMEC_MESH_ROUTE_TEST_BUILD ON", clicker_preset)
+        self.assertIn("CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE=y", clicker_conf)
 
         helper_start = report.index("static int mesh_reschedule_delayable")
         helper_end = report.index(
             "int mesh_route_work_reschedule", helper_start
         )
         helper = report[helper_start:helper_end]
-        self.assertIn("Known queue gap: mesh_clicker", helper)
+        self.assertIn("CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE", helper)
+        self.assertIn(
+            "k_work_reschedule_for_queue(&mesh_route_work_q, work", helper
+        )
         self.assertIn("return k_work_reschedule(work", helper)
+
+    def test_facade_has_no_synchronous_delivery_or_route_start_api(self):
+        header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
+        source = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+
+        for forbidden in (
+            "app_node_comm_start_delivery(",
+            "app_node_comm_start_owned_delivery(",
+            "mesh_request_route(target_id, reason)",
+        ):
+            self.assertNotIn(forbidden, header)
+            self.assertNotIn(forbidden, source)
 
     def test_gateway_single_ack_uses_bounded_communication_response(self):
         report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")

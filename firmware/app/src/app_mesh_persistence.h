@@ -32,14 +32,17 @@ struct app_mesh_persistence_health {
     bool ready;
 };
 
-#define APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION 1u
+#define APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION 2u
 struct app_mesh_discovery_assignment_snapshot {
     uint32_t epoch;
+    uint32_t table_command_seq;
+    uint32_t table_fingerprint;
     uint64_t local_id;
     uint64_t gateway_id;
     uint8_t version;
     uint8_t slot;
     uint8_t slot_count;
+    bool provisioned;
     bool valid;
 };
 

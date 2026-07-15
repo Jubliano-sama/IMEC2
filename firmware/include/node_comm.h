@@ -26,6 +26,7 @@ enum node_comm_delivery_outcome {
     NODE_COMM_DELIVERY_SUCCEEDED = 0,
     NODE_COMM_DELIVERY_RETRY,
     NODE_COMM_DELIVERY_FAILED,
+    NODE_COMM_DELIVERY_ATTEMPTS_EXHAUSTED,
 };
 
 enum node_comm_delivery_profile {

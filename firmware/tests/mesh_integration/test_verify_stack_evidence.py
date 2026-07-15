@@ -412,19 +412,19 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "system_workqueue"
         ])
         self.assertTrue(any(
-            "compiler synchronous stack chain 6400 plus required free 1229 "
-            "exceeds configured 6144"
+            "compiler synchronous stack chain 6400 plus required free 1024 "
+            "exceeds configured 4096"
             in issue
             for issue in evidence.issues
         ), evidence.issues)
 
     def test_synchronous_siblings_use_maximum_branch_not_sum(self) -> None:
         evidence = self._synchronous_evidence(
-            {"root": 1000, "left": 2800, "right": 2800},
+            {"root": 1000, "left": 2000, "right": 2000},
             {"root": {"left", "right"}, "left": set(), "right": set()},
         )
 
-        self.assertEqual(3800, evidence.synchronous_usage_bytes[
+        self.assertEqual(3000, evidence.synchronous_usage_bytes[
             "system_workqueue"
         ])
         self.assertFalse(any(
@@ -434,21 +434,21 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
     def test_synchronous_owner_margin_boundary_is_inclusive(self) -> None:
         accepted = self._synchronous_evidence(
-            {"root": 4915}, {"root": set()}
+            {"root": 3072}, {"root": set()}
         )
         rejected = self._synchronous_evidence(
-            {"root": 4916}, {"root": set()}
+            {"root": 3073}, {"root": set()}
         )
 
         self.assertEqual([], accepted.issues)
         self.assertTrue(any(
-            "4916 plus required free 1229 exceeds configured 6144" in issue
+            "3073 plus required free 1024 exceeds configured 4096" in issue
             for issue in rejected.issues
         ), rejected.issues)
 
     def test_callback_reference_owns_frame_but_is_not_synchronous(self) -> None:
         evidence = self._synchronous_evidence(
-            {"root": 4000, "callback": 3000},
+            {"root": 3000, "callback": 2000},
             {
                 "root": {
                     verifier._CGRAPH_REFERENCE_PREFIX + "callback"
@@ -457,7 +457,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(4000, evidence.synchronous_usage_bytes[
+        self.assertEqual(3000, evidence.synchronous_usage_bytes[
             "system_workqueue"
         ])
         self.assertEqual([], evidence.issues)
@@ -496,7 +496,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertIn("sync.c:leaf.isra.2", issue)
 
     def test_large_synchronous_dag_is_bounded_without_recursion(self) -> None:
-        node_count = 4000
+        node_count = 3000
         frames = {f"node_{index}": 1 for index in range(node_count)}
         calls = {
             f"node_{index}": (
@@ -628,6 +628,35 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             {verifier._CGRAPH_REFERENCE_PREFIX + "callback"},
             parsed[("callback.c", "root")],
         )
+
+    def test_compiler_func_strings_do_not_join_unrelated_functions(self) -> None:
+        graph = self.root / "func-string.c.c.000i.cgraph"
+        graph.write_text(
+            "first/1 (first)\n"
+            "  Type: function definition analyzed\n"
+            "  References: __func__/2 (read)\n"
+            "  Calls: \n"
+            "__func__/2 (__func__)\n"
+            "  Type: variable definition analyzed\n"
+            "  References: \n"
+            "  Varpool flags: initialized read-only const-value-known\n"
+            "second/3 (second)\n"
+            "  Type: function definition analyzed\n"
+            "  References: __func__/4 (read)\n"
+            "  Calls: \n"
+            "__func__/4 (__func__)\n"
+            "  Type: variable definition analyzed\n"
+            "  References: \n"
+            "  Varpool flags: initialized read-only const-value-known\n",
+            encoding="utf-8",
+        )
+
+        parsed = verifier._parse_cgraph(graph, "func-string.c")
+
+        self.assertEqual(set(), parsed[("func-string.c", "first")])
+        self.assertEqual(set(), parsed[("func-string.c", "second")])
+        self.assertFalse(any(node[1].startswith("<variable>:__func__")
+                             for node in parsed))
 
     def test_callback_and_ops_variables_preserve_exact_stack_ownership(self) -> None:
         graph_file = self.root / "callback.c.c.000i.cgraph"
@@ -948,7 +977,9 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertIn("app_stack_workload_diag_anchor_survey_release", anchor)
         self.assertIn("survey_gateway_note_reach_report_with_reverse_hint", gateway)
         self.assertIn("app_stack_workload_diag_gateway_report_cycle", gateway)
-        self.assertIn("app_node_comm_send_control_flood", gateway)
+        self.assertIn("app_node_comm_submit_delivery", gateway)
+        self.assertIn("gateway_survey_wait_for_discovery_collection", gateway)
+        self.assertIn("gateway_discovery_assignment_service_delivery", gateway)
         self.assertIn("app_stack_workload_diag_gateway_control_sample", gateway)
         self.assertIn("app_stack_workload_diag_ble_admit_with_pressure", ble)
         self.assertIn("app_stack_workload_diag_ble_terminal_with_pressure", ble)

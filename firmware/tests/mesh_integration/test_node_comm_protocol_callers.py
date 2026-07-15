@@ -52,25 +52,124 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-    def test_survey_report_uses_owned_delivery_facade(self):
+    def test_protocol_callers_do_not_use_synchronous_delivery_or_path_apis(self):
+        forbidden = (
+            "app_node_comm_start_delivery",
+            "app_node_comm_start_owned_delivery",
+            "app_node_comm_request_path",
+        )
+
+        for source_path in sorted(APP_SRC.glob("*.c")):
+            if source_path.name == "app_node_comm.c":
+                continue
+            source = source_path.read_text(encoding="utf-8")
+            for api in forbidden:
+                with self.subTest(source=source_path.name, api=api):
+                    self.assertIsNone(
+                        re.search(rf"\b{re.escape(api)}\s*\(", source),
+                        f"{source_path.name} bypasses asynchronous delivery via {api}",
+                    )
+
+    def test_anchor_heartbeat_submits_asynchronous_reliable_uplink(self):
+        body = function_body(self.anchor, "anchor_send_heartbeat")
+
+        self.assertEqual(body.count("app_node_comm_submit_reliable_uplink("), 1)
+        self.assertIn("ANCHOR_HEARTBEAT_DELIVERY_TIMEOUT_MS", body)
+        self.assertIn("absolute_deadline_ms", body)
+        self.assertIn("NULL", body)
+        self.assertNotIn("mesh_start_tracked_tx(", body)
+        self.assertNotIn("mesh_start_tracked_tx_with_retry(", body)
+        self.assertNotIn("mesh_request_route(", body)
+
+    def test_anchor_click_callback_only_freezes_and_queues_scan_handoff(self):
+        callback = function_body(
+            self.anchor, "anchor_handle_mesh_click_wake_claim"
+        )
+        handoff = function_body(
+            self.anchor, "anchor_click_handoff_work_handler"
+        )
+        ranging = function_body(
+            self.anchor, "anchor_run_mesh_click_wake_claim"
+        )
+        stack_budget = (
+            ROOT / "include" / "stack_budget.h"
+        ).read_text(encoding="utf-8")
+        config = (APP_SRC / "app_config.h").read_text(encoding="utf-8")
+
+        self.assertIn("anchor_pending_click_handoff.claim = *claim", callback)
+        self.assertIn(
+            "anchor_pending_click_handoff.received_at_ms = received_at_ms",
+            callback,
+        )
+        self.assertIn(
+            "k_work_submit_to_queue(&anchor_uwb_scan_work_q,",
+            callback,
+        )
+        self.assertIn("&anchor_click_handoff_work", callback)
+        for forbidden in (
+            "anchor_run_mesh_click_wake_claim(",
+            "anchor_handle_uwb_claim(",
+            "mesh_preempt_for_click_event(",
+            "radio_guard_uwb_start(",
+            "dwm3000_driver_",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, callback)
+
+        self.assertEqual(
+            self.anchor.count("anchor_run_mesh_click_wake_claim("), 3,
+            "only the declaration, definition, and handoff worker may name the runner",
+        )
+        self.assertEqual(handoff.count("anchor_run_mesh_click_wake_claim("), 1)
+        self.assertIn("anchor_handle_uwb_claim(", ranging)
+        self.assertIn("dwm3000_driver_configure_wake_mode(", ranging)
+        self.assertIn(
+            '"anchor_click_handoff_work_handler", "anchor_uwb_scan"',
+            stack_budget,
+        )
+        self.assertIn(
+            '"anchor_handle_mesh_click_wake_claim", "mesh_route"',
+            stack_budget,
+        )
+        self.assertIn(
+            "#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 12288u",
+            config,
+        )
+        self.assertIn("#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 9216u", config)
+        self.assertNotIn(
+            "mesh click handoff must have the full anchor sequence stack",
+            self.anchor,
+        )
+
+    def test_survey_report_submits_durable_asynchronous_delivery(self):
         body = function_body(self.survey, "app_anchor_survey_discovery_retry_report")
 
         self.assertIn('#include "app_node_comm.h"', self.survey)
-        self.assertIn("app_node_comm_start_owned_delivery(", body)
-        self.assertEqual(body.count("app_node_comm_start_owned_delivery("), 1)
+        self.assertEqual(body.count("app_node_comm_submit_delivery("), 1)
+        self.assertIn("NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK", body)
+        self.assertIn("absolute_deadline_ms", body)
+        self.assertIn("&delivery_handle", body)
+        self.assertIn(
+            "outbound = *app_mesh_local_delivery_outbound(delivery);",
+            body,
+        )
+        self.assertIn("survey_delivery_poll_comm_result()", body)
+        self.assertIn("survey_delivery_handle = delivery_handle", body)
+        self.assertIn("app_node_comm_abandon_delivery(stale_handle)", body)
+        self.assertNotIn("app_node_comm_service_deliveries(", body)
+        self.assertNotIn("app_node_comm_start_delivery(", body)
+        self.assertNotIn("app_node_comm_start_owned_delivery(", body)
+        self.assertNotIn("app_node_comm_request_path(", body)
         self.assertNotIn("mesh_start_owned_tracked_tx(", body)
-        # The durable journal remains the sole attempt owner around the facade call.
-        self.assertIn("app_mesh_local_delivery_begin_attempt(", body)
-        self.assertIn("app_mesh_local_delivery_note_attempt_sent(", body)
-        self.assertIn("app_mesh_local_delivery_note_attempt_blocked(", body)
-        self.assertLess(
-            body.index("app_mesh_local_delivery_begin_attempt("),
-            body.index("app_node_comm_start_owned_delivery("),
-        )
-        self.assertLess(
-            body.index("app_node_comm_start_owned_delivery("),
-            body.index("app_mesh_local_delivery_note_attempt_sent("),
-        )
+        self.assertNotIn("mesh_start_tracked_tx(", body)
+        self.assertNotIn("mesh_request_route(", body)
+        self.assertNotIn("dwm3000_driver_", body)
+
+        submit_index = body.index("app_node_comm_submit_delivery(")
+        unlock_index = body.rfind("SURVEY_DELIVERY_UNLOCK();", 0, submit_index)
+        self.assertGreater(unlock_index, 0)
+        self.assertLess(unlock_index, submit_index)
+        self.assertLess(submit_index, body.index("survey_delivery_handle = delivery_handle"))
 
     def test_survey_report_ack_remains_packet_exact(self):
         body = function_body(
@@ -83,6 +182,55 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
 
         self.assertLess(ack_commit, sample)
         self.assertLess(sample, terminal)
+
+    def test_survey_terminal_events_commit_or_release_persisted_custody(self):
+        poll = function_body(self.survey, "survey_delivery_poll_comm_result")
+        confirmed = function_body(
+            self.survey, "app_anchor_survey_delivery_gateway_confirmed"
+        )
+
+        self.assertIn("app_node_comm_take_delivery_event_for(handle, &event)", poll)
+        self.assertIn("survey_delivery_handle != handle", poll)
+        self.assertIn(
+            "outbound = *app_mesh_local_delivery_outbound(delivery);",
+            poll,
+        )
+        self.assertIn("event.reason == NODE_COMM_TERMINAL_DELIVERED", poll)
+        self.assertIn(
+            "app_anchor_survey_delivery_gateway_confirmed(&outbound.packet)",
+            poll,
+        )
+        self.assertIn("app_mesh_local_delivery_note_ack(delivery, packet)", confirmed)
+
+        failed = poll.index("app_mesh_local_delivery_note_failed(delivery)")
+        released = poll.index("app_mesh_local_delivery_discard_failed(delivery)")
+        self.assertLess(failed, released)
+        self.assertLess(
+            released,
+            poll.index("app_stack_workload_diag_anchor_survey_release("),
+        )
+
+    def test_survey_rejects_new_start_while_report_custody_is_pending(self):
+        start = function_body(
+            self.survey, "app_anchor_survey_discovery_handle_start"
+        )
+        retry = function_body(
+            self.survey, "app_anchor_survey_discovery_retry_report"
+        )
+
+        active = start.index("app_mesh_local_delivery_active(delivery)")
+        reject = start.index(
+            "survey discovery start rejected while earlier report custody is pending",
+            active,
+        )
+        queue_next = start.index("discovery_ops.queue_start(")
+        self.assertLess(active, reject)
+        self.assertLess(reject, queue_next)
+        self.assertNotIn("app_mesh_local_delivery_supersede(", start)
+        self.assertNotIn("app_node_comm_abandon_delivery(", start)
+
+        self.assertIn("stale_handle = delivery_handle", retry)
+        self.assertIn("app_node_comm_abandon_delivery(stale_handle)", retry)
 
     def test_assignment_result_sends_use_delivery_facade(self):
         submit = function_body(self.anchor, "anchor_submit_command_result")
@@ -104,16 +252,93 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             schedule,
         )
 
-    def test_gateway_protocol_floods_use_control_facade(self):
-        for name in (
-            "gateway_route_survey_reachability",
-            "gateway_send_discovery_assignment_claim_request",
-            "gateway_discovery_assignment_publish_table",
-        ):
-            with self.subTest(name=name):
-                body = function_body(self.anchor, name)
-                self.assertIn("app_node_comm_send_control_flood(", body)
-                self.assertNotIn("mesh_send_c5_flood(", body)
+    def test_gateway_protocol_floods_use_resumable_delivery_queue(self):
+        survey = function_body(self.anchor, "gateway_route_survey_reachability")
+        submit = function_body(
+            self.anchor, "gateway_discovery_assignment_submit_control_flood_locked"
+        )
+        claim = function_body(
+            self.anchor, "gateway_send_discovery_assignment_claim_request_locked"
+        )
+        table = function_body(
+            self.anchor, "gateway_discovery_assignment_publish_table"
+        )
+        assignment_terminal = function_body(
+            self.anchor, "gateway_discovery_assignment_service_delivery"
+        )
+        survey_terminal = function_body(
+            self.anchor, "gateway_survey_wait_for_discovery_collection"
+        )
+
+        for body in (survey, submit):
+            self.assertIn("app_node_comm_submit_delivery(", body)
+            self.assertIn("NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD", body)
+            self.assertNotIn("app_node_comm_send_control_flood(", body)
+            self.assertNotIn("mesh_send_c5_flood(", body)
+
+        self.assertIn(
+            "gateway_discovery_assignment_submit_control_flood_locked(", claim
+        )
+        self.assertIn("GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM", claim)
+        self.assertIn(
+            "gateway_discovery_assignment_submit_control_flood_locked(", table
+        )
+        self.assertIn("GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE", table)
+
+        for body in (assignment_terminal, survey_terminal):
+            self.assertIn("app_node_comm_take_delivery_event_for(", body)
+            self.assertIn("NODE_COMM_TERMINAL_DELIVERED", body)
+        self.assertIn("gateway_discovery_assignment_window_ms_locked()", assignment_terminal)
+        self.assertIn("gateway_survey_collection_deadline_ms", survey_terminal)
+        self.assertIn(
+            "k_uptime_get_32() + gateway_survey_collection_duration_ms",
+            survey_terminal,
+        )
+        self.assertNotIn(
+            "command_origin_ms + collection_delay_ms",
+            survey,
+        )
+        self.assertNotIn("app_node_comm_auto_reap_delivery(", survey)
+
+    def test_assignment_rounds_only_count_real_rf_and_preserve_failure_boundary(self):
+        claim_round = function_body(
+            self.anchor, "gateway_discovery_assignment_open_claim_round_locked"
+        )
+        table_round = function_body(
+            self.anchor, "gateway_discovery_assignment_publish_table"
+        )
+        terminal = function_body(
+            self.anchor, "gateway_discovery_assignment_service_delivery"
+        )
+        failure = function_body(
+            self.anchor, "gateway_discovery_assignment_fail_locked"
+        )
+
+        self.assertNotIn(
+            "gateway_discovery_assignment_state.claim_round++", claim_round
+        )
+        self.assertNotIn(
+            "gateway_discovery_assignment_state.table_round++", table_round
+        )
+        self.assertIn("event.attempts_started > 0u", terminal)
+        self.assertIn(
+            "gateway_discovery_assignment_state.claim_round++", terminal
+        )
+        self.assertIn(
+            "gateway_discovery_assignment_state.table_round++", terminal
+        )
+        self.assertIn("NODE_COMM_TERMINAL_DEADLINE_EXPIRED", terminal)
+        self.assertIn("NODE_COMM_TERMINAL_PERMANENT_FAILURE", terminal)
+        self.assertIn("COMMAND_RADIO_ERROR", terminal)
+        self.assertIn(
+            "gateway_discovery_assignment_state.claim_delivery_succeeded",
+            failure,
+        )
+        self.assertIn("GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS", failure)
+        self.assertIn(
+            "gateway_discovery_assignment_state.table_delivery_succeeded",
+            failure,
+        )
 
     def test_manual_and_automatic_survey_pair_control_share_reliable_lane(self):
         preparer = function_body(self.anchor, "gateway_survey_prepare_pair_control")

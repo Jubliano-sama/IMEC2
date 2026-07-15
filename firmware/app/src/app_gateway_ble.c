@@ -2096,8 +2096,8 @@ void gateway_command_result_tracking_init(void)
 #define GATEWAY_BLE_PACKET_TX_CHUNK_MAX_LEN CONFIG_BT_L2CAP_TX_MTU
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST) && DEVICE_ROLE == ROLE_GATEWAY
-BUILD_ASSERT(CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE >= 6144u,
-             "mesh gateway BLE commands require a 6 KiB system workqueue stack");
+BUILD_ASSERT(CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE >= 4096u,
+             "gateway BLE ingress needs the verified 4 KiB admission stack");
 #endif
 
 enum gateway_ble_tx_source {

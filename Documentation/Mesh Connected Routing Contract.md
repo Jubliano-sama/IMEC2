@@ -230,6 +230,14 @@ protocol remains responsible for either consuming a terminal delivery event or
 explicitly abandoning its handle; superseding a request must atomically cancel
 and reap the old handle so terminal records cannot consume capacity forever.
 
+Communication callbacks freeze and enqueue work, then return to their owning
+radio or system worker. They must not run a complete route search, reliable
+delivery, click range sequence, or protocol collection loop on that callback's
+stack. The communication queue owns delivery and route-wait work; an anchor
+hands an accepted click to its UWB sequence queue. A route wait has its own work
+item and deadline and must not move, reuse, or cancel the ACK timeout of an
+already active relay transmission.
+
 A logical request keeps one immutable packet identity and payload across every
 communication attempt. The communication service may defer or retry that same
 datagram, but a protocol must not allocate a new sequence number merely because
@@ -267,6 +275,35 @@ and consumes none of the four. The facade freezes accepted envelopes in a
 fixed-capacity compact queue and rejects a full queue or an oversized payload
 explicitly; it never falls through to a direct-route send or a second private
 retry queue.
+
+Ordinary production deliveries retain a 192-byte inline frozen payload so four
+queue records do not reserve four maximum-size UWB frames. The gateway also has
+one protocol-priority owner for one exact maximum-size control payload. This is
+required for the 921-byte 50-anchor assignment table. A second large control
+request is rejected until the first reaches a consumed terminal event; it must
+not overwrite the first payload or enlarge every ordinary queue record.
+
+Gateway survey start, assignment claim, and assignment-table workflows track
+the terminal event for their exact bounded-control handle. Correlated replies
+may be accepted after the first RF copy, but the complete collection or ACK
+window starts only after the handle reports `delivered`, meaning all four real
+RF opportunities ran. Queue admission, pre-RF deferral, and a blocked worker do
+not consume a protocol round. `No anchors` is valid only after a delivered claim
+or survey-start flood and its full response horizon; a flood deadline is a
+timeout, while exhausted or permanent RF delivery failure remains a radio
+failure with its communication terminal reason.
+
+Discovery-slot assignment distinguishes the operation epoch from the table
+generation. The generation is the common nonzero command sequence, flood epoch,
+and packet session identity; anchors persist it with a fingerprint of the full
+sorted table. Within one operation epoch, only a newer generation may replace
+the committed table, an equal generation is idempotent only when the fingerprint
+matches, and an older or conflicting table is rejected. An omitted anchor
+persists an unprovisioned tombstone with the same identity, so reset cannot make
+an old smaller table authoritative again. An exact table replay may re-arm a
+missing ACK after the earlier response delivery has terminated. Gateway mapping
+telemetry is staged only after the final roster is ACK-complete, so a late claim
+cannot leave the GUI with an older roster.
 
 The service can be quiesced, paused, resumed, or stopped without letting a
 protocol steal transport state. A pause has one generation-checked owner and a
@@ -648,6 +685,12 @@ horizon plus every report slot and grace interval. A terminal `no anchors`
 result is valid only after this bounded horizon completes without a unique
 eligible report.
 
+Only RF-started probes count as the four opportunities. If radio contention
+prevents all four before the bounded horizon ends, the anchor still delivers its
+partial peer report but marks it `COMMAND_RADIO_ERROR`; the gateway counts that
+as an explicit retry-exhausted survey failure rather than treating the partial
+discovery as successful or reporting that no anchor exists.
+
 Each report may retain up to twelve heard peers. The gateway first builds a
 deterministic degree-six-or-less spanning graph from every reported directed
 reachability edge, then fills remaining degree with mutual, higher-quality
@@ -663,6 +706,12 @@ record; admission to an in-memory report queue is not delivery. The durable
 record is cleared in two phases only after the gateway ACK is committed. While
 one report is pending, a later survey start is explicitly rejected and cannot
 overwrite the report whose custody is already owned.
+
+If the first journal write is temporarily unavailable, the exact encoded report
+and peer list remain the active generation's staging candidate in RAM. The
+anchor retries that same candidate and does not release the survey generation
+until durable custody succeeds; it must not replace the peer list with a newly
+encoded empty report merely because persistence was busy.
 
 Each real report attempt has a persisted token. The attempt budget is consumed
 before RF can start, so a reset after transmission cannot grant a free retry;
@@ -842,6 +891,13 @@ Likewise, an anchor's low-duty channel 5 scanner may defer for an approaching
 channel 9 event only after re-arming the channel 9 worker at that event's exact
 prepare boundary. Deferral without an armed owner can silently skip every ACK
 transmit window until unrelated work happens to restart the worker.
+
+Channel 5 reply listeners enqueue accepted event-control frames and release the
+radio before the communication worker processes them. They must not drain the
+general receive queue synchronously from inside route discovery, because result
+handling can request another route and recursively re-enter the complete radio
+and delivery path. The dedicated communication queue provides the prompt
+post-RX response without an unbounded call chain.
 
 Duplicate payload reception must be ACK-sticky. If an anchor receives a packet
 that it has already accepted within the packet deduplication window, it may

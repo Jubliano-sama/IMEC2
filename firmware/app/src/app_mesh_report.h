@@ -144,6 +144,7 @@ int mesh_try_send_c5_flood_resume(
 int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
+                                bool send_wake_train,
                                 bool *rf_started);
 int mesh_try_send_control_response_view(
     const struct app_mesh_outbound_view *view,
@@ -210,6 +211,7 @@ bool mesh_anchor_connected_radio_active(void);
 int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
 int mesh_gateway_command_priority_safe_boundary(void);
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms);
+int mesh_schedule_route_request(uint64_t target_id, const char *reason);
 int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary);
 bool mesh_node_comm_gateway_delivery_due_pending(void);
 bool mesh_node_comm_gateway_delivery_due_ready(void);

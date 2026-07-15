@@ -59,13 +59,31 @@ assert "anchor_discovery_gateway_hop_count()" in schedule
 assert "anchor_discovery_gateway_hop_count()" in retry
 
 publish = function_body(ANCHOR, "gateway_discovery_assignment_publish_table")
-assert "app_gateway_assignment_publisher_stage_sorted_ids(" in publish
-assert "app_gateway_assignment_publisher_stage_table_ready(" in publish
+assert "app_gateway_assignment_publisher_stage_sorted_ids(" not in publish
+assert "app_gateway_assignment_publisher_stage_table_ready(" not in publish
 assert "gateway_observe_command_event(&event, false)" not in publish
+delivery = function_body(
+    ANCHOR, "gateway_discovery_assignment_service_delivery"
+)
+assert "event.reason == NODE_COMM_TERMINAL_DELIVERED" in delivery
+assert "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE" in delivery
+assert "app_gateway_assignment_publisher_stage_table_ready(" not in delivery
+complete_success = function_body(
+    ANCHOR, "gateway_discovery_assignment_complete_success_locked"
+)
+assert "gateway_discovery_assignment_missing_ack_count_locked() != 0u" in complete_success
+stage_batch = complete_success.index(
+    "app_gateway_assignment_publisher_stage_sorted_ids("
+)
+stage_table = complete_success.index(
+    "app_gateway_assignment_publisher_stage_table_ready("
+)
+terminal = complete_success.index("gateway_observe_command_event(&event, true)")
+assert stage_batch < stage_table < terminal
 assert function_body(PUBLISHER, "app_gateway_assignment_publisher_stage_batch")
 assert function_body(PUBLISHER, "app_gateway_assignment_publisher_stage_sorted_ids")
 
-window = function_body(ANCHOR, "gateway_discovery_assignment_window_ms")
+window = function_body(ANCHOR, "gateway_discovery_assignment_window_ms_locked")
 assert "app_discovery_assignment_table_windows_remaining(" in window
 assert "return remaining_ms;" not in window
 finalize = function_body(

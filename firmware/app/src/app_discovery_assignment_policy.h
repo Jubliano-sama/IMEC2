@@ -36,26 +36,49 @@ struct app_discovery_assignment_work_guard {
 
 struct app_discovery_assignment_policy {
     uint32_t committed_epoch;
+    uint32_t committed_table_seq;
+    uint32_t committed_table_fingerprint;
     uint32_t joining_epoch;
+    uint32_t joining_table_seq;
+    uint32_t joining_table_fingerprint;
     uint32_t retired_epoch;
     bool claim_observed;
     bool provisioned;
 };
 
+static inline bool app_discovery_assignment_table_seq_newer(
+    uint32_t candidate,
+    uint32_t reference)
+{
+    return candidate != reference &&
+           (int32_t)(candidate - reference) > 0;
+}
+
 static inline void app_discovery_assignment_policy_init(
     struct app_discovery_assignment_policy *policy,
     bool persisted_assignment_valid,
-    uint32_t persisted_epoch)
+    bool persisted_provisioned,
+    uint32_t persisted_epoch,
+    uint32_t persisted_table_seq,
+    uint32_t persisted_table_fingerprint)
 {
     if (policy == NULL) {
         return;
     }
 
     policy->committed_epoch = persisted_assignment_valid ? persisted_epoch : 0u;
+    policy->committed_table_seq =
+        persisted_assignment_valid ? persisted_table_seq : 0u;
+    policy->committed_table_fingerprint =
+        persisted_assignment_valid ? persisted_table_fingerprint : 0u;
     policy->joining_epoch = 0u;
+    policy->joining_table_seq = 0u;
+    policy->joining_table_fingerprint = 0u;
     policy->retired_epoch = 0u;
     policy->claim_observed = false;
-    policy->provisioned = persisted_assignment_valid && persisted_epoch != 0u;
+    policy->provisioned = persisted_assignment_valid && persisted_provisioned &&
+                          persisted_epoch != 0u && persisted_table_seq != 0u &&
+                          persisted_table_fingerprint != 0u;
 }
 
 static inline enum app_discovery_assignment_provisioning_state
@@ -94,11 +117,14 @@ app_discovery_assignment_policy_note_claim(
     }
     if (policy->joining_epoch != 0u &&
         policy->joining_epoch != epoch &&
-        policy->provisioned &&
         epoch == policy->committed_epoch) {
         return APP_DISCOVERY_ASSIGNMENT_CLAIM_IGNORE_STALE;
     }
 
+    if (policy->joining_epoch != epoch) {
+        policy->joining_table_seq = 0u;
+        policy->joining_table_fingerprint = 0u;
+    }
     policy->joining_epoch = epoch;
     policy->claim_observed = true;
     return APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND;
@@ -107,40 +133,84 @@ app_discovery_assignment_policy_note_claim(
 static inline enum app_discovery_assignment_table_decision
 app_discovery_assignment_policy_note_table(
     struct app_discovery_assignment_policy *policy,
-    uint32_t epoch)
+    uint32_t epoch,
+    uint32_t table_seq,
+    uint32_t table_fingerprint)
 {
-    if (policy == NULL || epoch == 0u) {
+    if (policy == NULL || epoch == 0u || table_seq == 0u ||
+        table_fingerprint == 0u) {
         return APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID;
     }
     if (policy->joining_epoch != 0u) {
         if (epoch != policy->joining_epoch) {
             return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
         }
+        if (policy->joining_table_seq != 0u &&
+            (table_seq == policy->joining_table_seq ?
+                 table_fingerprint != policy->joining_table_fingerprint :
+                 !app_discovery_assignment_table_seq_newer(
+                     table_seq, policy->joining_table_seq))) {
+            return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+        }
+        if (policy->joining_table_seq == 0u &&
+            epoch == policy->committed_epoch &&
+            policy->committed_table_seq != 0u &&
+            (table_seq == policy->committed_table_seq ?
+                 table_fingerprint != policy->committed_table_fingerprint :
+                 !app_discovery_assignment_table_seq_newer(
+                     table_seq, policy->committed_table_seq))) {
+            return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+        }
+        policy->joining_table_seq = table_seq;
+        policy->joining_table_fingerprint = table_fingerprint;
         return policy->claim_observed ?
                APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY :
                APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM;
     }
-    if (policy->provisioned && epoch == policy->committed_epoch) {
-        return APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY;
+    if (epoch == policy->committed_epoch &&
+        policy->committed_table_seq != 0u) {
+        if (table_seq == policy->committed_table_seq) {
+            return table_fingerprint == policy->committed_table_fingerprint ?
+                   APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY :
+                   APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+        }
+        if (!app_discovery_assignment_table_seq_newer(
+                table_seq, policy->committed_table_seq)) {
+            return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+        }
+        policy->joining_epoch = epoch;
+        policy->joining_table_seq = table_seq;
+        policy->joining_table_fingerprint = table_fingerprint;
+        policy->claim_observed = false;
+        return APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM;
     }
     if (policy->retired_epoch != 0u && epoch == policy->retired_epoch) {
         return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
     }
 
     policy->joining_epoch = epoch;
+    policy->joining_table_seq = table_seq;
+    policy->joining_table_fingerprint = table_fingerprint;
     policy->claim_observed = false;
     return APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM;
 }
 
 static inline bool app_discovery_assignment_policy_commit(
     struct app_discovery_assignment_policy *policy,
-    uint32_t epoch)
+    uint32_t epoch,
+    uint32_t table_seq,
+    uint32_t table_fingerprint)
 {
-    if (policy == NULL || epoch == 0u ||
+    if (policy == NULL || epoch == 0u || table_seq == 0u ||
+        table_fingerprint == 0u ||
         (policy->joining_epoch != 0u &&
-         (policy->joining_epoch != epoch || !policy->claim_observed)) ||
+         (policy->joining_epoch != epoch || !policy->claim_observed ||
+          policy->joining_table_seq != table_seq ||
+          policy->joining_table_fingerprint != table_fingerprint)) ||
         (policy->joining_epoch == 0u &&
-         (!policy->provisioned || policy->committed_epoch != epoch))) {
+         (policy->committed_epoch != epoch ||
+          policy->committed_table_seq != table_seq ||
+          policy->committed_table_fingerprint != table_fingerprint))) {
         return false;
     }
 
@@ -151,27 +221,47 @@ static inline bool app_discovery_assignment_policy_commit(
         policy->retired_epoch = 0u;
     }
     policy->committed_epoch = epoch;
+    policy->committed_table_seq = table_seq;
+    policy->committed_table_fingerprint = table_fingerprint;
     policy->joining_epoch = 0u;
+    policy->joining_table_seq = 0u;
+    policy->joining_table_fingerprint = 0u;
     policy->claim_observed = false;
     policy->provisioned = true;
     return true;
 }
 
-static inline void app_discovery_assignment_policy_note_unassigned(
+static inline bool app_discovery_assignment_policy_note_unassigned(
     struct app_discovery_assignment_policy *policy,
-    uint32_t epoch)
+    uint32_t epoch,
+    uint32_t table_seq,
+    uint32_t table_fingerprint)
 {
-    if (policy == NULL || epoch == 0u) {
-        return;
+    if (policy == NULL || epoch == 0u || table_seq == 0u ||
+        table_fingerprint == 0u ||
+        (policy->joining_epoch != 0u &&
+         (policy->joining_epoch != epoch || !policy->claim_observed ||
+          policy->joining_table_seq != table_seq ||
+          policy->joining_table_fingerprint != table_fingerprint)) ||
+        (policy->joining_epoch == 0u &&
+         (policy->provisioned || policy->committed_epoch != epoch ||
+          policy->committed_table_seq != table_seq ||
+          policy->committed_table_fingerprint != table_fingerprint))) {
+        return false;
     }
 
     if (policy->provisioned && policy->committed_epoch != epoch) {
         policy->retired_epoch = policy->committed_epoch;
     }
-    policy->committed_epoch = 0u;
-    policy->joining_epoch = epoch;
-    policy->claim_observed = true;
+    policy->committed_epoch = epoch;
+    policy->committed_table_seq = table_seq;
+    policy->committed_table_fingerprint = table_fingerprint;
+    policy->joining_epoch = 0u;
+    policy->joining_table_seq = 0u;
+    policy->joining_table_fingerprint = 0u;
+    policy->claim_observed = false;
     policy->provisioned = false;
+    return true;
 }
 
 static inline bool app_discovery_assignment_operation_expired(

@@ -74,9 +74,32 @@ deficit_index = run.index(
 )
 deficit_guard_index = run.rfind("if (", 0, deficit_index)
 deficit_block = braced_block_at(run, deficit_guard_index)
-report_index = run.index("prepare_discovery_report(", deficit_index)
-assert "return" not in deficit_block and deficit_index < report_index, (
-    "deadline exhaustion must still emit the report containing heard peers"
+deficit_condition = run[
+    deficit_guard_index:run.index("{", deficit_guard_index)
+]
+assert "survey_discovery_probe_real_attempt_count(" in deficit_condition
+assert "SURVEY_DISCOVERY_OPPORTUNITY_COUNT" in deficit_condition
+assert "prepare_discovery_report(" in deficit_block, (
+    "deadline exhaustion must still stage a report containing heard peers"
+)
+assert re.search(
+    r"prepare_discovery_report\s*\(\s*config->survey_id\s*,\s*"
+    r"entries\s*,\s*entry_count\s*,.*?COMMAND_RADIO_ERROR\s*\)",
+    deficit_block,
+    re.S,
+), (
+    "fewer than four real RF opportunities must stage the exact heard-peer "
+    "report with an explicit radio-error status"
+)
+assert "return ret < 0 ? ret : -ETIMEDOUT;" in deficit_block, (
+    "an incomplete survey must remain terminally incomplete even after its "
+    "explicit status report enters durable custody"
+)
+success_report_index = run.rindex("prepare_discovery_report(")
+assert deficit_block.find("COMMAND_RADIO_ERROR") >= 0
+assert deficit_guard_index < success_report_index
+assert "COMMAND_OK" in run[success_report_index:], (
+    "only the complete four-opportunity path may publish a successful report"
 )
 
 probe_retry = function_body(DISCOVERY, "schedule_survey_probe_retry")
@@ -167,7 +190,10 @@ assert "schedule_pair_rf_retry(" in pair_defer_block
 assert "REPORT_TX_RETRY_DELAY_MS" not in pair_defer_block
 assert worker.count("schedule_pair_rf_retry(") == 2
 assert "REPORT_TX_RETRY_DELAY_MS" not in worker
-assert worker.count("SURVEY_NON_RF_SERVICE_POLL_MS") == 1
+assert worker.count("SURVEY_NON_RF_SERVICE_POLL_MS") == 3, (
+    "report-stage custody retry, post-run custody retry, and report-queue pressure "
+    "must use non-RF service polling without consuming radio retry rounds"
+)
 
 empty_report = function_body(
     DISCOVERY, "app_anchor_survey_discovery_stage_empty_report"
