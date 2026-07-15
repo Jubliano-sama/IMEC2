@@ -383,6 +383,16 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             with self.subTest(function=function):
                 self.assertEqual(expected, verifier._canonical_function(function))
 
+    def test_compiler_west_topdir_source_path_resolves_to_checkout(self) -> None:
+        expected = REPO_ROOT / "firmware" / "src" / "mesh_relay.c"
+
+        self.assertEqual(
+            expected.resolve(),
+            verifier._resolve_compiler_source(
+                Path("WEST_TOPDIR/firmware/src/mesh_relay.c")
+            ),
+        )
+
     def test_bare_clone_suffix_stack_usage_is_linked_and_attributed(self) -> None:
         policy = self.policies["mesh_anchor"]
         function = "anchor_uwb_scan_work_handler"

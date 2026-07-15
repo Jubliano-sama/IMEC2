@@ -363,6 +363,13 @@ def _parse_su(path: Path) -> list[StackUsage]:
     return records
 
 
+def _resolve_compiler_source(path: Path) -> Path:
+    """Resolve GCC paths after Zephyr's WEST_TOPDIR prefix remapping."""
+    if not path.is_absolute() and path.parts[:1] == ("WEST_TOPDIR",):
+        return (REPO_ROOT.joinpath(*path.parts[1:])).resolve()
+    return path.resolve()
+
+
 _GCC_CLONE_SUFFIX_RE = re.compile(
     r"(?:\.(?:isra|constprop|part)(?:\.\d+)?)+$"
 )
@@ -908,7 +915,10 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
             source_records = _parse_su(usage_path)
             try:
                 source_resolved = source_path.resolve()
-                records.extend(record for record in source_records if record.source.resolve() == source_resolved)
+                records.extend(
+                    record for record in source_records
+                    if _resolve_compiler_source(record.source) == source_resolved
+                )
             except OSError as exc:
                 evidence.issues.append(f"cannot resolve application source {source_path}: {exc}")
             cgraphs.update(_parse_cgraph(graph_path, source_path.name))
