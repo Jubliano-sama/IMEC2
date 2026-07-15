@@ -2,9 +2,11 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-ANCHOR = (ROOT / "app/src/app_anchor.c").read_text()
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 
 
 def function_body(source: str, name: str) -> str:

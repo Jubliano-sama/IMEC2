@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import unittest
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_SRC = ROOT / "app" / "src"
@@ -38,7 +40,7 @@ def function_body(source: str, name: str) -> str:
 class NodeCommProtocolCallerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.anchor = (APP_SRC / "app_anchor.c").read_text(encoding="utf-8")
+        cls.anchor = read_composed_source(APP_SRC / "app_anchor.c")
         cls.survey = (APP_SRC / "app_anchor_survey_discovery.c").read_text(
             encoding="utf-8"
         )

@@ -2,9 +2,11 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-ANCHOR = (ROOT / "app/src/app_anchor.c").read_text(encoding="utf-8")
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 BLE = (ROOT / "app/src/app_gateway_ble.c").read_text(encoding="utf-8")
 MAIN = (ROOT / "app/src/main.c").read_text(encoding="utf-8")
 SURVEY = (ROOT / "app/src/app_gateway_survey_observability.c").read_text(

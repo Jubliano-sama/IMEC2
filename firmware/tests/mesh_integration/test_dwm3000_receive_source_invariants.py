@@ -2,9 +2,11 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text(encoding="utf-8")
+DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 
 
 def function_body(name: str) -> str:

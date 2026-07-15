@@ -4,11 +4,13 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
 RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
-DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
+DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 DRIVER_HEADER = (ROOT / "app/src/dwm3000_driver.h").read_text()
 CORE_SURVEY = (ROOT / "src/survey.c").read_text()
 

@@ -9,6 +9,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from source_text import read_composed_source
+
 
 FIRMWARE_ROOT = Path(__file__).resolve().parents[2]
 APP_ROOT = FIRMWARE_ROOT / "app"
@@ -113,7 +115,7 @@ class ForcedHopRamPolicyTests(unittest.TestCase):
 
     def test_forcedhop_cannot_allocate_or_use_anchor_scan_queue(self) -> None:
         failures = _unguarded_queue_symbol_lines(
-            ANCHOR_SOURCE.read_text(encoding="utf-8")
+            read_composed_source(ANCHOR_SOURCE)
         )
         self.assertEqual(
             [],

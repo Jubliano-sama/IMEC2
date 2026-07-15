@@ -4,10 +4,12 @@ from pathlib import Path
 import re
 import unittest
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BLE = (ROOT / "app/src/app_gateway_ble.c").read_text(encoding="utf-8")
-REPORT = (ROOT / "app/src/app_mesh_report.c").read_text(encoding="utf-8")
+REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 RETRY_HEADER = (ROOT / "app/src/app_gateway_eack_retry.h").read_text(
     encoding="utf-8"
 )
@@ -18,7 +20,7 @@ COLLECTION = (ROOT / "app/src/app_gateway_collection_eack.c").read_text(
     encoding="utf-8"
 )
 GATEWAY_COMMAND = (ROOT / "src/gateway_command.c").read_text(encoding="utf-8")
-MESH_RELAY = (ROOT / "src/mesh_relay.c").read_text(encoding="utf-8")
+MESH_RELAY = read_composed_source(ROOT / "src/mesh_relay.c")
 
 
 def function_body(source: str, name: str) -> str:

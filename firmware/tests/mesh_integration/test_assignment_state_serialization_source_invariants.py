@@ -3,9 +3,11 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-ANCHOR = (ROOT / "app/src/app_anchor.c").read_text(encoding="utf-8")
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 STATE = "gateway_discovery_assignment_state."
 LOCK = "k_mutex_lock(&gateway_discovery_assignment_mutex"
 UNLOCK = "k_mutex_unlock(&gateway_discovery_assignment_mutex)"

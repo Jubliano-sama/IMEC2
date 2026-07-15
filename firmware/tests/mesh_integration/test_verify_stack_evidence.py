@@ -12,6 +12,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from source_text import read_composed_source
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 VERIFIER_PATH = REPO_ROOT / "firmware" / "scripts" / "verify_stack_evidence.py"
@@ -964,8 +966,9 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                    "app_clicker.c").read_text(encoding="utf-8")
         anchor = (REPO_ROOT / "firmware" / "app" / "src" /
                   "app_anchor_survey_discovery.c").read_text(encoding="utf-8")
-        gateway = (REPO_ROOT / "firmware" / "app" / "src" /
-                   "app_anchor.c").read_text(encoding="utf-8")
+        gateway = read_composed_source(
+            REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
+        )
         ble = (REPO_ROOT / "firmware" / "app" / "src" /
                "app_gateway_ble.c").read_text(encoding="utf-8")
 

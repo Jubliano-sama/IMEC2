@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import unittest
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_SRC = ROOT / "app" / "src"
@@ -100,7 +102,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertNotIn('#include "app_mesh_report.h"', header)
 
     def test_gateway_control_state_has_single_new_owner(self):
-        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
         control = (
             APP_SRC / "app_node_comm_gateway_control.c"
         ).read_text(encoding="utf-8")
@@ -117,7 +119,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         )
 
     def test_anchor_command_tracking_reuses_the_communication_context(self):
-        anchor = (APP_SRC / "app_anchor.c").read_text(encoding="utf-8")
+        anchor = read_composed_source(APP_SRC / "app_anchor.c")
 
         self.assertNotIn("anchor_command_orchestrator", anchor)
         self.assertIn(
@@ -323,7 +325,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
     def test_synthetic_transmitter_uses_terminal_communication_custody(self):
         source = (APP_SRC / "app_mesh_test.c").read_text(encoding="utf-8")
         header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
-        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
         cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn('#include "app_node_comm.h"', source)
@@ -356,7 +358,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
 
     def test_facade_terminal_releases_backend_without_owning_retry_policy(self):
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
-        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
 
         reconcile_start = facade.index(
             "static void app_node_comm_reconcile_terminal_backends_locked(void)"
@@ -395,7 +397,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
 
     def test_gateway_due_kick_keeps_rf_worker_on_mesh_route_queue(self):
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
-        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
 
         schedule_start = facade.index(
             "static void app_node_comm_schedule_delivery_locked"
@@ -453,7 +455,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             )
 
     def test_mesh_clicker_uses_dedicated_communication_queue(self):
-        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
         cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
         clicker_conf = (ROOT / "app" / "conf" / "mesh-clicker.conf").read_text(
             encoding="utf-8"
@@ -493,7 +495,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
 
     def test_gateway_single_ack_uses_bounded_communication_response(self):
-        report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
 
         queue_start = report.index(
@@ -514,9 +516,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
     def test_global_radio_admission_gate_closes_legacy_role_bypasses(self):
         state_header = (APP_SRC / "app_state.h").read_text(encoding="utf-8")
         state_source = (APP_SRC / "app_state.c").read_text(encoding="utf-8")
-        report_source = (APP_SRC / "app_mesh_report.c").read_text(
-            encoding="utf-8"
-        )
+        report_source = read_composed_source(APP_SRC / "app_mesh_report.c")
 
         for declaration in (
             "void radio_guard_uwb_admission_pause(void);",

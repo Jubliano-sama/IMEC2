@@ -4,11 +4,13 @@ from pathlib import Path
 import re
 import unittest
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-APP = (ROOT / "app/src/app_mesh_report.c").read_text(encoding="utf-8")
+APP = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 GATEWAY = (ROOT / "app/src/app_gateway_ble.c").read_text(encoding="utf-8")
-RELAY = (ROOT / "src/mesh_relay.c").read_text(encoding="utf-8")
+RELAY = read_composed_source(ROOT / "src/mesh_relay.c")
 PERSISTENCE = (ROOT / "app/src/app_mesh_persistence.c").read_text(
     encoding="utf-8"
 )

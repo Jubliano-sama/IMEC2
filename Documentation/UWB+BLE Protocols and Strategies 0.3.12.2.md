@@ -2,13 +2,88 @@
 
 # UWB+BLE Protocols and Strategies
 
-Version: 0.3.9
+Version: 0.3.12.2
 
-Previous version: [[UWB+BLE Protocols and Strategies 0.3.8]]
+Previous version: 0.3.12.1 (available in Git history)
 
-This document defines the v1 wire protocol: binary packet formats, message types, TLVs, and forwarding rules. System architecture, timing budgets, power estimates, and state machine flows are in [[UWB+BLE Architecture 0.6.3]]. Runtime behavior and decision flows are in [[Firmware State Machines 0.2.3]].
+This document defines the v1 wire protocol: binary packet formats, message types, TLVs, and forwarding rules. System architecture, timing budgets, power estimates, and state machine flows are in [[UWB+BLE Architecture 0.6.6]]. Runtime mesh invariants are in [[Mesh Connected Routing Contract]].
 
 ## Changelog
+
+### 2026-07-12 - 0.3.12.2
+
+- Required `SURVEY_DISCOVERY_START` to use the extended-PHR channel-5
+  mesh-control PHY used by the anchor's control-follow-up receiver. A
+  standard-wake-PHR survey-start frame is a PHY mismatch and is not decodable.
+- Made the four survey-probe opportunities real attempts. A missed nominal
+  transmit slot is retained for the same opportunity in a second bounded
+  reserve horizon; it is not silently consumed. Every anchor processes the
+  nominal and reserve horizons chronologically and listens through reserve
+  slots used by deferred peers.
+- Raised shared survey-slot validation to the complete worst-case radio
+  envelope: the bounded 20 ms transmit timeout, 2 ms transition guard, and
+  8 ms receive guard require at least a 30 ms slot. Timing remains relative and
+  wrap-safe across the 32-bit uptime boundary.
+- Required an anchor to retain one exact encoded discovery report until the
+  local report queue accepts custody. Queue pressure and transient busy states
+  use bounded retry after radio release; they do not silently discard the
+  report or evict an older local-origin report.
+- Added a survey-specific direct-gateway retry horizon for dense RF layouts.
+  Twenty directly reachable anchors may contend for one continuously listening
+  gateway without creating negotiated gateway connections: four real probes
+  use anchor-, survey-, and attempt-diversified 2/4/8 second backoff windows,
+  while a locally busy radio defers rather than consuming an attempt. Eight
+  consecutive busy deferrals end with a distinct busy terminal and zero to
+  four attempted transmissions; they are not reported as four attempted sends. Gateway
+  collection now keeps the 5 second queue-admission allowance separate from a
+  60.22 second conservative delivery tail covering probe policy, bounded
+  scratch acquisition and radio transitions, gateway
+  ACK retries, RX re-arm, and ACK turnaround.
+
+### 2026-07-12 - 0.3.12.1
+
+- Added optional one-byte `ATTEMPT_INDEX` and `DETECTION_SOURCE` TLVs to
+  normal click reports. New mesh firmware emits source value 1 for a CRC-valid
+  UWB wake claim; legacy packets omit both TLVs and remain valid.
+- Kept an unprovisioned anchor eligible for local click ranging by using its
+  deterministic hash slot until a valid gateway assignment is committed.
+  Status and diagnostics continue to report `UNPROVISIONED`; the fallback is a
+  bounded recovery path and does not replace gateway enumeration.
+
+### 2026-07-10 - 0.3.12
+
+- Removed the BLE debug-log characteristic and formatter backend. The gateway
+  BLE service now carries only framed host commands, packet reports, and the
+  read-only gateway identity; firmware diagnostics remain available over RTT.
+
+### 2026-07-10 - 0.3.11
+
+- Increased deterministic gateway survey planning from four to six peers per
+  anchor. A 50-anchor deployment is therefore bounded to 150 unique pairs,
+  compared with 1,225 pairs in the unrestricted complete graph.
+- Expanded pair storage to the exact 150-pair ceiling and compacted the
+  in-memory pair layout from 32 to 24 bytes so the larger topology uses less
+  static gateway RAM than the previous 128-entry allocation.
+- Corrected the documented extended channel-9 mesh capacity to the implemented
+  1,021-byte frame limit, including a 958-byte shared-packet payload.
+
+### 2026-07-10 - 0.3.10
+
+- Made discovery-slot assignment a convergent, acknowledged transaction. Claim
+  and table floods use bounded retries; anchor replies use assigned-slot and
+  route-hop staggering with randomized exponential backoff; the gateway reports
+  success only after every listed anchor acknowledges the exact table epoch.
+- Defined persistent assignment behavior. Anchors keep a previously committed
+  assignment while a new claim round is in progress, persist a validated table
+  before acknowledging it, restore it after reboot, and stop replying only when
+  an authoritative later table omits them.
+- Bounded automatic anchor-pair survey planning to four peers per anchor, made
+  pair selection deterministic, and required `CMD_SURVEY_START_PAIR` to match a
+  prior `CMD_SURVEY_PREPARE_PAIR`. Omitted gateway sample count now defaults to
+  the runtime queue capacity.
+- Clarified that aborting a survey stops the gateway orchestrator as well as the
+  addressed anchors, and that an already selected channel-9 ACK lane does not
+  silently fall back to another neighbor or channel 5 after transmission fails.
 
 ### 2026-07-10 - 0.3.9
 
@@ -26,8 +101,9 @@ This document defines the v1 wire protocol: binary packet formats, message types
   enter the priority channel-5 control path at the first safe radio boundary.
 - Added `CMD_ASSIGN_DISCOVERY_SLOTS`: the gateway collects and verifies full
   anchor hashes, sorts by `(hash, anchor_id)`, assigns collision-free normal
-  click reply slots, and floods the authoritative table. Unassigned anchors do
-  not fall back to hash slots for normal clicks.
+  click reply slots, and floods the authoritative table. As clarified in
+  0.3.12.1, an unassigned anchor uses a deterministic recovery slot so
+  provisioning loss cannot suppress local click ownership.
 - Extended `UWB_FINAL` by three bytes so the clicker can carry one signed
   response clock-offset sample plus a validity bit to the anchor. Click reports
   expose it separately from the anchor's own clock-offset sample.
@@ -203,7 +279,7 @@ All multi-byte fields are little-endian.
 
 Total header is 32 bytes. Maximum payload is 255 bytes. Maximum packet is 32 + 255 + 2 = 289 bytes.
 
-The gateway BLE packet characteristic carries a byte stream of COBS-delimited shared packets. One COBS frame may span multiple ATT writes or notifications. UWB mesh transport wraps one shared packet in a `UWB_MESH` frame with `network_id`, previous-hop ID, next-hop ID, packet length, and CRC. The maximum UWB mesh frame is 316 bytes: 25 bytes of UWB mesh header, one 289-byte shared packet, and a 2-byte frame CRC.
+The gateway BLE packet characteristic carries a byte stream of COBS-delimited shared packets. One COBS frame may span multiple ATT writes or notifications. UWB mesh transport wraps one shared packet in a `UWB_MESH` frame with `network_id`, previous-hop ID, next-hop ID, packet length, and CRC. The maximum extended UWB mesh frame before the radio FCS is 1,021 bytes: 25 bytes of UWB mesh header, one 994-byte extended shared packet (34-byte header, 958-byte payload, and 2-byte packet CRC), and a 2-byte mesh-frame CRC. The radio adds its 2-byte FCS to reach the 1,023-byte PHY limit.
 
 `Message age ms` is initialized to zero when a source creates a new shared packet. Every queue, relay, retransmit, and forwarded send adds elapsed local wall time before serialization, saturating at `UINT32_MAX`. The field is not part of duplicate identity and does not replace `src_id`, `dst_id`, `session_id`, or `seq`; it lets receivers compensate for mesh delay without requiring gateway-synchronized anchor clocks.
 
@@ -294,7 +370,7 @@ For UWB wake, discovery, range release, range schedule, and DS-TWR frames, the f
 | `0x0101` | `CMD_SURVEY_PREPARE_PAIR` | Prepare an anchor pair for UWB ranging. |
 | `0x0102` | `CMD_SURVEY_START_PAIR` | Start UWB ranging for a prepared pair. |
 | `0x0103` | `CMD_SURVEY_ABORT` | Abort the current survey. |
-| `0x0104` | `CMD_ASSIGN_DISCOVERY_SLOTS` | Ask reachable anchors for verified full hashes, assign their normal-click reply order, and flood the resulting table. The host addresses this command to the gateway itself. |
+| `0x0104` | `CMD_ASSIGN_DISCOVERY_SLOTS` | Ask reachable anchors for verified full hashes, assign their normal-click reply order, flood the resulting table, and wait for table acknowledgements. The host addresses this command to the gateway itself. |
 | `0x8000-0xFFFF` | Vendor-specific range | Project-local command IDs. |
 | `0x8000` | `CMD_ML_START_COLLECTION` | Start ML clicker full diagnostic collection. |
 | `0x8001` | `CMD_ML_START_FAST_RANGING` | Start ML clicker range-only collection. |
@@ -424,7 +500,7 @@ TLVs let command and report payloads grow without changing the fixed packet head
 | `0x9F` | `FLOOD_RANDOM_BACKOFF_SLOT_MS` | 2 | Slot size for the random flood delay. Relays choose an integer slot that does not exceed the maximum. Default is 600 ms. |
 | `0xA0` | `FLOOD_RETRY_COUNT` | 1 | Number of additional full flood retransmission bursts requested by the gateway. Default is 0. |
 | `0xA1` | `FLOOD_PACKET_AGE_MS` | 4 | Flood-local age mirror. Relays refresh it immediately before transmit to match the shared packet header age. |
-| `0xA4` | `DISCOVERY_ASSIGNMENT_PHASE` | 1 | `1` requests anchor hash claims; `2` carries the authoritative assignment table. |
+| `0xA4` | `DISCOVERY_ASSIGNMENT_PHASE` | 1 | `1` requests anchor hash claims; `2` carries the authoritative assignment table; `3` acknowledges that exact table epoch after durable installation. |
 | `0xA5` | `DISCOVERY_ASSIGNMENT_EPOCH` | 4 | Correlates claims and the resulting assignment table. |
 | `0xA6` | `DISCOVERY_ASSIGNMENT_HASH` | 8 | Full deterministic hash claimed by an anchor and verified by the gateway against the packet source ID. |
 | `0xA7` | `DISCOVERY_ASSIGNMENT_TABLE` | variable, repeated | Packed 17-byte entries: `anchor_id:u64`, `hash:u64`, `slot:u8`. Entries are ordered by `(hash, anchor_id)` and may span repeated TLVs. |
@@ -488,7 +564,9 @@ Anchors accept `RANGE_RELEASE` only while waiting after a discovery reply for th
 
 Anchors reject schedules that do not match the active epoch, wrong network/channel/nonce, any ranging channel other than 5, any reply delay other than the compiled `UWB_RANGE_REPLY_DELAY_UUS` in the DWM/DW3000 delayed-TX unit, STS enabled, diagnostics not required, a burst window below 400 ms, an exchange stride below 30000 us, more than 8 selected anchors, duplicate selected anchors, missing selected samples, or per-anchor sequence ranges that would wrap past `255`. The current long-range main firmware selects `UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS = 8000`; `UWB_RANGE_REPLY_DELAY_SHORT_RANGE_UUS = 2750` is a provisional lower-delay candidate. Both values still need recalibration against the final firmware timing path. Normal-click schedules also require at least three selected anchors; the current firmware encodes `minimum_successful_anchors` as `UWB_NORMAL_CLICK_MIN_ANCHORS = 3`, and validators reject values below three or above `selected_anchor_count`. Diagnostic/self-test schedules may use fewer anchors. The legacy poll-spacing field remains bounded for compatibility, but the active burst schedule is governed by `burst_window_ms` and `exchange_stride_us`.
 
-Normal mesh-click discovery uses gateway-assigned slots. A host sends `CMD_ASSIGN_DISCOVERY_SLOTS` to the gateway. The gateway floods a claim phase; every receiving anchor immediately clears its previous normal-click assignment and returns its full deterministic hash through the normal reliable mesh path. The gateway rejects hashes that do not match the result packet's source ID, de-duplicates anchor IDs, sorts valid claims by `(hash, anchor_id)`, assigns dense slots starting at zero, and floods the authoritative table for the same assignment epoch. The table declares the fixed 50-slot normal-click reply space separately from the number of listed anchors. An anchor installs a slot only after validating the complete ordered table and finding its own ID. Until then, or when omitted from a later table, it does not transmit normal-click discovery replies; there is no hash-slot fallback.
+Normal mesh-click discovery uses gateway-assigned slots. A host sends `CMD_ASSIGN_DISCOVERY_SLOTS` to the gateway. The gateway runs at least two bounded claim rounds and extends convergence when a previously unseen valid claim arrives. Each receiving anchor keeps its previously committed normal-click assignment while returning its full deterministic hash through the normal reliable mesh path. Claim and acknowledgement response delays combine a dense response slot with route hop count, scheduling farther anchors earlier within each slot, and randomized exponential retry backoff. The gateway rejects hashes that do not match the result packet's source ID, de-duplicates anchor IDs, sorts valid claims by `(hash, anchor_id)`, assigns dense slots starting at zero, and gives each generated table a unique command sequence within the assignment epoch.
+
+The authoritative table declares the fixed 50-slot normal-click reply space separately from the number of listed anchors. An anchor validates the complete ordered table, finds its own ID, and persists `(gateway_id, anchor_id, epoch, slot, slot_count)` before sending phase `3` for that exact table sequence. A persistence failure is not acknowledged. An anchor omitted from the authoritative table clears its persisted assignment; an anchor that receives a table before its claim was collected sends another claim instead of inventing a hash slot. The gateway retries the table with bounded randomized exponential backoff and reports host success only when every listed anchor has acknowledged it. A committed assignment is restored after reboot. There is no hash-slot fallback.
 
 Survey discovery and ML clicker discovery remain hash-derived and independent of the normal-click assignment table. Those modes use `hash(anchor_id) % slot_count`, with the configured or command-supplied slot count as their reply space. ML collection currently supports `1..8` slots for normal and fast-ranging collection and `2..8` for anchor-pair survey collection. Gateway survey discovery defaults to six slots and may override the count with `DISCOVERY_SLOT_COUNT` up to 50. Stable full device IDs remain required; per-anchor normal-click slot flash parameters are not part of the runtime contract.
 
@@ -550,8 +628,8 @@ The mesh is reactive. Nodes discover a path when a real packet needs one, then s
 6. **Route selection**: select among currently valid candidates. Do not expire a route by age alone. Routes use `effective_cost = hop_count * 100 + (100 - quality)`. Ties are broken by higher quality, fewer hops, newer observation time, then lower next-hop ID. See [[UWB+BLE Architecture 0.6.3]] for the full cost derivation and quality mapping.
 7. **Forward** the same packet with `ttl - 1`. Relays never rewrite `src_id`, `dst_id`, `session_id`, `seq`, or payload. Before forwarding or retransmitting, they add local elapsed time to `Message age ms`, saturating at `UINT32_MAX`. Broadcast forwarding is limited to survey discovery start packets. After a relay successfully forwards an ACK-required unicast, it sends `MESH_HOP_ACK` back toward the original source.
 8. **Gateway ACK**: for gateway-bound packets with `GATEWAY_ACK_REQUIRED`, keep the original sender's packet pending until the gateway ACK arrives. The base gateway-ACK timeout is 2 s, but each matching `MESH_HOP_ACK` resets that 2 s window because the packet is still progressing downstream. Missing gateway ACKs mark a route failure, wait a randomized 100/250/500 ms retry backoff, then retransmit if a current or alternate candidate remains. Packet age is refreshed at timeout and again before retransmit so the retried packet includes both the ACK wait and backoff delay.
-9. **Command serialization**: the gateway tracks one outstanding command at a time. A second command is rejected with `COMMAND_BUSY`. A matching `COMMAND_RESULT` clears the wait; no result within 12 s emits `COMMAND_TIMEOUT` over the connected BLE gateway packet stream.
-10. **Channel selection**: route discovery, route refresh, unknown-contact recovery, and mesh event control start on channel 5. Payload data, gateway ACKs, command results, heartbeats, and reports use channel 9 only when the selected next hop has fresh accepted event timing.
+9. **Command serialization**: the gateway BLE ingress queue holds two commands and preserves arrival order. The head retries transient radio, route, and queue-admission errors up to eight times with capped randomized exponential backoff; later commands cannot overtake it. End-to-end result tracking remains single-command: a matching `COMMAND_RESULT` clears the wait, while no result within 12 s emits `COMMAND_TIMEOUT` over the connected BLE gateway packet stream. A full ingress queue or exhausted retry budget produces an explicit failure instead of silent replacement.
+10. **Channel selection**: route discovery, route refresh, unknown-contact recovery, and mesh event control start on channel 5. Payload data, gateway ACKs, command results, heartbeats, and reports use channel 9 only when the selected next hop has fresh accepted event timing. Once a gateway or hop ACK has selected a negotiated channel-9 lane, a transmission failure is returned to the ACK owner with the original packet still retained; that attempt does not silently switch to another channel-9 neighbor or channel 5.
 11. **Click priority**: an accepted local `WAKE_CLAIM` preempts active mesh forwarding and clears pending mesh RX work. CRC-valid claims that fail network, channel, flag, freshness, or arbitration checks are ignored for preemption. Already-built local click reports are requeued for later delivery. See [[UWB+BLE Architecture 0.6.3]] for the full click-priority mechanism.
 
 ### Gateway-Originated Flood Controls
@@ -601,7 +679,7 @@ Anchor UWB status bit layout:
 
 ### Report Fragmentation
 
-An unfragmented aggregated click report can carry distance samples plus diagnostic TLVs inside one UWB mesh frame. If the anchor measured more samples than fit, it sends multiple `CLICK_REPORT` packets for the same `(anchor_id, clicker_id, event_seq, burst_id)`. Each packet's `TIMESTAMP_MS` is the sender-local start timestamp for the first distance sample in that chunk, `SEQUENCE_START_TIMESTAMPS_MS` gives the direct per-sample local start timestamps from that anchor, and the packet header `Message age ms` gives the elapsed time since that packet was created. `RANGE_ROUND_INDICES` gives the clicker-transmitted round-robin round for each sample, so the gateway can group reports by `(clicker_id, event_seq, burst_id, round_index)` and average the respective anchor start times for each round even when several round robins occur for one click. Anchors do not exchange start times with each other. The first normal-click packet carries one rounded-average `DISTANCE_MM`, one `QUALITY`, one `RANGE_STATUS`, one total `SAMPLE_COUNT`, `BURST_ID`, burst and stride TLVs, diagnostic status/count TLVs, the PHY configuration ID, the canonical six-byte `UWB_CIR_SAMPLE`, clicker diagnostics, and the first aligned distance/timing chunk. The same six bytes are not repeated as `ANCHOR_DIAG_BYTES`. Subsequent distance packets carry the same aggregate identity, a `SAMPLE_INDEX` pointing to the first sample in that chunk, and the next aligned distance, round-index, and timestamp samples; they omit first-packet diagnostics, RSL, and CIR.
+An unfragmented aggregated click report can carry distance samples plus diagnostic TLVs inside one UWB mesh frame. If the anchor measured more samples than fit, it sends multiple `CLICK_REPORT` packets for the same `(anchor_id, clicker_id, event_seq, burst_id)`. Each packet's `TIMESTAMP_MS` is the sender-local start timestamp for the first distance sample in that chunk, `SEQUENCE_START_TIMESTAMPS_MS` gives the direct per-sample local start timestamps from that anchor, and the packet header `Message age ms` gives the elapsed time since that packet was created. `RANGE_ROUND_INDICES` gives the clicker-transmitted round-robin round for each sample, so the gateway can group reports by `(clicker_id, event_seq, burst_id, round_index)` and average the respective anchor start times for each round even when several round robins occur for one click. Anchors do not exchange start times with each other. The first normal-click packet carries one rounded-average `DISTANCE_MM`, one `QUALITY`, one `RANGE_STATUS`, one total `SAMPLE_COUNT`, `BURST_ID`, burst and stride TLVs, diagnostic status/count TLVs, the PHY configuration ID, the canonical six-byte `UWB_CIR_SAMPLE`, clicker diagnostics, and the first aligned distance/timing chunk. New firmware also includes one-byte `ATTEMPT_INDEX` and `DETECTION_SOURCE`; source 1 means the anchor accepted a CRC-valid UWB wake claim for that attempt. Both fields are additive and may be absent in legacy records. The same six CIR bytes are not repeated as `ANCHOR_DIAG_BYTES`. Subsequent distance packets carry the same aggregate identity, a `SAMPLE_INDEX` pointing to the first sample in that chunk, and the next aligned distance, round-index, and timestamp samples; they omit first-packet diagnostics, RSL, and CIR.
 
 For a normal mesh click, the anchor also captures the same bounded partial CIR used by the ML firmware: 192 accumulator samples centered around the detected first path, with 64 samples before it where the accumulator boundary permits. Each sample is six raw bytes, so a complete window is 1,152 bytes. The anchor emits two extended `CLICK_REPORT` diagnostic packets carrying 881 and 271 raw CIR bytes. The first report payload reserves the mandatory nine bytes needed for `MESH_CH9_BATCH_ID` and `MESH_CH9_BATCH_FLAGS`, making the routed payload exactly 958 bytes. Every packet repeats `CLICKER_ID`, `ANCHOR_ID`, `EVENT_SEQ`, and `TIMESTAMP_MS`, and carries `DIAG_FRAGMENT_INDEX`, `DIAG_FRAGMENT_COUNT`, `UWB_CIR_BYTE_OFFSET`, `UWB_CIR_TOTAL_BYTES`, `UWB_CIR_FIRST_PATH_INDEX`, and `UWB_CIR_START_INDEX`. Because a TLV value length is one byte, one packet may contain several consecutive `UWB_CIR_FULL_CHUNK` values; the host concatenates those values in wire order before applying the packet byte offset. Reassembly is valid only when identity and metadata agree, offsets are in bounds, chunks do not conflict, and the two packets cover the declared total length. Missing or invalid packets leave the CIR explicitly incomplete; they do not invalidate the core click result. The anchor streams the two packets into its normal local-origin report path without requiring both to occupy the report queue at once.
 
@@ -625,14 +703,16 @@ The ML clicker firmware exposes a host-driven anchor-pair survey command, `CMD_M
 
 Each ML anchor-pair survey row is identified by `INITIATOR_ID` and `RESPONDER_ID`, not by a dedicated survey-result message. The report payload carries `SURVEY_ID`, `EVENT_SEQ`, `TIMESTAMP_MS`, `INITIATOR_ID`, `RESPONDER_ID`, `SAMPLE_INDEX`, `SAMPLE_COUNT`, `DISTANCE_MM`, `QUALITY`, `RANGE_STATUS`, and `UWB_RSL_DBM`. `SAMPLE_INDEX` is the zero-based pair index and `SAMPLE_COUNT` is the scheduled pair count for this command. The final `MSG_COMMAND_RESULT` may report `COMMAND_TIMEOUT` when not every scheduled pair produced a result before the receive deadline; any diagnostic click-report rows already emitted for that command remain valid input to the off-device geometry solver.
 
-The gateway starts survey setup with `SURVEY_DISCOVERY_START`, a broadcast mesh packet carrying `SURVEY_ID`, `DISCOVERY_START_DELAY_MS`, `DISCOVERY_SLOT_MS`, and `DISCOVERY_SLOT_COUNT`. The gateway uses six slots by default unless the host command includes `DISCOVERY_SLOT_COUNT`. Each anchor subtracts the packet header age from the start delay and joins the matching hash-derived slot when it receives the packet late but before the epoch has expired.
+The gateway starts survey setup with `SURVEY_DISCOVERY_START`, a broadcast mesh packet carrying `SURVEY_ID`, `DISCOVERY_START_DELAY_MS`, `DISCOVERY_SLOT_MS`, and `DISCOVERY_SLOT_COUNT`. This packet uses the extended-PHR channel-5 mesh-control PHY, matching the control-follow-up receiver opened by the gateway-command wake train. The gateway uses six slots by default unless the host command includes `DISCOVERY_SLOT_COUNT`. Each anchor subtracts the packet header age from the start delay and joins the matching hash-derived slot when it receives the packet late but before the epoch has expired.
 
-During the discovery epoch, anchor slot `n` transmits one `UWB_SURVEY_DISCOVERY_PROBE`; all other anchors listen through that slot. The current runtime uses channel 5, 850 kbps, a 4096-symbol preamble, PAC32, and no STS for this probe. In the local DW3000 SDK, 850 kbps is the lowest exposed data rate; future survey-only PHY tuning should keep the lowest supported data rate and longest validated preamble. The operational default is six slots at 40 ms per slot, so discovery itself takes 240 ms after the start delay unless the gateway command requests a larger `DISCOVERY_SLOT_COUNT`.
+During the discovery epoch, every anchor gets four real `UWB_SURVEY_DISCOVERY_PROBE` transmit attempts. Each attempt has a deterministic collision-diversified slot. If an anchor cannot start a complete transmission inside its nominal slot, that same attempt moves to its deterministic slot in a second bounded reserve horizon; the blocked nominal slot does not consume the attempt, and the anchor never transmits late outside either slot. All anchors process later nominal windows before the reserve horizon and listen through reserve slots, so one blocked early attempt does not hide later peer probes. The probe uses the standard-wake channel-5 PHY: 850 kbps, a 4096-symbol preamble, PAC32, standard PHR, and no STS. A slot must be at least 30 ms so the 20 ms transmit timeout, 2 ms transition guard, and 8 ms receive guard fit even on the failure path. The operational default remains six 40 ms slots.
 
-After discovery, each anchor reports the peer probes it heard as `SURVEY_DISCOVERY_REPORT`. Reports are not flooded at once: each anchor waits for `discovery_duration + anchor_slot * survey_report_mesh_slot_ms` before entering the gateway-bound report queue. The current report mesh slot is longer than the gateway ACK timeout, so a typical anchor report has time to be sent, ACKed, or move into route recovery before the next anchor starts. The gateway builds the reachability graph from these measured reports and then schedules individual anchor pairs.
+After both discovery horizons, each anchor reports the peer probes it heard as `SURVEY_DISCOVERY_REPORT`. Reports are not flooded at once: each anchor waits for `discovery_duration + anchor_slot * survey_report_mesh_slot_ms` before requesting gateway-bound queue custody. The anchor retains one exact encoded report while the local queue is full or temporarily busy and retries admission after radio release with bounded backoff through the collection allowance. It clears that pending state only after queue custody or an explicit terminal deadline/error. The current report mesh slot is longer than the gateway ACK timeout, so a typical anchor report has time to be sent, ACKed, or move into route recovery before the next anchor starts. The gateway builds the reachability graph from these measured reports and then deterministically schedules at most six peers per anchor, preferring mutual visibility, link quality, received level, and stable ID order. This caps a 50-anchor deployment at 150 pairs instead of the 1,225-pair complete graph.
+
+Direct RF reachability does not allocate a negotiated channel-9 connection at the gateway; the gateway remains a continuous channel-9 receiver. When many direct anchors become report-ready together, survey route probes get up to four actual transmissions with 2, 4, and 8 second widening retry bases plus full-width anchor-, survey-, and attempt-specific mixing. External RNG correlation therefore cannot make every anchor repeat the same delay, including anchor IDs whose upper and lower 32-bit halves have the same XOR. A locally busy radio may defer without consuming a transmission. Eight consecutive busy deferrals produce a distinct busy terminal, so that path does not falsely claim four sends occurred. The gateway collection deadline includes the separately calculated 60.22 second conservative delivery tail after the 5 second local queue-admission allowance. That tail covers the bounded probe policy, scratch acquisition and radio-transition allowances, the complete production gateway-ACK retry budget, RX re-arm, and ACK guard; it does not reinterpret queue admission as gateway delivery. The retry-policy model proves collision and deadline behavior only. The unscheduled direct-gateway simulator must separately prove report queueing, payload transmission, gateway batch ACK, retry, and final custody.
 
 Pair measurements report `SURVEY_ID`, `INITIATOR_ID`, `RESPONDER_ID`, `SAMPLE_INDEX`, `SAMPLE_COUNT`, `TIMESTAMP_MS`, `DISTANCE_MM`, `QUALITY`, and `RANGE_STATUS`. The timestamp marks when that individual DS-TWR ranging sequence started on the sender's local uptime. The firmware only measures and reports; solving anchor positions from this distance network is off-site software.
 
-Survey pair runs are long-running local work, not system command work. Anchors must continue to process mesh receive and commands while samples are being taken. `CMD_SURVEY_ABORT` must be accepted and must stop the active pair at the next sample boundary or bounded responder-listen check. The runtime handling is shown in [[Firmware State Machines 0.2.3]].
+Survey pair runs are long-running local work, not system command work. Anchors must continue to process mesh receive and commands while samples are being taken. `CMD_SURVEY_START_PAIR` is accepted only when all pair fields match a prior `CMD_SURVEY_PREPARE_PAIR`. If a gateway reachability request omits `SAMPLE_COUNT`, the gateway uses the current bounded runtime queue capacity. `CMD_SURVEY_ABORT` must be accepted, must stop the gateway's local pair orchestrator, and must stop the active anchor pair at the next sample boundary or bounded responder-listen check. The runtime handling is shown in [[Firmware State Machines 0.2.3]].
 
 Each survey DS-TWR sample uses `FLAG_DIAGNOSTIC`, the survey ID as the DS-TWR session ID, and a session nonce derived from `(survey_id, initiator_id, responder_id, sample_index)`. This keeps the full DS-TWR identity unique across the survey even though the compact 8-bit DS-TWR sequence value wraps in surveys longer than 255 samples.

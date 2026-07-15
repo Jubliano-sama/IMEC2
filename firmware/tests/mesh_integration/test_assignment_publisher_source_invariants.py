@@ -2,9 +2,11 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-ANCHOR = (ROOT / "app/src/app_anchor.c").read_text()
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 BLE = (ROOT / "app/src/app_gateway_ble.c").read_text()
 STREAM = (ROOT / "app/src/app_gateway_ble_stream.h").read_text()
 PUBLISHER = (ROOT / "app/src/app_gateway_assignment_publisher.c").read_text()

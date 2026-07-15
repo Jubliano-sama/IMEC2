@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
+from source_text import read_composed_source
+
 
 SOURCE = Path(__file__).resolve().parents[2] / "app/src/app_mesh_report.c"
 
@@ -12,7 +14,7 @@ def body(source: str, signature: str, next_signature: str) -> str:
 
 
 def main() -> None:
-    source = SOURCE.read_text(encoding="utf-8")
+    source = read_composed_source(SOURCE)
     c5_send = body(
         source,
         "static int mesh_send_c5_control_attempt(",

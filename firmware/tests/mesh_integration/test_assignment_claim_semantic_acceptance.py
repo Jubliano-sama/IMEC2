@@ -4,12 +4,14 @@ from pathlib import Path
 import re
 import unittest
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-ANCHOR = (ROOT / "app/src/app_anchor.c").read_text(encoding="utf-8")
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 ANCHOR_HEADER = (ROOT / "app/src/app_anchor.h").read_text(encoding="utf-8")
 GATEWAY = (ROOT / "app/src/app_gateway_ble.c").read_text(encoding="utf-8")
-REPORT = (ROOT / "app/src/app_mesh_report.c").read_text(encoding="utf-8")
+REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 
 
 def function_body(source: str, name: str) -> str:

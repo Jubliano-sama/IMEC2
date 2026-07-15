@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import unittest
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_SRC = ROOT / "app" / "src"
@@ -43,7 +45,7 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         self.refresh = (
             APP_SRC / "app_node_comm_gateway_route_refresh.c"
         ).read_text(encoding="utf-8")
-        self.report = (APP_SRC / "app_mesh_report.c").read_text(encoding="utf-8")
+        self.report = read_composed_source(APP_SRC / "app_mesh_report.c")
         self.flood_header = (APP_SRC / "app_mesh_flood.h").read_text(
             encoding="utf-8"
         )

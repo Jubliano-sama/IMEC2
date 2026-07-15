@@ -2,16 +2,18 @@
 from pathlib import Path
 import re
 
+from source_text import read_composed_source
+
 
 ROOT = Path(__file__).resolve().parents[2]
-REPORT = (ROOT / "app/src/app_mesh_report.c").read_text()
+REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 REPORT_HEADER = (ROOT / "app/src/app_mesh_report.h").read_text()
-ANCHOR = (ROOT / "app/src/app_anchor.c").read_text()
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
 SURVEY_RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
 NODE_COMM_APP = (ROOT / "app/src/app_node_comm.c").read_text()
 CONFIG = (ROOT / "app/src/app_config.h").read_text()
-DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
+DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 PERSISTENCE = (ROOT / "app/src/app_mesh_persistence.c").read_text()
 
 
