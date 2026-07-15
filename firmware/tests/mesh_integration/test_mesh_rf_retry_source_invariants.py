@@ -314,6 +314,55 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("DBG_EVENT_CTRL_POST_RX_QUEUED", body)
         self.assertNotIn("mesh_process_queued_rx_now", body)
 
+    def test_queued_event_propose_holds_only_its_accepted_exchange(self):
+        listener = function_body(REPORT, "mesh_listen_for_route_reply")
+        queue = listener.index("mesh_queue_from_frame_at_internal")
+        queue_reject = listener.index("continue;", queue)
+        post_rx = listener.index(
+            "app_mesh_c5_route_capture_requires_post_rx_response", queue_reject
+        )
+        hold = listener.index(
+            "hold_post_rx_response_contact = true", post_rx
+        )
+        cleanup = listener.index("if (captured_route_reply", hold)
+        clear = listener.index("mesh_c5_contact_clear", cleanup)
+
+        self.assertIn("bool hold_post_rx_response_contact = false", listener)
+        self.assertLess(queue, queue_reject)
+        self.assertLess(queue_reject, post_rx)
+        self.assertLess(post_rx, hold)
+        self.assertRegex(
+            listener[cleanup:clear],
+            r"captured_route_reply\s*\|\|\s*hold_post_rx_response_contact",
+        )
+        self.assertEqual(
+            listener.count("hold_post_rx_response_contact = true"), 1
+        )
+
+        send = function_body(REPORT, "mesh_send_c5_control_attempt")
+        self.assertRegex(
+            send,
+            r"mesh_c5_contact_active\(\s*peer_id,\s*purpose,\s*now_ms\s*\)",
+        )
+
+        clear_matching = function_body(
+            REPORT, "mesh_c5_contact_clear_matching"
+        )
+        self.assertIn("mesh_c5_contact.peer_id != peer_id", clear_matching)
+        self.assertIn("mesh_c5_contact.purpose != purpose", clear_matching)
+        self.assertIn("mesh_c5_contact_clear(reason)", clear_matching)
+
+        finish = function_body(REPORT, "mesh_event_accept_finish_send")
+        active_check = finish.index("if (transmitted_timing == NULL")
+        release = finish.index("mesh_c5_contact_clear_matching", active_check)
+        install = finish.index("mesh_install_channel9_timing_direction")
+        self.assertIn(
+            "C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION",
+            finish[release : release + 300],
+        )
+        self.assertLess(active_check, release)
+        self.assertLess(release, install)
+
     def test_first_deferred_control_flood_uses_identity_backoff(self):
         body = function_body(REPORT, "mesh_c5_flood_store_deferred")
 
@@ -324,10 +373,95 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
     def test_successful_accept_releases_single_retry_slot(self):
         body = function_body(REPORT, "mesh_event_accept_finish_send")
         store = body.index("mesh_event_accept_completed_store")
-        clear = body.index("mesh_event_accept_clear(false")
+        clear = body.rindex("mesh_event_accept_clear()")
 
         self.assertLess(store, clear)
         self.assertIn("app_mesh_event_retry_note_send_success", body)
+
+    def test_accept_reservation_stays_inert_until_successful_send(self):
+        handler_source = REPORT[
+            REPORT.rindex("static bool mesh_handle_event_control") :
+        ]
+        handler = function_body(handler_source, "mesh_handle_event_control")
+        proposal = handler.index(
+            "packet->msg_type == MSG_MESH_EVENT_PROPOSE"
+        )
+        accept = handler.index(
+            "packet->msg_type == MSG_MESH_EVENT_ACCEPT", proposal
+        )
+        proposal_path = handler[proposal:accept]
+        reserve = proposal_path.index(
+            "app_mesh_c5_event_accept_reservation"
+        )
+        begin = proposal_path.index("app_mesh_event_retry_begin", reserve)
+        attempt = proposal_path.index("mesh_event_accept_attempt", begin)
+        attempt_body = function_body(REPORT, "mesh_event_accept_attempt")
+        finish = function_body(REPORT, "mesh_event_accept_finish_send")
+        clear = function_body(REPORT, "mesh_event_accept_clear")
+        send = attempt_body.index("mesh_send_event_control_record")
+        success = attempt_body.index("if (ret == 0)", send)
+        finish_call = attempt_body.index(
+            "mesh_event_accept_finish_send", success
+        )
+        backoff = attempt_body.index(
+            "mesh_event_retry_after_failure", finish_call
+        )
+        claim = finish.index("app_mesh_event_retry_claim_timing_install")
+        install = finish.index("mesh_install_channel9_timing_direction")
+        note_success = finish.index("app_mesh_event_retry_note_send_success")
+        store = finish.index("mesh_event_accept_completed_store")
+        final_clear = finish.rindex("mesh_event_accept_clear()")
+
+        self.assertLess(reserve, begin)
+        self.assertLess(begin, attempt)
+        self.assertNotIn("mesh_install_channel9_timing", proposal_path)
+        self.assertNotIn("mesh_relay_clear_channel9_timing", proposal_path)
+        self.assertLess(send, success)
+        self.assertLess(success, finish_call)
+        self.assertLess(finish_call, backoff)
+        self.assertNotIn("mesh_install_channel9_timing", attempt_body)
+        self.assertNotIn("mesh_relay_clear_channel9_timing", attempt_body)
+        self.assertEqual(finish.count("mesh_install_channel9_timing_direction"), 1)
+        replay_guard = finish.index(
+            "!mesh_event_accept_retry.replay_existing_response"
+        )
+        negotiated = finish.index(
+            "&mesh_event_accept_retry.response.timing"
+        )
+        self.assertLess(negotiated, replay_guard)
+        self.assertLess(replay_guard, claim)
+        self.assertLess(claim, install)
+        self.assertIn(
+            "negotiated_timing",
+            finish[install : install + 300],
+        )
+        self.assertNotIn(
+            "transmitted_timing,",
+            finish[install : install + 300],
+        )
+        self.assertLess(install, note_success)
+        self.assertLess(note_success, store)
+        self.assertLess(store, final_clear)
+        self.assertNotIn("mesh_install_channel9_timing", clear)
+        self.assertNotIn("mesh_relay_clear_channel9_timing", clear)
+
+    def test_pending_accept_preempts_background_receive_owners(self):
+        active = function_body(REPORT, "mesh_rx_response_active")
+        worker_source = REPORT[
+            REPORT.rindex("static void mesh_uwb_rx_work_handler") :
+        ]
+        worker = function_body(worker_source, "mesh_uwb_rx_work_handler")
+        priority = worker.index("if (mesh_rx_response_active())")
+        channel9 = worker.index("mesh_select_channel9_rx_event", priority)
+
+        self.assertIn("mesh_event_accept_retry.retry.active", active)
+        self.assertIn("!mesh_event_accept_retry.retry.response_sent", active)
+        self.assertLess(priority, channel9)
+        self.assertIn(
+            "mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS)",
+            worker[priority:channel9],
+        )
+        self.assertIn("DBG_UWB_RX_YIELD_EVENT_RESPONSE", worker[priority:channel9])
 
     def test_duplicate_accept_replay_is_cached_and_backed_off(self):
         body = function_body(REPORT, "mesh_event_accept_duplicate")
@@ -348,7 +482,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         persist = body.index(
             "mesh_event_accept_completed_note_retry_round", replay
         )
-        preempt = body.index('mesh_event_accept_clear(false, "event-accept-replay-preempt")', replay)
+        preempt = body.index("mesh_event_accept_clear()", replay)
         generic_busy = body.index("match == APP_MESH_EVENT_REQUEST_CONFLICT", preempt)
 
         self.assertLess(busy, replay)
@@ -356,8 +490,18 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(persist, preempt)
         self.assertLess(preempt, generic_busy)
 
-    def test_exact_duplicate_accept_reinstalls_relative_timing(self):
+    def test_accept_confirms_retained_proposal_phase_and_duplicates_are_inert(self):
         classify = function_body(REPORT, "mesh_event_accept_rx_match")
+        propose = function_body(
+            REPORT, "mesh_propose_event_after_channel5_contact"
+        )
+        propose_send = propose.index("mesh_send_event_control_record")
+        propose_failure = propose.index("if (ret < 0)", propose_send)
+        retain_phase = propose.index(
+            "mesh_event_propose_record.timing = transmitted_timing",
+            propose_failure,
+        )
+        accept_listen = propose.index("if (require_accept)", retain_phase)
         handler_source = REPORT[
             REPORT.rindex("static bool mesh_handle_event_control") :
         ]
@@ -365,13 +509,30 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         duplicate = handler.index(
             "accept_match == APP_MESH_EVENT_REQUEST_DUPLICATE"
         )
-        reinstall = handler.index(
-            "mesh_install_channel9_timing_direction", duplicate
+        replay_exit = handler.index("if (replayed_event_accept)", duplicate)
+        retained_phase = handler.index(
+            "timing = mesh_event_propose_record.timing", replay_exit
         )
+        fresh_install = handler.index(
+            "mesh_install_channel9_timing_direction", retained_phase
+        )
+        fresh_schedule = handler.index("mesh_schedule_uwb_rx", fresh_install)
 
         self.assertIn("return match", classify)
-        self.assertIn("replayed_event_accept", handler[duplicate:reinstall])
-        self.assertIn("if (!replayed_event_accept)", handler[duplicate:reinstall])
+        self.assertLess(propose_send, propose_failure)
+        self.assertLess(propose_failure, retain_phase)
+        self.assertLess(retain_phase, accept_listen)
+        self.assertIn("return true", handler[replay_exit:retained_phase])
+        self.assertLess(replay_exit, retained_phase)
+        self.assertLess(retained_phase, fresh_install)
+        self.assertIn(
+            "&timing",
+            handler[fresh_install : fresh_install + 300],
+        )
+        self.assertIn(
+            "mesh_channel9_prepare_start_ms(&timing)",
+            handler[fresh_install:fresh_schedule + 300],
+        )
 
     def test_accept_rx_cache_ends_with_its_proposal_or_connection(self):
         propose = function_body(REPORT, "mesh_propose_event_after_channel5_contact")

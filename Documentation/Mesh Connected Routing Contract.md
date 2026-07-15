@@ -230,6 +230,15 @@ protocol remains responsible for either consuming a terminal delivery event or
 explicitly abandoning its handle; superseding a request must atomically cancel
 and reap the old handle so terminal records cannot consume capacity forever.
 
+A reliable backend may have only one datagram awaiting final acknowledgement.
+Additional reliable datagrams wait on that shared resource without consuming an
+RF attempt or advancing randomized retry backoff. Control traffic on an
+independent eligible lane remains able to preempt the wait. When the owner
+reaches a terminal state, the communication service wakes all resource waiters,
+reapplies delivery-profile priority, and preserves FIFO order within one
+profile. Newer ordinary traffic must never pass an older resource waiter until
+the older request either starts RF or reaches its explicit deadline.
+
 Communication callbacks freeze and enqueue work, then return to their owning
 radio or system worker. They must not run a complete route search, reliable
 delivery, click range sequence, or protocol collection loop on that callback's
@@ -479,6 +488,15 @@ sequence in ACCEPT. For compatibility with the last stable connected-routing
 release, a peer may instead use a fresh nonzero ACCEPT packet identity; the
 active-peer and exact-timing checks still apply, so an unrelated or stale
 negotiation cannot install timing.
+
+The successful PROPOSE RF transmission defines the channel 9 phase. The
+proposer retains the phase reanchored to that actual transmission, while the
+responder retains the same proposal phase decoded in its own clock domain. The
+responder installs that retained phase only after its ACCEPT physically
+transmits, and the proposer installs its own retained proposal phase after the
+matching ACCEPT arrives. Queue latency, ACCEPT retry delay, an exact duplicate
+ACCEPT, or a cached ACCEPT replay must not move an established phase; those
+responses confirm the proposal rather than proposing a new schedule.
 
 In direct-or-relayed transmitter mode, a direct gateway route may satisfy route
 acquisition. In forced-relay transmitter mode, a direct gateway route must not

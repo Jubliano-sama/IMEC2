@@ -39,6 +39,7 @@ struct app_node_comm_delivery_record {
     bool gateway_confirmed;
     bool backend_released;
     bool backend_attempt_outstanding;
+    bool waiting_for_reliable_owner;
     bool uses_large_control_payload;
     uint8_t backend_durable_attempt_token;
 };
@@ -123,6 +124,35 @@ app_node_comm_delivery_record_for_handle(uint32_t handle)
         }
     }
     return NULL;
+}
+
+static void app_node_comm_release_reliable_owner_locked(uint32_t handle)
+{
+    uint64_t now_ms;
+    size_t released = 0u;
+
+    if (handle == 0u || node_comm_reliable_uplink_inflight_handle != handle) {
+        return;
+    }
+    node_comm_reliable_uplink_inflight_handle = 0u;
+    now_ms = app_node_comm_now_ms();
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+
+        if (!record->occupied || !record->waiting_for_reliable_owner) {
+            continue;
+        }
+        record->waiting_for_reliable_owner = false;
+        if (node_comm_release_resource_wait(&node_comm_policy,
+                                            record->handle,
+                                            now_ms) == 0) {
+            released++;
+        }
+    }
+    if (released > 0u) {
+        app_node_comm_schedule_delivery_locked(now_ms);
+    }
 }
 
 static bool app_node_comm_protocol_priority_profile(
@@ -309,9 +339,7 @@ static void app_node_comm_clear_delivery_record(uint32_t handle)
         app_node_comm_delivery_record_for_handle(handle);
 
     if (record != NULL) {
-        if (node_comm_reliable_uplink_inflight_handle == handle) {
-            node_comm_reliable_uplink_inflight_handle = 0u;
-        }
+        app_node_comm_release_reliable_owner_locked(handle);
 #if APP_NODE_COMM_GATEWAY_ROLE
         if (record->uses_large_control_payload &&
             node_comm_large_control_payload_handle == handle) {
@@ -341,9 +369,7 @@ static void app_node_comm_reconcile_terminal_backends_locked(void)
         }
         ret = mesh_cancel_reliable_uplink(&record->packet);
         record->backend_released = true;
-        if (node_comm_reliable_uplink_inflight_handle == record->handle) {
-            node_comm_reliable_uplink_inflight_handle = 0u;
-        }
+        app_node_comm_release_reliable_owner_locked(record->handle);
         status_debug_printf(
             "DBG_NODE_COMM_TERMINAL_BACKEND_RELEASE handle=%u reason=%u attempts=%u ret=%d\n",
             record->handle,
@@ -394,9 +420,7 @@ static void app_node_comm_reap_auto_terminal_events_locked(void)
             event.client_token,
             (unsigned int)event.reason,
             event.attempts_started);
-        if (node_comm_reliable_uplink_inflight_handle == event.handle) {
-            node_comm_reliable_uplink_inflight_handle = 0u;
-        }
+        app_node_comm_release_reliable_owner_locked(event.handle);
         app_node_comm_clear_delivery_record(event.handle);
     }
 }
@@ -1245,9 +1269,10 @@ int app_node_comm_service_deliveries(void)
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) &&
         node_comm_reliable_uplink_inflight_handle != 0u &&
         node_comm_reliable_uplink_inflight_handle != lease.handle) {
-        state_ret = node_comm_lease_defer_pre_rf_retry(&node_comm_policy,
-                                                        &lease,
-                                                        attempt_begin_ms);
+        record->waiting_for_reliable_owner = true;
+        state_ret = node_comm_lease_wait_resource(&node_comm_policy,
+                                                   &lease,
+                                                   attempt_begin_ms);
         app_node_comm_schedule_delivery_locked(attempt_begin_ms);
         app_node_comm_sync_unlock();
         status_debug_printf(
@@ -1455,6 +1480,7 @@ int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet)
             ret = -ESTALE;
         } else if (ret == 0) {
             record->gateway_confirmed = true;
+            app_node_comm_release_reliable_owner_locked(record->handle);
             app_node_comm_reap_auto_terminal_events_locked();
             app_node_comm_schedule_delivery_locked(now_ms);
         }
@@ -1493,6 +1519,7 @@ int app_node_comm_note_gateway_failed(
                                       reason,
                                       now_ms);
         if (ret == 0 || ret == -EALREADY) {
+            app_node_comm_release_reliable_owner_locked(record->handle);
             app_node_comm_reap_auto_terminal_events_locked();
             app_node_comm_schedule_delivery_locked(now_ms);
         }

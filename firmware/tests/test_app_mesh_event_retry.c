@@ -205,6 +205,8 @@ static void test_pre_rf_and_actual_failures_share_backoff_without_identity_loss(
         assert(state.request.sequence == request.sequence);
         assert(state.retry_key.session_id == key.session_id);
         assert(state.retry_key.sequence == key.sequence);
+        assert(!state.timing_installed);
+        assert(!state.response_sent);
         now_ms = state.retry_due_ms;
         assert(app_mesh_event_retry_due(&state, now_ms));
     }

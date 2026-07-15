@@ -244,8 +244,19 @@ assert "schedule_work_ms(0u)" not in released, (
 delivery_service = function_body(
     NODE_COMM_APP, "app_node_comm_service_deliveries"
 )
-assert delivery_service.count("node_comm_lease_defer_pre_rf_retry(") == 3
+assert delivery_service.count("node_comm_lease_defer_pre_rf_retry(") == 2
 assert delivery_service.count("node_comm_lease_defer_pre_rf(") == 1
+assert delivery_service.count("node_comm_lease_wait_resource(") == 1
+single_flight_wait = delivery_service.index(
+    "node_comm_lease_wait_resource("
+)
+assert delivery_service.index(
+    "node_comm_reliable_uplink_inflight_handle != 0u"
+) < single_flight_wait
+assert "node_comm_release_resource_wait(" in NODE_COMM_APP, (
+    "single-flight occupancy is a resource wait, so owner release must wake "
+    "blocked protocol and uplink deliveries without consuming a retry"
+)
 assert re.search(
     r"if\s*\(\s*scheduled_retry_delay_ms\s*>\s*0u\s*\).*?"
     r"node_comm_lease_defer_pre_rf\s*\(.*?not_before_ms",

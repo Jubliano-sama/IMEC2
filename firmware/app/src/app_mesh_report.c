@@ -285,8 +285,6 @@ struct mesh_event_accept_retry_context {
     struct mesh_event_control_record response;
     struct app_mesh_event_retry_state retry;
     struct mesh_event_timing reservation_timing;
-    struct mesh_event_timing previous_timing;
-    bool had_previous_timing;
     bool replay_existing_response;
 };
 
@@ -815,6 +813,19 @@ static void mesh_c5_contact_clear(const char *reason)
     mesh_c5_contact.state = C5_CONTACT_CLOSING;
     mesh_c5_contact_log("closing", reason);
     memset(&mesh_c5_contact, 0, sizeof(mesh_c5_contact));
+}
+
+static void mesh_c5_contact_clear_matching(uint64_t peer_id,
+                                           uint8_t purpose,
+                                           const char *reason)
+{
+    if (mesh_c5_contact.state == C5_CONTACT_NONE ||
+        mesh_c5_contact.peer_id != peer_id ||
+        mesh_c5_contact.purpose != purpose) {
+        return;
+    }
+
+    mesh_c5_contact_clear(reason);
 }
 
 static bool mesh_c5_contact_active(uint64_t peer_id,
@@ -4322,7 +4333,9 @@ static int mesh_send_c5_control_attempt(
     peer_id = mesh_id_is_unicast(tx->next_hop_id) ? tx->next_hop_id : 0u;
     now_ms = k_uptime_get_32();
     if (peer_id != 0u) {
-        active_exchange = mesh_c5_contact_peer_active(peer_id, now_ms);
+        active_exchange = mesh_c5_contact_active(peer_id,
+                                                  purpose,
+                                                  now_ms);
     }
 
     if (mode == MESH_C5_CONTROL_ACCEPTED_EXCHANGE && !active_exchange) {
@@ -7394,6 +7407,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     uint8_t *frame = mesh_uwb_rx_frame;
     size_t capture_count = 0u;
     bool captured_route_reply = false;
+    bool hold_post_rx_response_contact = false;
     bool rx_failure_diagnostic_logged = false;
     int64_t uwb_window_start_ms = -1;
     uint32_t deadline_ms;
@@ -7750,6 +7764,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             capture_count++;
             if (app_mesh_c5_route_capture_requires_post_rx_response(
                     parsed.packet.msg_type)) {
+                hold_post_rx_response_contact = true;
                 status_debug_note("DBG_EVENT_CTRL_POST_RX_QUEUED\n");
             }
             if (app_mesh_c5_route_capture_requires_ack_hold(parsed.packet.msg_type)) {
@@ -7848,8 +7863,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             (unsigned int)capture_count,
             last_ret,
             reason == NULL ? "route" : reason);
-    if (captured_route_reply) {
-        status_debug_note("DBG_ROUTE_REPLY_CONTACT_KEEP_ACK\n");
+    if (captured_route_reply || hold_post_rx_response_contact) {
+        status_debug_note(captured_route_reply ?
+                          "DBG_ROUTE_REPLY_CONTACT_KEEP_ACK\n" :
+                          "DBG_EVENT_CTRL_CONTACT_KEEP_RESPONSE\n");
     } else {
         mesh_c5_contact_clear(capture_count > 0u ? "reply-listen-done" :
                               "reply-listen-timeout");
@@ -9914,6 +9931,12 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id, const cha
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_note("DBG_EVENT_PROPOSE_SENT\n");
     }
+    /*
+     * The immutable wire record carries a relative delay.  Retain the phase
+     * that this successful RF transmission actually proposed so ACCEPT can
+     * confirm it without moving the connection by the response-queue latency.
+     */
+    mesh_event_propose_record.timing = transmitted_timing;
 
     if (require_accept) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -9972,22 +9995,8 @@ static bool mesh_packet_is_event_control_type(uint8_t msg_type)
            msg_type == MSG_MESH_EVENT_END;
 }
 
-static void mesh_event_accept_clear(bool rollback, const char *reason)
+static void mesh_event_accept_clear(void)
 {
-    uint64_t peer_id = mesh_event_accept_retry.retry.peer_id;
-
-    if (rollback && mesh_event_accept_retry.retry.active &&
-        !mesh_event_accept_retry.retry.timing_installed &&
-        mesh_id_is_unicast(peer_id)) {
-        if (mesh_event_accept_retry.had_previous_timing) {
-            (void)mesh_install_channel9_timing(
-                peer_id,
-                &mesh_event_accept_retry.previous_timing,
-                reason == NULL ? "event-accept-rollback" : reason);
-        } else {
-            mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
-        }
-    }
     memset(&mesh_event_accept_retry, 0, sizeof(mesh_event_accept_retry));
 }
 
@@ -10097,6 +10106,8 @@ static int mesh_event_accept_finish_send(
 {
     struct app_mesh_event_retry_state *retry =
         &mesh_event_accept_retry.retry;
+    const struct mesh_event_timing *negotiated_timing =
+        &mesh_event_accept_retry.response.timing;
     uint64_t peer_id = retry->peer_id;
     uint16_t retry_round;
     int ret;
@@ -10104,39 +10115,48 @@ static int mesh_event_accept_finish_send(
     if (transmitted_timing == NULL || !retry->active) {
         return -EINVAL;
     }
-    if (app_mesh_event_retry_claim_timing_install(retry)) {
-        if (!mesh_event_accept_retry.replay_existing_response &&
-            !app_mesh_c5_event_accept_realign_is_reserved(
+    /*
+     * RF has completed, so the bounded accepted exchange has served its only
+     * purpose.  Release only this peer and control class; a newer or unrelated
+     * contact must survive even if timing validation below fails.
+     */
+    mesh_c5_contact_clear_matching(
+        peer_id,
+        C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION,
+        "event-accept-sent");
+    if (!mesh_event_accept_retry.replay_existing_response &&
+        app_mesh_event_retry_claim_timing_install(retry)) {
+        if (!app_mesh_c5_event_accept_realign_is_reserved(
                 &mesh_event_accept_retry.reservation_timing,
-                transmitted_timing,
+                negotiated_timing,
                 MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS)) {
             status_debug_printf("DBG_EVENT_ACCEPT_REALIGN_OUT_OF_BOUNDS prev=0x%llx reserved=%u actual=%u slop=%u\n",
                                 (unsigned long long)peer_id,
                                 mesh_event_accept_retry.reservation_timing.next_event_time_ms,
-                                transmitted_timing->next_event_time_ms,
+                                negotiated_timing->next_event_time_ms,
                                 MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS);
             retry->timing_installed = false;
-            mesh_event_accept_clear(true, "event-accept-realign-rollback");
+            mesh_event_accept_clear();
             return -ERANGE;
         }
         ret = mesh_install_channel9_timing_direction(
             peer_id,
-            transmitted_timing,
+            negotiated_timing,
             MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
             reason == NULL ? "event-accept-tx-aligned" : reason);
         if (ret != PROTO_OK) {
             retry->timing_installed = false;
-            mesh_event_accept_clear(true, "event-accept-install-rollback");
+            mesh_event_accept_clear();
             return mesh_errno_from_proto(ret);
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_EVENT_ACCEPT_REALIGNED prev=0x%llx next=%u\n",
                                 (unsigned long long)peer_id,
-                                transmitted_timing->next_event_time_ms);
+                                negotiated_timing->next_event_time_ms);
         }
         mesh_schedule_uwb_rx(uptime_ms_until_deadline(
             k_uptime_get_32(),
-            mesh_channel9_prepare_start_ms(transmitted_timing)));
+            mesh_channel9_prepare_start_ms(negotiated_timing)));
         if (mesh_gateway_route_test_role()) {
             mesh_gateway_route_test_clear_preempt(peer_id,
                                                   "event-accept-installed");
@@ -10151,7 +10171,7 @@ static int mesh_event_accept_finish_send(
         k_uptime_get_32(),
         retry->deadline_ms,
         retry_round);
-    mesh_event_accept_clear(false, "event-accept-complete");
+    mesh_event_accept_clear();
     (void)mesh_event_negotiation_schedule_next();
     return 0;
 }
@@ -10187,7 +10207,11 @@ static int mesh_event_accept_attempt(const char *reason)
             APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
             rf_started,
             "event-accept-send")) {
-        mesh_event_accept_clear(true, "event-accept-deadline");
+        mesh_c5_contact_clear_matching(
+            retry->peer_id,
+            C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION,
+            "event-accept-failed");
+        mesh_event_accept_clear();
         return -ETIMEDOUT;
     }
     return ret;
@@ -10205,9 +10229,11 @@ static bool mesh_event_accept_duplicate(
     uint32_t now_ms = k_uptime_get_32();
 
     if (app_mesh_event_retry_expired(&mesh_event_accept_retry.retry, now_ms)) {
-        mesh_event_accept_clear(
-            !mesh_event_accept_retry.retry.timing_installed,
-            "event-accept-cache-expired");
+        mesh_c5_contact_clear_matching(
+            mesh_event_accept_retry.retry.peer_id,
+            C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION,
+            "event-accept-expired");
+        mesh_event_accept_clear();
     }
     match = app_mesh_event_retry_match(&mesh_event_accept_retry.retry,
                                        previous_hop_id,
@@ -10237,7 +10263,7 @@ static bool mesh_event_accept_duplicate(
             &mesh_event_accept_retry.retry.request,
             now_ms,
             mesh_event_accept_retry.retry.retry.retry_round);
-        mesh_event_accept_clear(false, "event-accept-replay-preempt");
+        mesh_event_accept_clear();
         match = APP_MESH_EVENT_REQUEST_NEW;
     }
     if (match == APP_MESH_EVENT_REQUEST_CONFLICT ||
@@ -10262,13 +10288,10 @@ static bool mesh_event_accept_duplicate(
             return true;
         }
         if (match == APP_MESH_EVENT_REQUEST_DUPLICATE) {
-            struct mesh_event_timing active_timing = {0};
             struct app_mesh_rf_retry_key retry_key =
                 mesh_rf_retry_packet_key(
                     &entry->response.packet,
                     APP_MESH_RF_RETRY_OPERATION_EVENT_ACCEPT);
-            bool had_active_timing = mesh_find_active_channel9_timing(
-                previous_hop_id, now_ms, &active_timing);
             int ret;
 
             memset(&mesh_event_accept_retry, 0,
@@ -10284,19 +10307,14 @@ static bool mesh_event_accept_duplicate(
                 entry->response.timing.event_interval_ms,
                 MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS / 2u);
             if (ret < 0) {
-                mesh_event_accept_clear(false,
-                                        "event-accept-replay-begin");
+                mesh_event_accept_clear();
                 return true;
             }
-            mesh_event_accept_retry.previous_timing = active_timing;
-            mesh_event_accept_retry.had_previous_timing =
-                had_active_timing;
             mesh_event_accept_retry.replay_existing_response = true;
             if (app_mesh_event_retry_resume_backoff(
                     &mesh_event_accept_retry.retry,
                     entry->retry_round) < 0) {
-                mesh_event_accept_clear(false,
-                                        "event-accept-replay-state");
+                mesh_event_accept_clear();
                 return true;
             }
             if (!mesh_event_retry_after_failure(
@@ -10304,8 +10322,7 @@ static bool mesh_event_accept_duplicate(
                     APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
                     false,
                     "event-propose-duplicate")) {
-                mesh_event_accept_clear(false,
-                                        "event-accept-replay-deadline");
+                mesh_event_accept_clear();
             }
             status_debug_note("DBG_EVENT_PROPOSE_DUPLICATE\n");
             return true;
@@ -10442,20 +10459,6 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             status_debug_note("DBG_EVENT_PROPOSE_REJECT_RESERVATION\n");
             return true;
         }
-        ret = mesh_install_channel9_timing_direction(
-            previous_hop_id,
-            &reservation_timing,
-            MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
-            "event-propose-reserve");
-        if (ret != PROTO_OK) {
-            status_debug_printf("DBG_EVENT_PROPOSE_REJECT_INSTALL prev=0x%llx ret=%d\n",
-                                (unsigned long long)previous_hop_id,
-                                ret);
-            LOG_WRN("mesh channel-9 event proposal rejected before ACCEPT: next=0x%016llx ret=%d",
-                    (unsigned long long)previous_hop_id,
-                    ret);
-            return true;
-        }
         ret = mesh_prepare_event_control_record(
             &mesh_event_accept_retry.response,
             previous_hop_id,
@@ -10464,14 +10467,6 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             packet->session_id,
             packet->seq);
         if (ret < 0) {
-            if (had_active_timing) {
-                (void)mesh_install_channel9_timing(previous_hop_id,
-                                                   &active_timing,
-                                                   "event-accept-prepare-rollback");
-            } else {
-                mesh_relay_clear_channel9_timing(&mesh_runtime,
-                                                 previous_hop_id);
-            }
             return true;
         }
         request = mesh_event_request_identity(packet, payload, payload_len);
@@ -10488,21 +10483,11 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             timing.event_interval_ms,
             MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS / 2u);
         if (ret < 0) {
-            if (had_active_timing) {
-                (void)mesh_install_channel9_timing(previous_hop_id,
-                                                   &active_timing,
-                                                   "event-accept-state-rollback");
-            } else {
-                mesh_relay_clear_channel9_timing(&mesh_runtime,
-                                                 previous_hop_id);
-            }
             memset(&mesh_event_accept_retry, 0,
                    sizeof(mesh_event_accept_retry));
             return true;
         }
         mesh_event_accept_retry.reservation_timing = reservation_timing;
-        mesh_event_accept_retry.previous_timing = active_timing;
-        mesh_event_accept_retry.had_previous_timing = had_active_timing;
         atomic_set(&mesh_rx_response_active_state, 1);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
@@ -10563,7 +10548,13 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                 return true;
             }
         }
-        /* Exact replay bytes carry a relative delay, so install them again. */
+        if (replayed_event_accept) {
+            /* A duplicate confirmation cannot move an established schedule. */
+            status_debug_note("DBG_EVENT_ACCEPT_REPLAY_NO_TIMING_CHANGE\n");
+            return true;
+        }
+        /* ACCEPT confirms the phase from our successful PROPOSE RF send. */
+        timing = mesh_event_propose_record.timing;
         mesh_event_timing_set_local_first_slot_tx(&timing, true);
     }
 
@@ -10613,9 +10604,7 @@ static void mesh_event_negotiation_retry_work_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     if (app_mesh_event_retry_expired(&mesh_event_accept_retry.retry, now_ms)) {
-        mesh_event_accept_clear(
-            !mesh_event_accept_retry.retry.timing_installed,
-            "event-accept-retry-expired");
+        mesh_event_accept_clear();
     } else if (app_mesh_event_retry_due(&mesh_event_accept_retry.retry,
                                         now_ms)) {
         (void)mesh_event_accept_attempt("mesh-event-accept-retry");
@@ -15571,7 +15560,9 @@ uint32_t mesh_rx_pending_count(void)
 
 bool mesh_rx_response_active(void)
 {
-    return atomic_get(&mesh_rx_response_active_state) != 0;
+    return atomic_get(&mesh_rx_response_active_state) != 0 ||
+           (mesh_event_accept_retry.retry.active &&
+            !mesh_event_accept_retry.retry.response_sent);
 }
 
 bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
@@ -16056,6 +16047,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                 coordinator_decision.reason,
                                 mesh_route_waiting_tx_valid ? 1u : 0u,
                                 report_tx_queue_used());
+        }
+        mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
+        return;
+    }
+    if (mesh_rx_response_active()) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_note("DBG_UWB_RX_YIELD_EVENT_RESPONSE\n");
         }
         mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         return;

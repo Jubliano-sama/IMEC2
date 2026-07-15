@@ -922,6 +922,50 @@ int node_comm_lease_defer_pre_rf_retry(
     return 0;
 }
 
+int node_comm_lease_wait_resource(struct node_comm *comm,
+                                  const struct node_comm_lease *lease,
+                                  uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    (void)node_comm_service(comm, now_ms);
+    ret = validate_lease(comm, lease, &slot);
+    if (ret < 0) {
+        return ret;
+    }
+    if (slot->rf_started) {
+        return -EALREADY;
+    }
+    invalidate_lease(comm, slot);
+    slot->state = NODE_COMM_SLOT_WAIT_RESOURCE;
+    return 0;
+}
+
+int node_comm_release_resource_wait(struct node_comm *comm,
+                                    uint32_t handle,
+                                    uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+
+    if (comm == NULL || handle == 0u) {
+        return -EINVAL;
+    }
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+        return -EALREADY;
+    }
+    if (slot->state != NODE_COMM_SLOT_WAIT_RESOURCE) {
+        return -EAGAIN;
+    }
+    slot->state = NODE_COMM_SLOT_READY;
+    return 0;
+}
+
 int node_comm_lease_complete(struct node_comm *comm,
                              const struct node_comm_lease *lease,
                              enum node_comm_delivery_outcome outcome,
@@ -1151,7 +1195,8 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
             slot_due_ms = now_ms;
         } else if (slot->state == NODE_COMM_SLOT_WAIT_RETRY) {
             slot_due_ms = slot->retry_due_ms;
-        } else if (slot->state == NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+        } else if (slot->state == NODE_COMM_SLOT_WAIT_CONFIRMATION ||
+                   slot->state == NODE_COMM_SLOT_WAIT_RESOURCE) {
             if (slot->request.absolute_deadline_ms == 0u) {
                 continue;
             }

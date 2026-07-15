@@ -51,6 +51,7 @@ enum node_comm_request_slot_state {
     NODE_COMM_SLOT_FREE = 0,
     NODE_COMM_SLOT_READY,
     NODE_COMM_SLOT_WAIT_RETRY,
+    NODE_COMM_SLOT_WAIT_RESOURCE,
     NODE_COMM_SLOT_LEASED,
     NODE_COMM_SLOT_WAIT_CONFIRMATION,
     NODE_COMM_SLOT_TERMINAL,
@@ -205,6 +206,12 @@ int node_comm_lease_defer_pre_rf_retry(
     struct node_comm *comm,
     const struct node_comm_lease *lease,
     uint64_t now_ms);
+int node_comm_lease_wait_resource(struct node_comm *comm,
+                                  const struct node_comm_lease *lease,
+                                  uint64_t now_ms);
+int node_comm_release_resource_wait(struct node_comm *comm,
+                                    uint32_t handle,
+                                    uint64_t now_ms);
 int node_comm_lease_complete(struct node_comm *comm,
                              const struct node_comm_lease *lease,
                              enum node_comm_delivery_outcome outcome,

@@ -2312,39 +2312,77 @@ static void test_reliable_uplink_failure_preserves_reason_and_releases_owner(voi
     assert(event.attempts_started == 1u);
 }
 
-static void test_reliable_uplinks_serialize_single_flight_backend(void)
+static void test_single_flight_wait_preserves_priority_and_fifo(void)
 {
     struct mesh_outbound first = reliable_uplink_envelope(63u);
     struct mesh_outbound second = reliable_uplink_envelope(64u);
+    struct mesh_outbound third = reliable_uplink_envelope(65u);
+    struct mesh_outbound protocol = reliable_uplink_envelope(66u);
+    struct mesh_outbound control = control_response_envelope(67u);
     struct node_comm_terminal_event event;
-    uint32_t retry_delay_ms;
     uint32_t first_handle;
     uint32_t second_handle;
+    uint32_t third_handle;
+    uint32_t protocol_handle;
 
     reset_fixture();
     assert(app_node_comm_submit_delivery(
         &first, NODE_COMM_PROFILE_RELIABLE_UPLINK,
         10000u, 603u, &first_handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 1u);
+    assert(try_uplink_envelopes[0].packet.seq == first.packet.seq);
+
+    /*
+     * Queue enough work to reproduce a busy single-flight backend under load.
+     * Polling that backend must not turn queued work into independently
+     * jittered retries: after the owner completes, protocol work must retain
+     * priority and ordinary reliable uplinks must retain FIFO order.
+     */
     assert(app_node_comm_submit_delivery(
         &second, NODE_COMM_PROFILE_RELIABLE_UPLINK,
         10000u, 604u, &second_handle) == 0);
+    assert(app_node_comm_submit_protocol_response(
+        &protocol, 10000u, 606u, &protocol_handle) == 0);
+    assert(app_node_comm_submit_control_response(
+        &control, 10000u, 607u) == 0);
 
+    /* The independent control-response lane remains eligible immediately. */
     assert(app_node_comm_service_deliveries() == 0);
+    assert(try_response_calls == 1u);
+    assert(try_response_envelopes[0].packet.seq == control.packet.seq);
     assert(try_uplink_calls == 1u);
-    assert(app_node_comm_service_deliveries() == -EAGAIN);
-    assert(try_uplink_calls == 1u);
-    assert(app_node_comm_retry_backoff_ms(
-               &second, NODE_COMM_PROFILE_RELIABLE_UPLINK,
-               1u, &retry_delay_ms) == 0);
 
+    for (uint32_t poll = 0u; poll < 16u; poll++) {
+        assert(app_node_comm_service_deliveries() == -EAGAIN);
+        assert(try_uplink_calls == 1u);
+    }
+
+    /* Releasing the owner must not require unrelated randomized wait time. */
     assert(app_node_comm_note_gateway_confirmed(&first.packet) == 0);
     assert(app_node_comm_take_delivery_event_for(first_handle, &event));
-    atomic_store(&fake_now_ms, retry_delay_ms);
+
     assert(app_node_comm_service_deliveries() == 0);
     assert(try_uplink_calls == 2u);
-    assert(try_uplink_envelopes[1].packet.seq == second.packet.seq);
+    assert(try_uplink_envelopes[1].packet.seq == protocol.packet.seq);
+    assert(app_node_comm_note_gateway_confirmed(&protocol.packet) == 0);
+    assert(app_node_comm_take_delivery_event_for(protocol_handle, &event));
+    assert(app_node_comm_submit_delivery(
+        &third, NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        10000u, 605u, &third_handle) == 0);
+
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 3u);
+    assert(try_uplink_envelopes[2].packet.seq == second.packet.seq);
     assert(app_node_comm_note_gateway_confirmed(&second.packet) == 0);
     assert(app_node_comm_take_delivery_event_for(second_handle, &event));
+
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 4u);
+    assert(try_uplink_envelopes[3].packet.seq == third.packet.seq);
+    assert(app_node_comm_note_gateway_confirmed(&third.packet) == 0);
+    assert(app_node_comm_take_delivery_event_for(third_handle, &event));
+    assert(app_node_comm_pending_delivery_count() == 0u);
 }
 
 static void test_cancelling_reliable_uplink_releases_backend_owner(void)
@@ -2903,7 +2941,7 @@ int main(void)
     test_outer_backend_cancel_waits_for_active_call_to_return();
     test_reliable_uplink_synchronous_and_late_confirmations_are_bounded();
     test_reliable_uplink_failure_preserves_reason_and_releases_owner();
-    test_reliable_uplinks_serialize_single_flight_backend();
+    test_single_flight_wait_preserves_priority_and_fifo();
     test_cancelling_reliable_uplink_releases_backend_owner();
     test_protocol_response_preempts_ordinary_reliable_uplink();
     test_protocol_capacity_is_reserved_and_abandonment_reaps_slots();
