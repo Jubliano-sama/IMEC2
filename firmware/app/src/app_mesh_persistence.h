@@ -92,7 +92,9 @@ int app_mesh_persistence_save_gateway_collection(
     const struct gateway_collection_state *collection);
 int app_mesh_persistence_restore_gateway_collection(
     struct gateway_collection_state *collection);
-void app_mesh_persistence_clear_gateway_collection(void);
+int app_mesh_persistence_rollback_gateway_collection(
+    struct gateway_collection_state *collection);
+int app_mesh_persistence_clear_gateway_collection(void);
 int app_mesh_persistence_save_gateway_eack_custody(
     const struct gateway_collection_eack_custody_snapshot *snapshot);
 int app_mesh_persistence_restore_gateway_eack_custody(
@@ -102,7 +104,7 @@ int app_mesh_persistence_save_gateway_membership(
     const struct gateway_membership_roster *roster);
 int app_mesh_persistence_restore_gateway_membership(
     struct gateway_membership_roster *roster);
-void app_mesh_persistence_clear_gateway_membership(void);
+int app_mesh_persistence_clear_gateway_membership(void);
 int app_mesh_persistence_save_discovery_assignment(
     const struct app_mesh_discovery_assignment_snapshot *snapshot);
 int app_mesh_persistence_restore_discovery_assignment(

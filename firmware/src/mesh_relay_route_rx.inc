@@ -595,7 +595,8 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                       fields.capacity_validity_interval_ms,
                                       now_ms,
                                       NULL,
-                                      0u);
+                                      0u,
+                                      NULL);
     if (route_ret != PROTO_OK &&
         route_ret != PROTO_ERR_NO_SPACE) {
         return route_ret;
@@ -783,8 +784,11 @@ static int handle_route_request(struct mesh_relay *relay,
     struct route_discovery_fields fields = {0};
     struct flood_seen_entry *flood_entry = NULL;
     const struct route_candidate *selected = NULL;
+    struct mesh_event_timing downstream_timing = {0};
+    struct reactive_route_rollback route_rollback = {0};
     bool first_seen = false;
     bool best_updated = false;
+    bool reply_available;
     bool install_reply_timing = false;
     int ret;
 
@@ -817,13 +821,25 @@ static int handle_route_request(struct mesh_relay *relay,
     }
 
     fields.quality = combined_quality(fields.quality, link_quality);
-    flood_entry = route_solicit_flood_note(relay,
-                                           &fields,
-                                           packet->session_id,
-                                           previous_hop_id,
-                                           now_ms,
-                                           &first_seen,
-                                           &best_updated);
+    selected = route_selected(&relay->upstream);
+    reply_available = fields.target_id == relay->local_id ||
+        (fields.target_id == relay->gateway_id && selected != NULL);
+    install_reply_timing = reply_available &&
+        fields.proposed_channel9_timing_valid;
+    if (install_reply_timing) {
+        downstream_timing = fields.proposed_channel9_timing;
+        mesh_event_timing_set_local_first_slot_tx(&downstream_timing, false);
+        ret = mesh_relay_check_channel9_timing_guarded_direction(
+            relay,
+            previous_hop_id,
+            &downstream_timing,
+            MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
+            MESH_RELAY_EVENT_TIMINGS,
+            NULL);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     ret = upsert_reactive_route(relay,
                                 fields.origin_id,
                                 previous_hop_id,
@@ -836,12 +852,18 @@ static int handle_route_request(struct mesh_relay *relay,
                                 fields.capacity_validity_interval_ms,
                                 now_ms,
                                 &fields,
-                                packet->session_id);
-    if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
+                                packet->session_id,
+                                install_reply_timing ? &route_rollback : NULL);
+    if (ret != PROTO_OK) {
         return ret;
     }
-    install_reply_timing = (ret == PROTO_OK &&
-                            fields.proposed_channel9_timing_valid);
+    flood_entry = route_solicit_flood_note(relay,
+                                           &fields,
+                                           packet->session_id,
+                                           previous_hop_id,
+                                           now_ms,
+                                           &first_seen,
+                                           &best_updated);
 
     selected = route_selected(&relay->upstream);
 
@@ -860,29 +882,36 @@ static int handle_route_request(struct mesh_relay *relay,
                                 packet->session_id,
                                 reply_epoch,
                                 &result->route_reply);
+        if (ret != PROTO_OK && install_reply_timing) {
+            rollback_reactive_route(relay, &route_rollback);
+        }
         if (ret == PROTO_OK) {
             result->route_reply.earliest_tx_ms = route_reply_earliest_tx_ms(
                 now_ms,
                 fields.route_reply_rx_delay_ms,
                 random_value);
-            add_route_reply_backup(relay,
-                                   &fields,
-                                   packet->session_id,
-                                   previous_hop_id,
-                                   result);
-            result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
             if (install_reply_timing) {
-                struct mesh_event_timing downstream_timing = fields.proposed_channel9_timing;
-
-                mesh_event_timing_set_local_first_slot_tx(&downstream_timing, false);
-                (void)mesh_relay_set_channel9_timing_guarded_direction(
+                ret = mesh_relay_set_channel9_timing_guarded_direction(
                     relay,
                     previous_hop_id,
                     &downstream_timing,
                     MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
                     MESH_RELAY_EVENT_TIMINGS,
                     NULL);
+                if (ret != PROTO_OK) {
+                    rollback_reactive_route(relay, &route_rollback);
+                    return ret;
+                }
             }
+            add_route_reply_backup(relay,
+                                   &fields,
+                                   packet->session_id,
+                                   previous_hop_id,
+                                   result);
+            result->actions |= MESH_RELAY_ACTION_SEND_ROUTE_REPLY;
+        }
+        if (ret != PROTO_OK) {
+            return ret;
         }
         if (fields.target_id == relay->local_id) {
             return ret;
@@ -949,6 +978,9 @@ static int handle_route_reply(struct mesh_relay *relay,
                               struct mesh_relay_result *result)
 {
     struct route_discovery_fields fields = {0};
+    struct mesh_event_timing upstream_timing = {0};
+    struct reactive_route_rollback route_rollback = {0};
+    bool install_timing;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
@@ -978,6 +1010,21 @@ static int handle_route_reply(struct mesh_relay *relay,
     }
 
     fields.quality = combined_quality(fields.quality, link_quality);
+    install_timing = fields.proposed_channel9_timing_valid;
+    if (install_timing) {
+        upstream_timing = fields.proposed_channel9_timing;
+        mesh_event_timing_set_local_first_slot_tx(&upstream_timing, true);
+        ret = mesh_relay_check_channel9_timing_guarded_direction(
+            relay,
+            previous_hop_id,
+            &upstream_timing,
+            MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
+            MESH_RELAY_EVENT_TIMINGS,
+            NULL);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     ret = upsert_reactive_route(relay,
                                 fields.target_id,
                                 previous_hop_id,
@@ -990,26 +1037,26 @@ static int handle_route_reply(struct mesh_relay *relay,
                                 fields.capacity_validity_interval_ms,
                                 now_ms,
                                 NULL,
-                                0u);
-    if (ret != PROTO_OK && ret != PROTO_ERR_NO_SPACE) {
+                                0u,
+                                install_timing ? &route_rollback : NULL);
+    if (ret != PROTO_OK) {
         return ret;
     }
-    if (ret == PROTO_OK) {
-        if (fields.proposed_channel9_timing_valid) {
-            struct mesh_event_timing upstream_timing = fields.proposed_channel9_timing;
-
-            mesh_event_timing_set_local_first_slot_tx(&upstream_timing, true);
-            (void)mesh_relay_set_channel9_timing_guarded_direction(
-                relay,
-                previous_hop_id,
-                &upstream_timing,
-                MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
-                MESH_RELAY_EVENT_TIMINGS,
-                NULL);
+    if (install_timing) {
+        ret = mesh_relay_set_channel9_timing_guarded_direction(
+            relay,
+            previous_hop_id,
+            &upstream_timing,
+            MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
+            MESH_RELAY_EVENT_TIMINGS,
+            NULL);
+        if (ret != PROTO_OK) {
+            rollback_reactive_route(relay, &route_rollback);
+            return ret;
         }
-        mesh_relay_note_route_discovery_ready(relay, fields.target_id);
-        add_route_reply_ack_action(relay, packet, payload, payload_len, previous_hop_id, result);
     }
+    mesh_relay_note_route_discovery_ready(relay, fields.target_id);
+    add_route_reply_ack_action(relay, packet, payload, payload_len, previous_hop_id, result);
 
     if (packet->dst_id == relay->local_id) {
         result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY;

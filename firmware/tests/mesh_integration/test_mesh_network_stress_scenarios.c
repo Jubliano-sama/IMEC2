@@ -35,6 +35,17 @@
 #define ACK_AIRTIME_UPSTREAM_PHASE_MS 500u
 #define ACK_AIRTIME_UPSTREAM_INTERVAL_MS 2000u
 #define ACK_AIRTIME_MAX_DURATION_US UINT64_C(15000000)
+_Static_assert(MESH_CONNECTED_MAX_ANCHORS <= MESH_SIM_MAX_CONNECTIONS,
+               "the simulator must represent a 50-link whole world");
+_Static_assert(MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH == 4u,
+               "the production-model nominal report queue depth changed");
+_Static_assert(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
+               "the report queue model requires exactly one recovery reserve");
+_Static_assert(MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY == 5u,
+               "total report custody must include queue plus recovery reserve");
+_Static_assert(MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY <=
+               MESH_SIM_TX_QUEUE_CAPACITY,
+               "simulator storage must hold all production report custody");
 
 static const uint32_t multi_origin_seeds[] = {
     UINT32_C(0x5EED1001),
@@ -68,6 +79,8 @@ static const uint32_t shared_relay_seeds[] = {
     UINT32_C(0x5EED7001),
     UINT32_C(0x5EED70A7),
 };
+
+static const size_t whole_world_anchor_counts[] = {17u, 32u, 50u};
 
 struct test_context {
     const char *scenario;
@@ -747,6 +760,185 @@ static int add_line_connection(struct mesh_sim_world *sim,
                                    &params,
                                    true,
                                    connection_index);
+}
+
+static int test_whole_world_capacity_model(void)
+{
+    for (size_t size_index = 0u;
+         size_index < sizeof(whole_world_anchor_counts) /
+                      sizeof(whole_world_anchor_counts[0]);
+         size_index++) {
+        uint8_t anchors[MESH_CONNECTED_MAX_ANCHORS];
+        uint16_t connections[MESH_CONNECTED_MAX_ANCHORS];
+        uint8_t gateway;
+        size_t anchor_count = whole_world_anchor_counts[size_index];
+
+        begin_case("whole-world-capacity-model",
+                   UINT32_C(0x5EED5000) + (uint32_t)anchor_count);
+        set_phase("whole-world-add-%zu-anchors", anchor_count);
+        for (size_t i = 0u; i < anchor_count; i++) {
+            CHECK(mesh_sim_add_role(&world,
+                                    MESH_SIM_ROLE_ANCHOR,
+                                    RELAY_ID_BASE + UINT64_C(0x500) + i,
+                                    GATEWAY_ID,
+                                    ROUTE_EPOCH,
+                                    &anchors[i]) == MESH_SIM_OK);
+            CHECK(mesh_sim_set_tx_queue_capacity(
+                      &world,
+                      anchors[i],
+                      MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY) ==
+                  MESH_SIM_OK);
+        }
+        CHECK(mesh_sim_add_role(&world,
+                                MESH_SIM_ROLE_GATEWAY,
+                                GATEWAY_ID,
+                                GATEWAY_ID,
+                                ROUTE_EPOCH,
+                                &gateway) == MESH_SIM_OK);
+
+        set_phase("whole-world-connect-%zu-anchors", anchor_count);
+        for (size_t i = 0u; i < anchor_count; i++) {
+            uint8_t next = i + 1u < anchor_count ? anchors[i + 1u] :
+                                                  gateway;
+            uint32_t phase_ms = (i & 1u) == 0u ? 100u : 300u;
+
+            CHECK(add_line_connection(&world,
+                                      anchors[i],
+                                      next,
+                                      phase_ms,
+                                      MESH_RADIO_EVENT_INTERVAL_MS,
+                                      &connections[i]) == MESH_SIM_OK);
+        }
+        CHECK(world.role_count == anchor_count + 1u);
+        CHECK(world.connection_count == anchor_count);
+
+        set_phase("whole-world-schedule-%zu-links", anchor_count);
+        {
+            uint64_t run_until_us = 0u;
+
+            for (size_t i = 0u; i < anchor_count; i++) {
+                struct mesh_sim_connection_action action;
+
+                CHECK(mesh_sim_connection_next_action(&world,
+                                                      connections[i],
+                                                      &action) == MESH_SIM_OK);
+                CHECK(action.kind ==
+                      MESH_SIM_CONNECTION_ACTION_CHANNEL9_EVENT);
+                CHECK(!action.already_scheduled);
+                CHECK(mesh_sim_schedule_next_connection_event(
+                          &world, connections[i], false) == MESH_SIM_OK);
+                if (action.end_us > run_until_us) {
+                    run_until_us = action.end_us;
+                }
+            }
+            set_phase("whole-world-run-%zu-links", anchor_count);
+            CHECK(mesh_sim_run_until(&world, run_until_us) == MESH_SIM_OK);
+        }
+        for (size_t i = 0u; i < anchor_count; i++) {
+            CHECK(world.connections[connections[i]].completed_events == 1u);
+        }
+
+        set_phase("whole-world-nominal-queue-drain-%zu", anchor_count);
+        CHECK(mesh_sim_install_route(&world,
+                                     anchors[anchor_count - 1u],
+                                     gateway,
+                                     1u,
+                                     ROUTE_EPOCH) == PROTO_OK);
+        for (uint16_t seq = 1u;
+             seq <= MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH;
+             seq++) {
+            struct proto_packet packet;
+            uint8_t payload[96];
+            size_t payload_len = 0u;
+
+            CHECK(build_click_report(
+                      world.roles[anchors[anchor_count - 1u]].id,
+                      seq,
+                      &packet,
+                      payload,
+                      sizeof(payload),
+                      &payload_len) == PROTO_OK);
+            CHECK(mesh_sim_queue_originated(&world,
+                                            anchors[anchor_count - 1u],
+                                            &packet,
+                                            payload,
+                                            payload_len) == MESH_SIM_OK);
+        }
+        CHECK(world.roles[anchors[anchor_count - 1u]].tx_queue_count ==
+              MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH);
+        CHECK(arm_all_watchdogs(&world) == MESH_SIM_OK);
+        set_phase("whole-world-drain-production-queue-%zu", anchor_count);
+        CHECK(drive_until_quiescent(
+                  &world,
+                  &connections[anchor_count - 1u],
+                  1u,
+                  gateway,
+                  MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH,
+                  MAX_NETWORK_STEPS,
+                  "whole-world-direct-drain") == MESH_SIM_OK);
+        CHECK(world.roles[gateway].delivery_count ==
+              MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH);
+        for (uint16_t seq = 1u;
+             seq <= MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH;
+             seq++) {
+            CHECK(delivery_count_for(
+                      &world,
+                      gateway,
+                      world.roles[anchors[anchor_count - 1u]].id,
+                      seq) == 1u);
+        }
+        CHECK(no_watchdog_expired(&world));
+
+        /*
+         * The fifth slot models the app's owner-held recovery reserve.  Its
+         * handoff back into the four-entry queue is covered by the native
+         * queue-owner test; this model verifies total admission and rejects
+         * the sixth packet without pretending the reserve is a second queue.
+         */
+        set_phase("whole-world-explicit-capacity-failure-%zu", anchor_count);
+        for (uint16_t seq = 0u;
+             seq < MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY;
+             seq++) {
+            struct proto_packet packet;
+            uint8_t payload[96];
+            size_t payload_len = 0u;
+
+            CHECK(build_click_report(
+                      world.roles[anchors[anchor_count - 1u]].id,
+                      (uint16_t)(UINT16_C(0x7000) + seq),
+                      &packet,
+                      payload,
+                      sizeof(payload),
+                      &payload_len) == PROTO_OK);
+            CHECK(mesh_sim_queue_originated(&world,
+                                            anchors[anchor_count - 1u],
+                                            &packet,
+                                            payload,
+                                            payload_len) == MESH_SIM_OK);
+        }
+        {
+            struct proto_packet overflow_packet;
+            uint8_t overflow_payload[96];
+            size_t overflow_payload_len = 0u;
+
+            CHECK(build_click_report(
+                      world.roles[anchors[anchor_count - 1u]].id,
+                      UINT16_C(0x7FFF),
+                      &overflow_packet,
+                      overflow_payload,
+                      sizeof(overflow_payload),
+                      &overflow_payload_len) == PROTO_OK);
+            CHECK(mesh_sim_queue_originated(&world,
+                                            anchors[anchor_count - 1u],
+                                            &overflow_packet,
+                                            overflow_payload,
+                                            overflow_payload_len) ==
+                  MESH_SIM_ERR_CAPACITY);
+        }
+        CHECK(world.roles[anchors[anchor_count - 1u]].tx_queue_count ==
+              MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY);
+    }
+    return 0;
 }
 
 static int test_multi_origin_bursts(void)
@@ -2262,6 +2454,7 @@ struct scenario_entry {
 };
 
 static const struct scenario_entry scenarios[] = {
+    {"whole-world-capacity", test_whole_world_capacity_model},
     {"multi-origin", test_multi_origin_bursts},
     {"queue-pressure", test_queue_pressure_preserves_local_clicks},
     {"partition", test_partition_route_and_event_recovery},
@@ -2277,7 +2470,7 @@ int main(int argc, char **argv)
 {
     if (argc > 2) {
         fprintf(stderr,
-                "usage: %s [multi-origin|queue-pressure|partition|timing-repair|six-hop-fixture-routed|event-reclamation|watchdog-worker|shared-relay|ack-airtime]\n",
+                "usage: %s [whole-world-capacity|multi-origin|queue-pressure|partition|timing-repair|six-hop-fixture-routed|event-reclamation|watchdog-worker|shared-relay|ack-airtime]\n",
                 argv[0]);
         return 2;
     }

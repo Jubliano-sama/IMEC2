@@ -252,10 +252,17 @@ int app_anchor_start_anchor_role(void)
 
 int app_anchor_start_gateway_role(void)
 {
+    int ret;
+
     mesh_relay_init(&mesh_runtime,
                     MESH_RELAY_ROLE_GATEWAY,
                     DEVICE_ID,
                     GATEWAY_ID,
                     1u);
+    ret = app_mesh_report_attach_gateway_ack_store();
+    if (ret < 0) {
+        LOG_ERR("gateway ACK store attach failed: %d", ret);
+        return ret;
+    }
     return 0;
 }

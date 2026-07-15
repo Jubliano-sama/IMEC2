@@ -530,7 +530,11 @@ static struct app_gateway_eack_retry_state gateway_collection_eack_retry_state;
 static bool gateway_collection_eack_round_dirty;
 static struct k_work_delayable gateway_persistence_retry_work;
 static bool gateway_collection_persistence_dirty;
+static bool gateway_collection_clear_pending;
+static bool gateway_collection_restore_pending;
 static bool gateway_membership_persistence_dirty;
+static bool gateway_membership_clear_pending;
+static bool gateway_membership_restore_pending;
 static uint8_t gateway_persistence_retry_round;
 
 void gateway_command_timeout_side_effects(const struct proto_packet *command,
@@ -541,6 +545,8 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason);
 
 static bool gateway_collection_tracking_active(void);
+static int gateway_restore_membership_runtime(void);
+static int gateway_restore_collection_runtime(void);
 
 static void gateway_schedule_persistence_retry(const char *reason)
 {
@@ -564,12 +570,60 @@ static void gateway_schedule_persistence_retry(const char *reason)
             delay_ms);
 }
 
+static void gateway_finalize_collection_clear(void)
+{
+    gateway_collection_clear(&gateway_collection_state);
+    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    app_mesh_persistence_clear_gateway_eack_custody();
+    gateway_collection_eack_round_dirty = false;
+    gateway_collection_persistence_dirty = false;
+    gateway_collection_clear_pending = false;
+    (void)k_work_cancel_delayable(&gateway_collection_eack_work);
+}
+
+static void gateway_finalize_membership_clear(void)
+{
+    gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_persistence_dirty = false;
+    gateway_membership_clear_pending = false;
+}
+
 static void gateway_persistence_retry_work_handler(struct k_work *work)
 {
     int ret;
 
     ARG_UNUSED(work);
 
+    if (gateway_membership_restore_pending) {
+        ret = gateway_restore_membership_runtime();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("membership-restore");
+            return;
+        }
+    }
+    if (gateway_collection_restore_pending) {
+        ret = gateway_restore_collection_runtime();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("collection-restore");
+            return;
+        }
+    }
+    if (gateway_membership_clear_pending) {
+        ret = app_mesh_persistence_clear_gateway_membership();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("membership-clear");
+            return;
+        }
+        gateway_finalize_membership_clear();
+    }
+    if (gateway_collection_clear_pending) {
+        ret = app_mesh_persistence_clear_gateway_collection();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("collection-clear");
+            return;
+        }
+        gateway_finalize_collection_clear();
+    }
     if (gateway_collection_persistence_dirty) {
         if (!gateway_collection_tracking_active()) {
             gateway_collection_persistence_dirty = false;
@@ -716,7 +770,10 @@ static int gateway_persist_collection_state(const char *reason)
 {
     int ret;
 
-    if (!gateway_collection_tracking_active()) {
+    if (!gateway_collection_tracking_active() ||
+        gateway_membership_restore_pending ||
+        gateway_collection_restore_pending ||
+        gateway_collection_clear_pending) {
         return -ENOENT;
     }
 
@@ -745,12 +802,17 @@ static bool gateway_collection_tracking_active(void)
 
 static bool gateway_collection_work_pending(void)
 {
-    return gateway_collection_tracking_active() &&
+    return gateway_membership_restore_pending ||
+           gateway_collection_restore_pending ||
+           gateway_membership_persistence_dirty ||
+           gateway_membership_clear_pending ||
+           gateway_collection_clear_pending ||
+           (gateway_collection_tracking_active() &&
            (gateway_collection_state.collection_open ||
             gateway_collection_state.eack_pending ||
             gateway_collection_eack_retry_state.active ||
             gateway_collection_eack_round_dirty ||
-            gateway_collection_persistence_dirty);
+            gateway_collection_persistence_dirty));
 }
 
 static void gateway_collection_rollback_failed_start(void)
@@ -764,6 +826,8 @@ static void gateway_collection_rollback_failed_start(void)
         &gateway_collection_state);
     if (ret < 0) {
         gateway_collection_clear(&gateway_collection_state);
+        gateway_collection_restore_pending = true;
+        gateway_schedule_persistence_retry("collection-start-rollback-restore");
         LOG_WRN("gateway collection start rollback found no durable snapshot: ret=%d",
                 ret);
     }
@@ -1201,7 +1265,18 @@ static int gateway_accept_collection_record(
     if (collection_changed || reopened || gateway_collection_persistence_dirty) {
         ret = gateway_persist_collection_state(reason);
         if (ret < 0) {
-            if (reopened) {
+            if (collection_changed) {
+                int rollback_ret =
+                    app_mesh_persistence_rollback_gateway_collection(
+                        &gateway_collection_state);
+
+                gateway_collection_persistence_dirty = false;
+                if (rollback_ret < 0) {
+                    LOG_ERR("gateway collection result rollback failed: ret=%d persist_ret=%d",
+                            rollback_ret,
+                            ret);
+                }
+            } else if (reopened) {
                 gateway_collection_state.eack_pending = false;
                 gateway_collection_persistence_dirty = false;
             }
@@ -1269,6 +1344,7 @@ static int gateway_note_collection_result(const struct proto_packet *packet,
     int ret;
 
     if (!gateway_collection_tracking_active() ||
+        gateway_collection_clear_pending ||
         packet == NULL ||
         packet->msg_type != MSG_COMMAND_RESULT) {
         return -ENOENT;
@@ -1315,6 +1391,7 @@ static int gateway_note_collection_bundle(const struct proto_packet *packet,
     int ret;
 
     if (!gateway_collection_tracking_active() ||
+        gateway_collection_clear_pending ||
         packet == NULL ||
         packet->msg_type != MSG_RESULT_BUNDLE) {
         return -ENOENT;
@@ -1647,6 +1724,12 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -EINVAL;
     }
+    if (gateway_membership_restore_pending ||
+        gateway_collection_restore_pending ||
+        gateway_membership_persistence_dirty ||
+        gateway_membership_clear_pending) {
+        return -EAGAIN;
+    }
 
     ret = gateway_membership_set_roster_preserve_order(&gateway_membership_roster_state,
                                                        membership_epoch,
@@ -1669,17 +1752,29 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
 
 void gateway_clear_registered_membership_roster(void)
 {
-    if (DEVICE_ROLE != ROLE_GATEWAY) {
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || gateway_membership_restore_pending ||
+        gateway_collection_restore_pending) {
         return;
     }
 
-    gateway_membership_clear(&gateway_membership_roster_state);
-    gateway_membership_persistence_dirty = false;
-    app_mesh_persistence_clear_gateway_membership();
+    ret = app_mesh_persistence_clear_gateway_membership();
+    if (ret < 0) {
+        gateway_membership_clear_pending = true;
+        gateway_membership_persistence_dirty = false;
+        gateway_schedule_persistence_retry("membership-clear");
+        LOG_WRN("gateway membership clear deferred until NVS delete succeeds: ret=%d",
+                ret);
+        return;
+    }
+    gateway_finalize_membership_clear();
 }
 
 void gateway_clear_command_collection(const struct gateway_command_options *options)
 {
+    int ret;
+
     if (DEVICE_ROLE != ROLE_GATEWAY || options == NULL ||
         !gateway_collection_tracking_active()) {
         return;
@@ -1689,13 +1784,17 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
         return;
     }
 
-    gateway_collection_clear(&gateway_collection_state);
-    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-    app_mesh_persistence_clear_gateway_eack_custody();
-    gateway_collection_eack_round_dirty = false;
-    gateway_collection_persistence_dirty = false;
-    app_mesh_persistence_clear_gateway_collection();
-    (void)k_work_cancel_delayable(&gateway_collection_eack_work);
+    ret = app_mesh_persistence_clear_gateway_collection();
+    if (ret < 0) {
+        gateway_collection_clear_pending = true;
+        gateway_collection_persistence_dirty = false;
+        (void)k_work_cancel_delayable(&gateway_collection_eack_work);
+        gateway_schedule_persistence_retry("collection-clear");
+        LOG_WRN("gateway collection clear deferred until journal tombstone persists: ret=%d",
+                ret);
+        return;
+    }
+    gateway_finalize_collection_clear();
 }
 
 static void gateway_command_result_timeout_handler(struct k_work *work)
@@ -1881,44 +1980,37 @@ int gateway_begin_command_result_wait_for(const struct proto_packet *command,
     return 0;
 }
 
-void gateway_command_result_tracking_init(void)
+static int gateway_restore_membership_runtime(void)
+{
+    int ret = app_mesh_persistence_restore_gateway_membership(
+        &gateway_membership_roster_state);
+
+    if (ret < 0) {
+        gateway_membership_clear(&gateway_membership_roster_state);
+        gateway_membership_restore_pending = true;
+        LOG_WRN("gateway membership snapshot restore unavailable: ret=%d", ret);
+        return ret;
+    }
+    gateway_membership_restore_pending = false;
+    return 0;
+}
+
+static int gateway_restore_collection_runtime(void)
 {
     struct gateway_collection_eack decoded_eack;
     int ret;
 
-    gateway_collection_clear(&gateway_collection_state);
-    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-    gateway_collection_eack_round_dirty = false;
-    gateway_membership_clear(&gateway_membership_roster_state);
-    k_work_init_delayable(&gateway_command_result_timeout_work,
-                          gateway_command_result_timeout_handler);
-    k_work_init_delayable(&gateway_collection_eack_work,
-                          gateway_collection_eack_work_handler);
-    k_work_init_delayable(&gateway_persistence_retry_work,
-                          gateway_persistence_retry_work_handler);
-    gateway_collection_persistence_dirty = false;
-    gateway_membership_persistence_dirty = false;
-    gateway_persistence_retry_round = 0u;
-    if (DEVICE_ROLE != ROLE_GATEWAY) {
-        return;
-    }
-
-    ret = app_mesh_persistence_restore_gateway_membership(&gateway_membership_roster_state);
-    if (ret < 0) {
-        gateway_membership_clear(&gateway_membership_roster_state);
-        LOG_WRN("gateway membership snapshot restore unavailable: ret=%d", ret);
-    }
-
     ret = app_mesh_persistence_restore_gateway_collection(&gateway_collection_state);
     if (ret < 0) {
         gateway_collection_clear(&gateway_collection_state);
-        LOG_WRN("gateway collection snapshot restore unavailable: ret=%d", ret);
-        app_mesh_persistence_clear_gateway_eack_custody();
-        return;
+        gateway_collection_restore_pending = true;
+        LOG_WRN("gateway collection journal restore unavailable: ret=%d", ret);
+        return ret;
     }
+    gateway_collection_restore_pending = false;
     if (!gateway_collection_tracking_active()) {
         app_mesh_persistence_clear_gateway_eack_custody();
-        return;
+        return 0;
     }
 
     LOG_INF("gateway collection tracking restored: command_seq=%u collection=%u received=%u expected=%u open=%u eack_pending=%u",
@@ -1930,7 +2022,7 @@ void gateway_command_result_tracking_init(void)
             gateway_collection_state.eack_pending ? 1u : 0u);
     if (!gateway_collection_state.eack_pending) {
         app_mesh_persistence_clear_gateway_eack_custody();
-        return;
+        return 0;
     }
 
     ret = app_mesh_persistence_restore_gateway_eack_custody(
@@ -1959,7 +2051,7 @@ void gateway_command_result_tracking_init(void)
                     gateway_collection_state.collection_open;
             gateway_schedule_collection_eack_retry(
                 "collection-eack-reset-resume", -EAGAIN, 0u);
-            return;
+            return 0;
         }
 
         LOG_WRN("gateway collection EACK custody is stale for restored collection: ret=%d",
@@ -1974,6 +2066,44 @@ void gateway_command_result_tracking_init(void)
             "collection-eack-final-reset-gap", -EAGAIN, 0u);
     } else {
         gateway_schedule_collection_eack_round();
+    }
+    return 0;
+}
+
+void gateway_command_result_tracking_init(void)
+{
+    int ret;
+
+    gateway_collection_clear(&gateway_collection_state);
+    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    gateway_collection_eack_round_dirty = false;
+    gateway_membership_clear(&gateway_membership_roster_state);
+    k_work_init_delayable(&gateway_command_result_timeout_work,
+                          gateway_command_result_timeout_handler);
+    k_work_init_delayable(&gateway_collection_eack_work,
+                          gateway_collection_eack_work_handler);
+    k_work_init_delayable(&gateway_persistence_retry_work,
+                          gateway_persistence_retry_work_handler);
+    gateway_collection_persistence_dirty = false;
+    gateway_collection_clear_pending = false;
+    gateway_collection_restore_pending = true;
+    gateway_membership_persistence_dirty = false;
+    gateway_membership_clear_pending = false;
+    gateway_membership_restore_pending = true;
+    gateway_persistence_retry_round = 0u;
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return;
+    }
+
+    ret = gateway_restore_membership_runtime();
+    if (ret < 0) {
+        gateway_schedule_persistence_retry("membership-restore");
+        return;
+    }
+
+    ret = gateway_restore_collection_runtime();
+    if (ret < 0) {
+        gateway_schedule_persistence_retry("collection-restore");
     }
 }
 #else

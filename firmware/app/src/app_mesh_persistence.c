@@ -1,5 +1,6 @@
 #include "app_mesh_persistence.h"
 #include "discovery_assignment.h"
+#include "gateway_collection_journal.h"
 
 #include "app_config.h"
 #include "protocol.h"
@@ -29,13 +30,71 @@ LOG_MODULE_REGISTER(app_mesh_persistence, LOG_LEVEL_INF);
 #define APP_MESH_NVS_CLICK_HANDOFF_ID 0x0107u
 #define APP_MESH_NVS_LOCAL_DELIVERY_ID 0x0108u
 #define APP_MESH_NVS_GATEWAY_EACK_CUSTODY_ID 0x0109u
+#define APP_MESH_NVS_GATEWAY_COLLECTION_BASE_1_ID 0x010Au
+#define APP_MESH_NVS_GATEWAY_COLLECTION_CONTROL_0_ID 0x010Bu
+#define APP_MESH_NVS_GATEWAY_COLLECTION_CONTROL_1_ID 0x010Cu
+#define APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_0_BASE_ID 0x0110u
+#define APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_1_BASE_ID 0x0118u
+#define APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_0_BASE_ID 0x0120u
+#define APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_1_BASE_ID 0x0160u
 #define APP_MESH_NVS_SECTOR_SIZE 4096u
+#define APP_MESH_NVS_REQUIRED_SECTOR_COUNT 5u
+#define APP_MESH_NVS_CAPACITY_ALIGNMENT 4u
+#define APP_MESH_NVS_ATE_SIZE 8u
+#ifdef CONFIG_NVS_DATA_CRC
+#define APP_MESH_NVS_DATA_CRC_SIZE 4u
+#else
+#define APP_MESH_NVS_DATA_CRC_SIZE 0u
+#endif
+#define APP_MESH_NVS_ENTRY_BYTES(data_size) \
+    (ROUND_UP((data_size) + APP_MESH_NVS_DATA_CRC_SIZE, \
+              APP_MESH_NVS_CAPACITY_ALIGNMENT) + \
+     ROUND_UP(APP_MESH_NVS_ATE_SIZE, APP_MESH_NVS_CAPACITY_ALIGNMENT))
+#define APP_MESH_NVS_GATEWAY_JOURNAL_LIVE_BYTES \
+    (2u * APP_MESH_NVS_ENTRY_BYTES( \
+              GATEWAY_COLLECTION_JOURNAL_BASE_RECORD_SIZE) + \
+     2u * APP_MESH_NVS_ENTRY_BYTES( \
+              GATEWAY_COLLECTION_JOURNAL_CONTROL_RECORD_SIZE) + \
+     2u * GATEWAY_COLLECTION_JOURNAL_ROSTER_CHUNK_COUNT * \
+              APP_MESH_NVS_ENTRY_BYTES( \
+                  GATEWAY_COLLECTION_JOURNAL_ROSTER_RECORD_MAX_SIZE) + \
+     GATEWAY_COLLECTION_JOURNAL_BANK_COUNT * \
+              GATEWAY_COLLECTION_RESULT_CACHE_SIZE * \
+              APP_MESH_NVS_ENTRY_BYTES( \
+                  GATEWAY_COLLECTION_JOURNAL_RESULT_RECORD_SIZE))
+#define APP_MESH_NVS_OTHER_LIVE_BYTES \
+    (APP_MESH_NVS_ENTRY_BYTES(sizeof(struct mesh_relay_outbox_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES( \
+         sizeof(struct app_mesh_collection_result_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES( \
+         sizeof(struct mesh_relay_child_custody_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES( \
+         sizeof(struct app_mesh_click_handoff_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES( \
+         sizeof(struct app_mesh_local_delivery_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES( \
+         sizeof(struct gateway_collection_eack_custody_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES(sizeof(struct gateway_membership_snapshot)) + \
+     APP_MESH_NVS_ENTRY_BYTES( \
+         sizeof(struct app_mesh_discovery_assignment_snapshot)))
+#define APP_MESH_NVS_MINIMUM_USABLE_BYTES \
+    ((APP_MESH_NVS_REQUIRED_SECTOR_COUNT - 1u) * \
+     (APP_MESH_NVS_SECTOR_SIZE - \
+      2u * ROUND_UP(APP_MESH_NVS_ATE_SIZE, \
+                    APP_MESH_NVS_CAPACITY_ALIGNMENT)))
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(storage_partition), okay),
              "mesh persistence requires a storage_partition");
 BUILD_ASSERT(DT_REG_SIZE(DT_NODELABEL(storage_partition)) >=
-             (2u * APP_MESH_NVS_SECTOR_SIZE),
-             "mesh persistence storage_partition must contain at least two NVS sectors");
+             (APP_MESH_NVS_REQUIRED_SECTOR_COUNT * APP_MESH_NVS_SECTOR_SIZE),
+             "mesh persistence storage_partition must contain at least five NVS sectors");
+BUILD_ASSERT(DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)),
+                     write_block_size) <= APP_MESH_NVS_CAPACITY_ALIGNMENT,
+             "mesh persistence capacity model supports flash alignment up to four bytes");
+BUILD_ASSERT(APP_MESH_NVS_GATEWAY_JOURNAL_LIVE_BYTES +
+             APP_MESH_NVS_OTHER_LIVE_BYTES <=
+             APP_MESH_NVS_MINIMUM_USABLE_BYTES,
+             "five NVS sectors must fit the worst-case live gateway key set");
 BUILD_ASSERT(sizeof(struct mesh_relay_outbox_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "mesh outbox snapshot must fit comfortably in one NVS sector");
@@ -51,9 +110,24 @@ BUILD_ASSERT(sizeof(struct app_mesh_click_handoff_snapshot) <
 BUILD_ASSERT(sizeof(struct app_mesh_local_delivery_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "local delivery journal must fit comfortably in one NVS sector");
-BUILD_ASSERT(sizeof(struct gateway_collection_state) <=
-             (APP_MESH_NVS_SECTOR_SIZE - 256u),
-             "gateway collection state must leave NVS sector headroom");
+BUILD_ASSERT(GATEWAY_COLLECTION_JOURNAL_RECORD_MAX_SIZE <
+             (APP_MESH_NVS_SECTOR_SIZE / 2u),
+             "every gateway collection journal record must fit comfortably in NVS");
+BUILD_ASSERT(APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_0_BASE_ID +
+             GATEWAY_COLLECTION_JOURNAL_ROSTER_CHUNK_COUNT <=
+             APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_1_BASE_ID,
+             "gateway collection roster bank zero IDs must not overlap bank one");
+BUILD_ASSERT(APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_1_BASE_ID +
+             GATEWAY_COLLECTION_JOURNAL_ROSTER_CHUNK_COUNT <=
+             APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_0_BASE_ID,
+             "gateway collection roster IDs must not overlap result IDs");
+BUILD_ASSERT(APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_0_BASE_ID +
+             GATEWAY_COLLECTION_RESULT_CACHE_SIZE <=
+             APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_1_BASE_ID,
+             "gateway collection result bank zero IDs must not overlap bank one");
+BUILD_ASSERT(APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_1_BASE_ID +
+             GATEWAY_COLLECTION_RESULT_CACHE_SIZE - 1u <= UINT16_MAX,
+             "gateway collection result record IDs must fit the NVS key space");
 BUILD_ASSERT(sizeof(struct gateway_collection_eack_custody_snapshot) <
              (APP_MESH_NVS_SECTOR_SIZE / 2u),
              "gateway EACK custody must fit comfortably in one NVS sector");
@@ -66,6 +140,7 @@ static bool mesh_nvs_ready;
 static uint8_t mesh_nvs_init_retry_round;
 static uint32_t mesh_nvs_init_retry_at_ms;
 static struct app_mesh_persistence_health mesh_persistence_health;
+static struct gateway_collection_journal_cursor gateway_collection_journal_cursor;
 
 static void mesh_persistence_note_failure(int ret)
 {
@@ -189,6 +264,106 @@ static int mesh_persistence_write(uint16_t id,
             (unsigned int)len);
     return ret;
 }
+
+static int gateway_collection_journal_nvs_id(
+    struct gateway_collection_journal_key key,
+    uint16_t *id)
+{
+    if (id == NULL) {
+        return -EINVAL;
+    }
+
+    switch (key.kind) {
+    case GATEWAY_COLLECTION_JOURNAL_RECORD_BASE:
+        if (key.bank >= GATEWAY_COLLECTION_JOURNAL_BANK_COUNT || key.index != 0u) {
+            return -EINVAL;
+        }
+        *id = key.bank == 0u ? APP_MESH_NVS_GATEWAY_COLLECTION_ID :
+                              APP_MESH_NVS_GATEWAY_COLLECTION_BASE_1_ID;
+        return 0;
+    case GATEWAY_COLLECTION_JOURNAL_RECORD_CONTROL:
+        if (key.bank >= GATEWAY_COLLECTION_JOURNAL_BANK_COUNT || key.index != 0u) {
+            return -EINVAL;
+        }
+        *id = key.bank == 0u ? APP_MESH_NVS_GATEWAY_COLLECTION_CONTROL_0_ID :
+                              APP_MESH_NVS_GATEWAY_COLLECTION_CONTROL_1_ID;
+        return 0;
+    case GATEWAY_COLLECTION_JOURNAL_RECORD_ROSTER:
+        if (key.bank >= GATEWAY_COLLECTION_JOURNAL_BANK_COUNT ||
+            key.index >= GATEWAY_COLLECTION_JOURNAL_ROSTER_CHUNK_COUNT) {
+            return -EINVAL;
+        }
+        *id = (uint16_t)((key.bank == 0u ?
+                         APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_0_BASE_ID :
+                         APP_MESH_NVS_GATEWAY_COLLECTION_ROSTER_1_BASE_ID) +
+                        key.index);
+        return 0;
+    case GATEWAY_COLLECTION_JOURNAL_RECORD_RESULT:
+        if (key.bank >= GATEWAY_COLLECTION_JOURNAL_BANK_COUNT ||
+            key.index >= GATEWAY_COLLECTION_RESULT_CACHE_SIZE) {
+            return -EINVAL;
+        }
+        *id = (uint16_t)((key.bank == 0u ?
+                         APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_0_BASE_ID :
+                         APP_MESH_NVS_GATEWAY_COLLECTION_RESULT_1_BASE_ID) +
+                        key.index);
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static int gateway_collection_journal_nvs_read(
+    void *ctx,
+    struct gateway_collection_journal_key key,
+    void *data,
+    size_t data_cap,
+    size_t *stored_len)
+{
+    ssize_t read_len;
+    uint16_t id;
+    int ret;
+
+    ARG_UNUSED(ctx);
+    if (stored_len == NULL || (data == NULL && data_cap != 0u)) {
+        return -EINVAL;
+    }
+    ret = gateway_collection_journal_nvs_id(key, &id);
+    if (ret < 0) {
+        return ret;
+    }
+    read_len = nvs_read(&mesh_nvs, id, data, data_cap);
+    if (read_len < 0) {
+        return (int)read_len;
+    }
+    *stored_len = (size_t)read_len;
+    return 0;
+}
+
+static int gateway_collection_journal_nvs_write(
+    void *ctx,
+    struct gateway_collection_journal_key key,
+    const void *data,
+    size_t data_len)
+{
+    uint16_t id;
+    int ret;
+
+    ARG_UNUSED(ctx);
+    ret = gateway_collection_journal_nvs_id(key, &id);
+    if (ret < 0) {
+        return ret;
+    }
+    return mesh_persistence_write(id,
+                                  data,
+                                  data_len,
+                                  "gateway collection journal record");
+}
+
+static const struct gateway_collection_journal_io gateway_collection_journal_io = {
+    .read = gateway_collection_journal_nvs_read,
+    .write = gateway_collection_journal_nvs_write,
+};
 
 static bool click_handoff_snapshot_valid(
     const struct app_mesh_click_handoff_snapshot *snapshot)
@@ -451,18 +626,21 @@ void app_mesh_persistence_clear_child_custody(void)
     }
 }
 
-void app_mesh_persistence_clear_gateway_collection(void)
+int app_mesh_persistence_clear_gateway_collection(void)
 {
     int ret;
 
     if (!mesh_persistence_ready()) {
-        return;
+        return -ENODEV;
     }
 
-    ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_GATEWAY_COLLECTION_ID);
-    if (ret < 0 && ret != -ENOENT) {
-        LOG_WRN("gateway collection snapshot clear failed: %d", ret);
+    ret = gateway_collection_journal_clear(&gateway_collection_journal_io,
+                                           &gateway_collection_journal_cursor,
+                                           NULL);
+    if (ret < 0) {
+        LOG_WRN("gateway collection journal tombstone failed: %d", ret);
     }
+    return ret;
 }
 
 void app_mesh_persistence_clear_gateway_eack_custody(void)
@@ -479,21 +657,25 @@ void app_mesh_persistence_clear_gateway_eack_custody(void)
     }
 }
 
-void app_mesh_persistence_clear_gateway_membership(void)
+int app_mesh_persistence_clear_gateway_membership(void)
 {
     int ret;
 
     if (DEVICE_ROLE != ROLE_GATEWAY) {
-        return;
+        return -ENOTSUP;
     }
     if (!mesh_persistence_ready()) {
-        return;
+        return -ENODEV;
     }
 
     ret = nvs_delete(&mesh_nvs, APP_MESH_NVS_GATEWAY_MEMBERSHIP_ID);
-    if (ret < 0 && ret != -ENOENT) {
+    if (ret == -ENOENT) {
+        return 0;
+    }
+    if (ret < 0) {
         LOG_WRN("gateway membership snapshot clear failed: %d", ret);
     }
+    return ret;
 }
 
 int app_mesh_persistence_save_outbox(struct mesh_relay *relay, uint32_t now_ms)
@@ -704,10 +886,15 @@ int app_mesh_persistence_save_gateway_collection(
         return ret;
     }
 
-    return mesh_persistence_write(APP_MESH_NVS_GATEWAY_COLLECTION_ID,
-                                  collection,
-                                  sizeof(*collection),
-                                  "gateway collection state");
+    ret = gateway_collection_journal_save(&gateway_collection_journal_io,
+                                          &gateway_collection_journal_cursor,
+                                          collection,
+                                          NULL);
+    if (ret < 0) {
+        LOG_WRN("gateway collection journal save failed: %d", ret);
+        return ret;
+    }
+    return 0;
 }
 
 int app_mesh_persistence_save_gateway_eack_custody(
@@ -799,7 +986,9 @@ int app_mesh_persistence_restore_collection_result(
 int app_mesh_persistence_restore_gateway_collection(
     struct gateway_collection_state *collection)
 {
+    struct gateway_collection_journal_stats stats = {0};
     ssize_t read_len;
+    int ret;
 
     if (collection == NULL) {
         return -EINVAL;
@@ -808,32 +997,61 @@ int app_mesh_persistence_restore_gateway_collection(
         return -ENODEV;
     }
 
-    gateway_collection_clear(collection);
-    read_len = nvs_read(&mesh_nvs,
-                        APP_MESH_NVS_GATEWAY_COLLECTION_ID,
-                        collection,
-                        sizeof(*collection));
-    if (read_len == -ENOENT) {
+    ret = gateway_collection_journal_restore(&gateway_collection_journal_io,
+                                             &gateway_collection_journal_cursor,
+                                             collection,
+                                             &stats);
+    if (ret < 0) {
+        LOG_WRN("gateway collection journal restore failed: %d", ret);
+        return ret;
+    }
+    if (!gateway_collection_journal_cursor.active &&
+        gateway_collection_journal_cursor.generation == 0u) {
+        /*
+         * Schema migration: the retired format stored the complete 2048-byte
+         * live state at the bank-0 key. Read it directly into the existing
+         * singleton, then rewrite it through the compact journal. No second
+         * collection-sized stack or static buffer is needed.
+         */
+        read_len = nvs_read(&mesh_nvs,
+                            APP_MESH_NVS_GATEWAY_COLLECTION_ID,
+                            collection,
+                            sizeof(*collection));
+        if (read_len >= 0 && (size_t)read_len == sizeof(*collection) &&
+            gateway_collection_state_validate(collection) == PROTO_OK) {
+            ret = gateway_collection_journal_save(
+                &gateway_collection_journal_io,
+                &gateway_collection_journal_cursor,
+                collection,
+                NULL);
+            if (ret < 0) {
+                LOG_WRN("legacy gateway collection restored but journal migration deferred: %d",
+                        ret);
+                gateway_collection_clear(collection);
+                return ret;
+            } else {
+                LOG_INF("legacy gateway collection migrated to compact journal");
+                /*
+                 * Generation one commits to bank one. Remove the retired
+                 * bank-zero payload so an older firmware image cannot
+                 * resurrect it after a later downgrade.
+                 */
+                ret = nvs_delete(&mesh_nvs,
+                                 APP_MESH_NVS_GATEWAY_COLLECTION_ID);
+                if (ret < 0 && ret != -ENOENT) {
+                    LOG_WRN("legacy gateway collection cleanup failed: %d", ret);
+                }
+            }
+        } else {
+            gateway_collection_clear(collection);
+        }
+    }
+    if (!gateway_collection_journal_cursor.active) {
+        if (stats.records_ignored != 0u) {
+            LOG_WRN("gateway collection journal ignored %u stale or torn records",
+                    stats.records_ignored);
+        }
         return 0;
-    }
-    if (read_len < 0) {
-        LOG_WRN("gateway collection snapshot read failed: %d", (int)read_len);
-        return (int)read_len;
-    }
-    if ((size_t)read_len != sizeof(*collection)) {
-        LOG_WRN("gateway collection state has wrong size: %d/%u",
-                (int)read_len,
-                (unsigned int)sizeof(*collection));
-        gateway_collection_clear(collection);
-        app_mesh_persistence_clear_gateway_collection();
-        return -EINVAL;
-    }
-
-    if (gateway_collection_state_validate(collection) != PROTO_OK) {
-        LOG_WRN("gateway collection state restore rejected");
-        gateway_collection_clear(collection);
-        app_mesh_persistence_clear_gateway_collection();
-        return -EINVAL;
     }
 
     LOG_INF("gateway collection state restored: command_seq=%u collection=%u received=%u expected=%u open=%u",
@@ -842,6 +1060,20 @@ int app_mesh_persistence_restore_gateway_collection(
             collection->received_count,
             collection->expected_count,
             collection->collection_open ? 1u : 0u);
+    return 0;
+}
+
+int app_mesh_persistence_rollback_gateway_collection(
+    struct gateway_collection_state *collection)
+{
+    int ret = gateway_collection_journal_rollback_uncommitted(
+        &gateway_collection_journal_cursor,
+        collection);
+
+    if (ret != PROTO_OK) {
+        LOG_ERR("gateway collection journal RAM rollback failed: %d", ret);
+        return -EINVAL;
+    }
     return 0;
 }
 
@@ -1170,8 +1402,16 @@ int app_mesh_persistence_restore_gateway_collection(
     return -ENOTSUP;
 }
 
-void app_mesh_persistence_clear_gateway_collection(void)
+int app_mesh_persistence_rollback_gateway_collection(
+    struct gateway_collection_state *collection)
 {
+    ARG_UNUSED(collection);
+    return -ENOTSUP;
+}
+
+int app_mesh_persistence_clear_gateway_collection(void)
+{
+    return -ENOTSUP;
 }
 
 int app_mesh_persistence_save_gateway_eack_custody(
@@ -1208,8 +1448,9 @@ int app_mesh_persistence_restore_gateway_membership(
     return -ENOTSUP;
 }
 
-void app_mesh_persistence_clear_gateway_membership(void)
+int app_mesh_persistence_clear_gateway_membership(void)
 {
+    return -ENOTSUP;
 }
 
 int app_mesh_persistence_save_discovery_assignment(

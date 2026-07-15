@@ -235,3 +235,147 @@ int app_mesh_queue_remove_first(
     *removed_out = removed;
     return removed ? 0 : -ENOENT;
 }
+
+int app_mesh_queue_remove_first_owned(
+    const struct app_mesh_queue_head_owner *owner,
+    const struct app_mesh_queue_remove_ops *ops,
+    const struct mesh_outbound *target,
+    struct mesh_outbound *scratch,
+    bool *removed_out)
+{
+    if (owner == NULL) {
+        return -EINVAL;
+    }
+    if (owner->active) {
+        if (removed_out != NULL) {
+            *removed_out = false;
+        }
+        return -EBUSY;
+    }
+    return app_mesh_queue_remove_first(ops, target, scratch, removed_out);
+}
+
+void app_mesh_queue_head_owner_init(struct app_mesh_queue_head_owner *owner)
+{
+    if (owner != NULL) {
+        memset(owner, 0, sizeof(*owner));
+    }
+}
+
+bool app_mesh_queue_head_owned(const struct app_mesh_queue_head_owner *owner)
+{
+    return owner != NULL && owner->active;
+}
+
+int app_mesh_queue_head_begin(struct app_mesh_queue_head_owner *owner,
+                              const struct app_mesh_queue_head_ops *ops,
+                              struct mesh_outbound *outbound,
+                              struct app_mesh_queue_head_token *token)
+{
+    int ret;
+
+    if (owner == NULL || ops == NULL || outbound == NULL || token == NULL ||
+        ops->peek == NULL || ops->get == NULL || ops->recover == NULL ||
+        ops->matches == NULL) {
+        return -EINVAL;
+    }
+    if (owner->active) {
+        return -EBUSY;
+    }
+
+    ret = ops->peek(outbound, ops->ctx);
+    if (ret != 0) {
+        return ret;
+    }
+    owner->generation++;
+    if (owner->generation == 0u) {
+        owner->generation = 1u;
+    }
+    owner->active = true;
+    token->generation = owner->generation;
+    return 0;
+}
+
+int app_mesh_queue_head_commit(struct app_mesh_queue_head_owner *owner,
+                               const struct app_mesh_queue_head_ops *ops,
+                               const struct app_mesh_queue_head_token *token,
+                               const struct mesh_outbound *expected,
+                               struct mesh_outbound *removed)
+{
+    int ret;
+
+    if (owner == NULL || ops == NULL || token == NULL || expected == NULL ||
+        removed == NULL || expected == removed || ops->peek == NULL ||
+        ops->get == NULL || ops->recover == NULL || ops->matches == NULL) {
+        return -EINVAL;
+    }
+    if (!owner->active || token->generation == 0u ||
+        token->generation != owner->generation) {
+        return -ESTALE;
+    }
+
+    ret = ops->peek(removed, ops->ctx);
+    if (ret != 0) {
+        return ret;
+    }
+    if (!ops->matches(removed, expected, ops->ctx)) {
+        return -ESTALE;
+    }
+
+    ret = ops->get(removed, ops->ctx);
+    if (ret != 0) {
+        return ret;
+    }
+    if (!ops->matches(removed, expected, ops->ctx)) {
+        int recover_ret = ops->recover(removed, ops->ctx);
+
+        return recover_ret == 0 ? -EIO : recover_ret;
+    }
+
+    owner->active = false;
+    return 0;
+}
+
+int app_mesh_queue_head_abort(struct app_mesh_queue_head_owner *owner,
+                              const struct app_mesh_queue_head_token *token)
+{
+    if (owner == NULL || token == NULL) {
+        return -EINVAL;
+    }
+    if (!owner->active || token->generation == 0u ||
+        token->generation != owner->generation) {
+        return -ESTALE;
+    }
+    owner->active = false;
+    return 0;
+}
+
+enum app_mesh_parent_loss_custody app_mesh_parent_loss_custody_decide(
+    bool route_discovery_needed,
+    bool core_tx_active,
+    bool route_wait_eligible)
+{
+    if (!route_discovery_needed || !route_wait_eligible) {
+        return APP_MESH_PARENT_LOSS_CUSTODY_NONE;
+    }
+    if (core_tx_active) {
+        return APP_MESH_PARENT_LOSS_CUSTODY_CORE_RETRY;
+    }
+    return APP_MESH_PARENT_LOSS_CUSTODY_ROUTE_WAIT;
+}
+
+enum app_mesh_queue_reserve_action app_mesh_queue_reserve_decide(
+    bool reserve_valid,
+    bool reserved_local_origin_priority,
+    bool incoming_local_origin_priority)
+{
+    if (!reserve_valid) {
+        return APP_MESH_QUEUE_RESERVE_ADMIT;
+    }
+    if (!incoming_local_origin_priority) {
+        return APP_MESH_QUEUE_RESERVE_REJECT;
+    }
+    return reserved_local_origin_priority ?
+        APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS :
+        APP_MESH_QUEUE_RESERVE_REPLACE_TRANSIT_ACCOUNT_LOSS;
+}

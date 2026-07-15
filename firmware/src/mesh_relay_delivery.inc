@@ -1266,7 +1266,26 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
 
     if (packet->dst_id == relay->local_id) {
         if (gateway_delivery_requires_commit(relay, packet)) {
+            if (!gateway_ack_history_can_accept(relay,
+                                                packet,
+                                                payload,
+                                                payload_len,
+                                                now_ms)) {
+                result->status = PROTO_ERR_NO_SPACE;
+                result->actions |= MESH_RELAY_ACTION_DROP;
+                return PROTO_OK;
+            }
             result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
+            return PROTO_OK;
+        }
+        ret = gateway_ack_history_accept_generic(relay,
+                                                 packet,
+                                                 payload,
+                                                 payload_len,
+                                                 now_ms);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            result->actions |= MESH_RELAY_ACTION_DROP;
             return PROTO_OK;
         }
         duplicate_store(relay, packet, now_ms);

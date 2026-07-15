@@ -19,6 +19,40 @@ static bool has_action(const struct mesh_relay_result *result, enum mesh_relay_a
     return (result->actions & action) != 0u;
 }
 
+#define TEST_GATEWAY_ACK_STORE_COUNT 16u
+
+static struct mesh_gateway_ack_store
+    test_gateway_ack_stores[TEST_GATEWAY_ACK_STORE_COUNT];
+static size_t test_gateway_ack_store_next;
+
+static void raw_mesh_relay_init(struct mesh_relay *relay,
+                                enum mesh_relay_role role,
+                                uint64_t local_id,
+                                uint64_t gateway_id,
+                                uint32_t route_epoch)
+{
+    mesh_relay_init(relay, role, local_id, gateway_id, route_epoch);
+}
+
+static void test_mesh_relay_init(struct mesh_relay *relay,
+                                 enum mesh_relay_role role,
+                                 uint64_t local_id,
+                                 uint64_t gateway_id,
+                                 uint32_t route_epoch)
+{
+    raw_mesh_relay_init(relay, role, local_id, gateway_id, route_epoch);
+    if (role == MESH_RELAY_ROLE_GATEWAY) {
+        struct mesh_gateway_ack_store *store =
+            &test_gateway_ack_stores[test_gateway_ack_store_next];
+
+        test_gateway_ack_store_next =
+            (test_gateway_ack_store_next + 1u) % TEST_GATEWAY_ACK_STORE_COUNT;
+        assert(mesh_relay_attach_gateway_ack_store(relay, store) == PROTO_OK);
+    }
+}
+
+#define mesh_relay_init(...) test_mesh_relay_init(__VA_ARGS__)
+
 static size_t unique_u32_count(const uint32_t *values, size_t count)
 {
     size_t unique_count = 0u;
@@ -5142,6 +5176,64 @@ static void test_idle_route_solicit_without_upstream_is_forwarded_once(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
 }
 
+static void test_route_request_capacity_failure_does_not_poison_retry(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay relay;
+    struct mesh_outbound route_req;
+    struct mesh_relay_result result;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 12u);
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 12u);
+    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
+        relay.downlinks[i] = (struct mesh_downlink_entry) {
+            .target_id = UINT64_C(0xd000000000000100) + i,
+            .next_hop_id = UINT64_C(0xd000000000000200) + i,
+            .gateway_id = GATEWAY,
+            .route_epoch = 13u,
+            .last_seen_ms = 1000u,
+            .hop_count = 1u,
+            .quality = 100u,
+            .valid = true,
+        };
+    }
+
+    assert(mesh_relay_prepare_route_request(&origin,
+                                            GATEWAY,
+                                            1000u,
+                                            0u,
+                                            &route_req) == PROTO_OK);
+    route_req.packet.ttl = 2u;
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1010u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_NO_SPACE);
+    assert(result.actions == MESH_RELAY_ACTION_DROP);
+    for (uint8_t i = 0u; i < MESH_RELAY_FLOOD_SEEN_SIZE; i++) {
+        assert(!relay.flood_seen[i].valid);
+    }
+
+    relay.downlinks[0].valid = false;
+    assert(mesh_relay_handle_rx(&relay,
+                                &route_req.packet,
+                                route_req.payload,
+                                route_req.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1020u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(relay.flood_seen[0].valid);
+    assert(relay.flood_seen[0].forward_count == 1u);
+}
+
 static void test_better_route_request_copy_updates_pending_forward(void)
 {
     struct mesh_relay origin;
@@ -6804,6 +6896,459 @@ static void test_gateway_ordinary_command_result_duplicate_remains_sticky(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
 }
 
+static void test_gateway_ack_required_without_history_fails_closed(void)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay_result result;
+    struct proto_packet semantic = {
+        .msg_type = MSG_SURVEY_DISCOVERY_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_A,
+        .dst_id = GATEWAY,
+        .session_id = UINT32_C(0xe1e2e3e4),
+        .seq = 140u,
+        .ttl = 2u,
+    };
+    struct proto_packet generic;
+    uint8_t payload[8];
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_REASON,
+                         2u) == PROTO_OK);
+    semantic.payload_len = (uint16_t)payload_len;
+    raw_mesh_relay_init(&gateway,
+                        MESH_RELAY_ROLE_GATEWAY,
+                        GATEWAY,
+                        GATEWAY,
+                        77u);
+    assert(gateway.gateway_ack_store == NULL);
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &semantic,
+                                payload,
+                                payload_len,
+                                ANCHOR_B,
+                                90u,
+                                7900u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_NO_SPACE);
+    assert(result.actions == MESH_RELAY_ACTION_DROP);
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &semantic,
+                                              payload,
+                                              payload_len,
+                                              ANCHOR_B,
+                                              7901u,
+                                              &result) == PROTO_ERR_NO_SPACE);
+    assert(result.status == PROTO_ERR_NO_SPACE);
+    assert(result.actions == 0u);
+
+    assert(report_init_click_packet(&generic,
+                                    ANCHOR_A,
+                                    GATEWAY,
+                                    UINT32_C(0xe5e6e7e8),
+                                    141u,
+                                    (uint8_t)payload_len) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&gateway,
+                                &generic,
+                                payload,
+                                payload_len,
+                                ANCHOR_B,
+                                90u,
+                                7910u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_NO_SPACE);
+    assert(result.actions == MESH_RELAY_ACTION_DROP);
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+}
+
+static void test_gateway_shared_history_handles_unbatched_and_batch_churn(void)
+{
+    const size_t unbatched_count = 32u;
+    static struct mesh_gateway_ack_store ack_store;
+    struct mesh_relay gateway;
+    struct mesh_relay_result result;
+    struct proto_packet semantic = {
+        .msg_type = MSG_SURVEY_DISCOVERY_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_A,
+        .dst_id = GATEWAY,
+        .session_id = UINT32_C(0xf1f2f3f4),
+        .seq = 145u,
+        .ttl = 2u,
+    };
+    struct proto_packet click;
+    struct proto_packet first_unbatched = {0};
+    uint8_t semantic_payload[8];
+    uint8_t click_payload[16];
+    uint8_t first_unbatched_payload[16];
+    size_t semantic_payload_len = 0u;
+    size_t first_unbatched_payload_len = 0u;
+    uint32_t now_ms = 8120u;
+
+    assert(tlv_append_u8(semantic_payload,
+                         sizeof(semantic_payload),
+                         &semantic_payload_len,
+                         TLV_REASON,
+                         4u) == PROTO_OK);
+    semantic.payload_len = (uint16_t)semantic_payload_len;
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    78u);
+    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &semantic,
+                                semantic_payload,
+                                semantic_payload_len,
+                                ANCHOR_B,
+                                90u,
+                                8100u,
+                                &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_DELIVER_LOCAL);
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &semantic,
+                                              semantic_payload,
+                                              semantic_payload_len,
+                                              ANCHOR_B,
+                                              8101u,
+                                              &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
+
+    /* One noisy origin may use otherwise-free shared slots without a depth-four stall. */
+    for (size_t unbatched_index = 0u;
+         unbatched_index < unbatched_count;
+         unbatched_index++) {
+        size_t click_payload_len = 0u;
+
+        assert(tlv_append_u8(click_payload,
+                             sizeof(click_payload),
+                             &click_payload_len,
+                             TLV_REASON,
+                             (uint8_t)unbatched_index) == PROTO_OK);
+        assert(report_init_click_packet(&click,
+                                        ANCHOR_A,
+                                        GATEWAY,
+                                        UINT32_C(0xb1000000) +
+                                            (uint32_t)unbatched_index,
+                                        (uint16_t)(160u + unbatched_index),
+                                        (uint8_t)click_payload_len) == PROTO_OK);
+        if (unbatched_index == 0u) {
+            first_unbatched = click;
+            memcpy(first_unbatched_payload,
+                   click_payload,
+                   click_payload_len);
+            first_unbatched_payload_len = click_payload_len;
+        }
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &click,
+                                    click_payload,
+                                    click_payload_len,
+                                    ANCHOR_B,
+                                    90u,
+                                    now_ms++,
+                                    &result) == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    }
+
+    /* Later explicit batches recycle only prior batched entries from this origin. */
+    for (size_t batch_index = 0u; batch_index < 100u; batch_index++) {
+        size_t click_payload_len = 0u;
+
+        assert(tlv_append_u32(click_payload,
+                              sizeof(click_payload),
+                              &click_payload_len,
+                              TLV_MESH_CH9_BATCH_ID,
+                              UINT32_C(0xb8000000) +
+                                  (uint32_t)batch_index) == PROTO_OK);
+        assert(tlv_append_u8(click_payload,
+                             sizeof(click_payload),
+                             &click_payload_len,
+                             TLV_MESH_CH9_BATCH_FLAGS,
+                             1u) == PROTO_OK);
+        assert(report_init_click_packet(&click,
+                                        ANCHOR_A,
+                                        GATEWAY,
+                                        UINT32_C(0xb9000000) +
+                                            (uint32_t)batch_index,
+                                        (uint16_t)(300u + batch_index),
+                                        (uint8_t)click_payload_len) == PROTO_OK);
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &click,
+                                    click_payload,
+                                    click_payload_len,
+                                    ANCHOR_B,
+                                    90u,
+                                    now_ms++,
+                                    &result) == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    }
+
+    /* Evict the small generic cache, then prove old exact unbatched identities stick. */
+    for (size_t origin_index = 0u;
+         origin_index < MESH_RELAY_DUP_CACHE_SIZE + 4u;
+         origin_index++) {
+        size_t click_payload_len = 0u;
+        uint64_t origin_id = ANCHOR_B + origin_index + 1u;
+
+        assert(tlv_append_u32(click_payload,
+                              sizeof(click_payload),
+                              &click_payload_len,
+                              TLV_MESH_CH9_BATCH_ID,
+                              UINT32_C(0xc0000000) + (uint32_t)origin_index) ==
+               PROTO_OK);
+        assert(report_init_click_packet(&click,
+                                        origin_id,
+                                        GATEWAY,
+                                        UINT32_C(0xc1000000) +
+                                            (uint32_t)origin_index,
+                                        (uint16_t)(180u + origin_index),
+                                        (uint8_t)click_payload_len) == PROTO_OK);
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &click,
+                                    click_payload,
+                                    click_payload_len,
+                                    origin_id,
+                                    90u,
+                                    now_ms++,
+                                    &result) == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    }
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &semantic,
+                                semantic_payload,
+                                semantic_payload_len,
+                                ANCHOR_B,
+                                90u,
+                                now_ms,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &first_unbatched,
+                                first_unbatched_payload,
+                                first_unbatched_payload_len,
+                                ANCHOR_B,
+                                90u,
+                                now_ms + 1u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+}
+
+static void test_gateway_acceptance_survives_full_origin_batches_and_churn(void)
+{
+    const uint64_t origin_base = UINT64_C(0xa900000000001000);
+    static struct mesh_gateway_ack_store ack_store;
+    struct mesh_relay gateway;
+    struct mesh_relay_result result;
+    struct proto_packet semantic = {
+        .msg_type = MSG_SURVEY_DISCOVERY_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = origin_base,
+        .dst_id = GATEWAY,
+        .session_id = UINT32_C(0xe5e6e7e8),
+        .seq = 151u,
+        .ttl = 2u,
+    };
+    struct proto_packet intervening_click;
+    uint8_t semantic_payload[32];
+    uint8_t click_payload[32];
+    size_t semantic_payload_len = 0u;
+    size_t intervening_count = 0u;
+    uint32_t now_ms = 8020u;
+
+    assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u);
+    assert(tlv_append_u8(semantic_payload,
+                         sizeof(semantic_payload),
+                         &semantic_payload_len,
+                         TLV_REASON,
+                         3u) == PROTO_OK);
+    assert(tlv_append_u32(semantic_payload,
+                          sizeof(semantic_payload),
+                          &semantic_payload_len,
+                          TLV_MESH_CH9_BATCH_ID,
+                          UINT32_C(0x90000000)) == PROTO_OK);
+    assert(tlv_append_u8(semantic_payload,
+                         sizeof(semantic_payload),
+                         &semantic_payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS,
+                         0u) == PROTO_OK);
+    semantic.payload_len = (uint16_t)semantic_payload_len;
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    77u);
+    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) == PROTO_OK);
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &semantic,
+                                semantic_payload,
+                                semantic_payload_len,
+                                ANCHOR_B,
+                                90u,
+                                8000u,
+                                &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_DELIVER_LOCAL);
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &semantic,
+                                              semantic_payload,
+                                              semantic_payload_len,
+                                              ANCHOR_B,
+                                              8001u,
+                                              &result) == PROTO_OK);
+    assert(result.actions == MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
+
+    /* Fill every other identity in the maximum 50-origin, depth-four ingress. */
+    for (size_t origin_index = 0u;
+         origin_index < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX;
+         origin_index++) {
+        uint64_t origin_id = origin_base + origin_index;
+        uint32_t batch_id = UINT32_C(0x90000000) + (uint32_t)origin_index;
+
+        for (size_t packet_index = 0u;
+             packet_index < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
+             packet_index++) {
+            size_t click_payload_len = 0u;
+            uint16_t identity = (uint16_t)(origin_index *
+                MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN + packet_index + 1u);
+
+            if (origin_index == 0u && packet_index == 0u) {
+                continue;
+            }
+            assert(tlv_append_u32(click_payload,
+                                  sizeof(click_payload),
+                                  &click_payload_len,
+                                  TLV_MESH_CH9_BATCH_ID,
+                                  batch_id) == PROTO_OK);
+            assert(tlv_append_u8(
+                       click_payload,
+                       sizeof(click_payload),
+                       &click_payload_len,
+                       TLV_MESH_CH9_BATCH_FLAGS,
+                       packet_index + 1u ==
+                               MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ?
+                           1u : 0u) == PROTO_OK);
+            assert(report_init_click_packet(&intervening_click,
+                                            origin_id,
+                                            GATEWAY,
+                                            UINT32_C(0x91000000) + identity,
+                                            identity,
+                                            (uint8_t)click_payload_len) == PROTO_OK);
+            assert(mesh_relay_handle_rx(&gateway,
+                                        &intervening_click,
+                                        click_payload,
+                                        click_payload_len,
+                                        origin_id,
+                                        90u,
+                                        now_ms++,
+                                        &result) == PROTO_OK);
+            assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+            assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+            intervening_count++;
+        }
+    }
+    assert(intervening_count == MESH_RELAY_GATEWAY_ACK_CAPACITY - 1u);
+
+    /* A 51st active origin fails explicitly and cannot evict an owed ACK. */
+    {
+        size_t click_payload_len = 0u;
+
+        assert(tlv_append_u32(click_payload,
+                              sizeof(click_payload),
+                              &click_payload_len,
+                              TLV_MESH_CH9_BATCH_ID,
+                              UINT32_C(0x9fffffff)) == PROTO_OK);
+        assert(tlv_append_u8(click_payload,
+                             sizeof(click_payload),
+                             &click_payload_len,
+                             TLV_MESH_CH9_BATCH_FLAGS,
+                             1u) == PROTO_OK);
+        assert(report_init_click_packet(&intervening_click,
+                                        origin_base +
+                                            MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX,
+                                        GATEWAY,
+                                        UINT32_C(0x9ffffffe),
+                                        999u,
+                                        (uint8_t)click_payload_len) == PROTO_OK);
+        assert(mesh_relay_handle_rx(
+                   &gateway,
+                   &intervening_click,
+                   click_payload,
+                   click_payload_len,
+                   origin_base + MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX,
+                   90u,
+                   now_ms++,
+                   &result) == PROTO_OK);
+        assert(result.status == PROTO_ERR_NO_SPACE);
+        assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+        assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        assert(!has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    }
+
+    /* Successful later batches from another origin cannot evict the stalled one. */
+    for (size_t batch_index = 0u; batch_index < 100u; batch_index++) {
+        size_t click_payload_len = 0u;
+
+        assert(tlv_append_u32(click_payload,
+                              sizeof(click_payload),
+                              &click_payload_len,
+                              TLV_MESH_CH9_BATCH_ID,
+                              UINT32_C(0xa0000000) + (uint32_t)batch_index) == PROTO_OK);
+        assert(tlv_append_u8(click_payload,
+                             sizeof(click_payload),
+                             &click_payload_len,
+                             TLV_MESH_CH9_BATCH_FLAGS,
+                             1u) == PROTO_OK);
+        assert(report_init_click_packet(&intervening_click,
+                                        origin_base + 1u,
+                                        GATEWAY,
+                                        UINT32_C(0xa1000000) + (uint32_t)batch_index,
+                                        (uint16_t)(1000u + batch_index),
+                                        (uint8_t)click_payload_len) == PROTO_OK);
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &intervening_click,
+                                    click_payload,
+                                    click_payload_len,
+                                    origin_base + 1u,
+                                    90u,
+                                    now_ms++,
+                                    &result) == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+        intervening_count++;
+    }
+
+    assert(intervening_count >= 50u);
+    assert(mesh_relay_handle_rx(&gateway,
+                                &semantic,
+                                semantic_payload,
+                                semantic_payload_len,
+                                ANCHOR_B,
+                                90u,
+                                now_ms,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+}
+
 static void test_gateway_delivery_commit_rejects_invalid_contract(void)
 {
     struct mesh_relay gateway;
@@ -7378,6 +7923,81 @@ static void test_reactive_gateway_route_request_and_reply(void)
     assert(mesh_relay_start_tx(&anchor, &report, payload, sizeof(payload), 1050u, &report_tx) ==
            PROTO_OK);
     assert(report_tx.next_hop_id == ANCHOR_B);
+}
+
+static void test_route_reply_timing_conflict_preserves_discovery_without_route(void)
+{
+    struct mesh_relay origin;
+    struct mesh_relay responder;
+    struct mesh_outbound route_request;
+    struct mesh_relay_result responder_result;
+    struct mesh_relay_result origin_result;
+    struct route_candidate direct = direct_gateway_route(GATEWAY, 81u, 90u);
+    struct route_candidate existing = direct_gateway_route(ANCHOR_C, 81u, 95u);
+    struct mesh_event_params params = channel9_params(1500u);
+    struct mesh_event_timing proposed_timing = {0};
+    struct mesh_event_timing conflicting_timing = {0};
+    const struct route_candidate *selected;
+
+    mesh_relay_init(&origin, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 81u);
+    mesh_relay_init(&responder, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 81u);
+    assert(route_upsert_candidate(&responder.upstream, &direct) == PROTO_OK);
+    assert(route_upsert_candidate(&origin.upstream, &existing) == PROTO_OK);
+
+    assert(mesh_event_timing_negotiate(&proposed_timing, &params, true) == PROTO_OK);
+    mesh_event_timing_set_local_first_slot_tx(&proposed_timing, true);
+    conflicting_timing = proposed_timing;
+    mesh_event_timing_set_local_first_slot_tx(&conflicting_timing, false);
+    assert(mesh_relay_set_channel9_timing_guarded_direction(
+               &origin,
+               ANCHOR_C,
+               &conflicting_timing,
+               MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
+               MESH_RELAY_EVENT_TIMINGS,
+               NULL) == PROTO_OK);
+
+    assert(mesh_relay_prepare_route_request_with_timing(&origin,
+                                                        GATEWAY,
+                                                        &proposed_timing,
+                                                        1000u,
+                                                        1000u,
+                                                        0x12345678u,
+                                                        &route_request) == PROTO_OK);
+    assert(origin.route_discovery.active);
+    assert(mesh_relay_handle_rx(&responder,
+                                &route_request.packet,
+                                route_request.payload,
+                                route_request.payload_len,
+                                ANCHOR_A,
+                                90u,
+                                1010u,
+                                &responder_result) == PROTO_OK);
+    assert(responder_result.status == PROTO_OK);
+    assert(has_action(&responder_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+
+    assert(mesh_relay_handle_rx(&origin,
+                                &responder_result.route_reply.packet,
+                                responder_result.route_reply.payload,
+                                responder_result.route_reply.payload_len,
+                                ANCHOR_B,
+                                90u,
+                                1040u,
+                                &origin_result) == PROTO_OK);
+    assert(origin_result.status == PROTO_ERR_BUSY);
+    assert(has_action(&origin_result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&origin_result, MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK));
+    assert(!has_action(&origin_result, MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY));
+    assert(origin.route_discovery.active);
+    assert(origin.route_discovery.target_id == GATEWAY);
+    selected = route_selected(&origin.upstream);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == ANCHOR_C);
+    for (size_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        assert(!origin.upstream.candidates[i].valid ||
+               origin.upstream.candidates[i].next_hop_id != ANCHOR_B);
+    }
+    assert(channel9_timing_present(&origin, ANCHOR_C));
+    assert(!channel9_timing_present(&origin, ANCHOR_B));
 }
 
 static void test_multihop_route_reply_forward_uses_channel_five(void)
@@ -9811,6 +10431,7 @@ int main(void)
     test_route_discovery_continues_at_ttl_six_with_backoff();
     test_route_discovery_retry_sequence_handles_wrap_and_jitter();
     test_idle_route_solicit_without_upstream_is_forwarded_once();
+    test_route_request_capacity_failure_does_not_poison_retry();
     test_better_route_request_copy_updates_pending_forward();
     test_route_request_retry_uses_new_flood_identity();
     test_unanswered_timed_route_request_does_not_reserve_channel9();
@@ -9836,12 +10457,16 @@ int main(void)
     test_gateway_semantic_delivery_requires_commit_before_ack();
     test_relayed_gateway_semantic_duplicates_reach_acceptance_gate();
     test_gateway_ordinary_command_result_duplicate_remains_sticky();
+    test_gateway_ack_required_without_history_fails_closed();
+    test_gateway_shared_history_handles_unbatched_and_batch_churn();
+    test_gateway_acceptance_survives_full_origin_batches_and_churn();
     test_gateway_delivery_commit_rejects_invalid_contract();
     test_generic_gateway_ack_cannot_complete_collection_eack_custody();
     test_gateway_delivers_direct_clicker_self_test_report_and_acks();
     test_gateway_ack_previous_hop_fallback_must_not_be_rerouted();
     test_duplicate_retry_repairs_lost_gateway_ack();
     test_reactive_gateway_route_request_and_reply();
+    test_route_reply_timing_conflict_preserves_discovery_without_route();
     test_multihop_route_reply_forward_uses_channel_five();
     test_concurrent_route_replies_use_their_discovery_predecessor();
     test_relay_required_route_request_ignores_direct_gateway_copy();

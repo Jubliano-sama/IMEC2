@@ -297,7 +297,9 @@ struct mesh_event_accept_completed {
 static bool mesh_packet_prefers_channel9(const struct proto_packet *packet);
 static size_t mesh_outbound_encoded_frame_len(const struct mesh_outbound *out);
 static uint32_t mesh_ch9_estimated_airtime_ms(size_t frame_len);
+#if DEVICE_ROLE == ROLE_ANCHOR
 static void report_tx_schedule_backoff(uint32_t delay_ms, const char *reason);
+#endif
 
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -384,7 +386,64 @@ struct mesh_ch9_tx_pending_batch {
     bool active;
 };
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static struct mesh_ch9_tx_pending_batch mesh_ch9_tx_pending;
+BUILD_ASSERT(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
+             "report queue ownership has exactly one recovery reserve");
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4184u,
+             "connected anchor pending batch RAM contract changed");
+#endif
+#elif DEVICE_ROLE == ROLE_GATEWAY
+static struct mesh_gateway_ack_store mesh_gateway_ack_store;
+static bool mesh_gateway_ack_store_initialized;
+static bool mesh_gateway_ack_store_attached;
+BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 4000u,
+             "gateway ACK store RAM contract changed");
+#endif
+
+static bool mesh_ch9_tx_pending_is_active(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    return mesh_ch9_tx_pending.active;
+#else
+    return false;
+#endif
+}
+
+static uint32_t mesh_ch9_tx_pending_ack_deadline_ms(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    return mesh_ch9_tx_pending.deadline_ms;
+#else
+    return 0u;
+#endif
+}
+
+int app_mesh_report_attach_gateway_ack_store(void)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    int ret;
+
+    if (!mesh_gateway_ack_store_initialized) {
+        return -EACCES;
+    }
+    if (mesh_gateway_ack_store_attached) {
+        return -EALREADY;
+    }
+
+    ret = mesh_relay_attach_gateway_ack_store(&mesh_runtime,
+                                              &mesh_gateway_ack_store);
+    if (ret != PROTO_OK) {
+        return -EIO;
+    }
+    mesh_gateway_ack_store_attached = true;
+    return 0;
+#else
+    return -ENOTSUP;
+#endif
+}
+
 struct mesh_ch9_batch_metadata {
     uint32_t batch_id;
     uint8_t flags;
@@ -392,11 +451,15 @@ struct mesh_ch9_batch_metadata {
     bool final_packet;
 };
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static K_MUTEX_DEFINE(mesh_ch9_batch_payload_lock);
+#endif
 static K_MUTEX_DEFINE(mesh_send_scratch_lock);
 static struct mesh_outbound mesh_send_scratch_tx;
 static uint8_t mesh_send_scratch_frame[UWB_MESH_MAX_FRAME_LEN];
+#if DEVICE_ROLE == ROLE_ANCHOR
 static uint8_t mesh_ch9_batch_payload_scratch[UWB_MESH_MAX_PAYLOAD_LEN];
+#endif
 #if DEVICE_ROLE == ROLE_ANCHOR
 static uint32_t mesh_ch9_batch_next_id;
 
@@ -416,12 +479,10 @@ static struct mesh_outbound report_tx_worker_scratch;
 static struct mesh_outbound report_tx_batch_candidates[MESH_CH9_TX_BATCH_MAX];
 static struct mesh_outbound report_tx_queue_overflow_dropped;
 static bool report_tx_queue_recovery_valid;
+static struct app_mesh_queue_head_owner report_tx_queue_head_owner;
 #endif
 static struct mesh_relay_result mesh_work_result;
 static struct mesh_outbound mesh_tx_timeout_pending_waiting;
-#if DEVICE_ROLE == ROLE_ANCHOR
-static struct mesh_outbound mesh_tx_timeout_pending_report;
-#endif
 static struct mesh_rx_pending mesh_rx_work_pending;
 static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
 static struct proto_packet mesh_direct_gateway_ack_packet;

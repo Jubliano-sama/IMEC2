@@ -572,6 +572,7 @@ static int mesh_ch9_batch_metadata_parse(const uint8_t *payload,
     return PROTO_OK;
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_payload_copy_without_ch9_batch_metadata(uint8_t *dst,
                                                         size_t dst_cap,
                                                         size_t *dst_len,
@@ -614,6 +615,7 @@ static int mesh_payload_copy_without_ch9_batch_metadata(uint8_t *dst,
     *dst_len = out_len;
     return PROTO_OK;
 }
+#endif
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_outbound_set_ch9_batch_metadata(struct mesh_outbound *out,
@@ -666,6 +668,7 @@ out_unlock:
 }
 #endif
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_outbound_clear_ch9_batch_metadata(struct mesh_outbound *out)
 {
     size_t payload_len = 0u;
@@ -695,6 +698,7 @@ out_unlock:
     k_mutex_unlock(&mesh_ch9_batch_payload_lock);
     return ret;
 }
+#endif
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 static uint8_t mesh_requeue_ch9_batch_candidates(struct mesh_outbound *candidates,
@@ -1163,6 +1167,7 @@ static bool mesh_gateway_handoff_due_batch_acks(uint32_t now_ms)
     return admitted_any;
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static void mesh_ch9_tx_pending_clear(void)
 {
     memset(&mesh_ch9_tx_pending, 0, sizeof(mesh_ch9_tx_pending));
@@ -1172,11 +1177,11 @@ static void mesh_ch9_tx_pending_clear(void)
 static int mesh_ch9_tx_retry_queue_put(const struct mesh_outbound *outbound,
                                        void *ctx)
 {
-    struct k_msgq *queue = (struct k_msgq *)ctx;
     struct mesh_outbound clean;
     int strip_ret;
     int ret;
 
+    ARG_UNUSED(ctx);
     if (outbound == NULL) {
         return -EINVAL;
     }
@@ -1188,11 +1193,11 @@ static int mesh_ch9_tx_retry_queue_put(const struct mesh_outbound *outbound,
                             strip_ret,
                             outbound->packet.seq);
     }
-    ret = k_msgq_put(queue, strip_ret == PROTO_OK ? &clean : outbound, K_NO_WAIT);
+    ret = report_tx_queue_append(strip_ret == PROTO_OK ? &clean : outbound);
     if (ret == 0) {
         const struct mesh_outbound *retained =
             strip_ret == PROTO_OK ? &clean : outbound;
-        uint16_t queue_depth = (uint16_t)k_msgq_num_used_get(queue);
+        uint16_t queue_depth = (uint16_t)report_tx_queue_used();
 
         app_stack_workload_diag_relay_admit(&retained->packet, queue_depth,
                                             (uint16_t)mesh_ch9_tx_pending.count);
@@ -1202,19 +1207,13 @@ static int mesh_ch9_tx_retry_queue_put(const struct mesh_outbound *outbound,
     return ret;
 }
 
-static int mesh_ch9_tx_retry_queue_get(struct mesh_outbound *outbound,
-                                       void *ctx)
-{
-    struct k_msgq *queue = (struct k_msgq *)ctx;
-
-    return k_msgq_get(queue, outbound, K_NO_WAIT);
-}
-
 static uint8_t mesh_ch9_tx_retry_queue_used(void *ctx)
 {
-    struct k_msgq *queue = (struct k_msgq *)ctx;
+    uint32_t used;
 
-    return (uint8_t)k_msgq_num_used_get(queue);
+    ARG_UNUSED(ctx);
+    used = report_tx_queue_used();
+    return used > UINT8_MAX ? UINT8_MAX : (uint8_t)used;
 }
 
 static void mesh_ch9_tx_retry_note_drop(void *ctx)
@@ -1230,10 +1229,9 @@ static uint8_t mesh_ch9_tx_pending_requeue_unacked(uint32_t now_ms)
     struct app_mesh_ch9_tx_retry_entry retry_entries[MESH_CH9_TX_BATCH_MAX];
     const struct app_mesh_ch9_tx_retry_ops ops = {
         .put = mesh_ch9_tx_retry_queue_put,
-        .get = mesh_ch9_tx_retry_queue_get,
         .queue_used = mesh_ch9_tx_retry_queue_used,
         .note_drop = mesh_ch9_tx_retry_note_drop,
-        .ctx = &report_tx_msgq,
+        .ctx = NULL,
     };
     struct app_mesh_ch9_tx_retry_result result;
     int ret;
@@ -1307,33 +1305,6 @@ static uint8_t mesh_ch9_tx_pending_requeue_unacked(uint32_t now_ms)
     return 0u;
 #endif
 }
-
-#if DEVICE_ROLE == ROLE_ANCHOR
-static int report_tx_queue_discard_head_locked(void)
-{
-    return k_msgq_get(&report_tx_msgq, &mesh_send_scratch_tx, K_NO_WAIT);
-}
-
-static int report_tx_queue_discard_head(void)
-{
-    int ret = k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
-
-    if (ret != 0) {
-        return ret;
-    }
-    ret = report_tx_queue_discard_head_locked();
-    k_mutex_unlock(&mesh_send_scratch_lock);
-    if (ret == 0) {
-        uint16_t queue_depth = (uint16_t)report_tx_queue_used();
-
-        app_stack_workload_diag_click_release(&mesh_send_scratch_tx.packet,
-                                              0, queue_depth, 0u);
-        app_stack_workload_diag_cir_release(&mesh_send_scratch_tx.packet,
-                                            0, queue_depth, 0u);
-    }
-    return ret;
-}
-#endif
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_ch9_tx_pending_can_start(void)
@@ -1592,6 +1563,31 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     }
     return true;
 }
+#else
+static void mesh_ch9_tx_pending_clear(void)
+{
+}
+
+static bool mesh_ch9_tx_pending_track_sent(const struct mesh_outbound *sent,
+                                           uint32_t deadline_ms)
+{
+    ARG_UNUSED(sent);
+    ARG_UNUSED(deadline_ms);
+    return false;
+}
+
+static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
+                                           const uint8_t *payload,
+                                           size_t payload_len,
+                                           uint64_t previous_hop_id)
+{
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(previous_hop_id);
+    return false;
+}
+#endif
 
 static uint16_t mesh_route_wake_claimed_duration_ms(
     uint16_t wake_train_ends_in_ms,

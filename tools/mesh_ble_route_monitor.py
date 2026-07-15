@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor synthetic mesh-routing test packets over the IMEC BLE debug service."""
+"""Monitor synthetic mesh-routing packets from the gateway BLE stream."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import os
 import sys
 import time
 from typing import Callable
@@ -27,7 +28,6 @@ except Exception:  # pragma: no cover - host tool fallback for non-BlueZ systems
 # host-side test tool does not import or require the firmware build tree.
 SERVICE_UUID = "494d4543-0001-4757-8000-000000000001"
 PACKET_TX_UUID = "494d4543-0001-4757-8000-000000000002"
-LOG_TX_UUID = "494d4543-0001-4757-8000-000000000004"
 
 # Duplicated from firmware/include/protocol.h and firmware/src/protocol.c.
 PROTO_MAGIC = 0xC1
@@ -173,12 +173,15 @@ class MonitorStats:
     packets_seen: int = 0
     synthetic_seen: int = 0
     decode_errors: int = 0
+    capture_errors: int = 0
     gap_events: int = 0
     missing_packets: int = 0
+    sequence_resets: int = 0
     max_hop_count: int | None = None
     max_attempt: int | None = None
-    last_packet_id: int | None = None
-    last_drop_count: int | None = None
+    last_packet_ids: dict[tuple[int, str], int] = dataclasses.field(
+        default_factory=dict)
+    last_drop_counts: dict[int, int] = dataclasses.field(default_factory=dict)
 
 
 def crc16_ccitt_false(data: bytes) -> int:
@@ -323,12 +326,13 @@ def next_stream_record_len(buffer: bytearray) -> int | None:
     return header_len + payload_len
 
 
-def packet_id(packet: ProtoPacket) -> int:
-    for key in ("mesh_test_packet_id", "mesh_event_counter", "event_seq", "requested_msg_seq"):
+def packet_sequence(packet: ProtoPacket) -> tuple[str, int]:
+    for key in ("mesh_test_packet_id", "mesh_event_counter", "event_seq",
+                "requested_msg_seq"):
         value = packet.tlvs.get(key)
         if isinstance(value, int):
-            return value
-    return packet.seq
+            return key, value
+    return f"msg_0x{packet.msg_type:02x}_seq", packet.seq
 
 
 def packet_attempt(packet: ProtoPacket) -> int | None:
@@ -369,23 +373,31 @@ def format_id64(value: int) -> str:
 
 
 def format_packet_line(packet: ProtoPacket, stats: MonitorStats, now_s: float) -> str:
-    pid = packet_id(packet)
+    sequence_class, pid = packet_sequence(packet)
+    sequence_key = (packet.src_id, sequence_class)
+    previous_id = stats.last_packet_ids.get(sequence_key)
     attempt = packet_attempt(packet)
     drop_count = packet_drop_count(packet)
     hop_count = packet_hop_count(packet)
 
     gap_text = "gap=0"
-    if stats.last_packet_id is not None and pid > stats.last_packet_id + 1:
-        missing = pid - stats.last_packet_id - 1
+    advance_high_watermark = True
+    if previous_id is not None and pid == 1 and previous_id > 1:
+        stats.sequence_resets += 1
+        gap_text = f"gap=stream-reset prev={previous_id}"
+    elif previous_id is not None and pid > previous_id + 1:
+        missing = pid - previous_id - 1
         stats.gap_events += 1
         stats.missing_packets += missing
-        gap_text = f"gap={missing} missing={stats.last_packet_id + 1}..{pid - 1}"
-    elif stats.last_packet_id is not None and pid <= stats.last_packet_id:
-        gap_text = f"gap=out-of-order prev={stats.last_packet_id}"
-    stats.last_packet_id = pid
+        gap_text = f"gap={missing} missing={previous_id + 1}..{pid - 1}"
+    elif previous_id is not None and pid <= previous_id:
+        gap_text = f"gap=out-of-order prev={previous_id}"
+        advance_high_watermark = False
+    if advance_high_watermark:
+        stats.last_packet_ids[sequence_key] = pid
 
     if drop_count is not None:
-        stats.last_drop_count = drop_count
+        stats.last_drop_counts[packet.src_id] = drop_count
     if hop_count is not None:
         stats.max_hop_count = hop_count if stats.max_hop_count is None else max(stats.max_hop_count, hop_count)
     if attempt is not None:
@@ -393,6 +405,7 @@ def format_packet_line(packet: ProtoPacket, stats: MonitorStats, now_s: float) -
 
     fields = [
         f"t={now_s:8.3f}s",
+        f"stream={sequence_class}",
         f"id={pid}",
         gap_text,
         f"attempt={attempt if attempt is not None else '-'}",
@@ -418,6 +431,45 @@ def format_packet_line(packet: ProtoPacket, stats: MonitorStats, now_s: float) -
     if isinstance(payload_crc, int):
         fields.append(f"payload_crc=0x{payload_crc:04x}")
     return " ".join(fields)
+
+
+def packet_json_record(packet: ProtoPacket,
+                       now_s: float,
+                       observed_unix_ns: int | None = None) -> dict[str, object]:
+    sequence_class, sequence_id = packet_sequence(packet)
+
+    record: dict[str, object] = {
+        "observed_elapsed_s": round(now_s, 6),
+        "sequence_class": sequence_class,
+        "packet_id": sequence_id,
+        "attempt": packet_attempt(packet),
+        "drop_count": packet_drop_count(packet),
+        "hop_count": packet_hop_count(packet),
+        "msg_type": packet.msg_type,
+        "msg_name": MSG_NAMES.get(packet.msg_type),
+        "src_id": format_id64(packet.src_id),
+        "dst_id": format_id64(packet.dst_id),
+        "session_id": packet.session_id,
+        "seq": packet.seq,
+        "ttl": packet.ttl,
+        "message_age_ms": packet.message_age_ms,
+        "tlvs": packet.tlvs,
+    }
+    if observed_unix_ns is not None:
+        record["observed_unix_ns"] = observed_unix_ns
+    return record
+
+
+def append_jsonl_record(fd: int, record: dict[str, object], sync: bool) -> None:
+    pending = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+
+    while pending:
+        written = os.write(fd, pending)
+        if written <= 0:
+            raise OSError("JSONL append made no progress")
+        pending = pending[written:]
+    if sync:
+        os.fsync(fd)
 
 
 def device_matches(name_or_address: str, address: str, name: str) -> bool:
@@ -568,41 +620,23 @@ async def disconnect_bounded(client: BleakClient, timeout_s: float) -> None:
     await asyncio.wait_for(client.disconnect(), timeout=timeout_s)
 
 
-async def connect_log_device(name_or_address: str, args: argparse.Namespace) -> BleakClient:
-    device = await find_device(name_or_address, args.scan_timeout, require_service=False)
-    client = BleakClient(device.client_target, timeout=args.connect_timeout)
-    print(
-        f"resolved log[{name_or_address}] address={device.address} "
-        f"source={device.source} preconnected={int(device.connected)}",
-        flush=True,
-    )
-    await asyncio.wait_for(
-        client.connect(timeout=args.connect_timeout, dangerous_use_bleak_cache=True),
-        timeout=args.connect_timeout + 1.0,
-    )
-
-    def on_log(_sender: object, data: bytearray) -> None:
-        text = bytes(data).decode("utf-8", errors="replace")
-        for line in text.splitlines():
-            print(f"log[{name_or_address}] {line}", flush=True)
-
-    await start_notify_bounded(client, LOG_TX_UUID, on_log, args.connect_timeout, f"log[{name_or_address}]")
-    print(f"attached log[{name_or_address}] address={device.address}", flush=True)
-    return client
-
-
 async def run(args: argparse.Namespace) -> int:
     if args.list_devices:
         return await list_devices(args.scan_timeout)
 
     gateway = await find_device(args.gateway, args.scan_timeout, require_service=not args.no_service_filter)
-    log_clients: list[BleakClient] = []
     gateway_client: BleakClient | None = None
+    jsonl_fd: int | None = None
     gateway_preconnected = gateway.connected
     stats = MonitorStats()
     start_s = time.monotonic()
+    start_unix_ns = time.time_ns()
     done = asyncio.Event()
     rx_buffer = bytearray()
+    if args.jsonl_file:
+        jsonl_fd = os.open(args.jsonl_file,
+                           os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+                           0o644)
 
     def on_packet(_sender: object, data: bytearray) -> None:
         rx_buffer.extend(bytes(data))
@@ -654,30 +688,22 @@ async def run(args: argparse.Namespace) -> int:
                 continue
 
             stats.synthetic_seen += 1
-            print(format_packet_line(packet, stats, time.monotonic() - start_s), flush=True)
+            observed_s = time.monotonic() - start_s
+            print(format_packet_line(packet, stats, observed_s), flush=True)
+            record = packet_json_record(
+                packet,
+                observed_s,
+                start_unix_ns + int(observed_s * 1_000_000_000))
             if args.jsonl:
-                print(json.dumps({
-                    "packet_id": packet_id(packet),
-                    "attempt": packet_attempt(packet),
-                    "drop_count": packet_drop_count(packet),
-                    "hop_count": packet_hop_count(packet),
-                    "msg_type": packet.msg_type,
-                    "msg_name": MSG_NAMES.get(packet.msg_type),
-                    "src_id": format_id64(packet.src_id),
-                    "dst_id": format_id64(packet.dst_id),
-                    "session_id": packet.session_id,
-                    "seq": packet.seq,
-                    "ttl": packet.ttl,
-                    "message_age_ms": packet.message_age_ms,
-                    "tlvs": packet.tlvs,
-                }, sort_keys=True), flush=True)
+                print(json.dumps(record, sort_keys=True), flush=True)
+            if jsonl_fd is not None:
+                try:
+                    append_jsonl_record(jsonl_fd, record, args.jsonl_fsync)
+                except OSError as exc:
+                    stats.capture_errors += 1
+                    print(f"capture_error {exc}", file=sys.stderr, flush=True)
             if args.count and stats.synthetic_seen >= args.count:
                 done.set()
-
-    def on_gateway_log(_sender: object, data: bytearray) -> None:
-        text = bytes(data).decode("utf-8", errors="replace")
-        for line in text.splitlines():
-            print(f"log[gateway] {line}", flush=True)
 
     try:
         gateway_client = BleakClient(gateway.client_target, timeout=args.connect_timeout)
@@ -692,14 +718,6 @@ async def run(args: argparse.Namespace) -> int:
         )
         print(f"attached gateway={args.gateway} address={gateway.address}", flush=True)
         await start_notify_bounded(gateway_client, PACKET_TX_UUID, on_packet, args.connect_timeout, "gateway packet")
-        if args.gateway_logs:
-            await start_notify_bounded(gateway_client, LOG_TX_UUID, on_gateway_log, args.connect_timeout, "gateway log")
-            print("attached log[gateway] via primary connection", flush=True)
-        for log_name in args.log_device:
-            try:
-                log_clients.append(await connect_log_device(log_name, args))
-            except Exception as exc:
-                print(f"log[{log_name}] connect_error {exc}", file=sys.stderr, flush=True)
 
         if args.duration_s is None and args.count is None:
             while True:
@@ -710,9 +728,6 @@ async def run(args: argparse.Namespace) -> int:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(done.wait(), timeout=args.duration_s)
     finally:
-        for client in log_clients:
-            with contextlib.suppress(Exception):
-                await disconnect_bounded(client, args.connect_timeout)
         if gateway_client is not None:
             with contextlib.suppress(Exception):
                 if gateway_preconnected:
@@ -722,31 +737,29 @@ async def run(args: argparse.Namespace) -> int:
                         cleanup()
                 else:
                     await disconnect_bounded(gateway_client, args.connect_timeout)
+        if jsonl_fd is not None:
+            os.close(jsonl_fd)
 
     print(
         "summary "
         f"packets={stats.packets_seen} synthetic={stats.synthetic_seen} "
         f"gap_events={stats.gap_events} missing={stats.missing_packets} "
-        f"last_id={stats.last_packet_id if stats.last_packet_id is not None else '-'} "
-        f"drops={stats.last_drop_count if stats.last_drop_count is not None else '-'} "
+        f"streams={len(stats.last_packet_ids)} resets={stats.sequence_resets} "
+        f"drop_sources={len(stats.last_drop_counts)} "
         f"max_attempt={stats.max_attempt if stats.max_attempt is not None else '-'} "
         f"max_hop={stats.max_hop_count if stats.max_hop_count is not None else '-'} "
-        f"decode_errors={stats.decode_errors}",
+        f"decode_errors={stats.decode_errors} capture_errors={stats.capture_errors}",
         flush=True,
     )
-    return 0
+    return 1 if stats.capture_errors != 0 else 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Monitor COBS-framed IMEC mesh-routing test packets over BLE GATT.",
+        description="Monitor IMEC mesh-routing test packets from the gateway BLE stream.",
     )
     parser.add_argument("--gateway", default="IMEC Mesh Test Gateway",
                         help="gateway BLE name or address")
-    parser.add_argument("--log-device", action="append", default=[],
-                        help="optional anchor/transmitter BLE name or address to subscribe to LOG_TX; repeatable")
-    parser.add_argument("--gateway-logs", action="store_true",
-                        help="subscribe to gateway LOG_TX on the primary gateway connection")
     parser.add_argument("--scan-timeout", type=float, default=6.0,
                         help="BLE scan timeout per lookup")
     parser.add_argument("--connect-timeout", type=float, default=8.0,
@@ -763,6 +776,10 @@ def main() -> int:
                         help="do not require the gateway advertisement to include the IMEC service UUID")
     parser.add_argument("--jsonl", action="store_true",
                         help="also emit one JSON object per synthetic packet")
+    parser.add_argument("--jsonl-file",
+                        help="append one JSON object per packet to this durable capture file")
+    parser.add_argument("--jsonl-fsync", action="store_true",
+                        help="fsync every JSONL record (slower, but survives host power loss)")
     parser.add_argument("--verbose", action="store_true",
                         help="print non-synthetic packet notices and decode errors")
     args = parser.parse_args()
@@ -772,6 +789,8 @@ def main() -> int:
         parser.error("--count must be positive")
     if args.connect_timeout <= 0:
         parser.error("--connect-timeout must be positive")
+    if args.jsonl_fsync and not args.jsonl_file:
+        parser.error("--jsonl-fsync requires --jsonl-file")
     return asyncio.run(run(args))
 
 

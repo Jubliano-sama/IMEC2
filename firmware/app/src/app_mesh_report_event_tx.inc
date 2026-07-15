@@ -1368,6 +1368,7 @@ static bool mesh_outbound_is_local_origin_priority(const struct mesh_outbound *o
 }
 #endif
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_runtime_has_transit_reservation(void)
 {
     for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
@@ -1386,6 +1387,7 @@ static bool mesh_runtime_has_transit_reservation(void)
     }
     return false;
 }
+#endif
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 static uint8_t mesh_collect_active_transit_peers(uint64_t *peers, uint8_t peer_cap)
@@ -1430,6 +1432,7 @@ static uint8_t mesh_collect_active_transit_peers(uint64_t *peers, uint8_t peer_c
     return peer_count;
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_ch9_tx_pending_has_local_origin_priority(void)
 {
     if (!mesh_ch9_tx_pending.active) {
@@ -1444,6 +1447,7 @@ static bool mesh_ch9_tx_pending_has_local_origin_priority(void)
     }
     return false;
 }
+#endif
 
 static void mesh_reclaim_for_local_origin_priority(const struct mesh_outbound *out,
                                                    const char *reason,
@@ -1472,10 +1476,12 @@ static void mesh_reclaim_for_local_origin_priority(const struct mesh_outbound *o
         mesh_route_waiting_tx_valid = false;
     }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
     if (mesh_ch9_tx_pending.active &&
         !mesh_ch9_tx_pending_has_local_origin_priority()) {
         mesh_ch9_tx_pending_clear();
     }
+#endif
 
     peer_count = mesh_collect_active_transit_peers(peers,
                                                   (uint8_t)ARRAY_SIZE(peers));
@@ -2712,7 +2718,7 @@ send_prepared:
             }
             if (batch_ack_wait || core_ack_wait) {
                 uint32_t ack_deadline_ms = batch_ack_wait ?
-                    mesh_ch9_tx_pending.deadline_ms :
+                    mesh_ch9_tx_pending_ack_deadline_ms() :
                     mesh_runtime.pending.gateway_ack_deadline_ms;
 
                 mesh_ch9_event_note_persistent_ack_wait(

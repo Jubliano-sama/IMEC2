@@ -58,7 +58,7 @@ anchor or to the global mesh broadcast ID immediately forces that anchor's
 channel-5 scan interval to zero. That makes subsequent channel-5 wake/contact
 scans reschedule continuously.
 
-The firmware emits `MESH_CH5_PREEMPT_CH9` over the BLE log characteristic when
+The firmware emits `MESH_CH5_PREEMPT_CH9` over RTT when
 the scheduler clips, skips, or defers channel-9 work because a channel-5 scan
 or contact window must take priority.
 
@@ -96,13 +96,45 @@ Run the BLE monitor from the repository root:
 ./tools/mesh_ble_route_monitor.py --gateway "IMEC Mesh Test Gateway"
 ```
 
-Add relay/transmitter BLE logs when debugging channel scheduling:
+For a durable multi-node capture, append gateway records to JSONL. Sequence
+gaps are tracked independently per source and event class, so interleaved
+anchors do not create false loss reports:
 
 ```sh
 ./tools/mesh_ble_route_monitor.py \
   --gateway "IMEC Mesh Test Gateway" \
-  --log-device "IMEC Mesh Tx"
+  --jsonl-file logs/mesh-route-run.jsonl \
+  --jsonl-fsync
 ```
+
+The old BLE `LOG_TX` characteristic no longer exists. For radio-scheduling
+breadcrumbs, capture RTT separately from the gateway, suspected bottleneck
+relay, and source using each board's exact probe ID and `pre-reset` connect
+mode.
+
+### Large-setup fault isolation
+
+Keep the gateway JSONL capture running for the complete experiment, but attach
+RTT to only three roles at a time: the gateway, the relay carrying the most
+upstream traffic, and one source that demonstrates the failure. The JSONL
+stream identifies which source/event-class sequence first develops a gap; the
+three RTT views then distinguish source admission, relay custody, and
+gateway-to-host delivery without making every anchor format debug text in its
+timing path.
+
+Record the exact preset, ELF hash, probe-to-board mapping, node IDs, start UTC,
+and any injected loss or BLE backpressure with the capture. When a failure is
+repeatable, translate that boundary into a seeded native scenario using the
+production queue limit and the smallest topology that still fails, then retain
+the original 17/32/50-node run as the system regression. A packet is accounted
+for only when it is in one explicit owner: source delivery custody, a relay
+queue or retry transaction, gateway semantic acceptance, or the durable host
+capture.
+
+The current packet stream has no stable boot epoch, so a packet ID returning to
+one is reported as a source-local stream reset but cannot yet prove the reset
+cause. Fleet health should eventually add a random per-boot epoch and reset
+reason before unattended multi-month runs rely on automatic reboot diagnosis.
 
 ## Test Plan
 
@@ -134,7 +166,6 @@ near each other and run:
 ```sh
 ./tools/mesh_ble_route_monitor.py \
   --gateway "IMEC Mesh Test Gateway" \
-  --log-device "IMEC Mesh Tx" \
   --duration-s 120
 ```
 
@@ -155,10 +186,8 @@ place relay anchors so at least one path exists:
 ```sh
 ./tools/mesh_ble_route_monitor.py \
   --gateway "IMEC Mesh Test Gateway" \
-  --log-device "IMEC Mesh Tx" \
-  --log-device "IMEC Mesh Anchor 1" \
-  --log-device "IMEC Mesh Anchor 2" \
-  --jsonl mesh_route_run.jsonl
+  --jsonl-file logs/mesh-route-run.jsonl \
+  --jsonl-fsync
 ```
 
 Expected multi-hop output:
@@ -168,11 +197,11 @@ Expected multi-hop output:
 - Missing packet IDs identify dropped synthetic packets.
 - `DBG_MESH_TEST_TERMINAL attempts=` rises during weak connectivity and settles
   when the route is stable.
-- Relay-anchor BLE logs show channel-9 relay participation.
+- RTT from the selected relay anchors shows channel-9 relay participation.
 
 To verify channel-5 preemption, keep channel-9 mesh traffic active and then
 introduce a valid channel-5 wake/contact mesh frame addressed globally or to a
-specific anchor. Expected BLE debug output:
+specific anchor. Expected RTT debug output:
 
 - The matching anchor emits `MESH_TEST_WAKE`.
 - The first valid global/local channel-5 mesh wake switches that anchor to

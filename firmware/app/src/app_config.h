@@ -3,6 +3,7 @@
 
 #include "app_device_identity.h"
 #include "app_mesh_direct_gateway_retry.h"
+#include "mesh_capacity.h"
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "status.h"
@@ -275,7 +276,7 @@
 #define MESH_RX_QUEUE_DEPTH 8
 #endif
 #if DEVICE_ROLE == ROLE_ANCHOR && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)
-#define REPORT_TX_QUEUE_DEPTH 4
+#define REPORT_TX_QUEUE_DEPTH MESH_CONNECTED_ANCHOR_REPORT_QUEUE_CAPACITY
 #elif DEVICE_ROLE == ROLE_ANCHOR
 #define REPORT_TX_QUEUE_DEPTH 16
 #else

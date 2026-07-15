@@ -54,7 +54,8 @@ static int queue_outbound(struct mesh_sim_world *world,
         return MESH_SIM_ERR_ARG;
     }
     node = &world->roles[node_index];
-    if (node->tx_queue_count >= MESH_SIM_TX_QUEUE_CAPACITY) {
+    if (node->tx_queue_capacity == 0u ||
+        node->tx_queue_count >= node->tx_queue_capacity) {
         return mesh_sim_fail(world, MESH_SIM_ERR_CAPACITY);
     }
     for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {

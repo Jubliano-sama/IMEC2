@@ -194,7 +194,7 @@ int mesh_relay_set_channel9_timing(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
-int mesh_relay_set_channel9_timing_guarded_direction(
+int mesh_relay_check_channel9_timing_guarded_direction(
     struct mesh_relay *relay,
     uint64_t next_hop_id,
     const struct mesh_event_timing *timing,
@@ -283,15 +283,35 @@ int mesh_relay_set_channel9_timing_guarded_direction(
         status->reason = index >= 0 ? MESH_RELAY_CHANNEL9_GUARD_REPLACED_PEER :
                                      MESH_RELAY_CHANNEL9_GUARD_OK;
     }
-    {
-        int ret = mesh_relay_set_channel9_timing(relay, next_hop_id, timing);
+    return PROTO_OK;
+}
 
-        if (ret == PROTO_OK) {
-            index = relay_channel9_timing_index(relay, next_hop_id);
-            relay->event_timings[index].direction = (uint8_t)direction;
-        }
+int mesh_relay_set_channel9_timing_guarded_direction(
+    struct mesh_relay *relay,
+    uint64_t next_hop_id,
+    const struct mesh_event_timing *timing,
+    enum mesh_relay_channel9_direction direction,
+    uint8_t max_active_peers,
+    struct mesh_relay_channel9_guard_status *status)
+{
+    int index;
+    int ret = mesh_relay_check_channel9_timing_guarded_direction(
+        relay,
+        next_hop_id,
+        timing,
+        direction,
+        max_active_peers,
+        status);
+
+    if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_relay_set_channel9_timing(relay, next_hop_id, timing);
+    if (ret == PROTO_OK) {
+        index = relay_channel9_timing_index(relay, next_hop_id);
+        relay->event_timings[index].direction = (uint8_t)direction;
+    }
+    return ret;
 }
 
 int mesh_relay_set_channel9_timing_guarded(struct mesh_relay *relay,

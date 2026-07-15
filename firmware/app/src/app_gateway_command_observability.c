@@ -135,25 +135,25 @@ static struct gateway_command_event_snapshot *snapshot_for_kind(
     return &state->snapshots[(size_t)kind - 1u];
 }
 
-static void put_u16(uint8_t *out, size_t *offset, uint16_t value)
+static void event_put_u16(uint8_t *out, size_t *offset, uint16_t value)
 {
     proto_put_u16_le(&out[*offset], value);
     *offset += sizeof(value);
 }
 
-static void put_u32(uint8_t *out, size_t *offset, uint32_t value)
+static void event_put_u32(uint8_t *out, size_t *offset, uint32_t value)
 {
     proto_put_u32_le(&out[*offset], value);
     *offset += sizeof(value);
 }
 
-static void put_u64(uint8_t *out, size_t *offset, uint64_t value)
+static void event_put_u64(uint8_t *out, size_t *offset, uint64_t value)
 {
     proto_put_u64_le(&out[*offset], value);
     *offset += sizeof(value);
 }
 
-static uint16_t get_u16(const uint8_t *data, size_t *offset)
+static uint16_t event_get_u16(const uint8_t *data, size_t *offset)
 {
     uint16_t value = proto_get_u16_le(&data[*offset]);
 
@@ -161,7 +161,7 @@ static uint16_t get_u16(const uint8_t *data, size_t *offset)
     return value;
 }
 
-static uint32_t get_u32(const uint8_t *data, size_t *offset)
+static uint32_t event_get_u32(const uint8_t *data, size_t *offset)
 {
     uint32_t value = proto_get_u32_le(&data[*offset]);
 
@@ -169,7 +169,7 @@ static uint32_t get_u32(const uint8_t *data, size_t *offset)
     return value;
 }
 
-static uint64_t get_u64(const uint8_t *data, size_t *offset)
+static uint64_t event_get_u64(const uint8_t *data, size_t *offset)
 {
     uint64_t value = proto_get_u64_le(&data[*offset]);
 
@@ -207,24 +207,24 @@ int gateway_command_event_encode(const struct gateway_command_event *event,
     out[offset++] = event->attempt;
     out[offset++] = (uint8_t)event->status;
     out[offset++] = (uint8_t)event->reason;
-    put_u16(out, &offset, (uint16_t)event->command_id);
-    put_u16(out, &offset, event->gateway_epoch);
-    put_u32(out, &offset, event->correlation_id);
-    put_u32(out, &offset, event->gateway_sequence);
-    put_u32(out, &offset, event->host_session_id);
-    put_u16(out, &offset, event->host_seq);
-    put_u16(out, &offset, 0u);
-    put_u32(out, &offset, event->event_seq);
-    put_u64(out, &offset, event->anchor_id);
-    put_u64(out, &offset, event->pair_initiator_id);
-    put_u64(out, &offset, event->pair_responder_id);
-    put_u64(out, &offset, event->previous_hop_id);
-    put_u16(out, &offset, event->progress_count);
-    put_u16(out, &offset, event->total_count);
-    put_u16(out, &offset, event->success_count);
-    put_u16(out, &offset, event->failure_count);
-    put_u16(out, &offset, event->duplicate_count);
-    put_u16(out, &offset, event->lost_event_count);
+    event_put_u16(out, &offset, (uint16_t)event->command_id);
+    event_put_u16(out, &offset, event->gateway_epoch);
+    event_put_u32(out, &offset, event->correlation_id);
+    event_put_u32(out, &offset, event->gateway_sequence);
+    event_put_u32(out, &offset, event->host_session_id);
+    event_put_u16(out, &offset, event->host_seq);
+    event_put_u16(out, &offset, 0u);
+    event_put_u32(out, &offset, event->event_seq);
+    event_put_u64(out, &offset, event->anchor_id);
+    event_put_u64(out, &offset, event->pair_initiator_id);
+    event_put_u64(out, &offset, event->pair_responder_id);
+    event_put_u64(out, &offset, event->previous_hop_id);
+    event_put_u16(out, &offset, event->progress_count);
+    event_put_u16(out, &offset, event->total_count);
+    event_put_u16(out, &offset, event->success_count);
+    event_put_u16(out, &offset, event->failure_count);
+    event_put_u16(out, &offset, event->duplicate_count);
+    event_put_u16(out, &offset, event->lost_event_count);
     out[offset++] = event->hop_count;
     out[offset++] = event->slot;
     if (offset != GATEWAY_COMMAND_EVENT_WIRE_LEN) {
@@ -259,26 +259,26 @@ int gateway_command_event_decode(const uint8_t *data,
     event->attempt = data[offset++];
     event->status = (enum command_status)data[offset++];
     event->reason = (enum gateway_command_event_reason)data[offset++];
-    event->command_id = (enum command_id)get_u16(data, &offset);
-    event->gateway_epoch = get_u16(data, &offset);
-    event->correlation_id = get_u32(data, &offset);
-    event->gateway_sequence = get_u32(data, &offset);
-    event->host_session_id = get_u32(data, &offset);
-    event->host_seq = get_u16(data, &offset);
-    if (get_u16(data, &offset) != 0u) {
+    event->command_id = (enum command_id)event_get_u16(data, &offset);
+    event->gateway_epoch = event_get_u16(data, &offset);
+    event->correlation_id = event_get_u32(data, &offset);
+    event->gateway_sequence = event_get_u32(data, &offset);
+    event->host_session_id = event_get_u32(data, &offset);
+    event->host_seq = event_get_u16(data, &offset);
+    if (event_get_u16(data, &offset) != 0u) {
         return -EINVAL;
     }
-    event->event_seq = get_u32(data, &offset);
-    event->anchor_id = get_u64(data, &offset);
-    event->pair_initiator_id = get_u64(data, &offset);
-    event->pair_responder_id = get_u64(data, &offset);
-    event->previous_hop_id = get_u64(data, &offset);
-    event->progress_count = get_u16(data, &offset);
-    event->total_count = get_u16(data, &offset);
-    event->success_count = get_u16(data, &offset);
-    event->failure_count = get_u16(data, &offset);
-    event->duplicate_count = get_u16(data, &offset);
-    event->lost_event_count = get_u16(data, &offset);
+    event->event_seq = event_get_u32(data, &offset);
+    event->anchor_id = event_get_u64(data, &offset);
+    event->pair_initiator_id = event_get_u64(data, &offset);
+    event->pair_responder_id = event_get_u64(data, &offset);
+    event->previous_hop_id = event_get_u64(data, &offset);
+    event->progress_count = event_get_u16(data, &offset);
+    event->total_count = event_get_u16(data, &offset);
+    event->success_count = event_get_u16(data, &offset);
+    event->failure_count = event_get_u16(data, &offset);
+    event->duplicate_count = event_get_u16(data, &offset);
+    event->lost_event_count = event_get_u16(data, &offset);
     event->hop_count = data[offset++];
     event->slot = data[offset++];
     return offset == data_len && event_valid(event) ? 0 : -EINVAL;

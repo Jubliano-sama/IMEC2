@@ -14,6 +14,7 @@ RELAY = read_composed_source(ROOT / "src/mesh_relay.c")
 PERSISTENCE = (ROOT / "app/src/app_mesh_persistence.c").read_text(
     encoding="utf-8"
 )
+JOURNAL = (ROOT / "src/gateway_collection_journal.c").read_text(encoding="utf-8")
 
 
 def function_body(source: str, name: str) -> str:
@@ -86,8 +87,13 @@ class GatewayDurableAcceptSourceInvariantTests(unittest.TestCase):
         self.assertIn("return collection_ret;", result)
         self.assertIn("return gateway_note_collection_bundle", bundle)
         persist = accept.index("gateway_persist_collection_state")
+        rollback = accept.index(
+            "app_mesh_persistence_rollback_gateway_collection", persist
+        )
         accepted = accept.rindex("return 0;")
         self.assertLess(persist, accepted)
+        self.assertLess(persist, rollback)
+        self.assertLess(rollback, accepted)
         self.assertIn("gateway_drive_collection_eack_after_record", finalize)
 
     def test_commit_builds_ack_before_storing_duplicate_identity(self):
@@ -155,16 +161,82 @@ class GatewayDurableAcceptSourceInvariantTests(unittest.TestCase):
         wait = function_body(real_gateway, "gateway_begin_command_result_wait_for")
 
         for state in (
+            "gateway_membership_restore_pending",
+            "gateway_collection_restore_pending",
+            "gateway_membership_persistence_dirty",
             "collection_open",
             "eack_pending",
             "gateway_collection_eack_retry_state.active",
             "gateway_collection_eack_round_dirty",
             "gateway_collection_persistence_dirty",
+            "gateway_collection_clear_pending",
         ):
             with self.subTest(state=state):
                 self.assertIn(state, pending)
         self.assertIn("gateway_collection_work_pending()", begin)
         self.assertIn("gateway_collection_work_pending()", wait)
+
+    def test_transient_journal_restore_blocks_and_retries_command_work(self):
+        real_gateway = GATEWAY[GATEWAY.index(
+            "static struct gateway_command_pending gateway_command_pending_state"
+        ):]
+        retry = function_body(
+            real_gateway, "gateway_persistence_retry_work_handler"
+        )
+        persist = function_body(real_gateway, "gateway_persist_collection_state")
+        restore = function_body(
+            real_gateway, "gateway_restore_collection_runtime"
+        )
+        init = function_body(
+            real_gateway, "gateway_command_result_tracking_init"
+        )
+
+        restore_gate = retry.index("if (gateway_collection_restore_pending)")
+        reload = retry.index("gateway_restore_collection_runtime", restore_gate)
+        save = retry.index("app_mesh_persistence_save_gateway_collection", reload)
+        self.assertLess(restore_gate, reload)
+        self.assertLess(reload, save)
+        self.assertIn("gateway_collection_restore_pending", persist)
+        self.assertIn("gateway_collection_restore_pending = true", restore)
+        self.assertIn("gateway_collection_restore_pending = false", restore)
+        init_reload = init.index("gateway_restore_collection_runtime")
+        self.assertLess(
+            init_reload,
+            init.index("gateway_schedule_persistence_retry", init_reload),
+        )
+
+    def test_transient_membership_restore_precedes_collection_reload(self):
+        real_gateway = GATEWAY[GATEWAY.index(
+            "static struct gateway_command_pending gateway_command_pending_state"
+        ):]
+        retry = function_body(
+            real_gateway, "gateway_persistence_retry_work_handler"
+        )
+        init = function_body(
+            real_gateway, "gateway_command_result_tracking_init"
+        )
+        set_roster = function_body(
+            real_gateway, "gateway_set_registered_membership_roster"
+        )
+
+        membership = retry.index("if (gateway_membership_restore_pending)")
+        membership_restore = retry.index(
+            "gateway_restore_membership_runtime", membership
+        )
+        collection = retry.index("if (gateway_collection_restore_pending)")
+        collection_restore = retry.index(
+            "gateway_restore_collection_runtime", collection
+        )
+        self.assertLess(membership, membership_restore)
+        self.assertLess(membership_restore, collection)
+        self.assertLess(collection, collection_restore)
+        self.assertLess(
+            init.index("gateway_restore_membership_runtime"),
+            init.index("gateway_restore_collection_runtime"),
+        )
+        self.assertIn("gateway_membership_restore_pending", set_roster)
+        self.assertIn("gateway_collection_restore_pending", set_roster)
+        self.assertIn("gateway_membership_persistence_dirty", set_roster)
 
     def test_failed_start_restores_the_previous_durable_snapshot(self):
         real_gateway = GATEWAY[GATEWAY.index(
@@ -179,10 +251,16 @@ class GatewayDurableAcceptSourceInvariantTests(unittest.TestCase):
             "app_mesh_persistence_restore_gateway_collection", clear_dirty
         )
         fallback_clear = rollback.index("gateway_collection_clear", restore)
+        block = rollback.index(
+            "gateway_collection_restore_pending = true", fallback_clear
+        )
+        retry = rollback.index("gateway_schedule_persistence_retry", block)
         self.assertLess(clear_dirty, restore)
         self.assertLess(restore, fallback_clear)
+        self.assertLess(fallback_clear, block)
+        self.assertLess(block, retry)
 
-    def test_gateway_collection_persistence_uses_no_large_stack_snapshot(self):
+    def test_gateway_collection_persistence_uses_compact_journal_records(self):
         save = function_body(
             PERSISTENCE, "app_mesh_persistence_save_gateway_collection"
         )
@@ -193,10 +271,76 @@ class GatewayDurableAcceptSourceInvariantTests(unittest.TestCase):
         self.assertNotIn("gateway_collection_state_snapshot", save)
         self.assertNotIn("gateway_collection_state_snapshot", restore)
         self.assertIn("gateway_collection_state_validate(collection)", save)
-        self.assertIn("mesh_persistence_write", save)
-        self.assertIn("collection,", save)
-        self.assertIn("nvs_read", restore)
-        self.assertIn("gateway_collection_state_validate(collection)", restore)
+        self.assertIn("gateway_collection_journal_save", save)
+        self.assertIn("gateway_collection_journal_restore", restore)
+        self.assertNotIn("sizeof(*collection)", save)
+        self.assertIn("encode_result", JOURNAL)
+        self.assertIn("encode_control", JOURNAL)
+        self.assertIn("committed_slots", JOURNAL)
+        self.assertIn("decode_result", JOURNAL)
+
+    def test_collection_clear_waits_for_a_durable_tombstone(self):
+        real_gateway = GATEWAY[GATEWAY.index(
+            "static struct gateway_command_pending gateway_command_pending_state"
+        ):]
+        clear = function_body(real_gateway, "gateway_clear_command_collection")
+        retry = function_body(
+            real_gateway, "gateway_persistence_retry_work_handler"
+        )
+        finalize = function_body(
+            real_gateway, "gateway_finalize_collection_clear"
+        )
+
+        tombstone = clear.index("app_mesh_persistence_clear_gateway_collection")
+        failed = clear.index("if (ret < 0)", tombstone)
+        pending = clear.index("gateway_collection_clear_pending = true", failed)
+        commit = clear.index("gateway_finalize_collection_clear", pending)
+        self.assertLess(tombstone, failed)
+        self.assertLess(failed, pending)
+        self.assertLess(pending, commit)
+        self.assertIn("if (gateway_collection_clear_pending)", retry)
+        self.assertLess(
+            retry.index("app_mesh_persistence_clear_gateway_collection"),
+            retry.index("gateway_finalize_collection_clear"),
+        )
+        self.assertIn("gateway_collection_clear(&gateway_collection_state)", finalize)
+
+    def test_membership_clear_waits_for_durable_delete(self):
+        real_gateway = GATEWAY[GATEWAY.index(
+            "static struct gateway_command_pending gateway_command_pending_state"
+        ):]
+        clear = function_body(
+            real_gateway, "gateway_clear_registered_membership_roster"
+        )
+        retry = function_body(
+            real_gateway, "gateway_persistence_retry_work_handler"
+        )
+        finalize = function_body(
+            real_gateway, "gateway_finalize_membership_clear"
+        )
+        pending = function_body(real_gateway, "gateway_collection_work_pending")
+        set_roster = function_body(
+            real_gateway, "gateway_set_registered_membership_roster"
+        )
+
+        durable_clear = clear.index("app_mesh_persistence_clear_gateway_membership")
+        failed = clear.index("if (ret < 0)", durable_clear)
+        defer = clear.index("gateway_membership_clear_pending = true", failed)
+        commit = clear.index("gateway_finalize_membership_clear", defer)
+        self.assertLess(durable_clear, failed)
+        self.assertLess(failed, defer)
+        self.assertLess(defer, commit)
+        self.assertNotIn("gateway_membership_clear(", clear)
+        self.assertIn("if (gateway_membership_clear_pending)", retry)
+        self.assertLess(
+            retry.index("app_mesh_persistence_clear_gateway_membership"),
+            retry.index("gateway_finalize_membership_clear"),
+        )
+        self.assertIn(
+            "gateway_membership_clear(&gateway_membership_roster_state)", finalize
+        )
+        self.assertIn("gateway_membership_clear_pending", pending)
+        self.assertIn("gateway_membership_clear_pending", set_roster)
 
 
 if __name__ == "__main__":

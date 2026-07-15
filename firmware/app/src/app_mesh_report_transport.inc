@@ -459,7 +459,7 @@ static int mesh_schedule_uwb_rx(uint32_t delay_ms)
                                 report_tx_queue_used(),
                                 mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
                                 mesh_route_waiting_tx_valid ? 1u : 0u,
-                                mesh_ch9_tx_pending.active ? 1u : 0u,
+                                mesh_ch9_tx_pending_is_active() ? 1u : 0u,
                                 app_node_comm_gateway_route_refresh_due_ms(),
                                 mesh_uwb_rx_active ? 1u : 0u);
         }
@@ -471,7 +471,7 @@ static bool mesh_route_test_keeps_radio_idle_between_channel9_turns(void)
 {
     return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
            (mesh_channel9_connection_count() > 0u ||
-            mesh_ch9_tx_pending.active ||
+            mesh_ch9_tx_pending_is_active() ||
             app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table));
 }
 
@@ -492,7 +492,7 @@ static void mesh_release_radio_after_mesh_turn(bool channel9_turn,
             status_debug_printf("DBG_DWM_KEEP_IDLE reason=%s ch9=%u ack=%u qack=%u\n",
                                 reason == NULL ? "mesh" : reason,
                                 mesh_channel9_connection_count(),
-                                mesh_ch9_tx_pending.active ? 1u : 0u,
+                                mesh_ch9_tx_pending_is_active() ? 1u : 0u,
                                 app_mesh_ch9_ack_table_any_pending(
                                     &mesh_ch9_ack_table) ? 1u : 0u);
         }
@@ -572,7 +572,7 @@ void mesh_transport_resume(void)
         (void)mesh_submit_work(&mesh_rx_work);
     }
     if (mesh_relay_tx_active(&mesh_runtime) ||
-        mesh_ch9_tx_pending.active ||
+        mesh_ch9_tx_pending_is_active() ||
         mesh_relay_result_bundle_pending(&mesh_runtime)) {
         (void)mesh_schedule_tx_timeout();
     }

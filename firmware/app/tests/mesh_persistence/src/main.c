@@ -6,6 +6,7 @@
 #include "route.h"
 
 #include <string.h>
+#include <zephyr/storage/flash_map.h>
 #include <zephyr/ztest.h>
 
 #define LOCAL_ID 0x1111222233334444ull
@@ -15,8 +16,25 @@
 #define MEMBER_B_ID 0x1112131415161718ull
 #define MEMBER_C_ID 0x2122232425262728ull
 
-K_MSGQ_DEFINE(test_mesh_rx_msgq, sizeof(uint32_t), 2, 4);
 static struct k_work_delayable test_tx_timeout_work;
+
+static void *mesh_persistence_suite_setup(void)
+{
+    const struct flash_area *area = NULL;
+    int ret;
+
+    ret = flash_area_open(FIXED_PARTITION_ID(storage_partition), &area);
+    zassert_ok(ret);
+    zassert_not_null(area);
+    if (ret < 0 || area == NULL) {
+        return NULL;
+    }
+
+    ret = flash_area_erase(area, 0u, area->fa_size);
+    flash_area_close(area);
+    zassert_ok(ret);
+    return NULL;
+}
 
 int app_mesh_persistence_test_write_gateway_membership_snapshot(
     const void *snapshot,
@@ -57,6 +75,14 @@ static int schedule_timeout_for_preempt(void *opaque)
 
     ctx->schedule_count++;
     return k_work_reschedule(&test_tx_timeout_work, K_MSEC(1000));
+}
+
+static int cancel_active_tx_for_preempt(void *opaque)
+{
+    struct preempt_save_ctx *ctx = opaque;
+
+    mesh_relay_cancel_tx(ctx->relay);
+    return 0;
 }
 
 static int save_child_custody_for_grant(void *opaque)
@@ -329,7 +355,8 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
     unknown_id.result_seq = 302u;
 
     zassert_ok(app_mesh_persistence_init());
-    app_mesh_persistence_clear_gateway_collection();
+    zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
+    zassert_ok(app_mesh_persistence_clear_gateway_collection());
 
     zassert_ok(gateway_collection_start(&collection,
                                         GATEWAY_ID,
@@ -439,11 +466,108 @@ ZTEST(mesh_persistence, test_gateway_collection_snapshot_round_trip_and_clear)
                   PROTO_ERR_NOT_FOUND);
     zassert_equal(restored.received_count, 2u);
 
-    app_mesh_persistence_clear_gateway_collection();
+    zassert_ok(app_mesh_persistence_clear_gateway_collection());
     memset(&restored, 0xA5, sizeof(restored));
     zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
     zassert_equal(restored.gateway_id, 0u);
     zassert_false(restored.collection_open);
+}
+
+ZTEST(mesh_persistence, test_gateway_collection_journal_50_node_nvs_gc_and_reuse)
+{
+    static struct gateway_collection_state collection;
+    static struct gateway_collection_state restored;
+    static uint64_t roster[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
+    uint8_t payload[96];
+
+    zassert_equal(ARRAY_SIZE(roster), GATEWAY_COLLECTION_RESULT_CACHE_SIZE);
+    for (size_t slot = 0u; slot < ARRAY_SIZE(roster); slot++) {
+        roster[slot] = UINT64_C(0xA500000000000000) + slot + 1u;
+    }
+
+    zassert_ok(app_mesh_persistence_init());
+    zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
+    zassert_ok(app_mesh_persistence_clear_gateway_collection());
+
+    for (uint8_t generation = 0u; generation < 2u; generation++) {
+        uint32_t command_seq = 0x5000u + generation;
+        uint32_t collection_epoch_id = 0x7000u + generation;
+
+        zassert_ok(gateway_collection_start(&collection,
+                                            GATEWAY_ID,
+                                            13u,
+                                            command_seq,
+                                            collection_epoch_id,
+                                            51u,
+                                            ARRAY_SIZE(roster),
+                                            0u,
+                                            1000u));
+        zassert_ok(gateway_collection_set_expected_roster(&collection,
+                                                           roster,
+                                                           ARRAY_SIZE(roster)));
+        zassert_ok(app_mesh_persistence_save_gateway_collection(&collection));
+
+        for (size_t slot = 0u; slot < ARRAY_SIZE(roster); slot++) {
+            struct command_result_id result_id = {
+                .gateway_id = GATEWAY_ID,
+                .gateway_epoch = 13u,
+                .command_seq = command_seq,
+                .node_id = roster[slot],
+                .node_boot_counter = 0x10000u +
+                                     ((uint32_t)generation * 100u) +
+                                     (uint32_t)slot,
+                .result_seq = (uint16_t)(((uint16_t)generation * 100u) +
+                                         (uint16_t)slot + 1u),
+            };
+            struct proto_packet packet = {0};
+            size_t payload_len = 0u;
+            bool duplicate = false;
+
+            build_collection_command_result_payload(payload,
+                                                    sizeof(payload),
+                                                    64u,
+                                                    &result_id,
+                                                    collection_epoch_id,
+                                                    &payload_len);
+            zassert_ok(mesh_init_command_result(&packet,
+                                                result_id.node_id,
+                                                GATEWAY_ID,
+                                                command_seq,
+                                                result_id.result_seq,
+                                                (uint8_t)payload_len,
+                                                false));
+            zassert_ok(gateway_collection_record_result_from_hop(
+                &collection,
+                &packet,
+                payload,
+                payload_len,
+                result_id.node_id,
+                &duplicate));
+            zassert_false(duplicate);
+            zassert_ok(app_mesh_persistence_save_gateway_collection(&collection));
+        }
+
+        gateway_collection_clear(&restored);
+        zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
+        zassert_equal(restored.command_seq, command_seq);
+        zassert_equal(restored.collection_epoch_id, collection_epoch_id);
+        zassert_equal(restored.received_count, ARRAY_SIZE(roster));
+        zassert_false(restored.collection_open);
+        zassert_true(restored.eack_pending);
+        zassert_mem_equal(restored.expected_node_ids,
+                          roster,
+                          sizeof(roster));
+        for (size_t slot = 0u; slot < ARRAY_SIZE(roster); slot++) {
+            zassert_true(restored.results[slot].valid);
+            zassert_equal(restored.results[slot].id.node_id, roster[slot]);
+            zassert_equal(restored.results[slot].previous_hop_id, roster[slot]);
+        }
+
+        zassert_ok(app_mesh_persistence_clear_gateway_collection());
+        memset(&restored, 0xA5, sizeof(restored));
+        zassert_ok(app_mesh_persistence_restore_gateway_collection(&restored));
+        zassert_equal(restored.gateway_id, 0u);
+    }
 }
 
 ZTEST(mesh_persistence, test_gateway_collection_snapshot_rejects_invalid_save)
@@ -554,7 +678,7 @@ ZTEST(mesh_persistence, test_gateway_membership_snapshot_round_trip_and_clear)
     struct gateway_membership_roster restored;
 
     zassert_ok(app_mesh_persistence_init());
-    app_mesh_persistence_clear_gateway_membership();
+    zassert_ok(app_mesh_persistence_clear_gateway_membership());
 
     zassert_ok(app_mesh_persistence_save_gateway_membership(&saved));
 
@@ -562,7 +686,7 @@ ZTEST(mesh_persistence, test_gateway_membership_snapshot_round_trip_and_clear)
     zassert_ok(app_mesh_persistence_restore_gateway_membership(&restored));
     assert_membership_roster_equal(&restored, &saved);
 
-    app_mesh_persistence_clear_gateway_membership();
+    zassert_ok(app_mesh_persistence_clear_gateway_membership());
     memset(&restored, 0xA5, sizeof(restored));
     zassert_ok(app_mesh_persistence_restore_gateway_membership(&restored));
     zassert_false(restored.valid);
@@ -588,7 +712,7 @@ ZTEST(mesh_persistence, test_gateway_membership_restore_rejects_and_clears_bad_n
     struct gateway_membership_snapshot snapshot;
 
     zassert_ok(app_mesh_persistence_init());
-    app_mesh_persistence_clear_gateway_membership();
+    zassert_ok(app_mesh_persistence_clear_gateway_membership());
 
     zassert_ok(gateway_membership_export_snapshot(&roster, &snapshot));
     snapshot.version++;
@@ -603,7 +727,7 @@ ZTEST(mesh_persistence, test_gateway_membership_restore_rejects_and_clears_bad_n
     zassert_false(restored.valid);
 
     zassert_ok(gateway_membership_export_snapshot(&roster, &snapshot));
-    app_mesh_persistence_clear_gateway_membership();
+    zassert_ok(app_mesh_persistence_clear_gateway_membership());
     zassert_ok(app_mesh_persistence_test_write_gateway_membership_snapshot(
         &snapshot,
         sizeof(snapshot) - 1u));
@@ -729,13 +853,11 @@ ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_
     const uint32_t preempt_ms = 5033u;
     const uint32_t restore_ms = 7000u;
     uint32_t restored_retry_ms;
-    uint32_t rx_marker = 0xA5A55A5Au;
     uint8_t result_payload[128];
     size_t result_payload_len = 0u;
 
     zassert_ok(app_mesh_persistence_init());
     app_mesh_persistence_clear_outbox();
-    k_msgq_purge(&test_mesh_rx_msgq);
     (void)k_work_cancel_delayable(&test_tx_timeout_work);
 
     build_collection_command_result_payload(result_payload,
@@ -764,40 +886,39 @@ ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_
     zassert_equal(relay.outbox_record.delivery_state,
                   MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
 
-    zassert_ok(k_msgq_put(&test_mesh_rx_msgq, &rx_marker, K_NO_WAIT));
     zassert_ok(mesh_prepare_click_preemption(&relay,
                                              LOCAL_ID,
                                              preempt_ms,
                                              &plan));
-    zassert_true(plan.purge_rx_queue);
     zassert_true(plan.save_outbox);
     zassert_true(plan.schedule_timeout);
     zassert_false(plan.clear_outbox);
     zassert_false(plan.cancel_timeout);
-    zassert_equal(relay.pending.state, MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    zassert_equal(relay.pending.retry_after_ms,
-                  preempt_ms + RELAY_BUSY_RETRY_MIN_MS);
+    zassert_true(plan.cancel_active_tx);
+    zassert_equal(relay.pending.state, MESH_RELAY_TX_WAIT_GATEWAY_ACK);
 
     save_ctx = (struct preempt_save_ctx) {
         .relay = &relay,
         .now_ms = preempt_ms,
     };
     ops = (struct app_mesh_click_preempt_ops) {
-        .mesh_rx_msgq = &test_mesh_rx_msgq,
-        .tx_timeout_work = &test_tx_timeout_work,
         .save_outbox = save_outbox_for_preempt,
         .schedule_timeout = schedule_timeout_for_preempt,
+        .cancel_active_tx = cancel_active_tx_for_preempt,
         .ctx = &save_ctx,
     };
     zassert_ok(app_mesh_apply_click_preempt_plan(&plan, &ops, &preempt_result));
     zassert_true(preempt_result.outbox_saved);
     zassert_true(preempt_result.timeout_scheduled);
-    zassert_true(preempt_result.rx_queue_purged);
+    zassert_true(preempt_result.active_tx_cancelled);
+    zassert_true(preempt_result.transaction_committed);
+    zassert_equal(preempt_result.custody_owner,
+                  APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_OUTBOX);
     zassert_false(preempt_result.outbox_cleared);
     zassert_false(preempt_result.timeout_cancelled);
     zassert_equal(save_ctx.save_count, 1u);
     zassert_equal(save_ctx.schedule_count, 1u);
-    zassert_equal(k_msgq_num_used_get(&test_mesh_rx_msgq), 0u);
+    zassert_false(mesh_relay_tx_active(&relay));
     zassert_true(k_work_delayable_is_pending(&test_tx_timeout_work));
 
     mesh_relay_init(&restored,
@@ -1177,7 +1298,12 @@ ZTEST(mesh_persistence, test_child_result_bundle_round_trip_and_flush_after_rest
     zassert_false(mesh_relay_result_bundle_pending(&restored));
 }
 
-ZTEST_SUITE(mesh_persistence, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(mesh_persistence,
+            NULL,
+            mesh_persistence_suite_setup,
+            NULL,
+            NULL,
+            NULL);
 
 static int main_init(void)
 {

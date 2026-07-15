@@ -1,8 +1,16 @@
 #include "app_mesh_preemption.h"
+#include "mesh_capacity.h"
 
 #include <assert.h>
 #include <errno.h>
 #include <string.h>
+
+_Static_assert(MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY ==
+                   MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH +
+                       MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY,
+               "report storage must include the queue ownership reserve");
+_Static_assert(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
+               "queue recovery fixture models exactly one reserve entry");
 
 enum fixture_owner {
     FIXTURE_OWNER_ACTIVE = 0,
@@ -45,7 +53,8 @@ struct preempt_fixture {
 };
 
 struct queue_remove_fixture {
-    struct mesh_outbound entries[5];
+    struct mesh_outbound
+        entries[MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY];
     uint8_t count;
     uint8_t get_calls;
     uint8_t put_calls;
@@ -79,6 +88,17 @@ static int queue_remove_get(struct mesh_outbound *outbound, void *ctx)
     return 0;
 }
 
+static int queue_remove_peek(struct mesh_outbound *outbound, void *ctx)
+{
+    const struct queue_remove_fixture *fixture = ctx;
+
+    if (fixture->count == 0u) {
+        return -ENOENT;
+    }
+    *outbound = fixture->entries[0];
+    return 0;
+}
+
 static int queue_remove_put(const struct mesh_outbound *outbound, void *ctx)
 {
     struct queue_remove_fixture *fixture = ctx;
@@ -86,12 +106,13 @@ static int queue_remove_put(const struct mesh_outbound *outbound, void *ctx)
     fixture->put_calls++;
     if (fixture->fail_put_call == fixture->put_calls) {
         if (fixture->fill_on_put_failure) {
-            assert(fixture->count < 5u);
+            assert(fixture->count <
+                   MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY);
             fixture->entries[fixture->count++].packet.seq = 99u;
         }
         return -ENOSPC;
     }
-    assert(fixture->count < 5u);
+    assert(fixture->count < MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY);
     fixture->entries[fixture->count++] = *outbound;
     return 0;
 }
@@ -129,9 +150,23 @@ static struct app_mesh_queue_remove_ops queue_remove_ops(
     };
 }
 
+static struct app_mesh_queue_head_ops queue_head_ops(
+    struct queue_remove_fixture *fixture)
+{
+    return (struct app_mesh_queue_head_ops) {
+        .peek = queue_remove_peek,
+        .get = queue_remove_get,
+        .recover = queue_remove_recover,
+        .matches = queue_remove_matches,
+        .ctx = fixture,
+    };
+}
+
 static struct queue_remove_fixture queue_remove_fixture(void)
 {
-    struct queue_remove_fixture fixture = {.count = 4u};
+    struct queue_remove_fixture fixture = {
+        .count = MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH,
+    };
 
     for (uint8_t i = 0u; i < fixture.count; i++) {
         fixture.entries[i].packet.seq = (uint8_t)(i + 1u);
@@ -522,6 +557,108 @@ static void test_queue_remove_reports_get_and_put_failures(void)
     }
 }
 
+static void test_queue_head_owner_blocks_rotation_but_allows_append(void)
+{
+    struct queue_remove_fixture fixture = queue_remove_fixture();
+    struct app_mesh_queue_remove_ops remove_ops = queue_remove_ops(&fixture);
+    struct app_mesh_queue_head_ops head_ops = queue_head_ops(&fixture);
+    struct app_mesh_queue_head_owner owner;
+    struct app_mesh_queue_head_token token;
+    struct mesh_outbound expected;
+    struct mesh_outbound removed;
+    struct mesh_outbound target = {.packet.seq = 2u};
+    struct mesh_outbound appended = {.packet.seq = 5u};
+    bool target_removed = true;
+
+    app_mesh_queue_head_owner_init(&owner);
+    assert(app_mesh_queue_head_begin(&owner, &head_ops, &expected, &token) == 0);
+    assert(expected.packet.seq == 1u);
+    assert(app_mesh_queue_head_owned(&owner));
+
+    /* A producer may append while the sender owns the immutable head. */
+    assert(queue_remove_put(&appended, &fixture) == 0);
+    assert(fixture.count == 5u);
+    assert(app_mesh_queue_remove_first_owned(&owner,
+                                             &remove_ops,
+                                             &target,
+                                             &removed,
+                                             &target_removed) == -EBUSY);
+    assert(!target_removed);
+    assert(fixture.get_calls == 0u);
+    assert(fixture.entries[0].packet.seq == 1u);
+
+    assert(app_mesh_queue_head_commit(&owner,
+                                      &head_ops,
+                                      &token,
+                                      &expected,
+                                      &removed) == 0);
+    assert(removed.packet.seq == 1u);
+    assert(!app_mesh_queue_head_owned(&owner));
+    assert(fixture.count == 4u);
+    assert(fixture.entries[0].packet.seq == 2u);
+    assert(fixture.entries[3].packet.seq == 5u);
+}
+
+static void test_queue_head_owner_rejects_stale_or_changed_head(void)
+{
+    struct queue_remove_fixture fixture = queue_remove_fixture();
+    struct app_mesh_queue_head_ops ops = queue_head_ops(&fixture);
+    struct app_mesh_queue_head_owner owner;
+    struct app_mesh_queue_head_token token;
+    struct app_mesh_queue_head_token stale;
+    struct mesh_outbound expected;
+    struct mesh_outbound removed;
+
+    app_mesh_queue_head_owner_init(&owner);
+    assert(app_mesh_queue_head_begin(&owner, &ops, &expected, &token) == 0);
+    stale = token;
+    stale.generation++;
+    assert(app_mesh_queue_head_commit(&owner,
+                                      &ops,
+                                      &stale,
+                                      &expected,
+                                      &removed) == -ESTALE);
+    assert(fixture.count == 4u && fixture.get_calls == 0u);
+
+    /* Model an illegal unowned destructive interleaving: fail closed. */
+    fixture.entries[0].packet.seq = 99u;
+    assert(app_mesh_queue_head_commit(&owner,
+                                      &ops,
+                                      &token,
+                                      &expected,
+                                      &removed) == -ESTALE);
+    assert(fixture.count == 4u && fixture.get_calls == 0u);
+    assert(app_mesh_queue_head_abort(&owner, &token) == 0);
+}
+
+static void test_parent_loss_keeps_exactly_one_retry_owner(void)
+{
+    assert(app_mesh_parent_loss_custody_decide(
+               true, true, true) == APP_MESH_PARENT_LOSS_CUSTODY_CORE_RETRY);
+    assert(app_mesh_parent_loss_custody_decide(
+               true, false, true) == APP_MESH_PARENT_LOSS_CUSTODY_ROUTE_WAIT);
+    assert(app_mesh_parent_loss_custody_decide(
+               true, false, false) == APP_MESH_PARENT_LOSS_CUSTODY_NONE);
+    assert(app_mesh_parent_loss_custody_decide(
+               true, true, false) == APP_MESH_PARENT_LOSS_CUSTODY_NONE);
+    assert(app_mesh_parent_loss_custody_decide(
+               false, true, true) == APP_MESH_PARENT_LOSS_CUSTODY_NONE);
+}
+
+static void test_queue_recovery_reserve_accounts_every_replacement(void)
+{
+    assert(app_mesh_queue_reserve_decide(false, false, false) ==
+           APP_MESH_QUEUE_RESERVE_ADMIT);
+    assert(app_mesh_queue_reserve_decide(true, false, false) ==
+           APP_MESH_QUEUE_RESERVE_REJECT);
+    assert(app_mesh_queue_reserve_decide(true, false, true) ==
+           APP_MESH_QUEUE_RESERVE_REPLACE_TRANSIT_ACCOUNT_LOSS);
+    assert(app_mesh_queue_reserve_decide(true, true, true) ==
+           APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS);
+    assert(app_mesh_queue_reserve_decide(true, true, false) ==
+           APP_MESH_QUEUE_RESERVE_REJECT);
+}
+
 int main(void)
 {
     test_fallible_preparation_preserves_active_custody();
@@ -532,5 +669,9 @@ int main(void)
     test_queue_remove_rotates_once_and_preserves_relative_order();
     test_queue_remove_absent_target_preserves_order();
     test_queue_remove_reports_get_and_put_failures();
+    test_queue_head_owner_blocks_rotation_but_allows_append();
+    test_queue_head_owner_rejects_stale_or_changed_head();
+    test_parent_loss_keeps_exactly_one_retry_owner();
+    test_queue_recovery_reserve_accounts_every_replacement();
     return 0;
 }

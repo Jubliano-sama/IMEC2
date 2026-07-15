@@ -65,10 +65,17 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #define GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS 5u
 #define GATEWAY_SURVEY_TRANSACTION_POLL_MS 50u
 
-BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == SURVEY_GATEWAY_MAX_REPORTS,
-             "gateway enumeration and survey capacities must both cover 50 anchors");
-BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= 50u,
-             "gateway enumeration storage is intentionally capped at 50 anchors");
+BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
+             "gateway enumeration must cover the connected anchor maximum");
+BUILD_ASSERT(SURVEY_GATEWAY_MAX_REPORTS == MESH_CONNECTED_MAX_ANCHORS,
+             "gateway survey storage must cover the connected anchor maximum");
+BUILD_ASSERT(SURVEY_DISCOVERY_MAX_SLOT_COUNT >= MESH_CONNECTED_MAX_ANCHORS,
+             "survey discovery slots must cover every connected anchor");
+BUILD_ASSERT(GATEWAY_COLLECTION_RESULT_CACHE_SIZE == MESH_CONNECTED_MAX_ANCHORS,
+             "gateway collection storage must cover every connected anchor");
+BUILD_ASSERT(APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES ==
+             MESH_CONNECTED_MAX_ANCHORS,
+             "gateway assignment publication must cover every connected anchor");
 BUILD_ASSERT(SURVEY_GATEWAY_MAX_PEERS_PER_REPORT == SURVEY_REACH_MAX_ENTRIES,
              "anchor collection and gateway survey report caps must match");
 BUILD_ASSERT(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT <= 16u,

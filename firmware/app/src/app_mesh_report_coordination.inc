@@ -389,7 +389,7 @@ static void mesh_coordinator_decide_now(
         .report_queue_used = report_queue_used,
         .relay_tx_active = relay_tx_active,
         .route_waiting_tx_active = mesh_route_waiting_tx_valid,
-        .ch9_ack_wait_active = mesh_ch9_tx_pending.active ||
+        .ch9_ack_wait_active = mesh_ch9_tx_pending_is_active() ||
             app_mesh_ch9_core_ack_wait_active(&mesh_runtime.pending,
                                               relay_tx_active),
         .ch9_ack_send_pending =
@@ -1397,6 +1397,12 @@ static uint32_t mesh_preempt_report_queue_count(void *ctx)
     return k_msgq_num_used_get((struct k_msgq *)ctx);
 }
 
+static int mesh_preempt_report_queue_peek(struct mesh_outbound *outbound,
+                                          void *ctx)
+{
+    return k_msgq_peek((struct k_msgq *)ctx, outbound);
+}
+
 static int mesh_preempt_report_queue_get(struct mesh_outbound *outbound,
                                          void *ctx)
 {
@@ -1432,19 +1438,160 @@ static bool mesh_preempt_report_queue_matches(
     return mesh_preempt_outbound_matches(candidate, target);
 }
 
+static const struct app_mesh_queue_remove_ops report_tx_queue_remove_ops = {
+    .count = mesh_preempt_report_queue_count,
+    .get = mesh_preempt_report_queue_get,
+    .put = mesh_preempt_report_queue_put,
+    .recover = mesh_preempt_report_queue_recover,
+    .matches = mesh_preempt_report_queue_matches,
+    .ctx = &report_tx_msgq,
+};
+
+static const struct app_mesh_queue_head_ops report_tx_queue_head_ops = {
+    .peek = mesh_preempt_report_queue_peek,
+    .get = mesh_preempt_report_queue_get,
+    .recover = mesh_preempt_report_queue_recover,
+    .matches = mesh_preempt_report_queue_matches,
+    .ctx = &report_tx_msgq,
+};
+
+/* Caller holds report_tx_queue_overflow_lock. */
+static int report_tx_queue_restore_recovery_locked(void)
+{
+    int ret;
+
+    if (!report_tx_queue_recovery_valid) {
+        return 0;
+    }
+    ret = k_msgq_put(&report_tx_msgq,
+                     &report_tx_queue_overflow_dropped,
+                     K_NO_WAIT);
+    if (ret == 0) {
+        report_tx_queue_recovery_valid = false;
+    }
+    return ret;
+}
+
+static int report_tx_queue_peek(struct mesh_outbound *outbound)
+{
+    int ret;
+
+    if (outbound == NULL) {
+        return -EINVAL;
+    }
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    (void)report_tx_queue_restore_recovery_locked();
+    ret = k_msgq_peek(&report_tx_msgq, outbound);
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return ret;
+}
+
+static int report_tx_queue_append(const struct mesh_outbound *outbound)
+{
+    int ret;
+
+    if (outbound == NULL) {
+        return -EINVAL;
+    }
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    (void)report_tx_queue_restore_recovery_locked();
+    if (report_tx_queue_recovery_valid) {
+        ret = -ENOSPC;
+    } else {
+        ret = k_msgq_put(&report_tx_msgq, outbound, K_NO_WAIT);
+    }
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return ret;
+}
+
+static int report_tx_queue_begin_head(
+    struct mesh_outbound *outbound,
+    struct app_mesh_queue_head_token *token)
+{
+    int ret;
+
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    (void)report_tx_queue_restore_recovery_locked();
+    ret = app_mesh_queue_head_begin(&report_tx_queue_head_owner,
+                                    &report_tx_queue_head_ops,
+                                    outbound,
+                                    token);
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return ret;
+}
+
+static int report_tx_queue_abort_head(
+    const struct app_mesh_queue_head_token *token)
+{
+    int ret;
+
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = app_mesh_queue_head_abort(&report_tx_queue_head_owner, token);
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return ret;
+}
+
+/* Caller holds mesh_send_scratch_lock, which owns mesh_send_scratch_tx. */
+static int report_tx_queue_commit_head_locked(
+    const struct app_mesh_queue_head_token *token,
+    const struct mesh_outbound *expected)
+{
+    int ret;
+
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = app_mesh_queue_head_commit(&report_tx_queue_head_owner,
+                                     &report_tx_queue_head_ops,
+                                     token,
+                                     expected,
+                                     &mesh_send_scratch_tx);
+    if (ret == 0) {
+        (void)report_tx_queue_restore_recovery_locked();
+    }
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    if (ret == 0) {
+        uint16_t queue_depth = (uint16_t)report_tx_queue_used();
+
+        app_stack_workload_diag_click_release(&mesh_send_scratch_tx.packet,
+                                              0, queue_depth, 0u);
+        app_stack_workload_diag_cir_release(&mesh_send_scratch_tx.packet,
+                                            0, queue_depth, 0u);
+    }
+    return ret;
+}
+
+static int report_tx_queue_commit_head(
+    const struct app_mesh_queue_head_token *token,
+    const struct mesh_outbound *expected)
+{
+    int ret = k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
+
+    if (ret != 0) {
+        return ret;
+    }
+    ret = report_tx_queue_commit_head_locked(token, expected);
+    k_mutex_unlock(&mesh_send_scratch_lock);
+    return ret;
+}
+
 static int mesh_preempt_discard_requeued_click_report(
     void *ctx,
     const struct mesh_outbound *outbound)
 {
-    struct mesh_outbound candidate;
-    const struct app_mesh_queue_remove_ops ops = {
-        .count = mesh_preempt_report_queue_count,
-        .get = mesh_preempt_report_queue_get,
-        .put = mesh_preempt_report_queue_put,
-        .recover = mesh_preempt_report_queue_recover,
-        .matches = mesh_preempt_report_queue_matches,
-        .ctx = &report_tx_msgq,
-    };
     bool removed = false;
     int ret;
 
@@ -1452,16 +1599,24 @@ static int mesh_preempt_discard_requeued_click_report(
     if (outbound == NULL) {
         return -EINVAL;
     }
-    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_NO_WAIT);
+    ret = k_mutex_lock(&mesh_send_scratch_lock, K_NO_WAIT);
     if (ret != 0) {
         return ret;
     }
-    if (report_tx_queue_recovery_valid) {
-        k_mutex_unlock(&report_tx_queue_overflow_lock);
-        return -EBUSY;
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_NO_WAIT);
+    if (ret != 0) {
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        return ret;
     }
-    ret = app_mesh_queue_remove_first(&ops, outbound, &candidate, &removed);
+    (void)report_tx_queue_restore_recovery_locked();
+    ret = app_mesh_queue_remove_first_owned(&report_tx_queue_head_owner,
+                                            &report_tx_queue_remove_ops,
+                                            outbound,
+                                            &mesh_send_scratch_tx,
+                                            &removed);
+    (void)report_tx_queue_restore_recovery_locked();
     k_mutex_unlock(&report_tx_queue_overflow_lock);
+    k_mutex_unlock(&mesh_send_scratch_lock);
     return ret;
 }
 
@@ -1535,7 +1690,7 @@ static int mesh_schedule_tx_timeout(void)
     uint32_t delay_ms;
 
     if (!mesh_relay_tx_active(&mesh_runtime) &&
-        !mesh_ch9_tx_pending.active &&
+        !mesh_ch9_tx_pending_is_active() &&
         !mesh_relay_result_bundle_pending(&mesh_runtime)) {
         return mesh_cancel_delayable(&mesh_tx_timeout_work);
     }
@@ -1546,10 +1701,11 @@ static int mesh_schedule_tx_timeout(void)
                    mesh_runtime.pending.retry_after_ms :
                    mesh_runtime.pending.gateway_ack_deadline_ms;
     }
-    if (mesh_ch9_tx_pending.active &&
+    if (mesh_ch9_tx_pending_is_active() &&
         (deadline == UINT32_MAX ||
-         uptime_deadline_reached(deadline, mesh_ch9_tx_pending.deadline_ms))) {
-        deadline = mesh_ch9_tx_pending.deadline_ms;
+         uptime_deadline_reached(deadline,
+                                 mesh_ch9_tx_pending_ack_deadline_ms()))) {
+        deadline = mesh_ch9_tx_pending_ack_deadline_ms();
     }
     if (mesh_relay_result_bundle_pending(&mesh_runtime) &&
         (deadline == UINT32_MAX ||
@@ -1781,10 +1937,10 @@ static void mesh_route_reply_handoff_after_capture(uint64_t target_id,
                             k_msgq_num_used_get(&mesh_rx_msgq),
                             mesh_route_waiting_tx_valid ? 1u : 0u,
                             mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
-                            mesh_ch9_tx_pending.active ? 1u : 0u);
+                            mesh_ch9_tx_pending_is_active() ? 1u : 0u);
     }
     mesh_route_reply_handoff_begin();
-    if (!mesh_ch9_tx_pending.active &&
+    if (!mesh_ch9_tx_pending_is_active() &&
         !mesh_relay_tx_active(&mesh_runtime)) {
         (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
         (void)mesh_cancel_delayable(&mesh_route_waiting_work);

@@ -151,11 +151,16 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
         role < MESH_SIM_ROLE_CLICKER || role > MESH_SIM_ROLE_GATEWAY) {
         return MESH_SIM_ERR_ARG;
     }
+    if (role == MESH_SIM_ROLE_GATEWAY && id != gateway_id) {
+        return mesh_sim_fail(world, MESH_SIM_ERR_ARG);
+    }
     if (world->role_count >= MESH_SIM_MAX_ROLES) {
         return mesh_sim_fail(world, MESH_SIM_ERR_CAPACITY);
     }
     for (size_t i = 0u; i < world->role_count; i++) {
-        if (world->roles[i].id == id) {
+        if (world->roles[i].id == id ||
+            (role == MESH_SIM_ROLE_GATEWAY &&
+             world->roles[i].role == MESH_SIM_ROLE_GATEWAY)) {
             return mesh_sim_fail(world, MESH_SIM_ERR_ARG);
         }
     }
@@ -171,6 +176,7 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
     node->world = world;
     node->node_index = *node_index;
     node->work_epoch = 1u;
+    node->tx_queue_capacity = MESH_SIM_TX_QUEUE_CAPACITY;
     if (role != MESH_SIM_ROLE_CLICKER) {
         mesh_relay_init(&node->relay,
                         role == MESH_SIM_ROLE_GATEWAY ?
@@ -178,6 +184,14 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
                         id,
                         gateway_id,
                         route_epoch);
+        if (role == MESH_SIM_ROLE_GATEWAY &&
+            mesh_relay_attach_gateway_ack_store(
+                &node->relay,
+                &world->gateway_ack_store) != PROTO_OK) {
+            world->role_count--;
+            memset(node, 0, sizeof(*node));
+            return mesh_sim_fail(world, MESH_SIM_ERR_ARG);
+        }
         node->relay_initialized = true;
         {
             const struct mesh_runtime_ops ops = {
@@ -189,6 +203,21 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
             mesh_runtime_init(&node->runtime, &node->relay, id, &ops);
         }
     }
+    return MESH_SIM_OK;
+}
+
+int mesh_sim_set_tx_queue_capacity(struct mesh_sim_world *world,
+                                   uint8_t node_index,
+                                   size_t capacity)
+{
+    struct mesh_sim_role_instance *node = mesh_sim_role(world, node_index);
+
+    if (node == NULL || capacity == 0u ||
+        capacity > MESH_SIM_TX_QUEUE_CAPACITY ||
+        node->tx_queue_count > capacity) {
+        return MESH_SIM_ERR_ARG;
+    }
+    node->tx_queue_capacity = capacity;
     return MESH_SIM_OK;
 }
 

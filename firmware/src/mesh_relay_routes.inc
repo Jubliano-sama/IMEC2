@@ -17,6 +17,27 @@ void mesh_relay_init(struct mesh_relay *relay,
     route_table_init(&relay->upstream, route_epoch);
 }
 
+void mesh_gateway_ack_store_init(struct mesh_gateway_ack_store *store)
+{
+    if (store != NULL) {
+        memset(store, 0, sizeof(*store));
+    }
+}
+
+int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
+                                        struct mesh_gateway_ack_store *store)
+{
+    if (relay == NULL || store == NULL ||
+        relay->role != MESH_RELAY_ROLE_GATEWAY ||
+        relay->local_id != relay->gateway_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    mesh_gateway_ack_store_init(store);
+    relay->gateway_ack_store = store;
+    return PROTO_OK;
+}
+
 const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_relay *relay,
                                                            uint64_t target_id)
 {
@@ -825,7 +846,8 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                 0u,
                                 now_ms,
                                 NULL,
-                                0u);
+                                0u,
+                                NULL);
     if (ret == PROTO_OK || ret == PROTO_ERR_NOT_FOUND) {
         ret = route_record_candidate_success_at(&relay->upstream,
                                                 relay->gateway_id,

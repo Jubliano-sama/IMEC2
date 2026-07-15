@@ -454,6 +454,7 @@ else()
         ../src/device_identity.c
         ../src/protocol.c
         ../src/gateway_command.c
+        ../src/gateway_collection_journal.c
         ../src/gateway_ble_transport.c
         ../src/discovery_assignment.c
         ../src/dwm3000_timing.c

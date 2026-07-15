@@ -16,8 +16,10 @@ target_sources(app PRIVATE
     ../../src/app_mesh_preemption.c
     ../../src/app_mesh_result_handoff.c
     ../../../src/debug_log.c
+    ../../../src/discovery_assignment.c
     ../../../src/protocol.c
     ../../../src/gateway_command.c
+    ../../../src/gateway_collection_journal.c
     ../../../src/gateway_membership.c
     ../../../src/mesh.c
     ../../../src/mesh_preemption.c

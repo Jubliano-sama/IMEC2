@@ -3,7 +3,7 @@
 static int mesh_try_send_report_tx_ch9_batch(void)
 {
     struct mesh_outbound *first = &report_tx_worker_scratch;
-    struct mesh_outbound *queued = &report_tx_worker_scratch;
+    struct mesh_outbound *queued = &report_tx_batch_candidates[0];
     struct mesh_outbound *tx = &report_tx_worker_scratch;
     struct mesh_ch9_slot_tx_context slot_tx = {
         .uwb_window_start_ms = -1,
@@ -28,7 +28,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
         return -ENOTSUP;
     }
 
-    ret = k_msgq_peek(&report_tx_msgq, first);
+    ret = report_tx_queue_peek(first);
     if (ret != 0 || !mesh_packet_prefers_channel9(&first->packet)) {
         return -ENOTSUP;
     }
@@ -178,13 +178,14 @@ static int mesh_try_send_report_tx_ch9_batch(void)
     deadline_ms = now_ms + ROUTE_GATEWAY_ACK_TIMEOUT_MS;
     k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
     while (sent_count < max_sent) {
+        struct app_mesh_queue_head_token head_token;
         uint64_t queued_next_hop_id = 0u;
         uint32_t required_ms = 0u;
         uint32_t send_start_ms;
         size_t sent_frame_len = 0u;
         bool fits;
 
-        if (k_msgq_peek(&report_tx_msgq, queued) != 0) {
+        if (report_tx_queue_begin_head(queued, &head_token) != 0) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && sent_count > 0u) {
                 status_debug_printf("DBG_CH9_TX_BATCH_STOP reason=empty sent=%u now=%u q=%u\n",
                                     sent_count,
@@ -203,6 +204,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                     queued->packet.seq,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         now_ms = k_uptime_get_32();
@@ -218,6 +220,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                     queued->earliest_tx_ms,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         ret = mesh_relay_select_next_hop(&mesh_runtime,
@@ -234,6 +237,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                     queued->packet.seq,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
 
@@ -296,10 +300,12 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                                 &mesh_event_stats);
                 app_mesh_test_note_ch9_missed();
                 report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+                (void)report_tx_queue_abort_head(&head_token);
                 mesh_ch9_slot_tx_end(&slot_tx);
                 k_mutex_unlock(&mesh_send_scratch_lock);
                 return -EALREADY;
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
 
@@ -313,6 +319,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                         sent_count,
                                         tx->packet.seq);
                 }
+                (void)report_tx_queue_abort_head(&head_token);
                 k_mutex_unlock(&mesh_send_scratch_lock);
                 return ret;
             }
@@ -342,6 +349,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                                 &mesh_event_stats);
                 app_mesh_test_note_ch9_missed();
                 report_tx_schedule(mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+                (void)report_tx_queue_abort_head(&head_token);
                 mesh_ch9_slot_tx_end(&slot_tx);
                 k_mutex_unlock(&mesh_send_scratch_lock);
                 return -EALREADY;
@@ -381,12 +389,14 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                    next_hop_id,
                                    &plan,
                                    "queued-ch9-batch-send");
+                (void)report_tx_queue_abort_head(&head_token);
                 mesh_ch9_slot_tx_end(&slot_tx);
                 k_mutex_unlock(&mesh_send_scratch_lock);
                 report_tx_schedule_backoff(send_failure_retry_delay_ms,
                                            "queued-ch9-batch-send");
                 return -EALREADY;
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         {
@@ -411,7 +421,12 @@ static int mesh_try_send_report_tx_ch9_batch(void)
                                 tx->packet.seq);
         }
 
-        (void)report_tx_queue_discard_head_locked();
+        ret = report_tx_queue_commit_head_locked(&head_token, queued);
+        if (ret != 0) {
+            LOG_ERR("report queue batch commit failed: %d", ret);
+            (void)report_tx_queue_abort_head(&head_token);
+            break;
+        }
         mesh_relay_note_tx_sent(&mesh_runtime, tx, k_uptime_get_32());
         app_mesh_paused_delivery_note_sent(&mesh_paused_delivery, tx);
         if (mesh_ch9_tx_pending_track_sent(tx, deadline_ms)) {
@@ -488,6 +503,7 @@ void report_tx_schedule(uint32_t delay_ms)
 #endif
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static void report_tx_schedule_backoff(uint32_t delay_ms, const char *reason)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -507,6 +523,7 @@ static void report_tx_schedule_backoff(uint32_t delay_ms, const char *reason)
     ARG_UNUSED(reason);
 #endif
 }
+#endif
 
 static void mesh_c5_flood_work_handler(struct k_work *work)
 {
@@ -567,8 +584,16 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
 uint32_t report_tx_queue_used(void)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
-    return (uint32_t)k_msgq_num_used_get(&report_tx_msgq) +
+    uint32_t used;
+
+    if (k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER) != 0) {
+        return (uint32_t)k_msgq_num_used_get(&report_tx_msgq);
+    }
+    (void)report_tx_queue_restore_recovery_locked();
+    used = (uint32_t)k_msgq_num_used_get(&report_tx_msgq) +
            (report_tx_queue_recovery_valid ? 1u : 0u);
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return used;
 #else
     return 0u;
 #endif
@@ -576,12 +601,12 @@ uint32_t report_tx_queue_used(void)
 
 bool mesh_report_tx_backlog_active(void)
 {
-    return report_tx_queue_used() > 0u || mesh_ch9_tx_pending.active;
+    return report_tx_queue_used() > 0u || mesh_ch9_tx_pending_is_active();
 }
 
 bool mesh_report_ch9_ack_wait_active(void)
 {
-    return mesh_ch9_tx_pending.active;
+    return mesh_ch9_tx_pending_is_active();
 }
 
 static int mesh_queue_anchor_cir_fragment(struct mesh_outbound *outbound,
@@ -598,12 +623,12 @@ static int mesh_queue_anchor_cir_fragment(struct mesh_outbound *outbound,
     mesh_reclaim_for_local_origin_priority(outbound,
                                            "local-origin-cir-ready",
                                            false);
-    ret = k_msgq_put(&report_tx_msgq, outbound, K_NO_WAIT);
+    ret = report_tx_queue_append(outbound);
     if (ret != 0) {
         return -ENOSPC;
     }
     if (queue_depth != NULL) {
-        *queue_depth = (uint32_t)k_msgq_num_used_get(&report_tx_msgq);
+        *queue_depth = report_tx_queue_used();
     }
     return 0;
 #else
@@ -629,6 +654,7 @@ static void report_tx_work_handler(struct k_work *work)
     bool route_handoff_active;
     bool report_policy_deferred = false;
     struct app_mesh_tx_handoff_result handoff_result;
+    struct app_mesh_queue_head_token head_token;
     uint32_t now_ms;
     uint32_t channel9_wait_retry_delay_ms = 0u;
     int ret;
@@ -642,17 +668,8 @@ static void report_tx_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
-    if (report_tx_queue_recovery_valid &&
-        k_mutex_lock(&report_tx_queue_overflow_lock, K_NO_WAIT) == 0) {
-        if (k_msgq_put(&report_tx_msgq,
-                       &report_tx_queue_overflow_dropped,
-                       K_NO_WAIT) == 0) {
-            report_tx_queue_recovery_valid = false;
-        }
-        k_mutex_unlock(&report_tx_queue_overflow_lock);
-    }
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-    if (k_msgq_num_used_get(&report_tx_msgq) < 2u) {
+    if (report_tx_queue_used() < 2u) {
         ret = app_mesh_report_encode_queue_next_cir();
         if (ret < 0 && ret != -ENOENT) {
             LOG_WRN("anchor partial CIR report refill failed: %d", ret);
@@ -667,9 +684,9 @@ static void report_tx_work_handler(struct k_work *work)
         app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table);
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
-    report_queue_pending = k_msgq_num_used_get(&report_tx_msgq) > 0;
+    report_queue_pending = report_tx_queue_used() > 0u;
     if (report_queue_pending &&
-        k_msgq_peek(&report_tx_msgq, outbound) == 0 &&
+        report_tx_queue_peek(outbound) == 0 &&
         mesh_outbound_is_local_origin_priority(outbound)) {
         mesh_reclaim_for_local_origin_priority(outbound,
                                                "local-origin-report-ready",
@@ -732,7 +749,7 @@ static void report_tx_work_handler(struct k_work *work)
         return;
     }
     if (mesh_send_failure_retryable(ret) &&
-        k_msgq_peek(&report_tx_msgq, outbound) == 0) {
+        report_tx_queue_peek(outbound) == 0) {
         const struct app_mesh_rf_retry_key retry_key =
             mesh_rf_retry_packet_key(
                 &outbound->packet,
@@ -750,14 +767,16 @@ static void report_tx_work_handler(struct k_work *work)
         return;
     }
 
-    ret = k_msgq_peek(&report_tx_msgq, outbound);
+    ret = report_tx_queue_begin_head(outbound, &head_token);
     if (ret != 0) {
-        report_tx_backoff_until_ms = 0u;
+        if (ret != -EBUSY) {
+            report_tx_backoff_until_ms = 0u;
+        }
         return;
     }
 
     {
-        uint16_t queue_depth = (uint16_t)k_msgq_num_used_get(&report_tx_msgq);
+        uint16_t queue_depth = (uint16_t)report_tx_queue_used();
         uint16_t custody_depth = (uint16_t)(mesh_ch9_tx_pending.count +
             (mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u));
 
@@ -771,6 +790,7 @@ static void report_tx_work_handler(struct k_work *work)
 
     now_ms = k_uptime_get_32();
     if (!mesh_outbound_ready_for_tx(outbound, now_ms)) {
+        (void)report_tx_queue_abort_head(&head_token);
         report_tx_schedule(uptime_ms_until_deadline(now_ms, outbound->earliest_tx_ms));
         return;
     }
@@ -791,7 +811,13 @@ static void report_tx_work_handler(struct k_work *work)
                     DEVICE_ID);
 
             if (pressure_action == APP_MESH_CH9_TIMEOUT_DROP_TRANSIT) {
-                (void)report_tx_queue_discard_head();
+                ret = report_tx_queue_commit_head(&head_token, outbound);
+                if (ret != 0) {
+                    LOG_ERR("report queue transit-drop commit failed: %d", ret);
+                    (void)report_tx_queue_abort_head(&head_token);
+                    report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+                    return;
+                }
                 HIGH_DEBUG_COUNTER_INC(mesh_drop);
                 status_debug_printf("DBG_TRANSIT_QUEUE_DROP_NO_UPSTREAM src=0x%llx seq=%u type=0x%02x select=%d q=%u\n",
                                     (unsigned long long)outbound->packet.src_id,
@@ -805,6 +831,7 @@ static void report_tx_work_handler(struct k_work *work)
                 return;
             }
             if (pressure_action == APP_MESH_CH9_TIMEOUT_DEFER_LOCAL) {
+                (void)report_tx_queue_abort_head(&head_token);
                 status_debug_printf("DBG_LOCAL_QUEUE_DEFER_DOWNSTREAM seq=%u type=0x%02x delay=%u select=%d\n",
                                     outbound->packet.seq,
                                     outbound->packet.msg_type,
@@ -834,13 +861,19 @@ static void report_tx_work_handler(struct k_work *work)
         app_mesh_rf_retry_bank_note_success(&mesh_report_rf_retry_bank,
                                             &retry_key);
         report_tx_backoff_until_ms = 0u;
-        (void)report_tx_queue_discard_head();
+        ret = report_tx_queue_commit_head(&head_token, outbound);
+        if (ret != 0) {
+            LOG_ERR("report queue tracked-TX commit failed: %d", ret);
+            (void)report_tx_queue_abort_head(&head_token);
+            report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        }
         return;
     }
 
     if (ret == -EAGAIN) {
         uint32_t retry_delay_ms = 0u;
 
+        (void)report_tx_queue_abort_head(&head_token);
         if (!report_tx_consume_retry_delay_override(&retry_delay_ms)) {
             const struct app_mesh_rf_retry_key retry_key =
                 mesh_rf_retry_packet_key(
@@ -867,7 +900,12 @@ static void report_tx_work_handler(struct k_work *work)
         IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         mesh_route_waiting_tx_active()) {
         status_debug_note("DBG_REPORT_QUEUE_TO_ROUTE_WAIT\n");
-        (void)report_tx_queue_discard_head();
+        ret = report_tx_queue_commit_head(&head_token, outbound);
+        if (ret != 0) {
+            LOG_ERR("report queue route-wait transfer commit failed: %d", ret);
+            (void)report_tx_queue_abort_head(&head_token);
+            report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        }
         return;
     }
 
@@ -882,6 +920,7 @@ static void report_tx_work_handler(struct k_work *work)
             APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
             "report-channel5-deferral");
 
+        (void)report_tx_queue_abort_head(&head_token);
         app_mesh_test_note_report_tx_backoff(outbound->packet.seq,
                                              ret,
                                              retry_delay_ms);
@@ -895,6 +934,7 @@ static void report_tx_work_handler(struct k_work *work)
                             channel9_wait_retry_delay_ms :
                             REPORT_TX_RETRY_DELAY_MS;
 
+        (void)report_tx_queue_abort_head(&head_token);
         status_debug_printf("DBG_REPORT_TX_WAIT_CH9_SLOT now=%u delay=%u\n",
                             k_uptime_get_32(),
                             delay_ms);
@@ -903,12 +943,22 @@ static void report_tx_work_handler(struct k_work *work)
     }
 
     if (ret == -EHOSTUNREACH) {
+        (void)report_tx_queue_abort_head(&head_token);
         LOG_WRN("queued gateway-bound report waiting for mesh route/idle state: ret=%d", ret);
         report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
         return;
     }
 
-    (void)report_tx_queue_discard_head();
+    {
+        int commit_ret = report_tx_queue_commit_head(&head_token, outbound);
+
+        if (commit_ret != 0) {
+            LOG_ERR("report queue permanent-drop commit failed: %d", commit_ret);
+            (void)report_tx_queue_abort_head(&head_token);
+            report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+            return;
+        }
+    }
     {
         const struct app_mesh_rf_retry_key retry_key =
             mesh_rf_retry_packet_key(
@@ -940,6 +990,15 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
 
 #if DEVICE_ROLE == ROLE_ANCHOR
     struct mesh_outbound queued;
+    struct app_mesh_paused_delivery_store_result drop_result = {0};
+    uint32_t queue_depth = 0u;
+    uint16_t dropped_seq = 0u;
+    uint8_t dropped_msg_type = 0u;
+    bool admitted = false;
+    bool displaced = false;
+    bool displaced_local_custody = false;
+    bool owner_active_at_failure = false;
+    bool queued_local_priority;
     int ret;
 
     queued = *outbound;
@@ -948,104 +1007,155 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     mesh_reclaim_for_local_origin_priority(&queued,
                                            "local-origin-report-queued",
                                            false);
+    queued_local_priority = mesh_outbound_is_local_origin_priority(&queued);
 
-    ret = k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT);
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
     if (ret != 0) {
-        struct app_mesh_paused_delivery_store_result drop_result;
-        int lock_ret;
+        app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
+        return -ENOSPC;
+    }
 
-        lock_ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_NO_WAIT);
-        if (lock_ret == 0) {
-            bool queued_local_priority =
-                mesh_outbound_is_local_origin_priority(&queued);
+    (void)report_tx_queue_restore_recovery_locked();
+    if (!report_tx_queue_recovery_valid &&
+        k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT) == 0) {
+        admitted = true;
+    } else if (report_tx_queue_recovery_valid ||
+               app_mesh_queue_head_owned(&report_tx_queue_head_owner)) {
+        enum app_mesh_queue_reserve_action reserve_action =
+            app_mesh_queue_reserve_decide(
+                report_tx_queue_recovery_valid,
+                report_tx_queue_recovery_valid &&
+                    mesh_outbound_is_local_origin_priority(
+                        &report_tx_queue_overflow_dropped),
+                queued_local_priority);
 
-            if (report_tx_queue_recovery_valid) {
-                k_mutex_unlock(&report_tx_queue_overflow_lock);
-                return -ENOSPC;
+        /*
+         * The sender owns the immutable head, so a full-queue producer may
+         * append only through the explicit recovery slot.  A newer local
+         * report may displace that slot; transit is left to upstream retry.
+         */
+        if (reserve_action == APP_MESH_QUEUE_RESERVE_ADMIT) {
+            report_tx_queue_overflow_dropped = queued;
+            report_tx_queue_recovery_valid = true;
+            admitted = true;
+        } else if (reserve_action ==
+                       APP_MESH_QUEUE_RESERVE_REPLACE_TRANSIT_ACCOUNT_LOSS ||
+                   reserve_action ==
+                       APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS) {
+            dropped_msg_type = report_tx_queue_overflow_dropped.packet.msg_type;
+            dropped_seq = report_tx_queue_overflow_dropped.packet.seq;
+            displaced_local_custody =
+                reserve_action ==
+                    APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS;
+            app_mesh_paused_delivery_note_drop(&mesh_paused_delivery,
+                                               &drop_result);
+            mesh_attach_paused_delivery_loss(&queued,
+                                             "queue-anchor-report-reserved-replace");
+            report_tx_queue_overflow_dropped = queued;
+            displaced = true;
+            admitted = true;
+        }
+    } else {
+        ret = -ENOSPC;
+        for (uint32_t i = 0u;
+             i < REPORT_TX_QUEUE_DEPTH &&
+             k_msgq_get(&report_tx_msgq,
+                        &report_tx_queue_overflow_dropped,
+                        K_NO_WAIT) == 0;
+             i++) {
+            if (!mesh_outbound_is_local_origin_priority(
+                    &report_tx_queue_overflow_dropped)) {
+                ret = 0;
+                break;
+            }
+            ret = k_msgq_put(&report_tx_msgq,
+                             &report_tx_queue_overflow_dropped,
+                             K_NO_WAIT);
+            if (ret != 0) {
+                (void)mesh_preempt_report_queue_recover(
+                    &report_tx_queue_overflow_dropped,
+                    &report_tx_msgq);
+                break;
             }
             ret = -ENOSPC;
-            for (uint32_t i = 0u;
-                 i < REPORT_TX_QUEUE_DEPTH &&
-                 k_msgq_get(&report_tx_msgq,
-                            &report_tx_queue_overflow_dropped,
-                            K_NO_WAIT) == 0;
-                 i++) {
-                bool dropped_candidate = false;
-
-                if (queued_local_priority) {
-                    dropped_candidate =
-                        !mesh_outbound_is_local_origin_priority(
-                            &report_tx_queue_overflow_dropped);
-                } else {
-                    dropped_candidate =
-                        !mesh_outbound_is_local_origin_priority(
-                            &report_tx_queue_overflow_dropped);
-                }
-                if (dropped_candidate) {
-                    ret = 0;
-                    break;
-                }
-                (void)k_msgq_put(&report_tx_msgq,
-                                 &report_tx_queue_overflow_dropped,
-                                 K_NO_WAIT);
-            }
-            if (ret != 0 && queued_local_priority) {
-                ret = k_msgq_get(&report_tx_msgq,
-                                 &report_tx_queue_overflow_dropped,
-                                 K_NO_WAIT);
-            }
+        }
+        if (ret != 0 && queued_local_priority &&
+            !report_tx_queue_recovery_valid &&
+            k_msgq_get(&report_tx_msgq,
+                       &report_tx_queue_overflow_dropped,
+                       K_NO_WAIT) == 0) {
+            ret = 0;
+        }
+        if (ret == 0) {
+            dropped_msg_type = report_tx_queue_overflow_dropped.packet.msg_type;
+            dropped_seq = report_tx_queue_overflow_dropped.packet.seq;
+            displaced_local_custody = mesh_outbound_is_local_origin_priority(
+                &report_tx_queue_overflow_dropped);
+            ret = k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT);
             if (ret == 0) {
                 app_mesh_paused_delivery_note_drop(&mesh_paused_delivery,
                                                    &drop_result);
                 mesh_attach_paused_delivery_loss(&queued,
                                                  "queue-anchor-report-replace");
-                ret = k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT);
-                if (ret == 0) {
-                    HIGH_DEBUG_COUNTER_INC(mesh_drop);
-                    high_debug_log_event("ANCHOR_REPORT_QUEUE",
-                                         "phase=replace-oldest old_msg=0x%02x old_seq=%u new_msg=0x%02x new_seq=%u lost=%u queue_depth=%u",
-                                         report_tx_queue_overflow_dropped.packet.msg_type,
-                                         report_tx_queue_overflow_dropped.packet.seq,
-                                         queued.packet.msg_type,
-                                         queued.packet.seq,
-                                         drop_result.lost_count,
-                                         k_msgq_num_used_get(&report_tx_msgq));
-                    LOG_WRN("anchor report queue full; replaced oldest report: old_msg=0x%02x old_seq=%u new_msg=0x%02x new_seq=%u lost=%u",
-                            report_tx_queue_overflow_dropped.packet.msg_type,
-                            report_tx_queue_overflow_dropped.packet.seq,
-                            queued.packet.msg_type,
-                            queued.packet.seq,
-                            drop_result.lost_count);
-                    k_mutex_unlock(&report_tx_queue_overflow_lock);
-                    ret = 0;
-                    goto queued;
-                }
+                displaced = true;
+                admitted = true;
+            } else {
+                (void)mesh_preempt_report_queue_recover(
+                    &report_tx_queue_overflow_dropped,
+                    &report_tx_msgq);
             }
-            k_mutex_unlock(&report_tx_queue_overflow_lock);
         }
+    }
 
+    queue_depth = (uint32_t)k_msgq_num_used_get(&report_tx_msgq) +
+                  (report_tx_queue_recovery_valid ? 1u : 0u);
+    owner_active_at_failure =
+        app_mesh_queue_head_owned(&report_tx_queue_head_owner);
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+
+    if (!admitted) {
         app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
         HIGH_DEBUG_COUNTER_INC(mesh_drop);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_REPORT_QUEUE_FULL lost=%u lock=%d ret=%d\n",
+            status_debug_printf("DBG_REPORT_QUEUE_FULL lost=%u ret=%d owner=%u\n",
                                 drop_result.lost_count,
-                                lock_ret,
-                                ret);
+                                ret,
+                                owner_active_at_failure ? 1u : 0u);
         }
         LOG_WRN("anchor report queue full; gateway-bound report dropped: lost=%u",
                 drop_result.lost_count);
         return -ENOSPC;
     }
 
-queued:
-    if ((queued.packet.flags & FLAG_COUNT_AS_CLICK) != 0u) {
-        uint16_t queue_depth = (uint16_t)k_msgq_num_used_get(&report_tx_msgq);
+    if (displaced) {
+        HIGH_DEBUG_COUNTER_INC(mesh_drop);
+        high_debug_log_event("ANCHOR_REPORT_QUEUE",
+                             "phase=replace-oldest old_msg=0x%02x old_seq=%u old_local=%u new_msg=0x%02x new_seq=%u lost=%u queue_depth=%u",
+                             dropped_msg_type,
+                             dropped_seq,
+                             displaced_local_custody ? 1u : 0u,
+                             queued.packet.msg_type,
+                             queued.packet.seq,
+                             drop_result.lost_count,
+                             queue_depth);
+        LOG_WRN("anchor report queue full; replaced oldest report: old_msg=0x%02x old_seq=%u old_local=%u new_msg=0x%02x new_seq=%u lost=%u",
+                dropped_msg_type,
+                dropped_seq,
+                displaced_local_custody ? 1u : 0u,
+                queued.packet.msg_type,
+                queued.packet.seq,
+                drop_result.lost_count);
+    }
 
-        app_stack_workload_diag_click_admit(&queued.packet, queue_depth,
-                                            queue_depth);
+    if ((queued.packet.flags & FLAG_COUNT_AS_CLICK) != 0u) {
+        uint16_t click_queue_depth = (uint16_t)queue_depth;
+
+        app_stack_workload_diag_click_admit(&queued.packet, click_queue_depth,
+                                            click_queue_depth);
         /* Admission retains the new click beside any earlier report custody. */
-        app_stack_workload_diag_click_sample(&queued.packet, queue_depth,
-                                             queue_depth);
+        app_stack_workload_diag_click_sample(&queued.packet, click_queue_depth,
+                                             click_queue_depth);
     }
     high_debug_log_event("ANCHOR_REPORT_QUEUE",
                          "msg=0x%02x dst=0x%016llx seq=%u earliest_tx_ms=%u queue_depth=%u",
@@ -1053,11 +1163,11 @@ queued:
                          (unsigned long long)queued.packet.dst_id,
                          queued.packet.seq,
                          queued.earliest_tx_ms,
-                         k_msgq_num_used_get(&report_tx_msgq));
+                         queue_depth);
     LOG_INF("anchor queued gateway-bound report: msg=0x%02x earliest_tx_ms=%u queue_depth=%u",
             queued.packet.msg_type,
             queued.earliest_tx_ms,
-            k_msgq_num_used_get(&report_tx_msgq));
+            queue_depth);
     if (!anchor_uwb_window_active()) {
         uint32_t now_ms = k_uptime_get_32();
         uint32_t delay_ms = mesh_outbound_ready_for_tx(&queued, now_ms) ?

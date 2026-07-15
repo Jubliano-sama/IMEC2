@@ -18,6 +18,7 @@ add_library(core
     src/protocol.c
     src/gateway_membership.c
     src/gateway_command.c
+    src/gateway_collection_journal.c
     src/uwb.c
     src/uwb_ble_courtesy.c
     src/uwb_session.c
@@ -177,6 +178,22 @@ add_test(NAME status COMMAND test_status)
 add_executable(test_gateway_command tests/test_gateway_command.c)
 target_link_libraries(test_gateway_command PRIVATE core)
 add_test(NAME gateway_command COMMAND test_gateway_command)
+
+add_executable(test_gateway_collection_journal
+    tests/test_gateway_collection_journal.c
+    src/gateway_collection_journal.c
+    src/gateway_command.c
+    src/gateway_membership.c
+    src/protocol.c
+    src/mesh.c)
+target_include_directories(test_gateway_collection_journal PRIVATE include)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_gateway_collection_journal PRIVATE
+        -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME gateway_collection_journal COMMAND test_gateway_collection_journal)
+set_tests_properties(gateway_collection_journal PROPERTIES
+    LABELS "mesh_integration;hardware_models;gateway;persistence")
 
 add_executable(gateway_gui_protocol_oracle
     tests/mesh_integration/gateway_gui_protocol_oracle.c)
@@ -721,6 +738,12 @@ add_test(NAME forcedhop_ram_policy
 set_tests_properties(forcedhop_ram_policy
     PROPERTIES LABELS "mesh_integration;hardware_models;stack;forcedhop;static_analysis")
 
+add_test(NAME mesh_report_role_storage
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_report_role_storage.py)
+set_tests_properties(mesh_report_role_storage
+    PROPERTIES LABELS "mesh_integration;hardware_models;stack;static_analysis")
+
 add_test(NAME flash_verified_mesh
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh.py)
@@ -1033,3 +1056,9 @@ add_test(NAME mesh_sim_trace_scheduler
     COMMAND test_mesh_sim_trace_scheduler)
 set_tests_properties(mesh_sim_trace_scheduler
     PROPERTIES LABELS "mesh_integration;simulator;trace;scheduler")
+
+add_test(NAME mesh_ble_route_monitor
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_ble_route_monitor.py)
+set_tests_properties(mesh_ble_route_monitor
+    PROPERTIES LABELS "mesh_integration;host_tools;observability")

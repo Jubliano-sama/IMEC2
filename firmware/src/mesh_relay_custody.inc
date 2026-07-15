@@ -1946,6 +1946,16 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
         return ret;
     }
 
+    ret = gateway_ack_history_store(relay,
+                                    packet,
+                                    payload,
+                                    payload_len,
+                                    now_ms,
+                                    true);
+    if (ret != PROTO_OK) {
+        result->status = ret;
+        return ret;
+    }
     duplicate_store_payload_identity(relay,
                                      packet,
                                      payload,
@@ -2020,8 +2030,14 @@ static int upsert_reactive_route(struct mesh_relay *relay,
                                  uint16_t capacity_validity_interval_ms,
                                  uint32_t now_ms,
                                  const struct route_discovery_fields *discovery,
-                                 uint32_t discovery_session_id)
+                                 uint32_t discovery_session_id,
+                                 struct reactive_route_rollback *rollback)
 {
+    int ret;
+
+    if (rollback != NULL) {
+        memset(rollback, 0, sizeof(*rollback));
+    }
     if (!id_is_unicast(target_id) ||
         !id_is_unicast(next_hop_id) ||
         next_hop_id == relay->local_id ||
@@ -2062,7 +2078,15 @@ static int upsert_reactive_route(struct mesh_relay *relay,
         if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
             return PROTO_OK;
         }
-        return route_upsert_candidate(&relay->upstream, &candidate);
+        if (rollback != NULL) {
+            rollback->kind = REACTIVE_ROUTE_ROLLBACK_UPSTREAM;
+            rollback->state.upstream = relay->upstream;
+        }
+        ret = route_upsert_candidate(&relay->upstream, &candidate);
+        if (ret != PROTO_OK && rollback != NULL) {
+            rollback->kind = REACTIVE_ROUTE_ROLLBACK_NONE;
+        }
+        return ret;
     }
 
     if (advertised_hop_count + 1u == 0u) {
@@ -2082,5 +2106,32 @@ static int upsert_reactive_route(struct mesh_relay *relay,
         .valid = true,
     };
 
-    return upsert_downlink(relay, &entry);
+    if (rollback != NULL) {
+        rollback->kind = REACTIVE_ROUTE_ROLLBACK_DOWNLINK;
+    }
+    ret = upsert_downlink(relay,
+                          &entry,
+                          rollback != NULL ? &rollback->state.downlink : NULL);
+    if (ret != PROTO_OK && rollback != NULL) {
+        rollback->kind = REACTIVE_ROUTE_ROLLBACK_NONE;
+    }
+    return ret;
+}
+
+static void rollback_reactive_route(struct mesh_relay *relay,
+                                    struct reactive_route_rollback *rollback)
+{
+    if (relay == NULL || rollback == NULL) {
+        return;
+    }
+
+    if (rollback->kind == REACTIVE_ROUTE_ROLLBACK_UPSTREAM) {
+        relay->upstream = rollback->state.upstream;
+    } else if (rollback->kind == REACTIVE_ROUTE_ROLLBACK_DOWNLINK &&
+               rollback->state.downlink.valid &&
+               rollback->state.downlink.index < MESH_RELAY_DOWNLINK_ROUTES) {
+        relay->downlinks[rollback->state.downlink.index] =
+            rollback->state.downlink.previous;
+    }
+    rollback->kind = REACTIVE_ROUTE_ROLLBACK_NONE;
 }

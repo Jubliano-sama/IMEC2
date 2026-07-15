@@ -14,6 +14,15 @@ _Static_assert(sizeof(struct mesh_relay_result) <=
 #define LEGACY_MSG_ROUTE_STATUS 0x34u
 #define MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION 1u
 #define FLOOD_BETTER_METRIC_MARGIN_PERCENT 20u
+#define GATEWAY_ACK_HISTORY_OWNER_MASK 0x3fu
+#define GATEWAY_ACK_HISTORY_PAYLOAD_IDENTITY 0x40u
+#define GATEWAY_ACK_HISTORY_BATCHED 0x80u
+#define GATEWAY_ACK_ORIGIN_VALID 0x01u
+#define GATEWAY_ACK_ORIGIN_BATCH_ID_VALID 0x02u
+
+_Static_assert(MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX <=
+                   GATEWAY_ACK_HISTORY_OWNER_MASK,
+               "gateway ACK owner encoding must cover every anchor");
 
 static bool gateway_delivery_requires_commit(
     const struct mesh_relay *relay,
@@ -75,6 +84,26 @@ struct gateway_route_adv_fields {
     uint8_t path_quality_min;
     uint8_t gateway_capacity_state;
     uint8_t flood_retry_count;
+};
+
+struct downlink_upsert_rollback {
+    struct mesh_downlink_entry previous;
+    uint8_t index;
+    bool valid;
+};
+
+enum reactive_route_rollback_kind {
+    REACTIVE_ROUTE_ROLLBACK_NONE = 0,
+    REACTIVE_ROUTE_ROLLBACK_UPSTREAM = 1,
+    REACTIVE_ROUTE_ROLLBACK_DOWNLINK = 2,
+};
+
+struct reactive_route_rollback {
+    enum reactive_route_rollback_kind kind;
+    union {
+        struct route_table upstream;
+        struct downlink_upsert_rollback downlink;
+    } state;
 };
 
 _Static_assert(MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN <=
@@ -1189,7 +1218,9 @@ static bool downlink_is_better(const struct mesh_downlink_entry *candidate,
     return candidate->next_hop_id < selected->next_hop_id;
 }
 
-static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_entry *entry)
+static int upsert_downlink(struct mesh_relay *relay,
+                           const struct mesh_downlink_entry *entry,
+                           struct downlink_upsert_rollback *rollback)
 {
     bool discovery_scoped;
     int index;
@@ -1197,6 +1228,9 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
     int replace_index = 0;
     const struct mesh_downlink_entry *replace = NULL;
 
+    if (rollback != NULL) {
+        memset(rollback, 0, sizeof(*rollback));
+    }
     discovery_scoped = entry->discovery_flood_epoch_id != 0u;
     if (!id_is_unicast(entry->target_id) ||
         !id_is_unicast(entry->next_hop_id) ||
@@ -1211,6 +1245,11 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
 
     index = downlink_exact_index(relay, entry);
     if (index >= 0) {
+        if (rollback != NULL) {
+            rollback->previous = relay->downlinks[index];
+            rollback->index = (uint8_t)index;
+            rollback->valid = true;
+        }
         relay->downlinks[index] = *entry;
         relay->downlinks[index].valid = true;
         return PROTO_OK;
@@ -1231,6 +1270,11 @@ static int upsert_downlink(struct mesh_relay *relay, const struct mesh_downlink_
         return PROTO_ERR_NO_SPACE;
     }
     index = free_index >= 0 ? free_index : replace_index;
+    if (rollback != NULL) {
+        rollback->previous = relay->downlinks[index];
+        rollback->index = (uint8_t)index;
+        rollback->valid = true;
+    }
     relay->downlinks[index] = *entry;
     relay->downlinks[index].valid = true;
     return PROTO_OK;
@@ -1241,7 +1285,7 @@ static int upsert_required_gateway_downlink(
     const struct mesh_downlink_entry *entry)
 {
     int replace_index = -1;
-    int ret = upsert_downlink(relay, entry);
+    int ret = upsert_downlink(relay, entry, NULL);
 
     if (ret != PROTO_ERR_NO_SPACE) {
         return ret;
@@ -1307,6 +1351,396 @@ static uint32_t duplicate_window_ms(const struct mesh_duplicate_entry *entry)
     return ROUTE_DEDUP_WINDOW_MS;
 }
 
+static bool gateway_ack_history_applies(const struct mesh_relay *relay,
+                                        const struct proto_packet *packet)
+{
+    return relay->role == MESH_RELAY_ROLE_GATEWAY &&
+           packet->dst_id == relay->local_id &&
+           (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
+static bool gateway_ack_identity_valid(
+    const struct mesh_gateway_ack_identity_entry *entry)
+{
+    uint8_t owner_code = entry->owner_state & GATEWAY_ACK_HISTORY_OWNER_MASK;
+
+    return owner_code > 0u && owner_code <= MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX;
+}
+
+static uint8_t gateway_ack_identity_owner_index(
+    const struct mesh_gateway_ack_identity_entry *entry)
+{
+    return (uint8_t)((entry->owner_state & GATEWAY_ACK_HISTORY_OWNER_MASK) - 1u);
+}
+
+static bool gateway_ack_identity_matches_packet(
+    const struct mesh_gateway_ack_identity_entry *entry,
+    uint8_t owner_index,
+    const struct proto_packet *packet)
+{
+    return gateway_ack_identity_valid(entry) &&
+           gateway_ack_identity_owner_index(entry) == owner_index &&
+           entry->msg_type == packet->msg_type &&
+           entry->session_id == packet->session_id &&
+           entry->seq == packet->seq;
+}
+
+static bool gateway_ack_packet_batch_id(const uint8_t *payload,
+                                        size_t payload_len,
+                                        uint32_t *batch_id)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    if (batch_id == NULL ||
+        tlv_find(payload,
+                 payload_len,
+                 TLV_MESH_CH9_BATCH_ID,
+                 &value,
+                 &value_len) != PROTO_OK ||
+        value_len != sizeof(uint32_t)) {
+        return false;
+    }
+    *batch_id = proto_get_u32_le(value);
+    return *batch_id != 0u;
+}
+
+static void gateway_ack_history_expire_stale(struct mesh_relay *relay,
+                                             uint32_t now_ms)
+{
+    struct mesh_gateway_ack_store *store = relay->gateway_ack_store;
+
+    if (store == NULL) {
+        return;
+    }
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        struct mesh_gateway_ack_identity_entry *identity =
+            &store->identities[i];
+        uint8_t owner_index;
+
+        if (!gateway_ack_identity_valid(identity) ||
+            (uint32_t)(now_ms - identity->last_seen_ms) <=
+                ROUTE_DEDUP_WINDOW_MS) {
+            continue;
+        }
+        owner_index = gateway_ack_identity_owner_index(identity);
+        memset(identity, 0, sizeof(*identity));
+        if ((store->origins[owner_index].state & GATEWAY_ACK_ORIGIN_VALID) != 0u &&
+            store->origins[owner_index].identity_count > 0u) {
+            store->origins[owner_index].identity_count--;
+        }
+    }
+    for (uint8_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX; i++) {
+        if ((store->origins[i].state & GATEWAY_ACK_ORIGIN_VALID) != 0u &&
+            store->origins[i].identity_count == 0u) {
+            memset(&store->origins[i], 0, sizeof(store->origins[i]));
+        }
+    }
+}
+
+static int gateway_ack_history_find_origin_index(
+    struct mesh_relay *relay,
+    uint64_t src_id)
+{
+    struct mesh_gateway_ack_store *store = relay->gateway_ack_store;
+
+    if (store == NULL) {
+        return -1;
+    }
+    for (uint8_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX; i++) {
+        struct mesh_gateway_ack_origin_entry *origin = &store->origins[i];
+
+        if ((origin->state & GATEWAY_ACK_ORIGIN_VALID) != 0u &&
+            origin->src_id == src_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int gateway_ack_history_free_origin_index(
+    struct mesh_relay *relay)
+{
+    struct mesh_gateway_ack_store *store = relay->gateway_ack_store;
+
+    if (store == NULL) {
+        return -1;
+    }
+    for (uint8_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX; i++) {
+        struct mesh_gateway_ack_origin_entry *origin = &store->origins[i];
+
+        if ((origin->state & GATEWAY_ACK_ORIGIN_VALID) == 0u) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int gateway_ack_history_free_identity_index(
+    const struct mesh_gateway_ack_store *store)
+{
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        if (!gateway_ack_identity_valid(&store->identities[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int gateway_ack_history_find_identity_index(
+    const struct mesh_gateway_ack_store *store,
+    uint8_t owner_index,
+    const struct proto_packet *packet)
+{
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        if (gateway_ack_identity_matches_packet(&store->identities[i],
+                                                owner_index,
+                                                packet)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int gateway_ack_history_batched_identity_index(
+    const struct mesh_gateway_ack_store *store,
+    uint8_t owner_index)
+{
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        const struct mesh_gateway_ack_identity_entry *identity =
+            &store->identities[i];
+
+        if (gateway_ack_identity_valid(identity) &&
+            gateway_ack_identity_owner_index(identity) == owner_index &&
+            (identity->owner_state & GATEWAY_ACK_HISTORY_BATCHED) != 0u) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static uint8_t gateway_ack_history_owner_count(
+    const struct mesh_gateway_ack_store *store,
+    uint8_t owner_index)
+{
+    uint8_t count = 0u;
+
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        if (gateway_ack_identity_valid(&store->identities[i]) &&
+            gateway_ack_identity_owner_index(&store->identities[i]) ==
+                owner_index) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static bool gateway_ack_history_seen(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    size_t payload_len,
+    bool require_payload_identity,
+    uint16_t payload_crc)
+{
+    struct mesh_gateway_ack_store *store;
+    int origin_index;
+
+    if (!gateway_ack_history_applies(relay, packet) ||
+        relay->gateway_ack_store == NULL) {
+        return false;
+    }
+    store = relay->gateway_ack_store;
+    origin_index = gateway_ack_history_find_origin_index(relay, packet->src_id);
+    if (origin_index < 0) {
+        return false;
+    }
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        const struct mesh_gateway_ack_identity_entry *identity =
+            &store->identities[i];
+
+        if (!gateway_ack_identity_matches_packet(identity,
+                                                 (uint8_t)origin_index,
+                                                 packet)) {
+            continue;
+        }
+        if (require_payload_identity &&
+            (((identity->owner_state &
+               GATEWAY_ACK_HISTORY_PAYLOAD_IDENTITY) == 0u) ||
+             identity->payload_len != payload_len ||
+             identity->payload_crc != payload_crc)) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool gateway_ack_history_can_accept(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms)
+{
+    struct mesh_gateway_ack_store *store;
+    struct mesh_gateway_ack_origin_entry *origin;
+    int origin_index;
+    uint32_t batch_id = 0u;
+    bool batch_id_valid;
+
+    if (!gateway_ack_history_applies(relay, packet)) {
+        return true;
+    }
+    if (relay->gateway_ack_store == NULL) {
+        return false;
+    }
+    store = relay->gateway_ack_store;
+    gateway_ack_history_expire_stale(relay, now_ms);
+    origin_index = gateway_ack_history_find_origin_index(relay, packet->src_id);
+    if (origin_index < 0) {
+        return gateway_ack_history_free_origin_index(relay) >= 0 &&
+               gateway_ack_history_free_identity_index(store) >= 0;
+    }
+    origin = &store->origins[origin_index];
+    batch_id_valid = gateway_ack_packet_batch_id(payload,
+                                                  payload_len,
+                                                  &batch_id);
+    if (gateway_ack_history_find_identity_index(store,
+                                                (uint8_t)origin_index,
+                                                packet) >= 0) {
+        return true;
+    }
+    if (batch_id_valid &&
+        (origin->state & GATEWAY_ACK_ORIGIN_BATCH_ID_VALID) != 0u &&
+        origin->batch_id != batch_id &&
+        gateway_ack_history_batched_identity_index(
+            store,
+            (uint8_t)origin_index) >= 0) {
+        return true;
+    }
+    return gateway_ack_history_free_identity_index(store) >= 0;
+}
+
+static int gateway_ack_history_store(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms,
+    bool payload_identity_valid)
+{
+    struct mesh_gateway_ack_store *store;
+    struct mesh_gateway_ack_origin_entry *origin;
+    struct mesh_gateway_ack_identity_entry *identity;
+    int origin_index;
+    int identity_index;
+    uint32_t batch_id = 0u;
+    bool batch_id_valid;
+    bool batch_transition = false;
+    bool initialize_origin = false;
+
+    if (!gateway_ack_history_applies(relay, packet)) {
+        return PROTO_OK;
+    }
+    if (relay->gateway_ack_store == NULL) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    store = relay->gateway_ack_store;
+    gateway_ack_history_expire_stale(relay, now_ms);
+    batch_id_valid = gateway_ack_packet_batch_id(payload,
+                                                  payload_len,
+                                                  &batch_id);
+    origin_index = gateway_ack_history_find_origin_index(relay, packet->src_id);
+    if (origin_index < 0) {
+        origin_index = gateway_ack_history_free_origin_index(relay);
+        if (origin_index < 0) {
+            return PROTO_ERR_NO_SPACE;
+        }
+        initialize_origin = true;
+    } else {
+        origin = &store->origins[origin_index];
+        batch_transition = batch_id_valid &&
+            (origin->state & GATEWAY_ACK_ORIGIN_BATCH_ID_VALID) != 0u;
+        batch_transition = batch_transition && origin->batch_id != batch_id;
+    }
+    identity_index = initialize_origin ? -1 :
+        gateway_ack_history_find_identity_index(store,
+                                                (uint8_t)origin_index,
+                                                packet);
+    if (identity_index < 0 && batch_transition) {
+        identity_index = gateway_ack_history_batched_identity_index(
+            store,
+            (uint8_t)origin_index);
+    }
+    if (identity_index < 0) {
+        identity_index = gateway_ack_history_free_identity_index(store);
+    }
+    if (identity_index < 0) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    origin = &store->origins[origin_index];
+    if (initialize_origin) {
+        memset(origin, 0, sizeof(*origin));
+        origin->src_id = packet->src_id;
+        origin->state = GATEWAY_ACK_ORIGIN_VALID;
+    }
+    if (batch_transition) {
+        for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+            struct mesh_gateway_ack_identity_entry *candidate =
+                &store->identities[i];
+
+            if (gateway_ack_identity_valid(candidate) &&
+                gateway_ack_identity_owner_index(candidate) == origin_index &&
+                (candidate->owner_state & GATEWAY_ACK_HISTORY_BATCHED) != 0u) {
+                memset(candidate, 0, sizeof(*candidate));
+            }
+        }
+    }
+    if (batch_id_valid) {
+        origin->batch_id = batch_id;
+        origin->state |= GATEWAY_ACK_ORIGIN_BATCH_ID_VALID;
+    }
+
+    identity = &store->identities[identity_index];
+    identity->session_id = packet->session_id;
+    identity->last_seen_ms = now_ms;
+    identity->seq = packet->seq;
+    identity->payload_len = payload_identity_valid ? (uint16_t)payload_len : 0u;
+    identity->payload_crc = payload_identity_valid ?
+        proto_crc16_ccitt_false(payload, payload_len) : 0u;
+    identity->msg_type = packet->msg_type;
+    identity->owner_state = (uint8_t)(origin_index + 1) |
+        (payload_identity_valid ? GATEWAY_ACK_HISTORY_PAYLOAD_IDENTITY : 0u) |
+        (batch_id_valid ? GATEWAY_ACK_HISTORY_BATCHED : 0u);
+    origin->identity_count = gateway_ack_history_owner_count(
+        store,
+        (uint8_t)origin_index);
+    return PROTO_OK;
+}
+
+static int gateway_ack_history_accept_generic(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms)
+{
+    if (!gateway_ack_history_can_accept(relay,
+                                        packet,
+                                        payload,
+                                        payload_len,
+                                        now_ms)) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    return gateway_ack_history_store(relay,
+                                     packet,
+                                     payload,
+                                     payload_len,
+                                     now_ms,
+                                     false);
+}
+
 static void duplicate_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry;
@@ -1318,6 +1752,7 @@ static void duplicate_expire_stale(struct mesh_relay *relay, uint32_t now_ms)
             entry->valid = false;
         }
     }
+    gateway_ack_history_expire_stale(relay, now_ms);
 }
 
 static bool duplicate_seen(struct mesh_relay *relay,
@@ -1339,6 +1774,10 @@ static bool duplicate_seen(struct mesh_relay *relay,
         payload_crc = proto_crc16_ccitt_false(payload, payload_len);
     }
     duplicate_expire_stale(relay, now_ms);
+    if (gateway_ack_history_applies(relay, packet) &&
+        relay->gateway_ack_store == NULL) {
+        return false;
+    }
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
         if (duplicate_matches_packet(entry, packet)) {
@@ -1351,7 +1790,11 @@ static bool duplicate_seen(struct mesh_relay *relay,
             return true;
         }
     }
-    return false;
+    return gateway_ack_history_seen(relay,
+                                    packet,
+                                    payload_len,
+                                    require_payload_identity,
+                                    payload_crc);
 }
 
 static void duplicate_store(struct mesh_relay *relay,

@@ -282,7 +282,7 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
             ack_wait_started = mesh_ch9_tx_pending_track_sent(out, ack_deadline_ms);
             if (ack_wait_started) {
                 mesh_ch9_event_note_persistent_ack_wait(out->next_hop_id,
-                                                        mesh_ch9_tx_pending.deadline_ms,
+                                                        mesh_ch9_tx_pending_ack_deadline_ms(),
                                                         reason);
             } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x%llx src=0x%llx seq=%u\n",
@@ -425,12 +425,13 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
     }
 
     while (candidate_count < max_sent) {
+        struct app_mesh_queue_head_token head_token;
         uint64_t queued_next_hop_id = 0u;
         uint32_t required_ms = 0u;
         uint32_t send_start_ms;
         bool fits;
 
-        if (k_msgq_peek(&report_tx_msgq, queued) != 0) {
+        if (report_tx_queue_begin_head(queued, &head_token) != 0) {
             break;
         }
         mesh_coordinator_decide_now("ch9-direct-batch-collect",
@@ -443,6 +444,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                         coordinator_decision.state),
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
 
@@ -458,6 +460,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                     queued->earliest_tx_ms,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         ret = mesh_relay_select_next_hop(&mesh_runtime,
@@ -473,6 +476,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                     queued->packet.seq,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         if (queued->packet.dst_id != GATEWAY_ID ||
@@ -488,6 +492,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                     queued->packet.seq,
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         if (candidate_count == 0u) {
@@ -511,6 +516,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                     candidate_count,
                                     queued->packet.seq);
             }
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
 
@@ -545,11 +551,14 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                     &report_tx_batch_candidates[candidate_count]));
         }
         if (!fits) {
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
 
-        ret = report_tx_queue_discard_head();
+        ret = report_tx_queue_commit_head(&head_token, queued);
         if (ret != 0) {
+            LOG_ERR("direct report queue collection commit failed: %d", ret);
+            (void)report_tx_queue_abort_head(&head_token);
             break;
         }
         projected_done_ms = send_start_ms +

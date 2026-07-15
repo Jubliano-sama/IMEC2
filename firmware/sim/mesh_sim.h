@@ -2,6 +2,7 @@
 #define MESH_SIM_H
 
 #include "mesh.h"
+#include "mesh_capacity.h"
 #include "mesh_relay.h"
 #include "mesh_radio_timing.h"
 #include "mesh_runtime.h"
@@ -20,7 +21,7 @@ extern "C" {
 struct mesh_sim_world;
 
 #define MESH_SIM_MAX_ROLES 64u
-#define MESH_SIM_MAX_CONNECTIONS 24u
+#define MESH_SIM_MAX_CONNECTIONS 64u
 #define MESH_SIM_MAX_CONNECTION_EVENTS 1024u
 #define MESH_SIM_MAX_EVENTS 4096u
 #define MESH_SIM_MAX_RX_WINDOWS 512u
@@ -258,6 +259,7 @@ struct mesh_sim_role_instance {
     struct mesh_outbound route_waiting_outbound;
     struct mesh_sim_delivery deliveries[MESH_SIM_DELIVERY_CAPACITY];
     size_t tx_queue_count;
+    size_t tx_queue_capacity;
     size_t delivery_count;
     uint32_t route_discovery_requests;
     uint32_t decoded_frames;
@@ -381,6 +383,7 @@ struct mesh_sim_world {
     uint32_t next_enqueue_order;
     int last_error;
     struct mesh_sim_role_instance roles[MESH_SIM_MAX_ROLES];
+    struct mesh_gateway_ack_store gateway_ack_store;
     struct mesh_sim_connection connections[MESH_SIM_MAX_CONNECTIONS];
     struct mesh_sim_connection_event connection_events[MESH_SIM_MAX_CONNECTION_EVENTS];
     struct mesh_sim_event events[MESH_SIM_MAX_EVENTS];
@@ -433,6 +436,9 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
                       uint8_t *node_index);
 struct mesh_sim_role_instance *mesh_sim_role(struct mesh_sim_world *world,
                                              uint8_t node_index);
+int mesh_sim_set_tx_queue_capacity(struct mesh_sim_world *world,
+                                   uint8_t node_index,
+                                   size_t capacity);
 int mesh_sim_init_clicker_session(struct mesh_sim_world *world,
                                   uint8_t node_index,
                                   const struct uwb_clicker_config *config);

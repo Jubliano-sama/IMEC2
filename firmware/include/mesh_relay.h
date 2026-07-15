@@ -2,6 +2,7 @@
 #define MESH_RELAY_H
 
 #include "mesh.h"
+#include "mesh_capacity.h"
 #include "protocol.h"
 #include "route.h"
 
@@ -16,6 +17,11 @@ extern "C" {
 #define MESH_BROADCAST_ID 0u
 #define MESH_RELAY_DOWNLINK_ROUTES 16u
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
+#define MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX MESH_CONNECTED_MAX_ANCHORS
+#define MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN 4u
+#define MESH_RELAY_GATEWAY_ACK_CAPACITY \
+    (MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX * \
+     MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN)
 #define MESH_RELAY_FLOOD_SEEN_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
@@ -298,6 +304,49 @@ struct mesh_duplicate_entry {
 _Static_assert(sizeof(struct mesh_duplicate_entry) == 40u,
                "payload-bound duplicate identity must not increase relay RAM");
 
+/*
+ * External gateway-only acceptance history. The production gateway overlays
+ * this store on anchor-only batch state instead of charging every relay role.
+ * A new explicit batch may retire only the same origin's prior batched
+ * identities; exact unbatched acceptances remain sticky until expiry.
+ */
+struct mesh_gateway_ack_identity_entry {
+    uint32_t session_id;
+    uint32_t last_seen_ms;
+    uint16_t seq;
+    uint16_t payload_len;
+    uint16_t payload_crc;
+    uint8_t msg_type;
+    /* Low six bits encode owner index + 1; high bits hold identity flags. */
+    uint8_t owner_state;
+};
+
+struct mesh_gateway_ack_origin_entry {
+    uint64_t src_id;
+    uint32_t batch_id;
+    uint8_t identity_count;
+    uint8_t state;
+    uint16_t reserved;
+};
+
+struct mesh_gateway_ack_store {
+    struct mesh_gateway_ack_origin_entry
+        origins[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX];
+    struct mesh_gateway_ack_identity_entry
+        identities[MESH_RELAY_GATEWAY_ACK_CAPACITY];
+};
+
+_Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 16u,
+               "gateway ACK identity must remain compact");
+_Static_assert(sizeof(struct mesh_gateway_ack_origin_entry) == 16u,
+               "gateway ACK origin history must remain compact");
+_Static_assert(sizeof(struct mesh_gateway_ack_store) == 4000u,
+               "gateway ACK store must fit role-overlaid static storage");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u,
+               "gateway ACK history must cover 50 four-packet batches");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY <= UINT8_MAX,
+               "per-origin identity counts must not overflow");
+
 struct mesh_relay_event_timing_entry {
     uint64_t next_hop_id;
     struct mesh_event_timing timing;
@@ -424,6 +473,7 @@ struct mesh_relay {
     struct mesh_result_bundle_queue result_bundle;
     struct mesh_result_offer_reservation result_offer_reservation;
     struct mesh_relay_diagnostics diagnostics;
+    struct mesh_gateway_ack_store *gateway_ack_store;
     uint8_t duplicate_next;
     uint8_t flood_seen_next;
     uint16_t next_seq;
@@ -460,6 +510,9 @@ void mesh_relay_init(struct mesh_relay *relay,
                      uint64_t local_id,
                      uint64_t gateway_id,
                      uint32_t route_epoch);
+void mesh_gateway_ack_store_init(struct mesh_gateway_ack_store *store);
+int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
+                                        struct mesh_gateway_ack_store *store);
 const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_relay *relay,
                                                            uint64_t target_id);
 /* Caller must first accept a current-survey local gateway report and its RX metadata. */
@@ -496,6 +549,13 @@ int mesh_relay_set_channel9_timing_guarded(struct mesh_relay *relay,
                                            const struct mesh_event_timing *timing,
                                            uint8_t max_active_peers,
                                            struct mesh_relay_channel9_guard_status *status);
+int mesh_relay_check_channel9_timing_guarded_direction(
+    struct mesh_relay *relay,
+    uint64_t next_hop_id,
+    const struct mesh_event_timing *timing,
+    enum mesh_relay_channel9_direction direction,
+    uint8_t max_active_peers,
+    struct mesh_relay_channel9_guard_status *status);
 int mesh_relay_set_channel9_timing_guarded_direction(
     struct mesh_relay *relay,
     uint64_t next_hop_id,

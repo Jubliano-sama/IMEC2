@@ -145,6 +145,7 @@ bool mesh_process_queued_rx_now(const char *reason)
     return handled_count > 0u;
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
     const struct mesh_outbound *failed,
     uint64_t timed_out_next_hop_id,
@@ -228,7 +229,9 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
                             (unsigned long long)timed_out_next_hop_id);
     }
 }
+#endif
 
+#if DEVICE_ROLE == ROLE_ANCHOR
 static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
 {
     struct mesh_outbound route_failure_packet = {0};
@@ -340,6 +343,12 @@ static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
         report_tx_schedule(0u);
     }
 }
+#else
+static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
+{
+    ARG_UNUSED(now_ms);
+}
+#endif
 
 static bool mesh_defer_due_retry_to_channel9_tx_slot(uint32_t now_ms)
 {
@@ -395,11 +404,8 @@ static void mesh_tx_timeout_handler(struct k_work *work)
 {
     struct mesh_relay_result *result = &mesh_work_result;
     struct mesh_outbound *pending_waiting = &mesh_tx_timeout_pending_waiting;
+    enum app_mesh_parent_loss_custody parent_loss_custody;
     bool pending_route_waiting = false;
-#if DEVICE_ROLE == ROLE_ANCHOR
-    struct mesh_outbound *pending_report = &mesh_tx_timeout_pending_report;
-    bool pending_anchor_report = false;
-#endif
 
     ARG_UNUSED(work);
     if (mesh_transport_paused()) {
@@ -407,15 +413,12 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     }
     memset(result, 0, sizeof(*result));
     memset(pending_waiting, 0, sizeof(*pending_waiting));
-#if DEVICE_ROLE == ROLE_ANCHOR
-    memset(pending_report, 0, sizeof(*pending_report));
-#endif
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_TX_TIMEOUT_ENTER relay=%u route=%u ch9pend=%u bundle=%u now=%u\n",
                             mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
                             mesh_route_waiting_tx_valid ? 1u : 0u,
-                            mesh_ch9_tx_pending.active ? 1u : 0u,
+                            mesh_ch9_tx_pending_is_active() ? 1u : 0u,
                             mesh_relay_result_bundle_pending(&mesh_runtime) ? 1u : 0u,
                             k_uptime_get_32());
     }
@@ -429,21 +432,6 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         (void)mesh_reschedule_delayable(&mesh_tx_timeout_work, REPORT_TX_RETRY_DELAY_MS);
         return;
     }
-
-#if DEVICE_ROLE == ROLE_ANCHOR
-    if (mesh_relay_tx_active(&mesh_runtime) &&
-        mesh_runtime.pending.packet.msg_type == MSG_CLICK_REPORT &&
-        mesh_runtime.pending.packet.src_id == DEVICE_ID) {
-        pending_report->packet = mesh_runtime.pending.packet;
-        pending_report->payload_len = mesh_runtime.pending.payload_len;
-        if (pending_report->payload_len > 0u) {
-            memcpy(pending_report->payload,
-                   mesh_runtime.pending.payload,
-                   pending_report->payload_len);
-        }
-        pending_anchor_report = true;
-    }
-#endif
 
     if (mesh_relay_tx_active(&mesh_runtime)) {
         pending_waiting->packet = mesh_runtime.pending.packet;
@@ -470,28 +458,24 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         mesh_schedule_tx_timeout();
     }
 
-    if (pending_route_waiting &&
-        (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
-        if (!mesh_relay_tx_active(&mesh_runtime)) {
+    parent_loss_custody = app_mesh_parent_loss_custody_decide(
+        (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u,
+        mesh_relay_tx_active(&mesh_runtime),
+        pending_route_waiting);
+    if (parent_loss_custody != APP_MESH_PARENT_LOSS_CUSTODY_NONE) {
+        if (parent_loss_custody == APP_MESH_PARENT_LOSS_CUSTODY_ROUTE_WAIT) {
             mesh_store_route_waiting_tx(pending_waiting);
         }
         (void)mesh_schedule_route_request(pending_waiting->packet.dst_id,
                                           "pending-tx-timeout");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_TX_TIMEOUT_ROUTE_REQ_ASYNC relay=%u route=%u dst=0x%llx\n",
+            status_debug_printf("DBG_TX_TIMEOUT_ROUTE_REQ_ASYNC relay=%u route=%u custody=%u dst=0x%llx\n",
                                 mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
                                 mesh_route_waiting_tx_valid ? 1u : 0u,
+                                (unsigned int)parent_loss_custody,
                                 (unsigned long long)pending_waiting->packet.dst_id);
         }
     }
-
-#if DEVICE_ROLE == ROLE_ANCHOR
-    if (pending_anchor_report &&
-        (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
-        LOG_WRN("requeueing click report after mesh route loss");
-        (void)queue_anchor_report(pending_report);
-    }
-#endif
 }
 
 static bool mesh_queue_from_frame_at_internal(
@@ -1197,7 +1181,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                 report_tx_queue_used(),
                                 mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
                                 mesh_route_waiting_tx_valid ? 1u : 0u,
-                                mesh_ch9_tx_pending.active ? 1u : 0u,
+                                mesh_ch9_tx_pending_is_active() ? 1u : 0u,
                                 app_node_comm_gateway_route_refresh_due_ms(),
                                 mesh_channel9_connection_count());
         }
@@ -1497,7 +1481,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         status_debug_printf("DBG_TX_CH9_RX_WAIT next_delay=%u conn=%u ack=%u\n",
                             next_delay_ms,
                             mesh_channel9_connection_count(),
-                            mesh_ch9_tx_pending.active ? 1u : 0u);
+                            mesh_ch9_tx_pending_is_active() ? 1u : 0u);
         mesh_schedule_uwb_rx(next_delay_ms);
         return;
     }
@@ -2117,10 +2101,17 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     mesh_persistence_retry_round = 0u;
     memset(&mesh_delivery_health, 0, sizeof(mesh_delivery_health));
     app_mesh_ch9_ack_table_init(&mesh_ch9_ack_table);
+#if DEVICE_ROLE == ROLE_GATEWAY
+    mesh_gateway_ack_store_init(&mesh_gateway_ack_store);
+    mesh_gateway_ack_store_initialized = true;
+    mesh_gateway_ack_store_attached = false;
+#endif
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&mesh_route_waiting_work,
                           mesh_route_waiting_work_handler);
 #if DEVICE_ROLE == ROLE_ANCHOR
+    app_mesh_queue_head_owner_init(&report_tx_queue_head_owner);
+    report_tx_queue_recovery_valid = false;
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
 #endif
     k_work_init_delayable(&mesh_c5_flood_work, mesh_c5_flood_work_handler);

@@ -309,31 +309,45 @@ class GatewayEackRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("gateway_collection_eack_packet_validate", relay_validate)
 
     def test_boot_resumes_only_persisted_pending_eack_identity(self):
-        decoded_marker = BLE.index("struct gateway_collection_eack decoded_eack;")
-        real_init = BLE.rfind(
-            "void gateway_command_result_tracking_init", 0, decoded_marker
+        real_gateway = BLE[BLE.index(
+            "static struct gateway_command_pending gateway_command_pending_state"
+        ):]
+        restore_runtime = function_body(
+            real_gateway, "gateway_restore_collection_runtime"
         )
-        self.assertGreaterEqual(real_init, 0)
-        init = function_body(
-            BLE[real_init:], "gateway_command_result_tracking_init"
-        )
+        init = function_body(real_gateway, "gateway_command_result_tracking_init")
 
-        pending = init.index("!gateway_collection_state.eack_pending")
-        restore = init.index(
+        collection_restore = restore_runtime.index(
+            "app_mesh_persistence_restore_gateway_collection"
+        )
+        pending = restore_runtime.index(
+            "!gateway_collection_state.eack_pending", collection_restore
+        )
+        restore = restore_runtime.index(
             "app_mesh_persistence_restore_gateway_eack_custody", pending
         )
-        import_custody = init.index("app_gateway_eack_retry_import_custody", restore)
-        exact_validate = init.index(
+        import_custody = restore_runtime.index(
+            "app_gateway_eack_retry_import_custody", restore
+        )
+        exact_validate = restore_runtime.index(
             "gateway_collection_eack_packet_validate", import_custody
         )
-        resume = init.index("collection-eack-reset-resume", exact_validate)
-        final_gap = init.index("collection-eack-final-reset-gap", resume)
+        resume = restore_runtime.index(
+            "collection-eack-reset-resume", exact_validate
+        )
+        final_gap = restore_runtime.index("collection-eack-final-reset-gap", resume)
+        membership_reload = init.index("gateway_restore_membership_runtime")
+        collection_reload = init.index(
+            "gateway_restore_collection_runtime", membership_reload
+        )
 
+        self.assertLess(collection_restore, pending)
         self.assertLess(pending, restore)
         self.assertLess(restore, import_custody)
         self.assertLess(import_custody, exact_validate)
         self.assertLess(exact_validate, resume)
         self.assertLess(resume, final_gap)
+        self.assertLess(membership_reload, collection_reload)
 
     def test_eack_dedup_is_exact_round_not_whole_session(self):
         body = function_body(MESH_RELAY, "duplicate_matches_packet")
