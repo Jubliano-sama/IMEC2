@@ -186,6 +186,103 @@ static void test_persistent_collision_exhausts_then_queue_recovers(void)
     assert(node_comm_pending_count(&comm) == 0u);
 }
 
+static void test_protocol_response_survives_bounded_receiver_blackout(void)
+{
+    enum {
+        BOUNDED_CONTROL_RF_OPPORTUNITIES = 4,
+        OLD_PROTOCOL_RESPONSE_ATTEMPT_LIMIT = 4,
+        BLACKOUT_FAILED_ATTEMPTS = 8,
+    };
+    struct node_comm control_comm;
+    struct node_comm response_comm;
+    struct node_comm_request control = request_for(
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        2100u,
+        UINT32_C(0x8cc4a7d1));
+    struct node_comm_request response = request_for(
+        NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+        2101u,
+        UINT32_C(0xa16e503b));
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint64_t now_ms = 0u;
+    uint64_t due_ms = 0u;
+    uint32_t control_handle;
+    uint32_t response_handle;
+
+    /* The gateway control contract remains exactly four real RF copies. */
+    node_comm_init(&control_comm);
+    assert(node_comm_start(&control_comm, now_ms) == 0);
+    control_handle = submit(&control_comm, &control, now_ms);
+    for (uint8_t attempt = 1u;
+         attempt <= BOUNDED_CONTROL_RF_OPPORTUNITIES;
+         attempt++) {
+        assert(node_comm_acquire(&control_comm, now_ms, &lease) == 0);
+        assert(lease.handle == control_handle);
+        assert(lease.attempt_number == attempt);
+        assert(node_comm_lease_note_rf_started(
+                   &control_comm, &lease, now_ms) == 0);
+        assert(node_comm_lease_complete(
+                   &control_comm, &lease,
+                   NODE_COMM_DELIVERY_SUCCEEDED, now_ms) == 0);
+        if (attempt < BOUNDED_CONTROL_RF_OPPORTUNITIES) {
+            assert(!node_comm_take_terminal_event_for(
+                &control_comm, control_handle, &event));
+            assert(node_comm_next_service_due_ms(
+                &control_comm, now_ms, &due_ms));
+            now_ms = due_ms;
+        }
+    }
+    event = take_terminal(&control_comm, control_handle);
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == BOUNDED_CONTROL_RF_OPPORTUNITIES);
+    assert(node_comm_pending_count(&control_comm) == 0u);
+
+    /*
+     * Each failed RF start models a complete response transmission while the
+     * receiving gateway is unavailable.  Availability returns only after a
+     * blackout twice the old four-attempt horizon, so response custody must
+     * remain live and terminal-deliver on the first post-blackout attempt.
+     */
+    now_ms = 0u;
+    node_comm_init(&response_comm);
+    assert(node_comm_start(&response_comm, now_ms) == 0);
+    response_handle = submit(&response_comm, &response, now_ms);
+    for (uint8_t attempt = 1u; attempt <= BLACKOUT_FAILED_ATTEMPTS;
+         attempt++) {
+        assert(node_comm_acquire(&response_comm, now_ms, &lease) == 0);
+        assert(lease.handle == response_handle);
+        assert(lease.attempt_number == attempt);
+        assert(node_comm_lease_note_rf_started(
+                   &response_comm, &lease, now_ms) == 0);
+        assert(node_comm_lease_complete(
+                   &response_comm, &lease,
+                   NODE_COMM_DELIVERY_RETRY, now_ms) == 0);
+        assert(!node_comm_take_terminal_event_for(
+            &response_comm, response_handle, &event));
+        assert(node_comm_next_service_due_ms(
+            &response_comm, now_ms, &due_ms));
+        now_ms = due_ms;
+
+        if (attempt == OLD_PROTOCOL_RESPONSE_ATTEMPT_LIMIT) {
+            assert(node_comm_pending_count(&response_comm) == 1u);
+        }
+    }
+
+    assert(node_comm_acquire(&response_comm, now_ms, &lease) == 0);
+    assert(lease.handle == response_handle);
+    assert(lease.attempt_number == BLACKOUT_FAILED_ATTEMPTS + 1u);
+    assert(node_comm_lease_note_rf_started(
+               &response_comm, &lease, now_ms) == 0);
+    assert(node_comm_lease_complete(
+               &response_comm, &lease,
+               NODE_COMM_DELIVERY_SUCCEEDED, now_ms) == 0);
+    event = take_terminal(&response_comm, response_handle);
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == BLACKOUT_FAILED_ATTEMPTS + 1u);
+    assert(node_comm_pending_count(&response_comm) == 0u);
+}
+
 static void test_fifty_anchor_gateway_confirmation_sweep(void)
 {
     enum { ANCHOR_COUNT = 50 };
@@ -280,6 +377,7 @@ int main(void)
     test_control_response_burst_preempts_lower_priority_response();
     test_fifty_response_sweep_eventually_delivers();
     test_persistent_collision_exhausts_then_queue_recovers();
+    test_protocol_response_survives_bounded_receiver_blackout();
     test_fifty_anchor_gateway_confirmation_sweep();
 
     return 0;

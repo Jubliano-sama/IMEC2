@@ -1383,7 +1383,9 @@ static void gateway_survey_work_handler(struct k_work *work)
                 GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE :
                 ret == -ETIMEDOUT ?
                     GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
-                    GATEWAY_COMMAND_EVENT_REASON_RADIO);
+                    GATEWAY_COMMAND_EVENT_REASON_RADIO,
+            action.command_id,
+            action.target_id);
 #if DEVICE_ROLE == ROLE_GATEWAY
         gateway_survey_begin_cleanup();
 #endif

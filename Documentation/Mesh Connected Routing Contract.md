@@ -274,6 +274,13 @@ same packet identity so receiver deduplication and durable custody remain
 valid, while immutable source/session/sequence-derived jitter prevents
 independent nodes from repeating the same synchronized collision.
 
+Protocol-priority command responses retain sixteen RF opportunities within the
+caller's absolute deadline. This lets a survey PREPARE or START result outlive
+the gateway's required four-copy channel-5 control flood and return during the
+following channel-9 receive horizon; survey pair responses use the same
+90-second result deadline as the gateway transaction. The bounded control flood
+itself still requires exactly four real RF opportunities.
+
 The bounded-control-flood profile always runs four real RF opportunities, even
 when an earlier transmission succeeds, because a blind broadcast has no link
 ACK that can prove delivery. Successful opportunities repeat after 40 ms;

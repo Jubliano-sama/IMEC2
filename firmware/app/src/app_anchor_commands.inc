@@ -127,6 +127,7 @@ static int anchor_submit_command_result(
     struct mesh_outbound outbound = {0};
     uint32_t delivery_handle = 0u;
     uint32_t client_token;
+    uint32_t result_timeout_ms;
     uint64_t absolute_deadline_ms;
     uint64_t now_ms;
     size_t payload_len = 0u;
@@ -189,10 +190,15 @@ static int anchor_submit_command_result(
     outbound.packet.seq = seq;
 
     now_ms = (uint64_t)k_uptime_get();
+    result_timeout_ms =
+        command_id == CMD_SURVEY_PREPARE_PAIR ||
+        command_id == CMD_SURVEY_START_PAIR ?
+            SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS :
+            GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
     absolute_deadline_ms = UINT64_MAX - now_ms <
-                           GATEWAY_COMMAND_RESULT_TIMEOUT_MS ?
+                           result_timeout_ms ?
                            UINT64_MAX :
-                           now_ms + GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
+                           now_ms + result_timeout_ms;
     client_token = ((uint32_t)command_id << 16) | seq;
     ret = app_node_comm_submit_protocol_response(
         &outbound,

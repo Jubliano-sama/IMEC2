@@ -1413,20 +1413,26 @@ static int gateway_survey_auto_send_action(const struct survey_gateway_auto_acti
 static void gateway_survey_auto_log_skipped_pair(const char *reason,
                                                  enum command_status status,
                                                  uint8_t detail,
-                                                 enum gateway_command_event_reason event_reason)
+                                                 enum gateway_command_event_reason event_reason,
+                                                 enum command_id failed_command_id,
+                                                 uint64_t failed_target_id)
 {
     struct gateway_command_event event = gateway_observability_event(
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
         GATEWAY_COMMAND_EVENT_STAGE_PAIR_FAILURE,
-        CMD_SURVEY_START_PAIR,
+        failed_command_id,
         &gateway_survey_host_command,
         gateway_survey_context.survey_id);
 
     gateway_survey_pair_failure_count++;
     event.status = status;
     event.reason = event_reason;
+    event.anchor_id = failed_target_id;
     event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
     event.pair_responder_id = gateway_survey_auto.pair.responder_id;
+    event.progress_count =
+        (uint16_t)gateway_survey_context.next_pair_index;
+    event.total_count = (uint16_t)gateway_survey_context.pair_count;
 #if DEVICE_ROLE == ROLE_GATEWAY
     event.attempt = gateway_survey_transaction.active.request_attempts_started;
 #endif
@@ -1781,7 +1787,9 @@ static void gateway_survey_abandon_current(
         gateway_survey_auto_log_skipped_pair(log_reason,
                                              status,
                                              reason,
-                                             event_reason);
+                                             event_reason,
+                                             command_id,
+                                             gateway_survey_transaction.active_target_id);
     }
     gateway_survey_begin_cleanup();
 }
@@ -1879,7 +1887,9 @@ bool gateway_survey_auto_preflight_result(const struct proto_packet *packet,
                 "conflicting-command-result",
                 COMMAND_INTERNAL_ERROR,
                 reason,
-                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
+                command_id,
+                packet->src_id);
             gateway_survey_begin_cleanup();
         }
     } else if (transaction_result ==
@@ -2047,7 +2057,9 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
             reason,
             status == COMMAND_TIMEOUT ?
                 GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
-                GATEWAY_COMMAND_EVENT_REASON_RADIO);
+                GATEWAY_COMMAND_EVENT_REASON_RADIO,
+            command_id,
+            command->dst_id);
 #if DEVICE_ROLE == ROLE_GATEWAY
         gateway_survey_begin_cleanup();
 #endif
@@ -2161,7 +2173,9 @@ static void gateway_survey_auto_note_command_timeout(const struct proto_packet *
             "command-timeout",
             COMMAND_TIMEOUT,
             0u,
-            GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
+            GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED,
+            command_id,
+            command->dst_id);
 #if DEVICE_ROLE == ROLE_GATEWAY
         gateway_survey_begin_cleanup();
 #endif

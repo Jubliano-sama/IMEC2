@@ -13,6 +13,9 @@ Entries do **not** need to be contemporary. Many issues listed here may already 
 - PIL `ImageGrab` can create Tk windows on `DISPLAY=:1` but fail with `X get_image failed: error 8`; use a Wayland/portal screenshot path instead of treating the GUI as non-rendering.
 - `capture_stack_evidence.py` can reject an otherwise successful exact mesh-gateway build before RTT because static RAM headroom and compiler-owner attribution are deployment-policy gates; preserve the rejection and do not bypass it with direct flashing.
 - Context-mode JavaScript execution can fail before running commands with Bun `Expected CommonJS module to have a function wrapper`; rerun verification directly and do not treat the wrapper failure as test evidence.
+- Fixed survey initiator START replies exhausting four short protocol-response attempts during the gateway's required four-copy control flood by retaining sixteen attempts and the full 90-second survey deadline; keep bounded-control delivery itself at exactly four RF opportunities.
+- Exact Zephyr role builds compile composed `app_anchor.c` fragments that native tests can miss; when widening a cross-fragment static helper signature, search every `.inc` caller and add a composed-source invariant before trusting native coverage.
+- `flash_verified_mesh.py` starts RTT capture only after a silent full-flash readback; gate qualification workloads on the live `capture_stack_evidence.py`/`pyocd rtt` process, and remember that gateway evidence needs a completed pair control, which a mixed-version anchor set can prevent.
 
 - The Grok delegate rejected the requested `sol` model ID as unknown; continue locally or select a model returned by the installed backend rather than treating the failed launch as review evidence.
 - A focused provisioning script that imported an in-progress GUI decoder broke when another agent removed that symbol concurrently; keep hardware probes independent of files owned by concurrent agents.

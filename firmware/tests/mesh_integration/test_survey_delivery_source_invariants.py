@@ -516,6 +516,35 @@ control_backend = function_body(NODE_COMM_APP, "app_node_comm_service_deliveries
 assert "mesh_try_send_c5_flood_view(" in control_backend
 assert "app_mesh_flood_send_bounded(" not in control_backend
 
+command_result = function_body(ANCHOR, "anchor_submit_command_result")
+assert "command_id == CMD_SURVEY_PREPARE_PAIR" in command_result
+assert "command_id == CMD_SURVEY_START_PAIR" in command_result
+assert "SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS" in command_result
+assert "GATEWAY_COMMAND_RESULT_TIMEOUT_MS" in command_result
+assert re.search(
+    r"app_node_comm_submit_protocol_response\s*\(\s*&outbound\s*,\s*"
+    r"absolute_deadline_ms",
+    command_result,
+    re.S,
+), (
+    "survey command results must carry the selected end-to-end deadline into "
+    "protocol-response custody"
+)
+
+pair_failure = function_body(ANCHOR, "gateway_survey_auto_log_skipped_pair")
+assert "failed_command_id" in pair_failure
+assert "event.anchor_id = failed_target_id" in pair_failure
+assert "event.progress_count" in pair_failure
+assert "event.total_count" in pair_failure
+assert "event.attempt" in pair_failure
+survey_worker = function_body(ANCHOR, "gateway_survey_work_handler")
+assert re.search(
+    r"gateway_survey_auto_log_skipped_pair\s*\(\s*\"send-failed\".*?"
+    r"action\.command_id\s*,\s*action\.target_id\s*\)",
+    survey_worker,
+    re.S,
+), "send admission failures must identify the exact survey phase and target"
+
 gateway_rx_worker = function_body(REPORT, "mesh_uwb_rx_work_handler")
 assert gateway_rx_worker.count("mesh_rx_radio_start(") == 2
 assert gateway_rx_worker.count("mesh_rx_radio_stop(") == 2

@@ -41,7 +41,13 @@ static const struct node_comm_profile_policy profile_policies[] = {
     [NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE] = {
         .retry_delay_ms = 200u,
         .success_repeat_delay_ms = 0u,
-        .max_attempts = 4u,
+        /*
+         * A survey START result can become ready while the gateway is still
+         * completing the required four-copy channel-5 control flood. Keep
+         * enough channel-9 opportunities to outlive that bounded blackout;
+         * the caller's absolute deadline remains the final time bound.
+         */
+        .max_attempts = 16u,
         .successful_attempts_required = 1u,
         .retry_backoff_shift_cap = 3u,
         .priority = 220u,

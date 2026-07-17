@@ -884,6 +884,17 @@ def command_run_status(events: tuple[GatewayCommandEvent, ...]) -> tuple[str, st
     if terminal.reason == 2 or terminal.command_status == 3:
         return "Rejected", f"Rejected: {reason.lower()}."
     if terminal.reason in (6, 9):
+        pair_failure = next(
+            (event for event in reversed(events)
+             if event.command_kind == 2 and event.stage == 11),
+            None,
+        )
+        if pair_failure is not None:
+            return "Timed out", (
+                f"Survey ended with {terminal.success_count} pair(s) succeeded "
+                f"and {terminal.failure_count} failed. Last failure: "
+                f"{command_step_sentence(pair_failure)}"
+            )
         return "Timed out", f"Timed out: {reason.lower()}."
     return "Failed", f"Failed: {reason.lower()}."
 
@@ -916,7 +927,32 @@ def command_step_sentence(event: GatewayCommandEvent) -> str:
     if event.stage == 10:
         return "Anchor pair ranging succeeded."
     if event.stage == 11:
-        return f"Anchor pair ranging failed: {GATEWAY_COMMAND_REASON_NAMES[event.reason].lower()}."
+        reason = GATEWAY_COMMAND_REASON_NAMES[event.reason].lower()
+        if event.pair_initiator_id and event.pair_responder_id:
+            initiator = anchor_label(event.pair_initiator_id)
+            responder = anchor_label(event.pair_responder_id)
+            phase = {
+                0x0101: "PREPARE",
+                0x0102: "START",
+            }.get(event.command_id, f"command 0x{event.command_id:04x}")
+            if event.anchor_id == event.pair_initiator_id:
+                target = f"initiator {initiator}"
+            elif event.anchor_id == event.pair_responder_id:
+                target = f"responder {responder}"
+            elif event.anchor_id:
+                target = f"anchor {anchor_label(event.anchor_id)}"
+            else:
+                target = "unknown anchor"
+            attempts = (
+                f" after {event.attempt} gateway control attempt"
+                f"{'' if event.attempt == 1 else 's'}"
+                if event.attempt else ""
+            )
+            return (
+                f"Pair {initiator} -> {responder} failed during {phase} to "
+                f"{target}{attempts}: {reason}."
+            )
+        return f"Anchor pair ranging failed: {reason}."
     if event.terminal:
         reason = GATEWAY_COMMAND_REASON_NAMES[event.reason]
         if event.command_status == 0 and event.reason == 0:

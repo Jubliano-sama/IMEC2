@@ -536,6 +536,38 @@ class WakeAndTopologyTests(unittest.TestCase):
             command_step_sentence(survey_no_reports),
             "Command ended: no survey reports were received.",
         )
+        detailed_failure = replace(
+            event(kind=2, stage=11, status=5, reason=9, total=6),
+            command_id=0x0102,
+            attempt=4,
+            anchor_id=0x1111,
+            pair_initiator_id=0x1111,
+            pair_responder_id=0x2222,
+            success_count=1,
+            failure_count=2,
+        )
+        self.assertEqual(
+            command_step_sentence(detailed_failure),
+            "Pair 0x0000000000001111 -> 0x0000000000002222 failed during "
+            "START to initiator 0x0000000000001111 after 4 gateway control "
+            "attempts: retry exhausted.",
+        )
+        detailed_terminal = replace(
+            event(kind=2, stage=12, flags=1, status=5, reason=9, total=6,
+                  event_seq=2),
+            success_count=1,
+            failure_count=5,
+        )
+        self.assertEqual(
+            command_run_status((detailed_failure, detailed_terminal)),
+            (
+                "Timed out",
+                "Survey ended with 1 pair(s) succeeded and 5 failed. Last "
+                "failure: Pair 0x0000000000001111 -> 0x0000000000002222 "
+                "failed during START to initiator 0x0000000000001111 after "
+                "4 gateway control attempts: retry exhausted.",
+            ),
+        )
         self.assertEqual(MeshDiagnosticsView.RUN_COLUMNS,
                          ("Started", "Command", "Status", "Anchors / Pairs", "Attempts", "Result"))
         self.assertEqual(MeshDiagnosticsView.ANCHOR_COLUMNS,
