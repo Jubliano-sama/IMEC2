@@ -33,6 +33,8 @@ static int anchor_queue_survey_sample_result(
 {
     struct mesh_outbound outbound = {0};
     struct survey_sample sample = {0};
+    uint64_t absolute_deadline_ms;
+    uint64_t now_ms;
     size_t payload_len = 0u;
     enum range_status status;
     int64_t sample_local_ms;
@@ -86,7 +88,16 @@ static int anchor_queue_survey_sample_result(
         return mesh_errno_from_proto(ret);
     }
     outbound.payload_len = (uint8_t)payload_len;
-    return queue_anchor_report(&outbound);
+    now_ms = (uint64_t)k_uptime_get();
+    absolute_deadline_ms = UINT64_MAX - now_ms <
+                           SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS ?
+                           UINT64_MAX :
+                           now_ms + SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS;
+    return app_node_comm_submit_reliable_uplink(
+        &outbound,
+        absolute_deadline_ms,
+        ((uint32_t)MSG_SURVEY_PAIR_RESULT << 16) | outbound.packet.seq,
+        NULL);
 }
 
 static bool anchor_relay_tx_active(void)

@@ -53,6 +53,9 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         cls.gateway_ble = (APP_SRC / "app_gateway_ble.c").read_text(
             encoding="utf-8"
         )
+        cls.report_route_control = (
+            APP_SRC / "app_mesh_report_route_control.inc"
+        ).read_text(encoding="utf-8")
 
     def test_protocol_callers_do_not_use_synchronous_delivery_or_path_apis(self):
         forbidden = (
@@ -82,6 +85,29 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertNotIn("mesh_start_tracked_tx(", body)
         self.assertNotIn("mesh_start_tracked_tx_with_retry(", body)
         self.assertNotIn("mesh_request_route(", body)
+
+    def test_survey_pair_results_use_bounded_communication_custody(self):
+        body = function_body(
+            self.anchor, "anchor_queue_survey_sample_result"
+        )
+
+        self.assertEqual(body.count("app_node_comm_submit_reliable_uplink("), 1)
+        self.assertIn("absolute_deadline_ms", body)
+        self.assertRegex(body, r"SURVEY_[A-Z0-9_]*DELIVERY_TIMEOUT_MS")
+        self.assertNotIn("queue_anchor_report(", body)
+        self.assertNotIn("mesh_start_tracked_tx(", body)
+        self.assertNotIn("mesh_start_tracked_tx_with_retry(", body)
+        self.assertNotIn("mesh_request_route(", body)
+
+    def test_gateway_control_preempts_unrelated_route_reply_listener(self):
+        body = function_body(
+            self.report_route_control, "mesh_listen_for_route_reply"
+        )
+
+        self.assertIn("bool gateway_priority_control", body)
+        self.assertIn("parsed.packet.src_id == GATEWAY_ID", body)
+        self.assertIn(".gateway_control_priority = gateway_priority_control", body)
+        self.assertIn("if (gateway_priority_control)", body)
 
     def test_anchor_click_callback_only_freezes_and_queues_scan_handoff(self):
         callback = function_body(

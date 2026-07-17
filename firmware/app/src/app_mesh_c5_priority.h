@@ -30,6 +30,7 @@ struct app_mesh_c5_route_capture_state {
     uint16_t expected_reply_nonce;
     bool route_identity_required;
     bool control_followup;
+    bool gateway_control_priority;
 };
 
 struct app_mesh_c5_route_adv_timing {

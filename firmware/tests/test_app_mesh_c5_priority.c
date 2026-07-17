@@ -172,6 +172,9 @@ static void test_control_wake_captures_gateway_broadcast_command(void)
     assert(app_mesh_c5_route_capture_relevant(&state));
     state.control_followup = false;
     assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.gateway_control_priority = true;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.gateway_control_priority = false;
     state.control_followup = true;
     state.previous_hop_id = state.local_id;
     assert(!app_mesh_c5_route_capture_relevant(&state));

@@ -154,6 +154,8 @@ BUILD_ASSERT(SERIAL_FRAME_MAX_LEN <= UINT16_MAX,
              "gateway BLE frame queue length field must hold a full COBS frame");
 BUILD_ASSERT(GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH >= 2u,
              "gateway BLE RX queue must absorb at least one pending and one arriving frame");
+BUILD_ASSERT(GATEWAY_BLE_TX_RETRY_MAX_MS >= GATEWAY_BLE_TX_RETRY_MS,
+             "gateway BLE notification retry cap must cover the base delay");
 BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >= SURVEY_DISCOVERY_MIN_SLOT_MS,
              "survey discovery slots must fit the physical probe envelope");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,

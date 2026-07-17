@@ -14,14 +14,15 @@ extern "C" {
 #define SURVEY_MIN_SAMPLE_COUNT 1u
 #define SURVEY_MAX_SAMPLE_COUNT 1000u
 /*
- * The wire format permits larger surveys, but the connected mesh runtime keeps
- * one durable result per sample in the anchor report queue. This value is a
+ * The wire format permits larger surveys, but the connected mesh runtime can
+ * have one bounded reliable uplink per sample in flight. This value is a
  * cross-role contract: gateways must not admit work that mesh anchors cannot
- * execute without dropping a result.
+ * execute without an explicit delivery outcome.
  */
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
 #define SURVEY_DEFAULT_TTL 4u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
+#define SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS 5000u
 #define SURVEY_PAIR_START_SKEW_MARGIN_MS 5000u
 #define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
     (SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +                                \

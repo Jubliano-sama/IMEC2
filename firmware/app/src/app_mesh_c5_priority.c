@@ -101,7 +101,7 @@ bool app_mesh_c5_route_capture_relevant(
         return state->dst_id == state->local_id;
     }
 
-    if (state->control_followup &&
+    if ((state->control_followup || state->gateway_control_priority) &&
         control_origin_id != MESH_BROADCAST_ID &&
         state->src_id == control_origin_id) {
         if (targeted_control_followup_type(state->msg_type) &&

@@ -52,6 +52,12 @@ assert "ret = bt_gatt_notify_cb" in ble_work
 assert "else if (source == GATEWAY_BLE_TX_STREAM)" in ble_work
 assert "successful async submit consumes the controller credit" in ble_work
 assert "app_stack_workload_diag_ble_sample_with_pressure" in ble_work
+assert "gateway_ble_schedule_stream_retry();" in ble_work
+assert "bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN)" not in ble_work
+
+ble_retry = function_body(BLE, "gateway_ble_stream_retry_delay_ms")
+assert "GATEWAY_BLE_TX_RETRY_MS << shift" in ble_retry
+assert "GATEWAY_BLE_TX_RETRY_MAX_MS" in ble_retry
 
 ble_init = function_body(BLE, "gateway_ble_init")
 assert ble_init.count("return ret;") >= 2

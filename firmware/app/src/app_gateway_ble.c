@@ -2332,11 +2332,19 @@ static void gateway_ble_schedule_stream_drain(void)
     }
 }
 
+static uint32_t gateway_ble_stream_retry_delay_ms(void)
+{
+    uint8_t shift = MIN(gateway_ble_notify_failure_count, 6u);
+    uint32_t delay_ms = GATEWAY_BLE_TX_RETRY_MS << shift;
+
+    return MIN(delay_ms, GATEWAY_BLE_TX_RETRY_MAX_MS);
+}
+
 static void gateway_ble_schedule_stream_retry(void)
 {
     if (gateway_ble_transport_enabled()) {
         (void)k_work_reschedule(&gateway_ble_stream_work,
-                                K_MSEC(GATEWAY_BLE_TX_RETRY_MS));
+                                K_MSEC(gateway_ble_stream_retry_delay_ms()));
     }
 }
 
@@ -2765,7 +2773,6 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
     params.user_data = (void *)(uintptr_t)generation;
     ret = bt_gatt_notify_cb(conn, &params);
     if (ret < 0) {
-        bool disconnect = false;
         struct proto_packet blocked_packet;
         uint16_t queue_depth;
         int packet_ret;
@@ -2778,7 +2785,6 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
         if (gateway_ble_notify_failure_count < UINT8_MAX) {
             gateway_ble_notify_failure_count++;
         }
-        disconnect = gateway_ble_notify_failure_count >= 8u;
         k_spin_unlock(&gateway_ble_tx_lock, key);
         key = k_spin_lock(&gateway_ble_stream_lock);
         queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
@@ -2800,14 +2806,15 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
             app_stack_workload_diag_ble_sample_with_pressure(&blocked_packet,
                                                              &pressure);
         }
-        if (disconnect) {
-            LOG_WRN("gateway BLE notifications repeatedly failed; resetting connection: ret=%d failures=%u",
+        if (gateway_ble_notify_failure_count != 0u &&
+            (gateway_ble_notify_failure_count &
+             (gateway_ble_notify_failure_count - 1u)) == 0u) {
+            LOG_WRN("gateway BLE notification deferred: ret=%d failures=%u retry_ms=%u",
                     ret,
-                    gateway_ble_notify_failure_count);
-            (void)bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-        } else {
-            gateway_ble_schedule_stream_retry();
+                    gateway_ble_notify_failure_count,
+                    gateway_ble_stream_retry_delay_ms());
         }
+        gateway_ble_schedule_stream_retry();
     } else if (source == GATEWAY_BLE_TX_STREAM) {
         struct proto_packet inflight_packet;
         uint16_t queue_depth;

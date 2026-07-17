@@ -2460,6 +2460,13 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 continue;
             }
 
+            bool gateway_priority_control =
+                DEVICE_ROLE == ROLE_ANCHOR &&
+                parsed.packet.src_id == GATEWAY_ID &&
+                (parsed.packet.msg_type == MSG_COMMAND ||
+                 parsed.packet.msg_type == MSG_SURVEY_PAIR_PREPARE ||
+                 parsed.packet.msg_type == MSG_SURVEY_DISCOVERY_START);
+
             if (parsed.packet.msg_type == MSG_ROUTE_REPLY) {
                 (void)mesh_route_capture_find_u32(parsed.payload,
                                                   parsed.payload_len,
@@ -2493,6 +2500,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         .control_followup =
                             contact_purpose ==
                                 C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                        .gateway_control_priority = gateway_priority_control,
                     })) {
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_printf("DBG_ROUTE_REPLY_UNRELATED msg=0x%02x src=0x%llx dst=0x%llx prev=0x%llx target=0x%llx session=%u/%u flood=%u/%u nonce=%u/%u\n",
@@ -2518,8 +2526,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 continue;
             }
 
-            if (DEVICE_ROLE == ROLE_ANCHOR &&
-                contact_purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
+            if (gateway_priority_control) {
                 enum command_id control_command_id = CMD_VENDOR_BASE;
                 uint8_t control_origin_ttl = 0u;
                 int reverse_route_ret;
@@ -2666,8 +2673,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         (unsigned int)capture_count);
                 break;
             }
-            if (contact_purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD &&
-                parsed.packet.msg_type == MSG_COMMAND) {
+            if (gateway_priority_control) {
                 break;
             }
         }
