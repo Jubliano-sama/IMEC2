@@ -511,8 +511,11 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     gateway_survey_discovery_failure_count = 0u;
     gateway_survey_terminal_failure_reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
     gateway_survey_pair_result_mask = 0u;
-    gateway_survey_pair_range_failure_count = 0u;
+    gateway_survey_pair_initiator_unusable_mask = 0u;
+    gateway_survey_pair_responder_unusable_mask = 0u;
     gateway_survey_pair_observation_active = false;
+    survey_gateway_response_ack_settle_init(
+        &gateway_survey_response_ack_settle);
     app_gateway_survey_observability_reset(&gateway_survey_observability);
     {
         struct gateway_command_event event = gateway_observability_event(
@@ -652,10 +655,24 @@ static int gateway_note_survey_pair_result(const struct proto_packet *packet,
         }
         return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
-    gateway_survey_pair_result_mask |= sample_bit;
-    if (range_status != RANGE_OK && gateway_survey_pair_range_failure_count < UINT16_MAX) {
-        gateway_survey_pair_range_failure_count++;
+    if (!survey_sample_distance_usable(&sample)) {
+        if (packet->src_id == sample.pair.initiator_id) {
+            gateway_survey_pair_initiator_unusable_mask |= sample_bit;
+        } else {
+            gateway_survey_pair_responder_unusable_mask |= sample_bit;
+        }
+        if (survey_pair_missing_samples_all_unusable(
+                sample.pair.sample_count,
+                gateway_survey_pair_result_mask,
+                gateway_survey_pair_initiator_unusable_mask,
+                gateway_survey_pair_responder_unusable_mask)) {
+            (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
+        }
+        return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
+    gateway_survey_pair_initiator_unusable_mask &= (uint16_t)~sample_bit;
+    gateway_survey_pair_responder_unusable_mask &= (uint16_t)~sample_bit;
+    gateway_survey_pair_result_mask |= sample_bit;
     if ((uint16_t)__builtin_popcount(gateway_survey_pair_result_mask) ==
         gateway_survey_auto.pair.sample_count) {
         (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
@@ -913,8 +930,31 @@ gateway_survey_finalize_pair_observation(void)
     }
     observed_count = (uint16_t)__builtin_popcount(
         gateway_survey_pair_result_mask);
-    success = observed_count == gateway_survey_auto.pair.sample_count &&
-              gateway_survey_pair_range_failure_count == 0u;
+    success = observed_count == gateway_survey_auto.pair.sample_count;
+    if (!success &&
+        (gateway_survey_pair_initiator_unusable_mask != 0u ||
+         gateway_survey_pair_responder_unusable_mask != 0u) &&
+        survey_gateway_auto_rerun_pair(&gateway_survey_auto) == PROTO_OK) {
+        uint8_t run_number =
+            (uint8_t)(gateway_survey_auto.pair_reruns_started + 1u);
+
+        gateway_survey_pair_observation_active = false;
+        gateway_survey_pair_result_mask = 0u;
+        gateway_survey_pair_initiator_unusable_mask = 0u;
+        gateway_survey_pair_responder_unusable_mask = 0u;
+#if DEVICE_ROLE == ROLE_GATEWAY
+        survey_gateway_transaction_pair_complete(
+            &gateway_survey_transaction, false, (uint64_t)k_uptime_get());
+        gateway_survey_begin_cleanup();
+#endif
+        LOG_WRN("gateway survey pair unusable; rerunning full pair: survey=%u initiator=0x%016llx responder=0x%016llx run=%u/%u",
+                gateway_survey_auto.pair.survey_id,
+                (unsigned long long)gateway_survey_auto.pair.initiator_id,
+                (unsigned long long)gateway_survey_auto.pair.responder_id,
+                run_number,
+                SURVEY_GATEWAY_PAIR_MAX_RERUNS + 1u);
+        return GATEWAY_SURVEY_PAIR_FINALIZE_RETRY;
+    }
     event = gateway_observability_event(
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
         success ? GATEWAY_COMMAND_EVENT_STAGE_PAIR_SUCCESS :
@@ -924,9 +964,12 @@ gateway_survey_finalize_pair_observation(void)
         gateway_survey_context.survey_id);
     event.status = success ? COMMAND_OK : COMMAND_TIMEOUT;
     event.reason = success ? GATEWAY_COMMAND_EVENT_REASON_NONE :
-                   gateway_survey_pair_range_failure_count > 0u ?
+                   (gateway_survey_pair_initiator_unusable_mask != 0u ||
+                    gateway_survey_pair_responder_unusable_mask != 0u) ?
                    GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED :
                    GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE;
+    event.attempt =
+        (uint8_t)(gateway_survey_auto.pair_reruns_started + 1u);
     event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
     event.pair_responder_id = gateway_survey_auto.pair.responder_id;
     event.progress_count = observed_count;
@@ -952,7 +995,8 @@ gateway_survey_finalize_pair_observation(void)
     }
     gateway_survey_pair_observation_active = false;
     gateway_survey_pair_result_mask = 0u;
-    gateway_survey_pair_range_failure_count = 0u;
+    gateway_survey_pair_initiator_unusable_mask = 0u;
+    gateway_survey_pair_responder_unusable_mask = 0u;
 #if DEVICE_ROLE == ROLE_GATEWAY
     survey_gateway_transaction_pair_complete(&gateway_survey_transaction,
                                              success,
@@ -1028,6 +1072,8 @@ static void gateway_survey_auto_finish_status(
     gateway_survey_active = false;
     gateway_survey_budget_explicit = false;
     gateway_survey_operation_deadline_ms = 0u;
+    survey_gateway_response_ack_settle_init(
+        &gateway_survey_response_ack_settle);
     if (gateway_survey_pending_command_valid) {
         app_stack_workload_diag_gateway_control_release(
             &gateway_survey_pending_command, -ECANCELED, 0u, 0u);
@@ -1538,6 +1584,11 @@ static bool gateway_survey_cleanup_pending(void)
 
 static struct survey_gateway_drive_state gateway_survey_drive_state(void)
 {
+    bool response_ack_settle_pending =
+        survey_gateway_response_ack_settle_pending(
+            &gateway_survey_response_ack_settle,
+            (uint64_t)k_uptime_get());
+
     return (struct survey_gateway_drive_state) {
         .survey_active = gateway_survey_active,
         .auto_running = gateway_survey_auto.running,
@@ -1546,6 +1597,7 @@ static struct survey_gateway_drive_state gateway_survey_drive_state(void)
             gateway_survey_pair_observation_active,
         .cleanup_pending = gateway_survey_cleanup_pending(),
         .boundary_pending = gateway_survey_observability.boundary_pending,
+        .response_ack_settle_pending = response_ack_settle_pending,
     };
 }
 
@@ -1561,6 +1613,15 @@ static void gateway_survey_schedule_drive(void)
     } else if (action == SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY) {
         (void)k_work_reschedule(&gateway_survey_work,
                                 K_MSEC(GATEWAY_BLE_TX_RETRY_MS));
+    } else if (state.response_ack_settle_pending) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+        uint64_t remaining_ms =
+            gateway_survey_response_ack_settle.deadline_ms > now_ms ?
+                gateway_survey_response_ack_settle.deadline_ms - now_ms : 1u;
+
+        (void)k_work_reschedule(
+            &gateway_survey_work,
+            K_MSEC((uint32_t)MIN(remaining_ms, (uint64_t)UINT32_MAX)));
     } else if (action == SURVEY_GATEWAY_DRIVE_RUN_NOW) {
         status_debug_printf("DBG_SURVEY_DRIVE_RESUME survey=%u stage=%u\n",
                             gateway_survey_context.survey_id,
@@ -1894,7 +1955,17 @@ bool gateway_survey_auto_preflight_result(const struct proto_packet *packet,
         }
     } else if (transaction_result ==
                    SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+
         gateway_survey_duplicate_count++;
+        if (survey_gateway_response_ack_settle_pending(
+                &gateway_survey_response_ack_settle,
+                now_ms)) {
+            survey_gateway_response_ack_settle_note_result(
+                &gateway_survey_response_ack_settle,
+                now_ms);
+            gateway_survey_schedule_drive();
+        }
     }
     return true;
 #else
@@ -2077,7 +2148,8 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
 #endif
         gateway_survey_pair_observation_active = true;
         gateway_survey_pair_result_mask = 0u;
-        gateway_survey_pair_range_failure_count = 0u;
+        gateway_survey_pair_initiator_unusable_mask = 0u;
+        gateway_survey_pair_responder_unusable_mask = 0u;
         {
             struct gateway_command_event event = gateway_observability_event(
                 GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
@@ -2088,6 +2160,8 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
 
             event.pair_initiator_id = gateway_survey_auto.pair.initiator_id;
             event.pair_responder_id = gateway_survey_auto.pair.responder_id;
+            event.attempt =
+                (uint8_t)(gateway_survey_auto.pair_reruns_started + 1u);
             event.progress_count =
                 (uint16_t)gateway_survey_context.next_pair_index;
             event.total_count = (uint16_t)gateway_survey_context.pair_count;
@@ -2113,8 +2187,11 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
                 "transaction-retire-failed");
             return;
         }
+        survey_gateway_response_ack_settle_note_result(
+            &gateway_survey_response_ack_settle,
+            (uint64_t)k_uptime_get());
+        gateway_survey_schedule_drive();
 #endif
-        (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
     }
 }
 

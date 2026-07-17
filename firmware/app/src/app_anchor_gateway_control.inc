@@ -1302,6 +1302,11 @@ static void gateway_survey_work_handler(struct k_work *work)
              &gateway_survey_auto, &gateway_survey_context))) {
         goto out;
     }
+    if (survey_gateway_response_ack_settle_pending(
+            &gateway_survey_response_ack_settle,
+            (uint64_t)k_uptime_get())) {
+        goto out;
+    }
 #endif
     if (gateway_survey_auto.waiting) {
         goto out;

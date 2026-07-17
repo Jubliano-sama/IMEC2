@@ -563,9 +563,14 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         )
         self.assertNotIn("gateway_command_survey_terminal_outcome(", finish)
         self.assertIn("gateway_command_survey_terminal_outcome(", automatic)
+        terminal_finalize = finalize[
+            finalize.index("event = gateway_observability_event(") :
+        ]
         self.assertLess(
-            finalize.index("gateway_survey_observe_with_custody("),
-            finalize.index("gateway_survey_pair_observation_active = false"),
+            terminal_finalize.index("gateway_survey_observe_with_custody("),
+            terminal_finalize.index(
+                "gateway_survey_pair_observation_active = false"
+            ),
         )
 
     def test_explicit_survey_deadline_reason_survives_final_pair_flush(self):

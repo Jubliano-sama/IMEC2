@@ -355,6 +355,42 @@ bool survey_gateway_transaction_cleanup_pending(
             context->active.state == NODE_TRANSACTION_ABANDONING);
 }
 
+void survey_gateway_response_ack_settle_init(
+    struct survey_gateway_response_ack_settle *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+void survey_gateway_response_ack_settle_note_result(
+    struct survey_gateway_response_ack_settle *state,
+    uint64_t now_ms)
+{
+    if (state == NULL) {
+        return;
+    }
+    state->deadline_ms =
+        UINT64_MAX - now_ms < SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS ?
+            UINT64_MAX :
+            now_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+    state->active = true;
+}
+
+bool survey_gateway_response_ack_settle_pending(
+    struct survey_gateway_response_ack_settle *state,
+    uint64_t now_ms)
+{
+    if (state == NULL || !state->active) {
+        return false;
+    }
+    if (now_ms < state->deadline_ms) {
+        return true;
+    }
+    survey_gateway_response_ack_settle_init(state);
+    return false;
+}
+
 enum survey_gateway_drive_action survey_gateway_drive_action(
     const struct survey_gateway_drive_state *state)
 {
@@ -369,6 +405,9 @@ enum survey_gateway_drive_action survey_gateway_drive_action(
     }
     if (state->boundary_pending) {
         return SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY;
+    }
+    if (state->response_ack_settle_pending) {
+        return SURVEY_GATEWAY_DRIVE_NONE;
     }
     if (state->auto_running && !state->auto_waiting &&
         !state->pair_observation_active) {

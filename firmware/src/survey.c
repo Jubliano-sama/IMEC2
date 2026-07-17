@@ -8,6 +8,8 @@
 
 _Static_assert(sizeof(struct survey_pair) == 24u,
                "survey pair public layout changed");
+_Static_assert(SURVEY_GATEWAY_PAIR_MAX_RERUNS < UINT8_MAX,
+               "survey pair rerun count must fit observability attempts");
 _Static_assert(PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +
                    PROTO_TLV_U16_ENCODED_LEN +
                    SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *
@@ -66,6 +68,32 @@ int survey_sample_validate(const struct survey_sample *sample)
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
+}
+
+bool survey_sample_distance_usable(const struct survey_sample *sample)
+{
+    return sample != NULL && sample->range_status == RANGE_OK &&
+           sample->distance_mm > SURVEY_MIN_USABLE_DISTANCE_MM;
+}
+
+bool survey_pair_missing_samples_all_unusable(
+    uint16_t sample_count,
+    uint16_t usable_mask,
+    uint16_t initiator_unusable_mask,
+    uint16_t responder_unusable_mask)
+{
+    uint16_t expected_mask;
+    uint16_t missing_mask;
+
+    if (!survey_sample_count_valid(sample_count) || sample_count > 16u) {
+        return false;
+    }
+    expected_mask = sample_count == 16u ? UINT16_MAX :
+                    (uint16_t)((UINT16_C(1) << sample_count) - 1u);
+    missing_mask = expected_mask & (uint16_t)~usable_mask;
+    return missing_mask != 0u &&
+           (initiator_unusable_mask & responder_unusable_mask &
+            missing_mask) == missing_mask;
 }
 
 static uint64_t survey_mix64(uint64_t value)
@@ -1014,6 +1042,7 @@ int survey_gateway_auto_next_action(struct survey_gateway_auto_context *auto_con
         if (ret != PROTO_OK) {
             return ret;
         }
+        auto_context->pair_reruns_started = 0u;
         auto_context->stage = SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR;
     }
 
@@ -1114,6 +1143,28 @@ int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *contex
     }
 
     context->waiting = false;
+    return PROTO_OK;
+}
+
+int survey_gateway_auto_rerun_pair(
+    struct survey_gateway_auto_context *context)
+{
+    if (context == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (context->waiting) {
+        return PROTO_ERR_BUSY;
+    }
+    if (!context->running || context->stage != SURVEY_GATEWAY_AUTO_LOAD_PAIR ||
+        survey_pair_validate(&context->pair) != PROTO_OK) {
+        return PROTO_ERR_STALE;
+    }
+    if (context->pair_reruns_started >= SURVEY_GATEWAY_PAIR_MAX_RERUNS) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    context->pair_reruns_started++;
+    context->stage = SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR;
     return PROTO_OK;
 }
 

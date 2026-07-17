@@ -232,7 +232,14 @@ class SurveyGeometryModel:
         )
         samples = self._sample_outcomes.setdefault(pair, {})
         previous = samples.get(sample_index)
-        if previous is None or candidate.reporter_priority > previous.reporter_priority:
+        if (
+            previous is None
+            or (candidate.successful and not previous.successful)
+            or (
+                candidate.successful == previous.successful
+                and candidate.reporter_priority > previous.reporter_priority
+            )
+        ):
             samples[sample_index] = candidate
 
         complete = all(index in samples for index in range(sample_count))

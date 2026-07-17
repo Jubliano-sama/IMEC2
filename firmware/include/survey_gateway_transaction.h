@@ -10,6 +10,7 @@
 #define SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK 0x01u
 #define SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK 0x02u
 #define SURVEY_GATEWAY_TRANSACTION_RECENT_COUNT 4u
+#define SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS 3000u
 
 enum survey_gateway_transaction_result {
     SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK = 0,
@@ -34,6 +35,12 @@ struct survey_gateway_drive_state {
     bool pair_observation_active;
     bool cleanup_pending;
     bool boundary_pending;
+    bool response_ack_settle_pending;
+};
+
+struct survey_gateway_response_ack_settle {
+    uint64_t deadline_ms;
+    bool active;
 };
 
 struct survey_gateway_transaction_recent {
@@ -106,6 +113,14 @@ bool survey_gateway_transaction_cleanup_pending(
     const struct survey_gateway_transaction *context);
 enum survey_gateway_drive_action survey_gateway_drive_action(
     const struct survey_gateway_drive_state *state);
+void survey_gateway_response_ack_settle_init(
+    struct survey_gateway_response_ack_settle *state);
+void survey_gateway_response_ack_settle_note_result(
+    struct survey_gateway_response_ack_settle *state,
+    uint64_t now_ms);
+bool survey_gateway_response_ack_settle_pending(
+    struct survey_gateway_response_ack_settle *state,
+    uint64_t now_ms);
 bool survey_gateway_transaction_request_fingerprint(
     const struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,

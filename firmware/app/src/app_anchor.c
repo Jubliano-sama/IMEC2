@@ -212,8 +212,11 @@ static uint16_t gateway_survey_pair_failure_count;
 static uint16_t gateway_survey_discovery_failure_count;
 static enum gateway_command_event_reason gateway_survey_terminal_failure_reason;
 static uint16_t gateway_survey_pair_result_mask;
-static uint16_t gateway_survey_pair_range_failure_count;
+static uint16_t gateway_survey_pair_initiator_unusable_mask;
+static uint16_t gateway_survey_pair_responder_unusable_mask;
 static bool gateway_survey_pair_observation_active;
+static struct survey_gateway_response_ack_settle
+    gateway_survey_response_ack_settle;
 static struct app_gateway_survey_observability_state
     gateway_survey_observability;
 #if DEVICE_ROLE == ROLE_GATEWAY

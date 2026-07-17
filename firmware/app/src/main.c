@@ -20,6 +20,7 @@
 #include "route.h"
 #include "serial_frame.h"
 #include "survey.h"
+#include "survey_gateway_transaction.h"
 #include "uwb_ble_courtesy.h"
 
 #include <zephyr/kernel.h>
@@ -175,6 +176,12 @@ BUILD_ASSERT(SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT > 0u &&
              "default survey discovery slots must fit survey TLV limits");
 BUILD_ASSERT(SURVEY_RESULT_MESH_SLOT_MS > ROUTE_GATEWAY_ACK_TIMEOUT_MS,
              "survey result mesh slots must leave room for one tracked TX ACK wait");
+BUILD_ASSERT(SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS >=
+             (NODE_COMM_PROTOCOL_RESPONSE_RETRY_BACKOFF_MAX_MS +
+              APP_MESH_DIRECT_GATEWAY_ACK_RX_MS +
+              APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS +
+              APP_MESH_DIRECT_GATEWAY_SURVEY_SERVICE_GUARD_MS),
+             "survey response settle must cover the maximum response retry and ACK window");
 #if IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED
 BUILD_ASSERT(IMEC_HIGH_DEBUG_ANCHOR_SLOT < UWB_DISCOVERY_SLOT_COUNT,
              "flashed high-debug anchor slot must fit the UWB discovery slot field");

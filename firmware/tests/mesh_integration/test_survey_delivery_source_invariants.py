@@ -15,6 +15,7 @@ NODE_COMM_APP = (ROOT / "app/src/app_node_comm.c").read_text()
 CONFIG = (ROOT / "app/src/app_config.h").read_text()
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 PERSISTENCE = (ROOT / "app/src/app_mesh_persistence.c").read_text()
+SURVEY_HEADER = (ROOT / "include/survey.h").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -152,6 +153,71 @@ assert "survey_sample_validate(&sample)" in pair_accept
 assert "packet->session_id != sample.pair.survey_id" in pair_accept
 assert "packet->src_id != sample.pair.initiator_id" in pair_accept
 assert "packet->src_id != sample.pair.responder_id" in pair_accept
+assert "survey_sample_distance_usable(&sample)" in pair_accept, (
+    "gateway pair handling must distinguish usable geometry from diagnostic samples"
+)
+usable_check = pair_accept.index("survey_sample_distance_usable(&sample)")
+sample_consumed = pair_accept.index(
+    "gateway_survey_pair_result_mask |= sample_bit"
+)
+assert usable_check < sample_consumed, (
+    "an unusable pair distance must not consume its sample index"
+)
+unusable_path = pair_accept[usable_check:sample_consumed]
+assert "return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;" in unusable_path, (
+    "an unusable peer report must remain ACK-eligible while another peer can report"
+)
+assert "gateway_survey_pair_range_failure_count++" not in unusable_path, (
+    "one unusable peer report must not make a later usable peer report fail the pair"
+)
+rerange_limit = re.search(
+    r"#define\s+SURVEY_GATEWAY_PAIR_MAX_RERUNS\s+(\d+)u",
+    SURVEY_HEADER,
+)
+assert rerange_limit is not None, "pair reranging must have an explicit bound"
+assert int(rerange_limit.group(1)) == 2, (
+    "the conservative recovery policy permits two automatic reruns"
+)
+for reporter_mask in (
+    "gateway_survey_pair_initiator_unusable_mask",
+    "gateway_survey_pair_responder_unusable_mask",
+):
+    assert reporter_mask in pair_accept, (
+        "unusable results must retain reporter identity so one reporter's duplicate "
+        "cannot masquerade as both pair participants"
+    )
+assert "packet->src_id == sample.pair.initiator_id" in pair_accept
+assert "survey_pair_missing_samples_all_unusable(" in pair_accept, (
+    "the second participant's unusable report must trigger recovery immediately"
+)
+for required_rerange_input in (
+    "sample.pair.sample_count",
+    "gateway_survey_pair_result_mask",
+    "gateway_survey_pair_initiator_unusable_mask",
+    "gateway_survey_pair_responder_unusable_mask",
+):
+    assert required_rerange_input in unusable_path
+assert "k_work_reschedule(&gateway_survey_work, K_NO_WAIT)" in unusable_path, (
+    "complete unusable coverage from both reporters must bypass the long window"
+)
+
+finalize_pair = function_body(ANCHOR, "gateway_survey_finalize_pair_observation")
+rerun_start = finalize_pair.index("survey_gateway_auto_rerun_pair(")
+rerun_end = finalize_pair.index(
+    "event = gateway_observability_event(", rerun_start
+)
+rerun_path = finalize_pair[rerun_start:rerun_end]
+assert "== PROTO_OK" in rerun_path
+assert "GATEWAY_SURVEY_PAIR_FINALIZE_RETRY" in rerun_path
+for forbidden_accounting in (
+    "gateway_survey_pair_success_count++",
+    "gateway_survey_pair_failure_count++",
+    "survey_gateway_next_pair(",
+    "gateway_survey_context.next_pair_index",
+):
+    assert forbidden_accounting not in rerun_path, (
+        "reranging the retained pair must not complete, duplicate, or skip pair accounting"
+    )
 duplicate_sample = pair_accept[
     pair_accept.index("gateway_survey_pair_result_mask & sample_bit") :
     pair_accept.index("gateway_survey_pair_result_mask |= sample_bit")

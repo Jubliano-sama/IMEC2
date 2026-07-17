@@ -830,7 +830,7 @@ static void test_stop_during_resuming_does_not_rebase_retry_twice(void)
     assert(node_comm_acquire(&comm, 1910u, &lease) == 0);
 }
 
-static void test_all_delivery_profiles_have_fixed_priority_order(void)
+static void test_all_delivery_profiles_use_priority_then_fifo_order(void)
 {
     struct node_comm comm;
     const enum node_comm_delivery_profile profiles[] = {
@@ -842,8 +842,8 @@ static void test_all_delivery_profiles_have_fixed_priority_order(void)
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
     };
     const enum node_comm_delivery_profile expected[] = {
-        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
         NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
         NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
@@ -1283,7 +1283,7 @@ int main(void)
     test_pause_expiry_while_quiescing_requires_forced_reclaim();
     test_pause_then_preserving_stop_rebases_only_retry_timer();
     test_stop_during_resuming_does_not_rebase_retry_twice();
-    test_all_delivery_profiles_have_fixed_priority_order();
+    test_all_delivery_profiles_use_priority_then_fifo_order();
     test_gateway_confirmation_is_exact_and_does_not_hold_scheduler();
     test_late_gateway_confirmation_cannot_revive_expired_delivery();
     test_backend_rf_starts_are_accounted_without_changing_retry_policy();

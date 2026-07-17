@@ -13,6 +13,8 @@ extern "C" {
 
 #define SURVEY_MIN_SAMPLE_COUNT 1u
 #define SURVEY_MAX_SAMPLE_COUNT 1000u
+#define SURVEY_MIN_USABLE_DISTANCE_MM 50
+#define SURVEY_GATEWAY_PAIR_MAX_RERUNS 2u
 /*
  * The wire format permits larger surveys, but the connected mesh runtime can
  * have one bounded reliable uplink per sample in flight. This value is a
@@ -208,6 +210,7 @@ enum survey_gateway_auto_stage {
 struct survey_gateway_auto_context {
     struct survey_pair pair;
     enum survey_gateway_auto_stage stage;
+    uint8_t pair_reruns_started;
     bool running;
     bool waiting;
 };
@@ -223,6 +226,12 @@ struct survey_gateway_auto_action {
 bool survey_sample_count_valid(uint16_t sample_count);
 int survey_pair_validate(const struct survey_pair *pair);
 int survey_sample_validate(const struct survey_sample *sample);
+bool survey_sample_distance_usable(const struct survey_sample *sample);
+bool survey_pair_missing_samples_all_unusable(
+    uint16_t sample_count,
+    uint16_t usable_mask,
+    uint16_t initiator_unusable_mask,
+    uint16_t responder_unusable_mask);
 uint64_t survey_sample_nonce(const struct survey_pair *pair, uint16_t sample_index);
 int survey_reachability_entry_validate(const struct survey_reachability_entry *entry);
 int survey_discovery_config_validate(const struct survey_discovery_config *config);
@@ -327,6 +336,8 @@ int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *contex
                                       enum command_id command_id,
                                       uint64_t target_id,
                                       uint32_t survey_id);
+int survey_gateway_auto_rerun_pair(
+    struct survey_gateway_auto_context *context);
 int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
                                     enum command_id command_id,
                                     uint64_t target_id,

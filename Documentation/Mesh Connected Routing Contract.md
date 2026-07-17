@@ -229,6 +229,10 @@ communication service reserves admission capacity for this class, while each
 protocol remains responsible for either consuming a terminal delivery event or
 explicitly abandoning its handle; superseding a request must atomically cancel
 and reap the old handle so terminal records cannot consume capacity forever.
+When the gateway has already queued the transport ACK owed for an accepted
+protocol response, a later gateway control flood cannot overtake that ACK.
+They share the highest service priority, so FIFO order releases the sender's
+response custody before the next command can require another response.
 
 A reliable backend may have only one datagram awaiting final acknowledgement.
 Additional reliable datagrams wait on that shared resource without consuming an
@@ -280,6 +284,28 @@ the gateway's required four-copy channel-5 control flood and return during the
 following channel-9 receive horizon; survey pair responses use the same
 90-second result deadline as the gateway transaction. The bounded control flood
 itself still requires exactly four real RF opportunities.
+
+After accepting a survey PREPARE or START response that advances to another
+control phase, the gateway keeps channel 9 available for one continuous 3000 ms
+response-ACK settle interval before starting the next channel-5 control flood.
+An exact duplicate response is ACKed and restarts that interval, because the
+duplicate proves the anchor did not receive an earlier ACK. Pair launch is not
+delayed by this rule once the final START response advances into ranging, since
+no later channel-5 survey control starts during that observation window.
+
+A survey sample is usable geometry only when its range status is `RANGE_OK`
+and its distance is greater than 50 mm. An unusable report remains ACK-eligible
+but does not consume the sample index, so the other pair participant may still
+supply a usable result before the continuous observation window ends. If both
+participants report the same sample, a usable result outranks an unusable one
+regardless of reporter priority; reporter priority only selects between results
+with the same usability. If both participants prove that every still-missing
+sample is unusable, the gateway does not wait out the remaining observation
+window: it cleans up both roles and repeats the complete PREPARE/START/range
+sequence. An unusable result still present at the end of the continuous window
+causes the same rerun even when only one participant reported it. Each pair has
+at most two reruns, so persistent bad geometry reaches one explicit pair
+failure instead of looping or being counted as success.
 
 The bounded-control-flood profile always runs four real RF opportunities, even
 when an earlier transmission succeeds, because a blind broadcast has no link
@@ -1114,6 +1140,12 @@ Useful tests or guards include:
 - Gateway-originated commands outrank local-origin click report delivery,
   normal payload relay, packet retries, route maintenance, and background mesh
   work at the first safe radio boundary.
+- An ACK already owed for an accepted protocol response runs before a later
+  gateway control flood, so sequential command phases cannot strand the
+  responder's single reliable-response owner.
+- Sequential survey controls also wait through the continuous response-ACK
+  settle interval, and an exact duplicate restarts it, so one lost ACK cannot
+  overlap the next phase's channel-5 flood.
 - The gateway BLE packet stream accepts a complete maximum-size click report;
   it must not reject a protocol-valid click payload as oversize. Under queue
   pressure, click records may displace lower-priority diagnostic or status

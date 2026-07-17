@@ -39,7 +39,7 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .priority = 210u,
     },
     [NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE] = {
-        .retry_delay_ms = 200u,
+        .retry_delay_ms = NODE_COMM_PROTOCOL_RESPONSE_RETRY_BASE_MS,
         .success_repeat_delay_ms = 0u,
         /*
          * A survey START result can become ready while the gateway is still
@@ -47,9 +47,10 @@ static const struct node_comm_profile_policy profile_policies[] = {
          * enough channel-9 opportunities to outlive that bounded blackout;
          * the caller's absolute deadline remains the final time bound.
          */
-        .max_attempts = 16u,
+        .max_attempts = NODE_COMM_PROTOCOL_RESPONSE_MAX_ATTEMPTS,
         .successful_attempts_required = 1u,
-        .retry_backoff_shift_cap = 3u,
+        .retry_backoff_shift_cap =
+            NODE_COMM_PROTOCOL_RESPONSE_RETRY_SHIFT_CAP,
         .priority = 220u,
     },
     [NODE_COMM_PROFILE_CONTROL_RESPONSE] = {
@@ -58,7 +59,11 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .max_attempts = 4u,
         .successful_attempts_required = 1u,
         .retry_backoff_shift_cap = 3u,
-        .priority = 250u,
+        /*
+         * Match bounded control so FIFO preserves an ACK already owed for an
+         * accepted response before a later gateway command starts its flood.
+         */
+        .priority = 255u,
     },
     [NODE_COMM_PROFILE_BEST_EFFORT] = {
         .retry_delay_ms = 0u,

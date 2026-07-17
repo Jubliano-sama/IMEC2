@@ -50,6 +50,47 @@ static void test_pair_and_sample_validation(void)
     assert(survey_sample_validate(&value) == PROTO_OK);
 }
 
+static void test_sample_distance_usability(void)
+{
+    struct survey_sample value = sample();
+
+    value.distance_mm = -4726;
+    assert(!survey_sample_distance_usable(&value));
+
+    value.distance_mm = 0;
+    assert(!survey_sample_distance_usable(&value));
+
+    value.distance_mm = SURVEY_MIN_USABLE_DISTANCE_MM;
+    assert(!survey_sample_distance_usable(&value));
+
+    value.distance_mm = SURVEY_MIN_USABLE_DISTANCE_MM + 1;
+    assert(survey_sample_distance_usable(&value));
+
+    value.range_status = RANGE_RX_TIMEOUT;
+    value.distance_mm = 4726;
+    assert(!survey_sample_distance_usable(&value));
+}
+
+static void test_missing_samples_require_unusable_from_both_reporters(void)
+{
+    const uint16_t sample_0 = UINT16_C(1) << 0;
+    const uint16_t sample_1 = UINT16_C(1) << 1;
+    const uint16_t sample_2 = UINT16_C(1) << 2;
+
+    assert(!survey_pair_missing_samples_all_unusable(
+        0u, 0u, sample_0, sample_0));
+    assert(!survey_pair_missing_samples_all_unusable(
+        17u, 0u, UINT16_MAX, UINT16_MAX));
+    assert(!survey_pair_missing_samples_all_unusable(
+        3u, sample_1, sample_0 | sample_2, 0u));
+    assert(!survey_pair_missing_samples_all_unusable(
+        3u, sample_1, sample_0 | sample_2, sample_0));
+    assert(survey_pair_missing_samples_all_unusable(
+        3u, sample_1, sample_0 | sample_2, sample_0 | sample_2));
+    assert(!survey_pair_missing_samples_all_unusable(
+        3u, sample_0 | sample_1 | sample_2, UINT16_MAX, UINT16_MAX));
+}
+
 static void test_sample_nonce_is_unique_across_sequence_wrap(void)
 {
     struct survey_sample value = sample();
@@ -1641,6 +1682,103 @@ static void test_gateway_auto_sequences_prepare_and_start_actions(void)
     assert(auto_context.stage == SURVEY_GATEWAY_AUTO_IDLE);
 }
 
+static void test_gateway_auto_reranges_current_pair_without_advancing_plan(void)
+{
+    const struct survey_pair pair = {
+        .survey_id = 0xAABBCCDDu,
+        .initiator_id = 0x1111000000000001ull,
+        .responder_id = 0x2222000000000002ull,
+        .sample_count = 1u,
+    };
+    struct survey_gateway_context gateway_context = {
+        .survey_id = pair.survey_id,
+        .sample_count = pair.sample_count,
+        .pairs = {{
+            .initiator_id = pair.initiator_id,
+            .responder_id = pair.responder_id,
+        }},
+        .pair_count = 1u,
+        .next_pair_index = 1u,
+        .pairs_planned = true,
+    };
+    struct survey_gateway_auto_context auto_context = {
+        .pair = pair,
+        .stage = SURVEY_GATEWAY_AUTO_LOAD_PAIR,
+        .running = true,
+    };
+    struct survey_gateway_auto_context invalid_context = auto_context;
+    const enum survey_gateway_auto_stage expected_stages[] = {
+        SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR,
+        SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER,
+        SURVEY_GATEWAY_AUTO_START_RESPONDER,
+        SURVEY_GATEWAY_AUTO_START_INITIATOR,
+    };
+    const uint64_t expected_targets[] = {
+        pair.initiator_id,
+        pair.responder_id,
+        pair.responder_id,
+        pair.initiator_id,
+    };
+    struct survey_gateway_auto_action action = {0};
+    bool launched = false;
+    bool skipped = false;
+
+    invalid_context.waiting = true;
+    assert(survey_gateway_auto_rerun_pair(&invalid_context) == PROTO_ERR_BUSY);
+    invalid_context = auto_context;
+    invalid_context.stage = SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER;
+    assert(survey_gateway_auto_rerun_pair(&invalid_context) == PROTO_ERR_STALE);
+
+    for (uint8_t rerun = 1u;
+         rerun <= SURVEY_GATEWAY_PAIR_MAX_RERUNS;
+         rerun++) {
+        assert(survey_gateway_auto_rerun_pair(&auto_context) == PROTO_OK);
+        assert(gateway_context.next_pair_index == 1u);
+        assert(auto_context.pair_reruns_started == rerun);
+        assert(auto_context.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
+        assert(memcmp(&auto_context.pair, &pair, sizeof(pair)) == 0);
+
+        for (size_t i = 0u;
+             i < sizeof(expected_stages) / sizeof(expected_stages[0]);
+             i++) {
+            memset(&action, 0, sizeof(action));
+            assert(survey_gateway_auto_next_action(&auto_context,
+                                                   &gateway_context,
+                                                   &action) == PROTO_OK);
+            assert(!action.complete);
+            assert(action.stage == expected_stages[i]);
+            assert(action.target_id == expected_targets[i]);
+            assert(memcmp(&action.pair, &pair, sizeof(pair)) == 0);
+            assert(gateway_context.next_pair_index == 1u);
+            assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+            assert(survey_gateway_auto_note_result(&auto_context,
+                                                   action.command_id,
+                                                   action.target_id,
+                                                   action.pair.survey_id,
+                                                   COMMAND_OK,
+                                                   &launched,
+                                                   &skipped) == PROTO_OK);
+            assert(!skipped);
+            assert(launched ==
+                   (expected_stages[i] == SURVEY_GATEWAY_AUTO_START_INITIATOR));
+        }
+    }
+
+    assert(survey_gateway_auto_rerun_pair(&auto_context) == PROTO_ERR_NO_SPACE);
+    assert(auto_context.pair_reruns_started ==
+           SURVEY_GATEWAY_PAIR_MAX_RERUNS);
+    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_LOAD_PAIR);
+    assert(memcmp(&auto_context.pair, &pair, sizeof(pair)) == 0);
+    assert(gateway_context.next_pair_index == 1u);
+
+    memset(&action, 0, sizeof(action));
+    assert(survey_gateway_auto_next_action(&auto_context,
+                                           &gateway_context,
+                                           &action) == PROTO_OK);
+    assert(action.complete);
+    assert(gateway_context.next_pair_index == 1u);
+}
+
 static void test_gateway_auto_skips_pair_on_failed_command_result(void)
 {
     struct survey_gateway_context context;
@@ -1839,6 +1977,8 @@ int main(void)
 {
     test_sample_count_validation();
     test_pair_and_sample_validation();
+    test_sample_distance_usability();
+    test_missing_samples_require_unusable_from_both_reporters();
     test_sample_nonce_is_unique_across_sequence_wrap();
     test_sample_tlvs_include_required_fields();
     test_reach_request_tlvs_include_survey_and_duration();
@@ -1873,6 +2013,7 @@ int main(void)
     test_pair_planner_caps_degree_and_is_report_order_independent();
     test_pair_planner_reaches_six_degree_ceiling_for_50_anchors();
     test_gateway_auto_sequences_prepare_and_start_actions();
+    test_gateway_auto_reranges_current_pair_without_advancing_plan();
     test_gateway_auto_skips_pair_on_failed_command_result();
     test_reachability_plan_rejects_invalid_graph_or_capacity();
     test_result_packet_is_diagnostic_not_click();

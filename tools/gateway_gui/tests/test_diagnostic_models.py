@@ -183,6 +183,27 @@ class SurveyAndClickTests(unittest.TestCase):
             model.observe_pair_packet(duplicate_failure)
             self.assertEqual(len(model.pairs), 1)
 
+    def test_usable_report_wins_over_unusable_reporter_priority(self):
+        for records in (
+            (
+                pair_result(1, 2, -4726, 0, 1, reporter=1),
+                pair_result(1, 2, 1250, 0, 2, reporter=2),
+            ),
+            (
+                pair_result(1, 2, 1250, 0, 1, reporter=2),
+                pair_result(1, 2, -4726, 0, 2, reporter=1),
+            ),
+        ):
+            model = SurveyGeometryModel()
+            for record in records:
+                model.observe_pair_packet(record)
+
+            self.assertEqual(len(model.pairs), 1)
+            self.assertAlmostEqual(
+                next(iter(model.pairs.values())).distance_m, 1.25
+            )
+            self.assertEqual(model.failures, set())
+
     def test_pair_mutation_invalidates_existing_solution_generation(self):
         model = SurveyGeometryModel()
         model.begin_survey(40, host_session_id=1, host_sequence=2)

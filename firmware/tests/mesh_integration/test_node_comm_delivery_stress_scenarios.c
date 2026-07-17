@@ -283,6 +283,78 @@ static void test_protocol_response_survives_bounded_receiver_blackout(void)
     assert(node_comm_pending_count(&response_comm) == 0u);
 }
 
+static void test_owed_gateway_ack_precedes_later_survey_control(void)
+{
+    enum {
+        SURVEY_PHASE_COUNT = 3,
+        BOUNDED_CONTROL_RF_OPPORTUNITIES = 4,
+    };
+    struct node_comm comm;
+    uint64_t now_ms = 0u;
+
+    node_comm_init(&comm);
+    assert(node_comm_start(&comm, now_ms) == 0);
+
+    for (uint32_t phase = 0u; phase < SURVEY_PHASE_COUNT; phase++) {
+        struct node_comm_request owed_ack = request_for(
+            NODE_COMM_PROFILE_CONTROL_RESPONSE,
+            5000u + phase,
+            UINT32_C(0x45d9f3b) * (phase + 1u));
+        struct node_comm_request next_control = request_for(
+            NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+            6000u + phase,
+            UINT32_C(0x27d4eb2d) * (phase + 1u));
+        struct node_comm_terminal_event event;
+        struct node_comm_lease lease;
+        uint32_t ack_handle;
+        uint32_t control_handle;
+
+        /*
+         * Accepting one survey command result owes its gateway ACK before
+         * driving the next phase. The later control must not overtake that
+         * already-queued ACK, or the anchor's response single-flight remains
+         * occupied and cannot carry the next phase result.
+         */
+        ack_handle = submit(&comm, &owed_ack, now_ms);
+        control_handle = submit(&comm, &next_control, now_ms);
+
+        assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
+        assert(lease.handle == ack_handle);
+        assert(node_comm_lease_note_rf_started(
+                   &comm, &lease, now_ms) == 0);
+        assert(node_comm_lease_complete(
+                   &comm, &lease,
+                   NODE_COMM_DELIVERY_SUCCEEDED, now_ms) == 0);
+        event = take_terminal(&comm, ack_handle);
+        assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+
+        for (uint8_t attempt = 1u;
+             attempt <= BOUNDED_CONTROL_RF_OPPORTUNITIES;
+             attempt++) {
+            uint64_t due_ms;
+
+            assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
+            assert(lease.handle == control_handle);
+            assert(lease.attempt_number == attempt);
+            assert(node_comm_lease_note_rf_started(
+                       &comm, &lease, now_ms) == 0);
+            assert(node_comm_lease_complete(
+                       &comm, &lease,
+                       NODE_COMM_DELIVERY_SUCCEEDED, now_ms) == 0);
+            if (attempt < BOUNDED_CONTROL_RF_OPPORTUNITIES) {
+                assert(node_comm_next_service_due_ms(
+                    &comm, now_ms, &due_ms));
+                now_ms = due_ms;
+            }
+        }
+        event = take_terminal(&comm, control_handle);
+        assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+        assert(event.attempts_started == BOUNDED_CONTROL_RF_OPPORTUNITIES);
+        assert(node_comm_pending_count(&comm) == 0u);
+        now_ms++;
+    }
+}
+
 static void test_fifty_anchor_gateway_confirmation_sweep(void)
 {
     enum { ANCHOR_COUNT = 50 };
@@ -378,6 +450,7 @@ int main(void)
     test_fifty_response_sweep_eventually_delivers();
     test_persistent_collision_exhausts_then_queue_recovers();
     test_protocol_response_survives_bounded_receiver_blackout();
+    test_owed_gateway_ack_precedes_later_survey_control();
     test_fifty_anchor_gateway_confirmation_sweep();
 
     return 0;
