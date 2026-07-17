@@ -1,0 +1,878 @@
+{
+  "summary": {
+    "pages_validated": 14,
+    "pages_missing": 0,
+    "sections_validated": 56,
+    "sections_missing": 0,
+    "total_errors": 0,
+    "total_warnings": 108,
+    "is_valid": true
+  },
+  "errors": [],
+  "warnings": [
+    {
+      "file": "README.md",
+      "line": 8,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "README.md",
+      "line": 28,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "README.md",
+      "line": 32,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "README.md",
+      "line": 32,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "README.md",
+      "line": 36,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "README.md",
+      "line": 36,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 10,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 33,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 37,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 38,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 39,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 41,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 43,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 77,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 79,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 81,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 83,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 85,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 93,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "01_product-roles-and-firmware-lines.md",
+      "line": 106,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "06_anchor-identity-discovery-and-assignment.md",
+      "line": 10,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "06_anchor-identity-discovery-and-assignment.md",
+      "line": 37,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "06_anchor-identity-discovery-and-assignment.md",
+      "line": 41,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "06_anchor-identity-discovery-and-assignment.md",
+      "line": 43,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "06_anchor-identity-discovery-and-assignment.md",
+      "line": 43,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "07_anchor-self-setup-survey-and-geometry.md",
+      "line": 11,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "07_anchor-self-setup-survey-and-geometry.md",
+      "line": 38,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "07_anchor-self-setup-survey-and-geometry.md",
+      "line": 38,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "07_anchor-self-setup-survey-and-geometry.md",
+      "line": 40,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "07_anchor-self-setup-survey-and-geometry.md",
+      "line": 44,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "07_anchor-self-setup-survey-and-geometry.md",
+      "line": 132,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../Documentation/narrative%28user%20story%29.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 10,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 36,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 49,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 57,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 76,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 84,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 100,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 115,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 128,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 129,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 132,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "10_build-presets-and-configuration.md",
+      "line": 136,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "11_verified-deployment-and-qualification.md",
+      "line": 10,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "11_verified-deployment-and-qualification.md",
+      "line": 45,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "11_verified-deployment-and-qualification.md",
+      "line": 63,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "11_verified-deployment-and-qualification.md",
+      "line": 105,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "11_verified-deployment-and-qualification.md",
+      "line": 107,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 10,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 11,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 12,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 13,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 14,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 15,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 47,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 51,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 51,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 52,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 56,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 56,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 56,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 68,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 88,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 90,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 98,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 108,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 108,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 112,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 114,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 114,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 116,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 116,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 116,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 116,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "12_testing-simulation-and-release-evidence.md",
+      "line": 116,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 10,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 11,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 12,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 23,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 24,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 25,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 40,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 40,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 51,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 53,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 53,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 55,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 55,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 55,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 71,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 75,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 108,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 109,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 112,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 114,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 124,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 126,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 126,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 128,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 128,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 130,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 130,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 132,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 134,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 136,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 136,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 138,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENTS.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    },
+    {
+      "file": "13_hardware-bring-up-and-troubleshooting.md",
+      "line": 138,
+      "severity": "warning",
+      "category": "link",
+      "message": "Link to '../../AGENT_KNOWN_ISSUES.md' not defined in TOC",
+      "fix_hint": "Verify the target file exists or update the link"
+    }
+  ]
+}

@@ -1,0 +1,661 @@
+project:
+  name: "IMEC2"
+  description: "A robust UWB-first experience-sampling system that turns participant clicks into timestamped, spatially contextual research data through clickers, anchors, a connected-routing mesh, and a BLE gateway."
+  repo_base_url: "https://github.com/Jubliano-sama/IMEC2/blob"
+  ref_commit_hash: "f6594e41b57f5fd612aba182e0bd13cbbdd0c621"
+  updated_at: "2026-07-17"
+
+pages:
+  - id: imec2-00-start-here
+    title: "Start Here: From the User Story to the System"
+    filename: "README.md"
+    description: "Begin with the Living Vitality Hub research story, follow one participant click, and choose a clickable path into the system details."
+    source_files:
+      - "README.md"
+      - "Documentation/narrative(user story).md"
+      - "Documentation/Customer Needs.md"
+      - "Documentation/Stakeholder Requirements.md"
+      - "Documentation/user requirements.md"
+    sections:
+      - id: imec2-00-start-here-research-story
+        title: "The Research Story"
+        description: "Explain the office experience-sampling problem, the participant experience, and why exact time plus passive location matter."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-00-start-here-system-response
+        title: "How IMEC2 Answers the User Story"
+        description: "Connect participant intent to the clicker, anchors, gateway, host, and downstream research data without beginning from repository folders."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["flowchart"]
+      - id: imec2-00-start-here-robustness-promise
+        title: "The Robustness Promise"
+        description: "State the no-silent-stall, no-data-loss, and no-false-success principles that shape every later subsystem."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-00-start-here-reading-path
+        title: "Follow the Story"
+        description: "Render a prominent linked reading path through every numbered page, plus shorter role-based paths for researchers, firmware developers, and bench operators."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-13-bring-up-and-troubleshooting
+      - imec2-01-product-roles
+      - imec2-02-click-to-research-data
+      - imec2-07-anchor-self-setup
+      - imec2-09-host-tools-and-observability
+
+  - id: imec2-01-product-roles
+    title: "Product Roles and Firmware Lines"
+    filename: "01_product-roles-and-firmware-lines.md"
+    description: "Understand what the production clicker, anchor, and gateway own, and keep bench, ML, debug, and legacy images in their proper scope."
+    source_files:
+      - "AGENTS.md"
+      - "CODEMAP.md"
+      - "firmware/README.md"
+      - "firmware/app/CMakeLists.txt"
+      - "firmware/app/src/app_config.h"
+      - "firmware/app/src/main.c"
+      - "firmware/app/conf/mesh-clicker.conf"
+      - "firmware/app/conf/mesh-anchor.conf"
+      - "firmware/app/conf/role-gateway.conf"
+    sections:
+      - id: imec2-01-product-roles-production-candidate-line
+        title: "The Production-Candidate Line"
+        description: "Define mesh_clicker, mesh_anchor, and mesh_gateway as the current product behavior source of truth."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-01-product-roles-role-ownership
+        title: "Role Ownership and Boundaries"
+        description: "Describe clicker, anchor, and gateway responsibilities in terms of the participant workflow and data custody."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-01-product-roles-nonproduction-lines
+        title: "Bench, ML, Debug, and Legacy Lines"
+        description: "Distinguish forced-hop traffic generators, ML collection presets, staged debug images, and legacy direct-role builds from deployable roles."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-01-product-roles-code-boundaries
+        title: "Core Logic and Zephyr Boundaries"
+        description: "Explain the native firmware core versus Zephyr hardware and role orchestration, with links forward to the subsystem pages."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-00-start-here
+      - imec2-02-click-to-research-data
+      - imec2-10-build-and-configuration
+      - imec2-11-verified-deployment
+
+  - id: imec2-02-click-to-research-data
+    title: "One Click, End to End"
+    filename: "02_one-click-end-to-end.md"
+    description: "Trace one participant button press through wake, discovery, ranging, report custody, mesh delivery, gateway streaming, and research ingestion."
+    source_files:
+      - "Documentation/From Click to Ranging, Developing a Robust UWB Gated Wake up Strategy.md"
+      - "Documentation/UWB+BLE Architecture 0.6.6.md"
+      - "firmware/app/src/app_clicker.c"
+      - "firmware/app/src/app_anchor.c"
+      - "firmware/app/src/app_mesh_report.c"
+      - "firmware/app/src/app_gateway_ble_stream.c"
+      - "firmware/src/report.c"
+      - "firmware/src/uwb_session.c"
+    sections:
+      - id: imec2-02-click-to-research-data-participant-action
+        title: "The Participant Action"
+        description: "Start from the physical click and explain the immediate device feedback and identity/session context."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-02-click-to-research-data-wake-discover-range
+        title: "Wake, Discover, and Range"
+        description: "Show courtesy, channel-5 wake coverage, discovery, scheduling, and DS-TWR as one bounded interaction."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["sequence"]
+      - id: imec2-02-click-to-research-data-report-delivery
+        title: "From Range Results to Gateway Custody"
+        description: "Follow local reports through anchor priority, connected routing, acknowledgements, and gateway semantic acceptance."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-02-click-to-research-data-research-record
+        title: "The Research Record"
+        description: "Explain what reaches the host, how timestamps and spatial evidence remain correlated, and where downstream study systems begin."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-01-product-roles
+      - imec2-03-uwb-ranging-and-power
+      - imec2-05-connected-mesh
+      - imec2-09-host-tools-and-observability
+
+  - id: imec2-03-uwb-ranging-and-power
+    title: "UWB Wake, Ranging, and Low-Power Radio"
+    filename: "03_uwb-wake-ranging-and-power.md"
+    description: "Understand the channel-5 timing model, DS-TWR exchange, DWM3000 constraints, and retained low-duty behavior behind a click."
+    source_files:
+      - "Documentation/UWB+BLE Architecture 0.6.6.md"
+      - "firmware/include/uwb.h"
+      - "firmware/include/uwb_session.h"
+      - "firmware/include/dwm3000_runtime.h"
+      - "firmware/include/dwm3000_timing.h"
+      - "firmware/src/uwb.c"
+      - "firmware/src/uwb_session.c"
+      - "firmware/src/dwm3000_runtime.c"
+      - "firmware/app/src/dwm3000_driver.c"
+      - "firmware/app/src/app_anchor_low_power_policy.h"
+    sections:
+      - id: imec2-03-uwb-ranging-and-power-channel-five-coverage
+        title: "Channel 5 as the Contact Lane"
+        description: "Explain wake trains, low-duty anchor scan coverage, quiet checks, and click priority."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-03-uwb-ranging-and-power-ranging-exchange
+        title: "The Scheduled DS-TWR Exchange"
+        description: "Show the selected-anchor schedule and poll, response, and final timing without exposing misleading implementation shorthand."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["sequence"]
+      - id: imec2-03-uwb-ranging-and-power-driver-contract
+        title: "DWM3000 Runtime Contract"
+        description: "Cover status polling instead of IRQ, SPI speed transitions, PHY configuration, deadlines, and retained configuration."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-03-uwb-ranging-and-power-energy-and-failure
+        title: "Power Budget and Fail-Closed Behavior"
+        description: "Relate radio duty and retained sleep to battery goals, and explain why incomplete or mistimed frames fail instead of producing fallback results."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-02-click-to-research-data
+      - imec2-04-protocol-and-data-model
+      - imec2-05-connected-mesh
+      - imec2-13-bring-up-and-troubleshooting
+
+  - id: imec2-04-protocol-and-data-model
+    title: "Protocol, Packets, and Data Contracts"
+    filename: "04_protocol-packets-and-data-contracts.md"
+    description: "Read the shared packet envelope, message types, TLVs, framing, identities, statuses, and cross-role capacity rules."
+    source_files:
+      - "Documentation/UWB+BLE Protocols and Strategies 0.3.12.2.md"
+      - "firmware/include/protocol.h"
+      - "firmware/include/report.h"
+      - "firmware/include/status.h"
+      - "firmware/include/serial_frame.h"
+      - "firmware/src/protocol.c"
+      - "firmware/src/report.c"
+      - "firmware/src/status.c"
+      - "firmware/src/serial_frame.c"
+    sections:
+      - id: imec2-04-protocol-and-data-model-envelope-and-framing
+        title: "Packet Envelope and Framing"
+        description: "Explain the binary envelope, CRC, COBS host framing, and strict validation boundaries."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-04-protocol-and-data-model-messages-and-tlvs
+        title: "Messages, Flags, and TLVs"
+        description: "Organize message families by participant clicks, routing, commands, status, diagnostics, and surveys rather than by enum order."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-04-protocol-and-data-model-identity-and-correlation
+        title: "Identity, Correlation, and Time"
+        description: "Describe source, destination, session, sequence, event, burst, packet age, and status fields that prevent cross-run confusion."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-04-protocol-and-data-model-capacity-contracts
+        title: "Capacity and Compatibility Contracts"
+        description: "Surface compile-time bounds, standard versus gateway-only frames, and versioned compatibility expectations."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-03-uwb-ranging-and-power
+      - imec2-05-connected-mesh
+      - imec2-07-anchor-self-setup
+      - imec2-09-host-tools-and-observability
+
+  - id: imec2-05-connected-mesh
+    title: "Connected Routing, Priority, and Reliable Delivery"
+    filename: "05_connected-routing-and-reliable-delivery.md"
+    description: "Understand the binding mesh contract: channel-5 contact, channel-9 events, routes, custody, preemption, retries, ACKs, and teardown."
+    source_files:
+      - "Documentation/Mesh Connected Routing Contract.md"
+      - "firmware/include/mesh.h"
+      - "firmware/include/mesh_relay.h"
+      - "firmware/include/mesh_runtime.h"
+      - "firmware/include/node_comm.h"
+      - "firmware/include/route.h"
+      - "firmware/src/mesh.c"
+      - "firmware/src/mesh_relay.c"
+      - "firmware/src/mesh_runtime.c"
+      - "firmware/src/node_comm.c"
+      - "firmware/src/route.c"
+      - "firmware/app/src/app_mesh_coordinator.c"
+    sections:
+      - id: imec2-05-connected-mesh-contract-invariants
+        title: "The Mesh Contract"
+        description: "Lead with the non-negotiable invariants and the shared communication-service boundary."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-05-connected-mesh-route-and-connect
+        title: "Find a Route and Establish Contact"
+        description: "Show route requests, proposals, accepts, event timing, and the separation between route knowledge and channel-9 timing."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["flowchart", "sequence"]
+      - id: imec2-05-connected-mesh-custody-and-acks
+        title: "Custody, Forwarding, and Acknowledgements"
+        description: "Explain local versus transit ownership, hop progress, gateway ACKs, duplicates, batches, and exactly-once terminal outcomes."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-05-connected-mesh-priority-and-recovery
+        title: "Priority, Retry, and Recovery"
+        description: "Connect click preemption, command priority, randomized exponential retry, invalidation, refresh, and bounded failure."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-04-protocol-and-data-model
+      - imec2-06-anchor-identity-and-assignment
+      - imec2-08-persistence-and-recovery
+      - imec2-12-testing-and-simulation
+
+  - id: imec2-06-anchor-identity-and-assignment
+    title: "Anchor Identity, Discovery, and Assignment"
+    filename: "06_anchor-identity-discovery-and-assignment.md"
+    description: "See how one common anchor image becomes a stable physical node, is discovered by the gateway, receives logical order, and persists assignment."
+    source_files:
+      - "firmware/include/device_identity.h"
+      - "firmware/include/discovery_assignment.h"
+      - "firmware/src/device_identity.c"
+      - "firmware/src/discovery_assignment.c"
+      - "firmware/app/src/app_device_identity.c"
+      - "firmware/app/src/app_gateway_assignment_publisher.c"
+      - "firmware/app/src/app_discovery_assignment_stack.h"
+      - "firmware/scripts/provision_mesh_anchor.py"
+      - "Documentation/Gateway Here-I-Am Stress Coverage.md"
+    sections:
+      - id: imec2-06-anchor-identity-and-assignment-stable-hardware-identity
+        title: "Stable Hardware Identity"
+        description: "Explain FICR-derived anchor identity and why production anchors share one exact mesh_anchor artifact."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-06-anchor-identity-and-assignment-discovery-and-claims
+        title: "Discovery and Here-I-Am Claims"
+        description: "Describe correlated discovery, claim timing, collision handling, and gateway acceptance."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-06-anchor-identity-and-assignment-table-publication
+        title: "Assignment Table Publication"
+        description: "Explain generations, slot/order assignment, ACK completion, duplicates, supersession, and capacity."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-06-anchor-identity-and-assignment-persistence-and-provisioning
+        title: "Persistence and Provisioning Evidence"
+        description: "Show how an assignment becomes durable and how the headless provisioning tool proves the complete lifecycle."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-05-connected-mesh
+      - imec2-07-anchor-self-setup
+      - imec2-08-persistence-and-recovery
+      - imec2-11-verified-deployment
+
+  - id: imec2-07-anchor-self-setup
+    title: "Anchor Self-Setup: Survey and Geometry"
+    filename: "07_anchor-self-setup-survey-and-geometry.md"
+    description: "Follow automated anchor discovery, pair planning, inter-anchor ranging, durable result delivery, and host-side 3D geometry solving."
+    source_files:
+      - "README.md"
+      - "Documentation/narrative(user story).md"
+      - "Documentation/UWB+BLE Protocols and Strategies 0.3.12.2.md"
+      - "firmware/include/survey.h"
+      - "firmware/include/survey_gateway_transaction.h"
+      - "firmware/include/survey_pair_lease.h"
+      - "firmware/src/survey.c"
+      - "firmware/src/survey_gateway_transaction.c"
+      - "firmware/src/survey_pair_lease.c"
+      - "firmware/app/src/app_anchor_survey_runtime.c"
+      - "firmware/app/src/app_mesh_gateway_command_flow.c"
+      - "tools/gateway_gui/anchor_geometry.py"
+    sections:
+      - id: imec2-07-anchor-self-setup-why-self-setup
+        title: "Why Self-Setup Exists"
+        description: "Tie automated geometry to the user story by removing manual localization-pole and anchor-position workflows."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-07-anchor-self-setup-discover-and-plan
+        title: "Discover Anchors and Plan a Connected Pair Graph"
+        description: "Explain measured reachability, bounded reports, reverse hints, and connected degree-bounded pair selection."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-07-anchor-self-setup-run-pair-survey
+        title: "Run the Pair Survey"
+        description: "Show gateway prepare/start coordination, anchor leases, DS-TWR samples, retries, cleanup, and correlated completion."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["sequence"]
+      - id: imec2-07-anchor-self-setup-solve-and-inspect-geometry
+        title: "Solve and Inspect the Geometry"
+        description: "Explain how pair distances and the approximate radio radius reach the host solver, including diagnostics for disconnected or ambiguous layouts."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-06-anchor-identity-and-assignment
+      - imec2-08-persistence-and-recovery
+      - imec2-09-host-tools-and-observability
+      - imec2-12-testing-and-simulation
+
+  - id: imec2-08-persistence-and-recovery
+    title: "Data Custody, Persistence, and Recovery"
+    filename: "08_data-custody-persistence-and-recovery.md"
+    description: "Understand how the system preserves exact work across queue pressure, radio failure, BLE backpressure, reset, and NVS faults."
+    source_files:
+      - "firmware/include/gateway_collection_journal.h"
+      - "firmware/include/gateway_membership.h"
+      - "firmware/include/node_transaction.h"
+      - "firmware/include/watchdog_adoption.h"
+      - "firmware/src/gateway_collection_journal.c"
+      - "firmware/src/gateway_membership.c"
+      - "firmware/src/node_transaction.c"
+      - "firmware/src/watchdog_adoption.c"
+      - "firmware/app/src/app_mesh_persistence.c"
+      - "firmware/app/src/app_gateway_collection_eack.c"
+      - "firmware/app/src/app_watchdog.c"
+    sections:
+      - id: imec2-08-persistence-and-recovery-custody-owners
+        title: "Who Owns Data at Each Boundary"
+        description: "Map local report, transit relay, gateway semantic, host-stream, and persistent ownership so success is never inferred too early."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-08-persistence-and-recovery-durable-state
+        title: "Durable State and Journals"
+        description: "Cover click/report custody, survey results, gateway collections, membership, generations, CRCs, tombstones, and replay."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-08-persistence-and-recovery-transaction-lifecycle
+        title: "Transaction and Terminal-State Lifecycle"
+        description: "Show accepted, duplicate, conflict, cleanup, abandoned, delivered, and retired states across retries and resets."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["state"]
+      - id: imec2-08-persistence-and-recovery-watchdog-and-backpressure
+        title: "Watchdogs, Backpressure, and Bounded Recovery"
+        description: "Explain progress leases, BLE reservation, retryable pressure, randomized backoff, and fail-closed startup restore gates."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-07-anchor-self-setup
+      - imec2-09-host-tools-and-observability
+      - imec2-11-verified-deployment
+      - imec2-12-testing-and-simulation
+
+  - id: imec2-09-host-tools-and-observability
+    title: "Gateway, Host Tools, and Observability"
+    filename: "09_gateway-host-tools-and-observability.md"
+    description: "Use the connected BLE edge, GUI, monitors, command telemetry, RTT records, and append-only captures without confusing host evidence with RF success."
+    source_files:
+      - "Documentation/Gateway BLE Streaming.md"
+      - "Documentation/Gateway Command Observability.md"
+      - "firmware/include/gateway_ble_transport.h"
+      - "firmware/src/gateway_ble_transport.c"
+      - "firmware/app/src/app_gateway_ble.c"
+      - "firmware/app/src/app_gateway_ble_stream.c"
+      - "firmware/app/src/app_gateway_command_observability.c"
+      - "tools/gateway_gui/README.md"
+      - "tools/gateway_gui/app.py"
+      - "tools/gateway_gui/protocol.py"
+      - "tools/gateway_gui/ble_transport.py"
+      - "tools/mesh_ble_route_monitor.py"
+    sections:
+      - id: imec2-09-host-tools-and-observability-gateway-edge
+        title: "The Gateway-to-PC Edge"
+        description: "Explain GATT ingress, prioritized record streaming, framing, reservations, and why BLE never carries mesh RF traffic."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-09-host-tools-and-observability-gui-and-geometry
+        title: "Gateway GUI and Geometry Views"
+        description: "Guide readers through live records, commands, diagnostics, survey status, and anchor geometry workflows."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-09-host-tools-and-observability-command-telemetry
+        title: "Command and Lifecycle Telemetry"
+        description: "Explain correlation IDs, stages, terminal events, delivery state, and semantic acceptance evidence."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-09-host-tools-and-observability-rtt-and-capture-tools
+        title: "RTT, Route Monitoring, and Durable Captures"
+        description: "Describe the roles of RTT, BLE route monitoring, JSONL capture, gaps, duplicates, and evidence limits."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-08-persistence-and-recovery
+      - imec2-10-build-and-configuration
+      - imec2-11-verified-deployment
+      - imec2-13-bring-up-and-troubleshooting
+
+  - id: imec2-10-build-and-configuration
+    title: "Build Presets, Configuration, and Repository Boundaries"
+    filename: "10_build-presets-and-configuration.md"
+    description: "Configure the native core and exact Zephyr role presets while keeping imported SDKs, product roles, and debug variants clearly separated."
+    source_files:
+      - "AGENTS.md"
+      - "CODEMAP.md"
+      - "firmware/CMakeLists.txt"
+      - "firmware/app/CMakeLists.txt"
+      - "firmware/app/Kconfig"
+      - "firmware/app/prj.conf"
+      - "firmware/app/prj-clicker.conf"
+      - "firmware/app/prj-gateway.conf"
+      - "firmware/app/app.overlay"
+      - "firmware/app/src/app_config.h"
+      - "firmware/app/conf/mesh-clicker.conf"
+      - "firmware/app/conf/mesh-anchor.conf"
+    sections:
+      - id: imec2-10-build-and-configuration-workspace-boundaries
+        title: "Workspace and Dependency Boundaries"
+        description: "Explain project-owned firmware, imported west dependencies, protected archive material, and the native-versus-Zephyr split."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-10-build-and-configuration-native-build
+        title: "Native Core Build"
+        description: "Document configuration, compilation, and test discovery for platform-independent logic."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-10-build-and-configuration-exact-role-presets
+        title: "Exact Zephyr Role Presets"
+        description: "Show the three production-candidate build commands and how CMake, Kconfig, role configs, and overlays compose each artifact."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-10-build-and-configuration-nonproduction-configuration
+        title: "Nonproduction Configuration"
+        description: "Explain when bench traffic, ML collection, connectivity smoke, legacy, and high-debug presets are appropriate."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-09-host-tools-and-observability
+      - imec2-11-verified-deployment
+      - imec2-12-testing-and-simulation
+      - imec2-01-product-roles
+
+  - id: imec2-11-verified-deployment
+    title: "Verified Mesh Deployment and Hardware Qualification"
+    filename: "11_verified-deployment-and-qualification.md"
+    description: "Build, qualify, and flash deployable mesh artifacts through the repository-owned evidence gate with exact preset and probe identity."
+    source_files:
+      - "AGENTS.md"
+      - ".github/workflows/mesh-deployment-policy.yml"
+      - "Documentation/Mesh Deployment Hardening Audit.md"
+      - "firmware/scripts/check_mesh_deployment_policy.py"
+      - "firmware/scripts/capture_stack_evidence.py"
+      - "firmware/scripts/verify_stack_evidence.py"
+      - "firmware/scripts/flash_verified_mesh.py"
+      - "firmware/include/stack_budget.h"
+      - "firmware/include/stack_diag_transport.h"
+      - "firmware/app/src/app_stack_diag.c"
+      - "firmware/app/src/app_stack_workload_diag.c"
+    sections:
+      - id: imec2-11-verified-deployment-eligibility-gate
+        title: "What Makes an Artifact Eligible"
+        description: "Explain exact preset checks, static RAM and stack evidence, policy headers, hashes, and role-specific workload requirements."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-11-verified-deployment-qualification-capture
+        title: "Qualification Capture"
+        description: "Document probe binding, TTY-backed pre-reset RTT, typed run and sample records, and manifest generation."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-11-verified-deployment-verified-flash
+        title: "Verified Flash Workflow"
+        description: "Show backup, staged programming, readback, evidence verification, one-time capture consumption, and failure behavior."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["flowchart"]
+      - id: imec2-11-verified-deployment-trust-boundary
+        title: "Trust Boundary and Bench Exceptions"
+        description: "State what local provenance proves, what it cannot attest, and why only explicitly documented bench or legacy images may bypass the deployable wrapper."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-10-build-and-configuration
+      - imec2-12-testing-and-simulation
+      - imec2-13-bring-up-and-troubleshooting
+      - imec2-08-persistence-and-recovery
+
+  - id: imec2-12-testing-and-simulation
+    title: "Testing, Simulation, and Release Evidence"
+    filename: "12_testing-simulation-and-release-evidence.md"
+    description: "Use unit tests, high-fidelity mesh scenarios, hardware models, exact role builds, and bench evidence as complementary proof."
+    source_files:
+      - "firmware/CMakeLists.txt"
+      - "firmware/tests/mesh_integration/README.md"
+      - "firmware/sim/mesh_sim.c"
+      - "firmware/sim/mesh_sim.h"
+      - "firmware/tests/mesh_integration/test_mesh_production_scenarios.c"
+      - "firmware/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c"
+      - "firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c"
+      - "firmware/tests/mesh_integration/test_gateway_ble_transport_model.c"
+      - "firmware/tests/mesh_integration/test_dwm3000_models.c"
+      - "Documentation/Mesh Integration Coverage Matrix 2026-07-12.md"
+      - "Documentation/Mesh Integration Simulator Adversarial Review 2026-07-11.md"
+    sections:
+      - id: imec2-12-testing-and-simulation-test-layers
+        title: "The Evidence Ladder"
+        description: "Explain native unit tests, mesh integration scenarios, hardware models, Zephyr component tests, exact builds, and real-board smoke tests."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-12-testing-and-simulation-simulator-contract
+        title: "What the Simulator Models"
+        description: "Cover complete airtime containment, collisions, radio timing, SPI, BLE credit, watchdog, stack, queue, route, and persistence constraints."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-12-testing-and-simulation-scenarios-and-invariants
+        title: "Scenario Sweeps and Source Invariants"
+        description: "Show broad adversarial coverage for clicks, routes, survey topology, assignment, backpressure, retries, and exactly-once outcomes."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-12-testing-and-simulation-required-gates
+        title: "Required Gates Before Hardware"
+        description: "Give the focused ctest, mesh_integration, hardware_models, role-build, and requested bench-evidence sequence, including stale-build cautions."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-11-verified-deployment
+      - imec2-13-bring-up-and-troubleshooting
+      - imec2-05-connected-mesh
+      - imec2-07-anchor-self-setup
+
+  - id: imec2-13-bring-up-and-troubleshooting
+    title: "Hardware Bring-Up and Troubleshooting"
+    filename: "13_hardware-bring-up-and-troubleshooting.md"
+    description: "Diagnose boards and full-stack behavior from exact preset identity through DWM3000, UWB, mesh, BLE, persistence, RTT, and qualification evidence."
+    source_files:
+      - "AGENT_KNOWN_ISSUES.md"
+      - "Documentation/HARDWARE_BRINGUP_DEBUG.md"
+      - "firmware/README.md"
+      - "firmware/app/app.overlay"
+      - "firmware/app/src/dwm3000_driver.c"
+      - "firmware/app/src/dwm3000_port.c"
+      - "firmware/app/src/app_high_debug.c"
+      - "tools/mesh_rtt_acceptance.py"
+      - "tools/twr_range_monitor.py"
+      - "tools/mesh_ble_route_monitor.py"
+    sections:
+      - id: imec2-13-bring-up-and-troubleshooting-first-principles
+        title: "Start With Identity and Evidence"
+        description: "Verify exact preset, ELF-reported role and device identity, probe-to-board mapping, wiring, and capture method before interpreting symptoms."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-13-bring-up-and-troubleshooting-staged-bring-up
+        title: "Staged Bring-Up"
+        description: "Walk from one device through anchor, multi-anchor, gateway, mesh, BLE, and complete click flows while preserving production-versus-debug distinctions."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+      - id: imec2-13-bring-up-and-troubleshooting-symptom-routing
+        title: "Route Symptoms to the Right Layer"
+        description: "Provide a decision flow for SPI and retained sleep, RF decode, ranging timing, route and ACK, persistence, BLE backpressure, watchdog, and stack evidence."
+        autogen: true
+        diagrams_needed: true
+        diagram_types: ["flowchart"]
+      - id: imec2-13-bring-up-and-troubleshooting-rtt-and-usb-gotchas
+        title: "RTT, USB, and Tooling Gotchas"
+        description: "Collect the proven TTY, pre-reset, direct USB access, pyOCD compatibility, transcript, and stale-process lessons without treating tooling failure as firmware evidence."
+        autogen: true
+        diagrams_needed: false
+        diagram_types: []
+    related_pages:
+      - imec2-12-testing-and-simulation
+      - imec2-00-start-here
+      - imec2-03-uwb-ranging-and-power
+      - imec2-09-host-tools-and-observability
+
+notes:
+  - "Navigation is narrative-first: README.md must present a clickable participant-to-research journey and link every numbered page in order."
+  - "Every generated page must begin with a relative breadcrumb back to README.md and end with Previous, Next, and Related links derived from related_pages."
+  - "On first mention, link roles and concepts to their canonical wiki page; prefer relative Markdown links and avoid duplicating long explanations."
+  - "The immediate previous and next page are included in related_pages for every numbered page; remaining entries are conceptual cross-links."
+  - "Production-candidate mesh_clicker, mesh_anchor, and mesh_gateway behavior must remain distinct from forced-hop bench, ML collection, staged debug, and legacy role lines."
+  - "Diagrams are requested only for the participant research loop, the end-to-end click sequence, DS-TWR timing, connected routing, survey control, transaction state, verified deployment, and symptom routing."
