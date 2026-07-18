@@ -6,8 +6,6 @@
 #include <errno.h>
 #include <string.h>
 
-#define ROUTE_REFRESH_STARTUP_DELAY_MS 500u
-#define ROUTE_REFRESH_PERIOD_MS 600000u
 #define ROUTE_REFRESH_PRE_RF_RETRY_MS 10u
 #define ROUTE_REFRESH_MAX_OUTER_RETRIES 8u
 #define ROUTE_REFRESH_RETRY_BASE_MS 100u
@@ -46,8 +44,6 @@ struct route_refresh_state {
     uint8_t resume_pending : 1;
     uint8_t absolute_deadline_valid : 1;
     uint8_t response_due_valid : 1;
-    uint8_t readiness_candidate : 1;
-    uint8_t ready : 1;
 };
 
 struct route_refresh_operation {
@@ -247,15 +243,8 @@ static void refresh_complete(int result)
         .result = result,
         .correlated = route_refresh.correlated,
     };
-    uint32_t generation = route_refresh.operation_generation;
-    uint32_t now_ms;
-    bool allowed;
     bool observe = route_refresh.forced && route_refresh.correlated &&
                    config != NULL && config->observe != NULL;
-
-    if (result == 0 && route_refresh.readiness_candidate) {
-        route_refresh.ready = true;
-    }
 
     route_refresh.active = false;
     route_refresh.forced = false;
@@ -264,35 +253,13 @@ static void refresh_complete(int result)
     route_refresh.absolute_deadline_valid = false;
     route_refresh.due_ms = 0u;
     route_refresh.scheduled = false;
-    route_refresh.readiness_candidate = false;
     refresh_reset_outer_attempt();
 
     app_node_comm_sync_unlock();
     if (observe) {
         config->observe(config->ctx, &event);
     }
-    allowed = config != NULL && config->allowed != NULL &&
-              config->allowed(config->ctx);
-    now_ms = config == NULL || config->now_ms == NULL ? 0u :
-             config->now_ms(config->ctx);
     (void)app_node_comm_sync_lock();
-    if (route_refresh.config != config ||
-        route_refresh.operation_generation != generation ||
-        route_refresh.paused || route_refresh.active) {
-        return;
-    }
-    if (allowed) {
-        route_refresh.active = true;
-        route_refresh.absolute_deadline_ms = refresh_deadline_add(
-            now_ms,
-            ROUTE_REFRESH_PERIOD_MS + ROUTE_REFRESH_PROTOCOL_DEADLINE_MS);
-        route_refresh.absolute_deadline_valid = true;
-        if (refresh_schedule(ROUTE_REFRESH_PERIOD_MS) < 0) {
-            route_refresh.active = false;
-            route_refresh.due_ms = 0u;
-            route_refresh.scheduled = false;
-        }
-    }
 }
 
 static bool refresh_failure_retryable(int ret)
@@ -453,7 +420,8 @@ static int refresh_prepare_outer(struct route_refresh_operation *operation,
                outbound->queued_at_ms != operation->snapshot.queued_at_ms) {
         return -EIO;
     }
-    if (outbound->payload_len != MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN) {
+    if (outbound->payload_len != MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN &&
+        outbound->payload_len != MESH_GATEWAY_ROUTE_ADV_POLICY_PAYLOAD_LEN) {
         return -EMSGSIZE;
     }
     if (outbound->packet.message_age_ms != 0u) {
@@ -553,7 +521,6 @@ static void refresh_work_handler(struct k_work *work)
         route_refresh.active = false;
         route_refresh.response_due_ms = 0u;
         route_refresh.response_due_valid = false;
-        route_refresh.readiness_candidate = false;
         app_node_comm_sync_unlock();
         return;
     }
@@ -769,26 +736,12 @@ void app_node_comm_gateway_route_refresh_init(
     }
 }
 
-bool app_node_comm_gateway_route_refresh_ready(void)
-{
-    bool ready = false;
-
-    if (app_node_comm_sync_lock() == 0) {
-        ready = route_refresh.config != NULL &&
-                route_refresh.config->gateway_role &&
-                route_refresh.ready;
-        app_node_comm_sync_unlock();
-    }
-    return ready;
-}
-
 static int route_refresh_request_bounded(
     uint32_t delay_ms,
     const char *reason,
     bool forced,
     const struct proto_packet *correlation,
-    uint32_t timeout_ms,
-    bool startup)
+    uint32_t timeout_ms)
 {
     const struct app_node_comm_gateway_route_refresh_config *config;
     uint32_t now_ms;
@@ -797,8 +750,7 @@ static int route_refresh_request_bounded(
     bool stop_role_scan = false;
     int ret;
 
-    if (timeout_ms == 0u || UINT32_MAX - delay_ms < timeout_ms ||
-        (startup && (forced || correlation != NULL))) {
+    if (timeout_ms == 0u || UINT32_MAX - delay_ms < timeout_ms) {
         return -EINVAL;
     }
     ret = app_node_comm_sync_lock();
@@ -848,7 +800,6 @@ static int route_refresh_request_bounded(
         route_refresh.retry_round = 0u;
         route_refresh.forced = true;
         route_refresh.correlated = correlation != NULL;
-        route_refresh.readiness_candidate = correlation != NULL;
         if (correlation != NULL) {
             route_refresh.correlation.flags = correlation->flags;
             route_refresh.correlation.session_id = correlation->session_id;
@@ -865,7 +816,6 @@ static int route_refresh_request_bounded(
         route_refresh.absolute_deadline_ms = refresh_deadline_add(
             now_ms, delay_ms + timeout_ms);
         route_refresh.absolute_deadline_valid = true;
-        route_refresh.readiness_candidate = startup;
     }
     (void)reason;
     route_refresh.active = true;
@@ -891,7 +841,6 @@ static int route_refresh_request_bounded(
         route_refresh.active = false;
         route_refresh.due_ms = 0u;
         route_refresh.scheduled = false;
-        route_refresh.readiness_candidate = false;
         if (forced) {
             route_refresh.forced = false;
             route_refresh.correlated = false;
@@ -903,17 +852,6 @@ out:
         config->stop_role_scan(config->ctx);
     }
     return ret;
-}
-
-void app_node_comm_gateway_route_refresh_start(void)
-{
-    (void)route_refresh_request_bounded(
-        ROUTE_REFRESH_STARTUP_DELAY_MS,
-        "startup",
-        false,
-        NULL,
-        ROUTE_REFRESH_PROTOCOL_DEADLINE_MS,
-        true);
 }
 
 int app_node_comm_gateway_route_refresh_request(
@@ -941,8 +879,7 @@ int app_node_comm_gateway_route_refresh_request_bounded(
                                          reason,
                                          forced,
                                          correlation,
-                                         timeout_ms,
-                                         false);
+                                         timeout_ms);
 }
 
 bool app_node_comm_gateway_route_refresh_pending_wait_ms(

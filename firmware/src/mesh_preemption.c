@@ -27,7 +27,6 @@ int mesh_prepare_click_preemption(struct mesh_relay *relay,
                                   struct mesh_click_preempt_plan *plan)
 {
     bool pending_local_click_report;
-    bool pending_transit_click_report;
 
     if (relay == NULL || plan == NULL) {
         return PROTO_ERR_ARG;
@@ -42,26 +41,22 @@ int mesh_prepare_click_preemption(struct mesh_relay *relay,
     pending_local_click_report =
         relay->pending.packet.msg_type == MSG_CLICK_REPORT &&
         relay->pending.packet.src_id == local_id;
-    pending_transit_click_report =
-        relay->pending.packet.msg_type == MSG_CLICK_REPORT &&
-        relay->pending.packet.src_id != local_id;
-
     if (pending_local_click_report) {
         copy_pending_click_report(&relay->pending, plan);
         plan->clear_outbox = true;
         plan->cancel_timeout = true;
-    } else if (!pending_transit_click_report && mesh_relay_can_defer_tx(relay)) {
+        plan->cancel_active_tx = true;
+    } else if (mesh_relay_can_defer_tx(relay)) {
         plan->save_outbox = true;
         plan->schedule_timeout = true;
-    } else {
-        plan->clear_outbox = true;
-        plan->cancel_timeout = true;
+        plan->cancel_active_tx = true;
     }
 
     /*
-     * Do not release relay->pending here.  The app transaction establishes an
-     * alternate owner first, then performs this cancellation as its commit.
+     * Non-deferrable work remains owned by the active runtime and resumes at
+     * the next safe radio boundary.  When cancellation is possible, do not
+     * release relay->pending here: the app transaction establishes an
+     * alternate owner first, then performs cancellation as its commit.
      */
-    plan->cancel_active_tx = true;
     return PROTO_OK;
 }

@@ -704,12 +704,17 @@ int mesh_relay_build_route_request(struct mesh_relay *relay,
                                                      now_ms);
 }
 
-int mesh_relay_capture_gateway_route_adv_snapshot(
+int mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
     struct mesh_relay *relay,
     uint32_t gateway_route_seq,
     uint32_t now_ms,
+    const struct operation_policy_set *operation_policy,
     struct mesh_gateway_route_adv_snapshot *snapshot)
 {
+    struct mesh_gateway_route_adv_snapshot captured = {0};
+    uint8_t operation_policy_len = 0u;
+    int ret;
+
     if (relay == NULL || snapshot == NULL ||
         relay->role != MESH_RELAY_ROLE_GATEWAY ||
         relay->local_id != relay->gateway_id ||
@@ -718,16 +723,37 @@ int mesh_relay_capture_gateway_route_adv_snapshot(
         return PROTO_ERR_ARG;
     }
 
-    memset(snapshot, 0, sizeof(*snapshot));
-    snapshot->gateway_route_seq = gateway_route_seq;
-    snapshot->queued_at_ms = now_ms;
-    snapshot->gateway_epoch = (uint16_t)relay->upstream.current_epoch;
-    snapshot->packet_seq = relay_next_seq(relay);
-    snapshot->gateway_capacity_state = relay_current_capacity_state(relay);
-    snapshot->capacity_validity_interval_ms =
+    if (operation_policy != NULL) {
+        ret = mesh_relay_operation_policy_encode_complete(
+            operation_policy,
+            captured.operation_policy_tlvs,
+            &operation_policy_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        captured.operation_policy_tlvs_len = operation_policy_len;
+        captured.operation_policy_present = true;
+    }
+    captured.gateway_route_seq = gateway_route_seq;
+    captured.queued_at_ms = now_ms;
+    captured.gateway_epoch = (uint16_t)relay->upstream.current_epoch;
+    captured.packet_seq = relay_next_seq(relay);
+    captured.gateway_capacity_state = relay_current_capacity_state(relay);
+    captured.capacity_validity_interval_ms =
         relay_current_capacity_validity_interval_ms(relay);
-    snapshot->valid = true;
+    captured.valid = true;
+    *snapshot = captured;
     return PROTO_OK;
+}
+
+int mesh_relay_capture_gateway_route_adv_snapshot(
+    struct mesh_relay *relay,
+    uint32_t gateway_route_seq,
+    uint32_t now_ms,
+    struct mesh_gateway_route_adv_snapshot *snapshot)
+{
+    return mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+        relay, gateway_route_seq, now_ms, NULL, snapshot);
 }
 
 int mesh_relay_build_gateway_route_adv_from_snapshot(
@@ -737,6 +763,7 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
 {
     struct gateway_route_adv_fields fields;
     size_t payload_len = 0u;
+    bool operation_policy_present;
     int ret;
 
     if (relay == NULL || snapshot == NULL || out == NULL ||
@@ -747,9 +774,28 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
         snapshot->gateway_capacity_state > RELAY_CAP_BLACK) {
         return PROTO_ERR_ARG;
     }
+    if (snapshot->operation_policy_tlvs_len >
+        sizeof(snapshot->operation_policy_tlvs)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(&fields, 0, sizeof(fields));
+    ret = mesh_relay_operation_policy_parse_exact(
+        snapshot->operation_policy_tlvs,
+        snapshot->operation_policy_tlvs_len,
+        &fields.operation_policy,
+        fields.operation_policy_tlvs,
+        &fields.operation_policy_tlvs_len,
+        &operation_policy_present);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (operation_policy_present != snapshot->operation_policy_present) {
+        return PROTO_ERR_MALFORMED;
+    }
+    fields.operation_policy_present = operation_policy_present;
 
     memset(out, 0, sizeof(*out));
-    memset(&fields, 0, sizeof(fields));
     fields.gateway_id = relay->gateway_id;
     fields.path.node_ids[0] = relay->gateway_id;
     fields.path.count = 1u;
@@ -796,14 +842,16 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     return PROTO_OK;
 }
 
-int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
-                                       uint32_t gateway_route_seq,
-                                       uint32_t now_ms,
-                                       struct mesh_outbound *out)
+int mesh_relay_build_gateway_route_adv_with_policy(
+    struct mesh_relay *relay,
+    uint32_t gateway_route_seq,
+    uint32_t now_ms,
+    const struct operation_policy_set *operation_policy,
+    struct mesh_outbound *out)
 {
     struct mesh_gateway_route_adv_snapshot snapshot;
-    int ret = mesh_relay_capture_gateway_route_adv_snapshot(
-        relay, gateway_route_seq, now_ms, &snapshot);
+    int ret = mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+        relay, gateway_route_seq, now_ms, operation_policy, &snapshot);
 
     if (ret != PROTO_OK) {
         return ret;
@@ -811,6 +859,15 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
     return mesh_relay_build_gateway_route_adv_from_snapshot(relay,
                                                             &snapshot,
                                                             out);
+}
+
+int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
+                                       uint32_t gateway_route_seq,
+                                       uint32_t now_ms,
+                                       struct mesh_outbound *out)
+{
+    return mesh_relay_build_gateway_route_adv_with_policy(
+        relay, gateway_route_seq, now_ms, NULL, out);
 }
 
 int mesh_relay_prepare_route_request_with_timing_flags(

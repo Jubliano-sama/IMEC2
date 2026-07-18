@@ -347,7 +347,8 @@ static bool run_workflow(size_t anchor_count)
     }
 
     collection_ms = discovery_assignment_collection_window_ms(
-        (uint8_t)anchor_count, DISCOVERY_ASSIGNMENT_MAX_HOPS);
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+        DISCOVERY_ASSIGNMENT_MAX_HOPS);
     CHECK(collection_ms != 0u, "zero collection count=%zu", anchor_count);
     for (uint8_t round = 0u;
          round < MAX_ROUNDS && gateway.claim_count < anchor_count; round++) {
@@ -796,7 +797,8 @@ static bool test_explicit_budget_clips_current_window_without_division(void)
     const uint32_t command_budget_ms = 60000u;
     const uint32_t natural_window_ms =
         discovery_assignment_collection_window_ms(
-            MAX_ANCHORS, DISCOVERY_ASSIGNMENT_MAX_HOPS);
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+            DISCOVERY_ASSIGNMENT_MAX_HOPS);
     const uint32_t remaining_ms = 24000u;
     uint8_t round_limit = gateway_command_budget_retry_limit(
         true, command_budget_ms, MAX_ROUNDS);

@@ -93,7 +93,7 @@ static void test_click_preemption_defers_collection_result(void)
     assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
 }
 
-static void test_click_preemption_cancels_non_collection_tx(void)
+static void test_click_preemption_retains_non_deferrable_tx(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(7u);
@@ -117,10 +117,13 @@ static void test_click_preemption_cancels_non_collection_tx(void)
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) == PROTO_OK);
     assert(!plan.save_outbox);
     assert(!plan.schedule_timeout);
-    assert(plan.clear_outbox);
-    assert(plan.cancel_timeout);
-    assert(plan.cancel_active_tx);
+    assert(!plan.clear_outbox);
+    assert(!plan.cancel_timeout);
+    assert(!plan.cancel_active_tx);
     assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.packet.msg_type == MSG_ANCHOR_HEARTBEAT);
+    assert(relay.pending.packet.src_id == ANCHOR_A);
+    assert(relay.pending.payload_len == 0u);
 }
 
 static void test_click_preemption_requeues_local_click_report(void)
@@ -162,7 +165,7 @@ static void test_click_preemption_requeues_local_click_report(void)
     assert(mesh_relay_tx_active(&relay));
 }
 
-static void test_click_preemption_cancels_transit_click_report(void)
+static void test_click_preemption_retains_transit_click_report(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(7u);
@@ -195,17 +198,22 @@ static void test_click_preemption_cancels_transit_click_report(void)
     assert(!plan.save_outbox);
     assert(!plan.schedule_timeout);
     assert(!plan.requeue_click_report);
-    assert(plan.clear_outbox);
-    assert(plan.cancel_timeout);
-    assert(plan.cancel_active_tx);
+    assert(!plan.clear_outbox);
+    assert(!plan.cancel_timeout);
+    assert(!plan.cancel_active_tx);
     assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    assert(relay.pending.packet.msg_type == MSG_CLICK_REPORT);
+    assert(relay.pending.packet.src_id == TRANSMITTER);
+    assert(relay.pending.payload_len == sizeof(payload));
+    assert(memcmp(relay.pending.payload, payload, sizeof(payload)) == 0);
 }
 
 int main(void)
 {
     test_click_preemption_defers_collection_result();
-    test_click_preemption_cancels_non_collection_tx();
+    test_click_preemption_retains_non_deferrable_tx();
     test_click_preemption_requeues_local_click_report();
-    test_click_preemption_cancels_transit_click_report();
+    test_click_preemption_retains_transit_click_report();
     return 0;
 }

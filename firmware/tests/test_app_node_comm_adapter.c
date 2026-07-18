@@ -246,10 +246,6 @@ void app_node_comm_gateway_route_refresh_resume(uint32_t now_ms)
     route_refresh_resume_calls++;
 }
 
-void app_node_comm_gateway_route_refresh_start(void)
-{
-}
-
 int app_node_comm_gateway_route_refresh_request(
     uint32_t delay_ms,
     const char *reason,

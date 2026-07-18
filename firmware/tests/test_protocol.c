@@ -639,6 +639,24 @@ static void test_cobs_round_trip(void)
     assert(memcmp(raw, decoded, sizeof(raw)) == 0);
 }
 
+static void test_operation_policy_tlv_registration(void)
+{
+    const uint8_t policy[] = {1u, 3u, 0u, 2u, 4u};
+    uint8_t payload[16] = {0};
+    const uint8_t *decoded = NULL;
+    uint8_t decoded_len = 0u;
+    size_t payload_len = 0u;
+
+    assert(TLV_OPERATION_POLICY == 0xAEu);
+    assert(tlv_append_bytes(payload, sizeof(payload), &payload_len,
+                            TLV_OPERATION_POLICY,
+                            policy, sizeof(policy)) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_OPERATION_POLICY,
+                    &decoded, &decoded_len) == PROTO_OK);
+    assert(decoded_len == sizeof(policy));
+    assert(memcmp(decoded, policy, sizeof(policy)) == 0);
+}
+
 int main(void)
 {
     test_crc_known_vector();
@@ -652,5 +670,6 @@ int main(void)
     test_result_offer_grant_busy_tlvs_round_trip();
     test_result_bundle_and_collection_eack_tlvs_round_trip();
     test_cobs_round_trip();
+    test_operation_policy_tlv_registration();
     return 0;
 }

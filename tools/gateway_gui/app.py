@@ -11,7 +11,29 @@ from typing import Any, Literal
 
 from .ble_transport import BLEAK_IMPORT_ERROR, BleDeviceInfo, BleTransport
 from .cir_reassembly import CirAssemblyKey, CirReassembler, CirSample
+from .command_orchestration import (
+    ROUTE_REFRESH_DEFAULT_BUDGET_MS,
+    GatewayCommandDispatch,
+    GatewayCommandPlan,
+    GatewayCommandTransition,
+)
 from .diagnostics_integration import GatewayDiagnosticsMixin
+from .operation_policy import (
+    ASSIGNMENT_DEFAULT_BUDGET_MS,
+    ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+    DISCOVERY_DEFAULT_BUDGET_MS,
+    DISCOVERY_DEFAULT_REPORT_GRACE_MS,
+    DISCOVERY_DEFAULT_ROUND_COUNT,
+    DISCOVERY_DEFAULT_SLOT_COUNT,
+    DISCOVERY_DEFAULT_SLOT_MS,
+    DISCOVERY_DEFAULT_START_DELAY_MS,
+    PAIR_AUTO_MAX_PARALLEL_PAIRS,
+    PAIR_DEFAULT_MAX_RERUNS,
+    AssignmentOperationPolicy,
+    DiscoveryOperationPolicy,
+    OperationPolicyProfile,
+    PairOperationPolicy,
+)
 from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
@@ -159,6 +181,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.device_by_display: dict[str, BleDeviceInfo] = {}
         self.packet_counter = 0
         self.sequence = 0
+        self._last_command_session_id = 0
         self.connected = False
         self.scanning = False
         self.gateway_id: int | None = None
@@ -173,6 +196,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.assignment_expected_anchors_text = tk.StringVar(
             value=DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
         )
+        self.assignment_budget_text = tk.StringVar(
+            value=str(ASSIGNMENT_DEFAULT_BUDGET_MS)
+        )
+        self.assignment_response_spread_text = tk.StringVar(
+            value=str(ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS)
+        )
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
         survey_id_seed = (time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1
@@ -180,8 +209,28 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._used_survey_ids: set[int] = set()
         self.survey_id_text = tk.StringVar(value=str(survey_id_seed))
         self.survey_id_auto = tk.BooleanVar(value=True)
-        self.duration_text = tk.StringVar(value="250")
-        self.discovery_slots_text = tk.StringVar(value="6")
+        self.duration_text = tk.StringVar(
+            value=str(DISCOVERY_DEFAULT_REPORT_GRACE_MS)
+        )
+        self.discovery_start_delay_text = tk.StringVar(
+            value=str(DISCOVERY_DEFAULT_START_DELAY_MS)
+        )
+        self.discovery_slot_ms_text = tk.StringVar(
+            value=str(DISCOVERY_DEFAULT_SLOT_MS)
+        )
+        self.discovery_slots_text = tk.StringVar(
+            value=str(DISCOVERY_DEFAULT_SLOT_COUNT)
+        )
+        self.discovery_round_count_text = tk.StringVar(
+            value=str(DISCOVERY_DEFAULT_ROUND_COUNT)
+        )
+        self.discovery_budget_text = tk.StringVar(
+            value=str(DISCOVERY_DEFAULT_BUDGET_MS)
+        )
+        self.pair_max_reruns_text = tk.StringVar(
+            value=str(PAIR_DEFAULT_MAX_RERUNS)
+        )
+        self.pair_max_parallel_text = tk.StringVar(value="auto (25)")
         self.sample_count_text = tk.StringVar(value="1")
         self.sample_warning_text = tk.StringVar(value="Select a click report to inspect aligned samples.")
         self.cir_state_text = tk.StringVar(value="Select a CIR diagnostic fragment to inspect its assembly.")
@@ -317,23 +366,60 @@ class GatewayGui(GatewayDiagnosticsMixin):
             auto_survey_id,
             "Enabled by default so delayed packets from an older run cannot match a new one. Clear it to send the exact Survey ID above.",
         )
-        self._labeled_spin(discovery, 2, "Report grace (ms)", self.duration_text, 1, 60000)
-        self._labeled_spin(discovery, 3, "Discovery slots", self.discovery_slots_text, 1, 50)
-        self._labeled_spin(discovery, 4, "Pair samples", self.sample_count_text, 1, 1000)
+        self._labeled_spin(
+            discovery, 2, "Start delay (ms)",
+            self.discovery_start_delay_text, 6000, 60000
+        )
+        self._labeled_spin(
+            discovery, 3, "Discovery slot (ms)",
+            self.discovery_slot_ms_text, 30, 1000
+        )
+        self._labeled_spin(
+            discovery, 4, "Discovery slots", self.discovery_slots_text, 1, 50
+        )
+        self._labeled_spin(
+            discovery, 5, "Discovery rounds",
+            self.discovery_round_count_text, 1, 4
+        )
+        self._labeled_spin(
+            discovery, 6, "Report grace (ms)", self.duration_text, 1, 60000
+        )
+        self._labeled_spin(
+            discovery, 7, "Survey budget (ms)",
+            self.discovery_budget_text, 1000, 600000
+        )
+        self._labeled_spin(
+            discovery, 8, "Pair reruns", self.pair_max_reruns_text, 0, 2
+        )
+        ttk.Label(discovery, text="Concurrent pairs").grid(
+            row=9, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
+        )
+        parallel_entry = ttk.Entry(
+            discovery, textvariable=self.pair_max_parallel_text
+        )
+        parallel_entry.grid(row=9, column=1, sticky="ew", pady=(4, 0))
+        Tooltip(
+            parallel_entry,
+            "Use 'auto' to expose all 25 safe lanes; the neighborhood conflict "
+            "classifier still serializes pairs that can interfere.",
+        )
+        self._labeled_spin(
+            discovery, 10, "Pair samples", self.sample_count_text, 1, 4
+        )
         ttk.Label(
             discovery,
-            text="Current gateway-role runtime accepts 1 pair sample; larger values may return DENIED.",
+            text="Each pair can collect 1 to 4 samples in its shared survey round.",
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 8))
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(5, 8))
         self.discovery_button = ttk.Button(
             discovery,
             text="Start anchor-pair survey",
             style="Primary.TButton",
             command=self._send_discovery,
         )
-        self.discovery_button.grid(row=6, column=0, columnspan=2, sticky="ew")
+        self.discovery_button.grid(row=12, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.discovery_button,
             "Send gateway-local CMD_SURVEY_REACHABILITY (0x0100). Firmware starts survey discovery and reports COMMAND_RESULT.",
@@ -362,13 +448,29 @@ class GatewayGui(GatewayDiagnosticsMixin):
             1,
             50,
         )
+        self._labeled_spin(
+            refresh,
+            4,
+            "Assignment budget (ms)",
+            self.assignment_budget_text,
+            1000,
+            600000,
+        )
+        self._labeled_spin(
+            refresh,
+            5,
+            "Response spread (ms)",
+            self.assignment_response_spread_text,
+            20,
+            10000,
+        )
         self.refresh_button = ttk.Button(
             refresh,
             text="Refresh mesh routes (Here I Am)",
             style="Primary.TButton",
             command=self._send_here_i_am,
         )
-        self.refresh_button.grid(row=4, column=0, columnspan=2, sticky="ew")
+        self.refresh_button.grid(row=6, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.refresh_button,
             "Send local CMD_FORCE_REDISCOVERY (0x000c). The gateway responds and schedules a priority GATEWAY_ROUTE_ADV flood.",
@@ -380,14 +482,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._send_assign_discovery_slots,
         )
         self.assignment_button.grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.assignment_button,
             "Send gateway-local CMD_ASSIGN_DISCOVERY_SLOTS (0x0104). Firmware collects anchor claims, floods the assignment table, and returns the assigned-anchor count.",
         )
         self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
-        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         contract = ttk.LabelFrame(parent, text="Command Surface", padding=10)
         contract.grid(row=3, column=0, sticky="ew")
@@ -679,7 +781,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
         if self.sequence == 0:
             self.sequence = 1
         session_id = (time.monotonic_ns() // 1_000_000) & 0xFFFFFFFF
-        return session_id or 1, self.sequence
+        session_id = session_id or 1
+        previous = getattr(self, "_last_command_session_id", 0)
+        if previous != 0:
+            session_id = (previous + 1) & 0xFFFFFFFF or 1
+        self._last_command_session_id = session_id
+        return session_id, self.sequence
 
     def _command_budget_ms(self) -> int | None:
         raw = self.command_budget_text.get().strip()
@@ -696,6 +803,58 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms, or blank"
             )
         return budget_ms
+
+    def _operation_policy_profile(self) -> OperationPolicyProfile:
+        expected_raw = self.assignment_expected_anchors_text.get().strip()
+        expected_anchor_count = (
+            self._parse_int("Expected anchors", expected_raw)
+            if expected_raw else 0
+        )
+        parallel_raw = self.pair_max_parallel_text.get().strip().lower()
+        if parallel_raw in {"auto", "auto25", "auto (25)"}:
+            max_parallel_pairs = PAIR_AUTO_MAX_PARALLEL_PAIRS
+        else:
+            max_parallel_pairs = self._parse_int(
+                "Concurrent pairs", parallel_raw
+            )
+        return OperationPolicyProfile(
+            assignment=AssignmentOperationPolicy(
+                expected_anchor_count=expected_anchor_count,
+                operation_budget_ms=self._parse_int(
+                    "Assignment budget", self.assignment_budget_text.get()
+                ),
+                response_spread_ms=self._parse_int(
+                    "Assignment response spread",
+                    self.assignment_response_spread_text.get(),
+                ),
+            ),
+            discovery=DiscoveryOperationPolicy(
+                start_delay_ms=self._parse_int(
+                    "Discovery start delay", self.discovery_start_delay_text.get()
+                ),
+                slot_ms=self._parse_int(
+                    "Discovery slot duration", self.discovery_slot_ms_text.get()
+                ),
+                slot_count=self._parse_int(
+                    "Discovery slots", self.discovery_slots_text.get()
+                ),
+                round_count=self._parse_int(
+                    "Discovery rounds", self.discovery_round_count_text.get()
+                ),
+                report_grace_ms=self._parse_int(
+                    "Report grace", self.duration_text.get()
+                ),
+                operation_budget_ms=self._parse_int(
+                    "Survey budget", self.discovery_budget_text.get()
+                ),
+            ),
+            pair=PairOperationPolicy(
+                max_reruns=self._parse_int(
+                    "Pair reruns", self.pair_max_reruns_text.get()
+                ),
+                max_parallel_pairs=max_parallel_pairs,
+            ),
+        )
 
     @staticmethod
     def _command_timeout_s(
@@ -736,12 +895,73 @@ class GatewayGui(GatewayDiagnosticsMixin):
             raise ValueError("Connected gateway identity is unavailable; reconnect before sending commands")
         return self.gateway_id
 
+    def _submit_gateway_command(self, plan: GatewayCommandPlan) -> bool:
+        dispatch = self.command_orchestrator.begin(plan)
+        if dispatch is None:
+            self.status_text.set("A gateway command is already active")
+            return False
+        self._update_command_state()
+        self._dispatch_gateway_command(dispatch)
+        return True
+
+    def _dispatch_gateway_command(self, dispatch: GatewayCommandDispatch) -> None:
+        if dispatch.on_dispatch is not None:
+            dispatch.on_dispatch()
+        self.status_text.set(dispatch.status_text)
+        self.transport.send_frame(dispatch.frame, dispatch.label)
+
+    def _apply_gateway_command_transition(
+        self, transition: GatewayCommandTransition
+    ) -> None:
+        if not transition.matched:
+            return
+        if transition.dispatch is not None:
+            self._dispatch_gateway_command(transition.dispatch)
+        elif transition.completed and transition.phase == "preflight":
+            self.status_text.set(
+                "Here I Am preflight failed; requested command was not sent"
+            )
+        self._update_command_state()
+
+    def _here_i_am_dispatch(
+        self,
+        *,
+        host_id: int,
+        gateway_id: int,
+        command_budget_ms: int | None,
+        operation_policy: OperationPolicyProfile,
+        status_text: str,
+    ) -> GatewayCommandDispatch:
+        session_id, seq = self._next_identity()
+        command = build_here_i_am_command(
+            host_id=host_id,
+            gateway_id=gateway_id,
+            session_id=session_id,
+            seq=seq,
+            command_budget_ms=command_budget_ms,
+            operation_policy=operation_policy,
+        )
+        return GatewayCommandDispatch(
+            command_kind=3,
+            command_id=command.command_id,
+            session_id=session_id,
+            sequence=seq,
+            frame=command.frame,
+            label=command.label,
+            timeout_s=self._command_timeout_s(
+                command_budget_ms, ROUTE_REFRESH_DEFAULT_BUDGET_MS
+            ),
+            status_text=status_text,
+        )
+
     def _send_discovery(self) -> None:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
-            command_budget_ms = self._command_budget_ms()
+            operation_policy = self._operation_policy_profile()
+            discovery_policy = operation_policy.discovery
+            command_budget_ms = discovery_policy.operation_budget_ms
             survey_id = self._survey_id_for_send()
             command = build_anchor_discovery_command(
                 host_id=host_id,
@@ -749,59 +969,68 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 session_id=session_id,
                 seq=seq,
                 survey_id=survey_id,
-                duration_ms=self._parse_int("Report grace", self.duration_text.get()),
-                discovery_slot_count=self._parse_int("Discovery slots", self.discovery_slots_text.get()),
+                duration_ms=discovery_policy.report_grace_ms,
+                discovery_slot_count=discovery_policy.slot_count,
                 sample_count=self._parse_int("Pair samples", self.sample_count_text.get()),
                 command_budget_ms=command_budget_ms,
+                operation_policy=operation_policy,
+            )
+            target = GatewayCommandDispatch(
+                command_kind=2,
+                command_id=command.command_id,
+                session_id=session_id,
+                sequence=seq,
+                frame=command.frame,
+                label=command.label,
+                timeout_s=self._command_timeout_s(command_budget_ms),
+                status_text="Writing anchor-pair survey command over BLE...",
+                on_dispatch=lambda: self._prepare_anchor_geometry_survey(
+                    survey_id, session_id, seq
+                ),
+            )
+            preflight = self._here_i_am_dispatch(
+                host_id=host_id,
+                gateway_id=gateway_id,
+                command_budget_ms=None,
+                operation_policy=operation_policy,
+                status_text="Refreshing mesh routes before anchor-pair survey...",
+            )
+            plan = GatewayCommandPlan.user_triggered(
+                target, preflight=preflight
             )
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(
-                2, session_id, seq,
-                timeout_s=self._command_timeout_s(command_budget_ms)):
-            return
-        self._prepare_anchor_geometry_survey(survey_id, session_id, seq)
-        self.status_text.set("Writing anchor-pair survey command over BLE...")
-        self.transport.send_frame(command.frame, command.label)
+        self._submit_gateway_command(plan)
 
     def _send_here_i_am(self) -> None:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
-            session_id, seq = self._next_identity()
             command_budget_ms = self._command_budget_ms()
-            command = build_here_i_am_command(
+            operation_policy = self._operation_policy_profile()
+            target = self._here_i_am_dispatch(
                 host_id=host_id,
                 gateway_id=gateway_id,
-                session_id=session_id,
-                seq=seq,
                 command_budget_ms=command_budget_ms,
+                operation_policy=operation_policy,
+                status_text="Writing Here I Am route-refresh request over BLE...",
             )
+            plan = GatewayCommandPlan.user_triggered(target)
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(
-                3, session_id, seq,
-                timeout_s=self._command_timeout_s(command_budget_ms)):
-            return
-        self.status_text.set("Writing Here I Am route-refresh request over BLE...")
-        self.transport.send_frame(command.frame, command.label)
+        self._submit_gateway_command(plan)
 
     def _send_assign_discovery_slots(self) -> None:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
-            command_budget_ms = self._command_budget_ms()
-            expected_anchor_count_raw = (
-                self.assignment_expected_anchors_text.get().strip()
-            )
-            expected_anchor_count = (
-                self._parse_int("Expected anchors", expected_anchor_count_raw)
-                if expected_anchor_count_raw
-                else None
-            )
+            operation_policy = self._operation_policy_profile()
+            assignment_policy = operation_policy.assignment
+            command_budget_ms = assignment_policy.operation_budget_ms
+            expected_anchor_count = assignment_policy.expected_anchor_count or None
             command = build_assign_discovery_slots_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
@@ -809,19 +1038,41 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 seq=seq,
                 command_budget_ms=command_budget_ms,
                 expected_anchor_count=expected_anchor_count,
+                operation_policy=operation_policy,
+            )
+            target = GatewayCommandDispatch(
+                command_kind=1,
+                command_id=command.command_id,
+                session_id=session_id,
+                sequence=seq,
+                frame=command.frame,
+                label=command.label,
+                timeout_s=self._command_timeout_s(
+                    command_budget_ms,
+                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+                ),
+                status_text=(
+                    "Writing anchor enumeration and discovery-slot assignment "
+                    "request over BLE..."
+                ),
+            )
+            preflight = self._here_i_am_dispatch(
+                host_id=host_id,
+                gateway_id=gateway_id,
+                command_budget_ms=None,
+                operation_policy=operation_policy,
+                status_text=(
+                    "Refreshing mesh routes before anchor enumeration and "
+                    "discovery-slot assignment..."
+                ),
+            )
+            plan = GatewayCommandPlan.user_triggered(
+                target, preflight=preflight
             )
         except ValueError as exc:
             self._show_error(str(exc))
             return
-        if not self._begin_gateway_command(
-                1, session_id, seq,
-                timeout_s=self._command_timeout_s(
-                    command_budget_ms,
-                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
-                )):
-            return
-        self.status_text.set("Writing anchor enumeration and discovery-slot assignment request over BLE...")
-        self.transport.send_frame(command.frame, command.label)
+        self._submit_gateway_command(plan)
 
     def _drain_events(self) -> None:
         self._expire_gateway_command()
@@ -894,8 +1145,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
 
     def _set_connection_state(self, state: str) -> None:
         self.connected = state == "connected"
-        if not self.connected and state != "connecting" and hasattr(self, "command_request_tracker"):
-            self.command_request_tracker.disconnect()
+        if (
+            not self.connected
+            and state != "connecting"
+            and hasattr(self, "command_orchestrator")
+        ):
+            self._apply_gateway_command_transition(
+                self.command_orchestrator.disconnect()
+            )
         if not self.connected and state != "connecting":
             self._clear_gateway_identity("Connect to read the gateway firmware DEVICE_ID.")
         elif state == "connecting":

@@ -793,9 +793,8 @@ app_mesh_ch9_timeout_pressure_decide(const struct mesh_outbound *outbound,
         return APP_MESH_CH9_TIMEOUT_RETRY;
     }
     if (outbound->packet.src_id != local_id) {
-        return local_origin_priority_needs_capacity ?
-               APP_MESH_CH9_TIMEOUT_DROP_TRANSIT :
-               APP_MESH_CH9_TIMEOUT_RETRY;
+        (void)local_origin_priority_needs_capacity;
+        return APP_MESH_CH9_TIMEOUT_RETRY;
     }
     if (outbound->packet.msg_type == MSG_CLICK_REPORT ||
         outbound->packet.msg_type == MSG_COMMAND_RESULT) {

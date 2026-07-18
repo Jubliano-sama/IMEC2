@@ -2108,13 +2108,6 @@ int app_node_comm_start(void)
     return ret;
 }
 
-void app_node_comm_start_route_refresh(void)
-{
-    if (app_node_comm_require_running() == 0) {
-        app_node_comm_gateway_route_refresh_start();
-    }
-}
-
 int app_node_comm_request_route_refresh(uint32_t delay_ms,
                                         const char *reason,
                                         bool forced)

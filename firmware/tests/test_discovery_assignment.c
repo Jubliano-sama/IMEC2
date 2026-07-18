@@ -204,33 +204,29 @@ static void test_response_custody_allows_only_valid_supersession_boundaries(void
         103u));
 }
 
-static void test_response_delay_uses_slot_hops_and_bounded_backoff(void)
+static void test_response_delay_uses_equal_spread_and_bounded_backoff(void)
 {
-    uint32_t far_delay = 0u;
-    uint32_t near_delay = 0u;
-    uint32_t later_slot_delay = 0u;
+    uint32_t first_delay = 0u;
+    uint32_t same_random_delay = 0u;
     uint32_t retry_delay = 0u;
     uint32_t max_initial_delay = 0u;
 
-    assert(discovery_assignment_response_delay_ms(3u, 50u, 8u, 0u, 0u,
-                                                  &far_delay) == PROTO_OK);
-    assert(discovery_assignment_response_delay_ms(3u, 50u, 1u, 0u, 0u,
-                                                  &near_delay) == PROTO_OK);
-    assert(discovery_assignment_response_delay_ms(4u, 50u, 8u, 0u, 0u,
-                                                  &later_slot_delay) == PROTO_OK);
-    assert(discovery_assignment_response_delay_ms(3u, 50u, 8u, 2u, UINT32_MAX,
+    assert(discovery_assignment_response_delay_ms(1000u, 0u, 0u,
+                                                  &first_delay) == PROTO_OK);
+    assert(discovery_assignment_response_delay_ms(1000u, 0u, 0u,
+                                                  &same_random_delay) == PROTO_OK);
+    assert(discovery_assignment_response_delay_ms(1000u, 2u, UINT32_MAX,
                                                   &retry_delay) == PROTO_OK);
     assert(discovery_assignment_response_delay_ms(
-               49u, 50u, 1u, 0u,
-               DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS,
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS, 0u,
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS - 1u,
                &max_initial_delay) == PROTO_OK);
-    assert(far_delay < near_delay);
-    assert(later_slot_delay - far_delay == DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS);
-    assert(retry_delay > far_delay);
+    assert(first_delay == same_random_delay);
+    assert(retry_delay > first_delay);
     assert(max_initial_delay ==
            DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS);
-    assert(discovery_assignment_response_delay_ms(50u, 50u, 1u, 0u, 0u,
-                                                  &far_delay) == PROTO_ERR_ARG);
+    assert(discovery_assignment_response_delay_ms(0u, 0u, 0u,
+                                                  &first_delay) == PROTO_ERR_ARG);
 
     assert(discovery_assignment_retry_backoff_ms(0u, 0u) ==
            DISCOVERY_ASSIGNMENT_RETRY_BASE_MS);
@@ -240,11 +236,14 @@ static void test_response_delay_uses_slot_hops_and_bounded_backoff(void)
            2u * DISCOVERY_ASSIGNMENT_RETRY_MAX_MS);
 }
 
-static void test_collection_window_covers_slots_and_hops(void)
+static void test_collection_window_covers_spread_and_hops(void)
 {
-    uint32_t direct = discovery_assignment_collection_window_ms(50u, 1u);
-    uint32_t forced_hop = discovery_assignment_collection_window_ms(50u, 4u);
-    uint32_t unknown = discovery_assignment_collection_window_ms(50u, 0u);
+    uint32_t direct = discovery_assignment_collection_window_ms(
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 1u);
+    uint32_t forced_hop = discovery_assignment_collection_window_ms(
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 4u);
+    uint32_t unknown = discovery_assignment_collection_window_ms(
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 0u);
     uint32_t delay_ms = 0u;
 
     assert(direct >= DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS);
@@ -255,17 +254,12 @@ static void test_collection_window_covers_slots_and_hops(void)
     assert(discovery_assignment_response_custody_ms(0u) ==
            DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS);
     assert(discovery_assignment_response_delay_ms(
-               49u, 50u, 1u, 0u,
-               DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS,
-               &delay_ms) == PROTO_OK);
-    assert(delay_ms == 1799u);
-    assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 1u) ==
-           32799u);
-    assert(discovery_assignment_response_delay_ms(
-               49u, 50u, 8u, 0u,
-               DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS,
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 0u,
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS - 1u,
                &delay_ms) == PROTO_OK);
     assert(delay_ms == 1099u);
+    assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 1u) ==
+           32099u);
     assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 8u) ==
            102099u);
     assert(discovery_assignment_response_deadline_ms(
@@ -274,12 +268,13 @@ static void test_collection_window_covers_slots_and_hops(void)
            UINT16_C(0x444c));
     assert(discovery_assignment_membership_epoch(UINT32_C(0x00010001)) == 1u);
     assert(direct == DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS +
-                     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS);
+                     DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+                     DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS - 1u);
     assert(direct >= 31000u);
     assert(forced_hop >= 61000u);
     assert(unknown >= 101000u);
     assert(discovery_assignment_collection_window_ms(0u, 1u) == 0u);
-    assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 101099u);
+    assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 110099u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS == 10000u);
     assert(DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS == 3000u);
     assert(DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS == 5u);
@@ -289,9 +284,8 @@ static void test_collection_window_covers_slots_and_hops(void)
                DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS ==
            10u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 235209u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS ==
-           DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1000u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 235209u);
     assert(DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS == 1u);
     assert(DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS == 1u);
     assert(discovery_assignment_control_flood_deadline_ms(1000u, 50000u) ==
@@ -484,8 +478,8 @@ int main(void)
     test_control_and_claim_hash_round_trip();
     test_response_custody_matches_logical_epoch_and_phase();
     test_response_custody_allows_only_valid_supersession_boundaries();
-    test_response_delay_uses_slot_hops_and_bounded_backoff();
-    test_collection_window_covers_slots_and_hops();
+    test_response_delay_uses_equal_spread_and_bounded_backoff();
+    test_collection_window_covers_spread_and_hops();
     test_claim_ack_settle_scales_and_duplicate_restarts_deadline();
     test_expected_count_is_optional_and_bounded();
     test_full_table_fits_one_extended_packet_and_round_trips();

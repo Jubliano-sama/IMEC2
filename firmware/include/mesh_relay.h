@@ -4,6 +4,7 @@
 #include "mesh.h"
 #include "mesh_capacity.h"
 #include "mesh_route_path.h"
+#include "operation_policy.h"
 #include "protocol.h"
 #include "route.h"
 
@@ -28,7 +29,7 @@ extern "C" {
      MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN)
 #define MESH_RELAY_FLOOD_SEEN_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
-#define MESH_RELAY_DOWNLINK_MAX_FAILURES 3u
+#define MESH_RELAY_DOWNLINK_MAX_FAILURES ROUTE_MAX_FAILURES
 #define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 1000u
 #define MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 60000u
 #define MESH_RELAY_RETRY_BACKOFF_MAX_MS \
@@ -56,6 +57,9 @@ extern "C" {
 #define MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN \
     (MESH_GATEWAY_ROUTE_ADV_FIXED_TLV_BYTES + \
      PROTO_TLV_U64_ENCODED_LEN)
+#define MESH_GATEWAY_ROUTE_ADV_POLICY_PAYLOAD_LEN \
+    (MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN + \
+     OPERATION_POLICY_ALL_TLVS_LEN)
 #define C5_POLITE_SNIFF_MS 20u
 #define C5_POLITE_BACKOFF_MIN_MS 20u
 #define C5_POLITE_BACKOFF_MAX_MS 1600u
@@ -252,6 +256,7 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL = 1u << 27,
     /* The original transit outbox remains owned until this ACK is sent. */
     MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING = 1u << 28,
+    MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY = 1u << 29,
 };
 
 enum mesh_relay_tx_state {
@@ -280,6 +285,9 @@ struct mesh_gateway_route_adv_snapshot {
     uint16_t packet_seq;
     uint16_t capacity_validity_interval_ms;
     uint8_t gateway_capacity_state;
+    uint8_t operation_policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
+    uint8_t operation_policy_tlvs_len;
+    bool operation_policy_present;
     bool valid;
 };
 
@@ -295,6 +303,7 @@ struct mesh_downlink_entry {
     uint32_t discovery_flood_epoch_id;
     uint8_t hop_count;
     uint8_t quality;
+    uint8_t failure_count;
     bool valid;
 };
 
@@ -542,6 +551,7 @@ struct mesh_relay_result {
     struct mesh_outbound route_reply_ack;
     uint64_t route_reply_backup_next_hop_id;
     uint64_t route_discovery_target_id;
+    struct operation_policy_set operation_policy;
     bool route_reply_backup_valid;
 };
 
@@ -656,10 +666,22 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
                                        uint32_t gateway_route_seq,
                                        uint32_t now_ms,
                                        struct mesh_outbound *out);
+int mesh_relay_build_gateway_route_adv_with_policy(
+    struct mesh_relay *relay,
+    uint32_t gateway_route_seq,
+    uint32_t now_ms,
+    const struct operation_policy_set *operation_policy,
+    struct mesh_outbound *out);
 int mesh_relay_capture_gateway_route_adv_snapshot(
     struct mesh_relay *relay,
     uint32_t gateway_route_seq,
     uint32_t now_ms,
+    struct mesh_gateway_route_adv_snapshot *snapshot);
+int mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+    struct mesh_relay *relay,
+    uint32_t gateway_route_seq,
+    uint32_t now_ms,
+    const struct operation_policy_set *operation_policy,
     struct mesh_gateway_route_adv_snapshot *snapshot);
 int mesh_relay_build_gateway_route_adv_from_snapshot(
     const struct mesh_relay *relay,

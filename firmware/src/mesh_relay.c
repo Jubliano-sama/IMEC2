@@ -7,7 +7,8 @@
 #include <string.h>
 
 _Static_assert(sizeof(struct mesh_relay_result) <=
-               (3u * sizeof(struct mesh_outbound)) + 32u,
+               (3u * sizeof(struct mesh_outbound)) +
+                   sizeof(struct operation_policy_set) + 40u,
                "relay result must retain only three simultaneous outbound buffers");
 
 #define LEGACY_MSG_ROUTE_ADV 0x33u
@@ -86,6 +87,10 @@ struct gateway_route_adv_fields {
     uint8_t path_quality_min;
     uint8_t gateway_capacity_state;
     uint8_t flood_retry_count;
+    struct operation_policy_set operation_policy;
+    uint8_t operation_policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
+    uint8_t operation_policy_tlvs_len;
+    bool operation_policy_present;
 };
 
 struct downlink_upsert_rollback {
@@ -114,6 +119,182 @@ _Static_assert(MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN <=
 _Static_assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN <=
                    PACKET_MAX_PAYLOAD_LEN,
                "maximum-depth gateway route path exceeds mesh payload capacity");
+
+static int mesh_relay_operation_policy_set_validate_complete(
+    const struct operation_policy_set *set)
+{
+    struct operation_policy policy;
+    int ret;
+
+    if (set == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!set->assignment_present || !set->discovery_present ||
+        !set->pair_present) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(&policy, 0, sizeof(policy));
+    policy.family = OPERATION_POLICY_FAMILY_ASSIGNMENT;
+    policy.value.assignment = set->assignment;
+    ret = operation_policy_validate(&policy);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    policy.family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY;
+    policy.value.discovery = set->discovery;
+    ret = operation_policy_validate(&policy);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    policy.family = OPERATION_POLICY_FAMILY_SURVEY_PAIR;
+    policy.value.pair = set->pair;
+    return operation_policy_validate(&policy);
+}
+
+static int mesh_relay_operation_policy_encode_complete(
+    const struct operation_policy_set *set,
+    uint8_t *encoded,
+    uint8_t *encoded_len)
+{
+    struct operation_policy policy;
+    uint8_t local[OPERATION_POLICY_ALL_TLVS_LEN] = {0};
+    size_t offset = 0u;
+    int ret;
+
+    if (encoded == NULL || encoded_len == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = mesh_relay_operation_policy_set_validate_complete(set);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(&policy, 0, sizeof(policy));
+    policy.family = OPERATION_POLICY_FAMILY_ASSIGNMENT;
+    policy.value.assignment = set->assignment;
+    ret = operation_policy_append_tlv(local, sizeof(local), &offset, &policy);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    policy.family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY;
+    policy.value.discovery = set->discovery;
+    ret = operation_policy_append_tlv(local, sizeof(local), &offset, &policy);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    policy.family = OPERATION_POLICY_FAMILY_SURVEY_PAIR;
+    policy.value.pair = set->pair;
+    ret = operation_policy_append_tlv(local, sizeof(local), &offset, &policy);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (offset != sizeof(local)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memcpy(encoded, local, sizeof(local));
+    *encoded_len = (uint8_t)sizeof(local);
+    return PROTO_OK;
+}
+
+static int mesh_relay_operation_policy_parse_exact(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct operation_policy_set *set,
+    uint8_t *encoded,
+    uint8_t *encoded_len,
+    bool *present)
+{
+    struct operation_policy_set parsed;
+    uint8_t local[OPERATION_POLICY_ALL_TLVS_LEN] = {0};
+    size_t local_len = 0u;
+    size_t offset = 0u;
+    int ret;
+
+    if ((payload == NULL && payload_len != 0u) || set == NULL ||
+        encoded == NULL || encoded_len == NULL || present == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = operation_policy_set_from_tlvs(payload, payload_len, &parsed);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    while (offset < payload_len) {
+        size_t tlv_offset = offset;
+        uint8_t type;
+        uint8_t len;
+        size_t tlv_len;
+
+        if (payload_len - offset < PROTO_TLV_HEADER_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = payload[offset];
+        len = payload[offset + 1u];
+        offset += PROTO_TLV_HEADER_LEN;
+        if (payload_len - offset < len) {
+            return PROTO_ERR_MALFORMED;
+        }
+        tlv_len = PROTO_TLV_HEADER_LEN + len;
+        if (type == TLV_OPERATION_POLICY) {
+            if (local_len + tlv_len > sizeof(local)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            memcpy(&local[local_len], &payload[tlv_offset], tlv_len);
+            local_len += tlv_len;
+        }
+        offset += len;
+    }
+
+    if (local_len == 0u) {
+        *set = parsed;
+        memset(encoded, 0, OPERATION_POLICY_ALL_TLVS_LEN);
+        *encoded_len = 0u;
+        *present = false;
+        return PROTO_OK;
+    }
+    if (local_len != sizeof(local)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = mesh_relay_operation_policy_set_validate_complete(&parsed);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    *set = parsed;
+    memcpy(encoded, local, sizeof(local));
+    *encoded_len = (uint8_t)sizeof(local);
+    *present = true;
+    return PROTO_OK;
+}
+
+static int mesh_relay_operation_policy_append_exact(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const uint8_t *encoded,
+    uint8_t encoded_len,
+    bool present)
+{
+    if (payload == NULL || offset == NULL || encoded == NULL ||
+        *offset > payload_cap) {
+        return PROTO_ERR_ARG;
+    }
+    if (!present) {
+        return encoded_len == 0u ? PROTO_OK : PROTO_ERR_MALFORMED;
+    }
+    if (encoded_len != OPERATION_POLICY_ALL_TLVS_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (payload_cap - *offset < encoded_len) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    memcpy(&payload[*offset], encoded, encoded_len);
+    *offset += encoded_len;
+    return PROTO_OK;
+}
 
 struct flood_control_fields {
     uint32_t random_backoff_max_ms;

@@ -709,7 +709,15 @@ void mesh_relay_note_delivery_failure_at(struct mesh_relay *relay,
 
     index = downlink_index(relay, dst_id);
     if (index >= 0) {
-        downlink_at_mutable(relay, (size_t)index)->valid = false;
+        struct mesh_downlink_entry *downlink =
+            downlink_at_mutable(relay, (size_t)index);
+
+        if (downlink->failure_count < UINT8_MAX) {
+            downlink->failure_count++;
+        }
+        if (downlink->failure_count >= MESH_RELAY_DOWNLINK_MAX_FAILURES) {
+            downlink->valid = false;
+        }
     }
 }
 

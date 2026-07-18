@@ -36,7 +36,6 @@ struct refresh_fixture {
     bool pause_after_first_send;
     bool run_schedule_synchronously;
     bool response_active;
-    bool ready_at_success_terminal;
     uint8_t synchronous_schedule_calls;
 };
 
@@ -237,11 +236,6 @@ static void fixture_observe(
     assert(fixture->event_count <
            sizeof(fixture->events) / sizeof(fixture->events[0]));
     fixture->events[fixture->event_count++] = *event;
-    if (event->kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE &&
-        event->result == 0) {
-        fixture->ready_at_success_terminal =
-            app_node_comm_gateway_route_refresh_ready();
-    }
 }
 
 static void fixture_init(struct refresh_fixture *fixture)
@@ -370,81 +364,24 @@ static void test_schedule_failure_is_terminal(void)
     assert(fixture.events[fixture.event_count - 1u].result == -EIO);
 }
 
-static void test_startup_and_two_periodic_cycles_do_not_preexpire(void)
-{
-    struct refresh_fixture fixture;
-
-    fixture_init(&fixture);
-    fixture.allowed = true;
-    assert(!app_node_comm_gateway_route_refresh_ready());
-    app_node_comm_gateway_route_refresh_start();
-    assert(!app_node_comm_gateway_route_refresh_ready());
-    assert(fixture.scheduled_delay_ms == 500u);
-    fixture_run(&fixture);
-    assert(app_node_comm_gateway_route_refresh_ready());
-    assert(fixture.send_calls == 4u);
-    assert(fixture.scheduled_delay_ms == 600000u);
-    fixture_run(&fixture);
-    assert(fixture.send_calls == 8u);
-    assert(fixture.scheduled_delay_ms == 600000u);
-    fixture_run(&fixture);
-    assert(fixture.send_calls == 12u);
-    assert(fixture.note_sent_calls == 3u);
-}
-
-static void test_readiness_resets_and_failed_startup_does_not_set_it(void)
-{
-    struct refresh_fixture fixture;
-
-    fixture_init(&fixture);
-    fixture.allowed = true;
-    fixture.schedule_result = -EIO;
-    app_node_comm_gateway_route_refresh_start();
-    assert(!app_node_comm_gateway_route_refresh_ready());
-    assert(fixture.send_calls == 0u);
-
-    fixture.schedule_result = 0;
-    app_node_comm_gateway_route_refresh_start();
-    fixture_run(&fixture);
-    assert(app_node_comm_gateway_route_refresh_ready());
-
-    app_node_comm_gateway_route_refresh_init(&fixture.config, GATEWAY_ID);
-    assert(!app_node_comm_gateway_route_refresh_ready());
-}
-
-static void test_correlated_forced_retry_sets_readiness_only_after_success(void)
+static void test_manual_refresh_completion_does_not_schedule_maintenance(void)
 {
     struct refresh_fixture fixture;
     struct proto_packet command = correlated_command();
+    uint32_t wait_ms = 0u;
 
     fixture_init(&fixture);
-    fixture.send_result = -EIO;
+    fixture.allowed = true;
     assert(app_node_comm_gateway_route_refresh_request(
-               0u, "failed-here-i-am", true, &command) == 0);
+               0u, "manual-only", true, &command) == 0);
     fixture_run(&fixture);
-    assert(!app_node_comm_gateway_route_refresh_ready());
-    assert(fixture.event_count > 0u);
-    assert(fixture.events[fixture.event_count - 1u].kind ==
-           APP_NODE_COMM_ROUTE_REFRESH_BACKOFF);
-
-    fixture.send_result = 0;
-    fixture_run(&fixture);
-    assert(app_node_comm_gateway_route_refresh_ready());
+    assert(fixture.send_calls == 4u);
     assert(fixture.events[fixture.event_count - 1u].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
     assert(fixture.events[fixture.event_count - 1u].result == 0);
-    assert(fixture.ready_at_success_terminal);
-}
-
-static void test_uncorrelated_forced_success_does_not_create_readiness(void)
-{
-    struct refresh_fixture fixture;
-
-    fixture_init(&fixture);
-    assert(app_node_comm_gateway_route_refresh_request(
-               0u, "uncorrelated-maintenance", true, NULL) == 0);
-    fixture_run(&fixture);
-    assert(!app_node_comm_gateway_route_refresh_ready());
+    assert(!app_node_comm_gateway_route_refresh_pending_wait_ms(
+        fixture.now_ms, &wait_ms));
+    assert(fixture.scheduled_delay_ms == 0u);
 }
 
 static void test_packet_retry_bursts_each_keep_four_opportunities(void)
@@ -668,10 +605,7 @@ int main(void)
     test_pause_between_opportunities_preserves_four_real_sends();
     test_pause_rebases_outer_backoff_but_deadline_stays_absolute();
     test_schedule_failure_is_terminal();
-    test_startup_and_two_periodic_cycles_do_not_preexpire();
-    test_readiness_resets_and_failed_startup_does_not_set_it();
-    test_correlated_forced_retry_sets_readiness_only_after_success();
-    test_uncorrelated_forced_success_does_not_create_readiness();
+    test_manual_refresh_completion_does_not_schedule_maintenance();
     test_packet_retry_bursts_each_keep_four_opportunities();
     test_concurrent_pause_stops_callbacks_and_preserves_correlation();
     test_synchronous_resume_schedule_cannot_strand_refresh();

@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 import math
 from typing import Any, Callable
 
+from .operation_policy import (
+    OperationPolicyProfile,
+    decode_operation_policy_value,
+)
+
 
 SERVICE_UUID = "494d4543-0001-4757-8000-000000000001"
 PACKET_TX_UUID = "494d4543-0001-4757-8000-000000000002"
@@ -36,7 +41,7 @@ MESH_BROADCAST_ID = 0
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
 GATEWAY_COMMAND_BUDGET_MAX_MS = 600000
-DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 225199
+DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 235209
 
 MSG_CLICK_REPORT = 0x20
 MSG_MESH_DATA = 0x30
@@ -47,6 +52,7 @@ MSG_GATEWAY_COMMAND_EVENT = 0x56
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
+CMD_SURVEY_GO = 0x0105
 
 TLV_EVENT_SEQ = 0x06
 TLV_TIMESTAMP_MS = 0x07
@@ -97,6 +103,8 @@ TLV_UWB_RX_DIAG_BYTES = 0x54
 TLV_ATTEMPT_INDEX = 0xA9
 TLV_DETECTION_SOURCE = 0xAA
 TLV_COMMAND_BUDGET_MS = 0xAB
+TLV_OPERATION_POLICY = 0xAE
+TLV_SURVEY_ROUND_ID = 0xAF
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -209,6 +217,7 @@ COMMAND_NAMES = {
     0x0102: "SURVEY_START_PAIR",
     0x0103: "SURVEY_ABORT",
     CMD_ASSIGN_DISCOVERY_SLOTS: "ASSIGN_DISCOVERY_SLOTS",
+    CMD_SURVEY_GO: "SURVEY_GO",
     0x8000: "ML_START_COLLECTION",
     0x8001: "ML_START_FAST_RANGING",
     0x8002: "ML_START_ANCHOR_PAIR_SURVEY",
@@ -279,6 +288,13 @@ DISCOVERY_ASSIGNMENT_PHASE_NAMES = {
 
 class DecodeError(ValueError):
     """A transport frame or packet violated the firmware framing contract."""
+
+
+def _operation_policy(raw: bytes) -> dict[str, Any]:
+    try:
+        return decode_operation_policy_value(raw)
+    except ValueError as exc:
+        raise DecodeError(str(exc)) from exc
 
 
 Decoder = Callable[[bytes], Any]
@@ -441,6 +457,8 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_CLICKER_CLOCK_OFFSET_RAW: TlvSpec("CLICKER_CLOCK_OFFSET_RAW", _scalar(2, signed=True)),
     TLV_ATTEMPT_INDEX: TlvSpec("ATTEMPT_INDEX", _scalar(1)),
     TLV_DETECTION_SOURCE: TlvSpec("DETECTION_SOURCE", _scalar(1)),
+    TLV_OPERATION_POLICY: TlvSpec("OPERATION_POLICY", _operation_policy),
+    TLV_SURVEY_ROUND_ID: TlvSpec("SURVEY_ROUND_ID", _scalar(2)),
 }
 
 # Keep every currently assigned protocol TLV named even where the GUI does not
@@ -1043,6 +1061,13 @@ def append_tlv(payload: bytearray, type_id: int, value: bytes) -> None:
     payload.extend(value)
 
 
+def append_operation_policy_tlvs(
+    payload: bytearray, profile: OperationPolicyProfile
+) -> None:
+    for value in profile.encoded_values():
+        append_tlv(payload, TLV_OPERATION_POLICY, value)
+
+
 def _build_command_frame(
     *,
     label: str,
@@ -1077,6 +1102,7 @@ def build_anchor_discovery_command(
     discovery_slot_count: int = 6,
     sample_count: int = 1,
     command_budget_ms: int | None = None,
+    operation_policy: OperationPolicyProfile | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1101,6 +1127,20 @@ def build_anchor_discovery_command(
             f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
             f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
         )
+    if operation_policy is not None:
+        discovery = operation_policy.discovery
+        if duration_ms != discovery.report_grace_ms:
+            raise ValueError(
+                "legacy duration must equal operation-policy report grace"
+            )
+        if discovery_slot_count != discovery.slot_count:
+            raise ValueError(
+                "legacy discovery slot count must equal operation policy"
+            )
+        if command_budget_ms != discovery.operation_budget_ms:
+            raise ValueError(
+                "legacy command budget must equal discovery operation policy"
+            )
 
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_REACHABILITY.to_bytes(2, "little"))
@@ -1110,6 +1150,8 @@ def build_anchor_discovery_command(
     append_tlv(payload, TLV_DISCOVERY_SLOT_COUNT, bytes((discovery_slot_count,)))
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
+    if operation_policy is not None:
+        append_operation_policy_tlvs(payload, operation_policy)
     return _build_command_frame(
         label="Anchor survey discovery",
         command_id=CMD_SURVEY_REACHABILITY,
@@ -1128,6 +1170,7 @@ def build_here_i_am_command(
     session_id: int,
     seq: int,
     command_budget_ms: int | None = None,
+    operation_policy: OperationPolicyProfile | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1148,6 +1191,8 @@ def build_here_i_am_command(
     append_tlv(payload, TLV_COMMAND_ID, CMD_FORCE_REDISCOVERY.to_bytes(2, "little"))
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
+    if operation_policy is not None:
+        append_operation_policy_tlvs(payload, operation_policy)
     return _build_command_frame(
         label="Here I Am route refresh",
         command_id=CMD_FORCE_REDISCOVERY,
@@ -1167,6 +1212,7 @@ def build_assign_discovery_slots_command(
     seq: int,
     command_budget_ms: int | None = None,
     expected_anchor_count: int | None = None,
+    operation_policy: OperationPolicyProfile | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1175,17 +1221,28 @@ def build_assign_discovery_slots_command(
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
     if command_budget_ms is not None and not (
-        DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS
+        GATEWAY_COMMAND_BUDGET_MIN_MS
         <= command_budget_ms
         <= GATEWAY_COMMAND_BUDGET_MAX_MS
     ):
         raise ValueError(
             "assignment command budget must be in "
-            f"{DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS}.."
+            f"{GATEWAY_COMMAND_BUDGET_MIN_MS}.."
             f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
         )
     if expected_anchor_count is not None and not 1 <= expected_anchor_count <= 50:
         raise ValueError("expected anchor count must be in 1..50")
+    if operation_policy is not None:
+        assignment = operation_policy.assignment
+        policy_expected = assignment.expected_anchor_count
+        if expected_anchor_count != (policy_expected or None):
+            raise ValueError(
+                "legacy expected anchor count must equal assignment operation policy"
+            )
+        if command_budget_ms != assignment.operation_budget_ms:
+            raise ValueError(
+                "legacy command budget must equal assignment operation policy"
+            )
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little"))
     if expected_anchor_count is not None:
@@ -1196,6 +1253,8 @@ def build_assign_discovery_slots_command(
         )
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
+    if operation_policy is not None:
+        append_operation_policy_tlvs(payload, operation_policy)
     return _build_command_frame(
         label="Assign discovery slots",
         command_id=CMD_ASSIGN_DISCOVERY_SLOTS,

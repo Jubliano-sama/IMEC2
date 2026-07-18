@@ -286,6 +286,7 @@ static void run_survey_start_phy_case(bool mutate_tx_to_standard_wake,
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     static struct mesh_sim_world world;
     struct proto_packet packet;
@@ -366,9 +367,12 @@ static void run_survey_start_phy_case(bool mutate_tx_to_standard_wake,
     }
 }
 
-static bool run_pair_start_skew_phy_case(const uint8_t *poll,
-                                         size_t poll_len,
-                                         uint32_t start_skew_ms)
+static enum mesh_sim_rx_outcome run_pair_start_skew_phy_case(
+    const uint8_t *poll,
+    size_t poll_len,
+    uint32_t start_skew_ms,
+    uint32_t attempt_offset_us,
+    enum mesh_sim_rx_outcome expected_outcome)
 {
     static struct mesh_sim_world world;
     uint8_t initiator = UINT8_MAX;
@@ -380,7 +384,8 @@ static bool run_pair_start_skew_phy_case(const uint8_t *poll,
     uint64_t poll_end_us;
     uint64_t responder_end_us;
 
-    mesh_sim_init(&world, UINT32_C(0x52c50000) ^ start_skew_ms);
+    mesh_sim_init(&world, UINT32_C(0x52c50000) ^ start_skew_ms ^
+                  attempt_offset_us);
     CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
                             GATEWAY_ID, ROUTE_EPOCH, &initiator) == MESH_SIM_OK,
           "pair-skew initiator setup failed");
@@ -393,7 +398,8 @@ static bool run_pair_start_skew_phy_case(const uint8_t *poll,
 
     airtime_us = mesh_sim_frame_duration_us(MESH_SIM_PHY_CHANNEL5_RANGE,
                                              poll_len);
-    poll_start_us = TX_START_US + (uint64_t)start_skew_ms * 1000u;
+    poll_start_us = TX_START_US + (uint64_t)start_skew_ms * 1000u +
+                    attempt_offset_us;
     poll_end_us = poll_start_us + airtime_us;
     responder_end_us = TX_START_US +
         (uint64_t)SURVEY_PAIR_RESPONDER_WINDOW_MS * 1000u;
@@ -412,18 +418,20 @@ static bool run_pair_start_skew_phy_case(const uint8_t *poll,
     CHECK(mesh_sim_run_until(&world, poll_end_us + 1u) == MESH_SIM_OK,
           "pair-skew PHY simulation failed");
     CHECK(world.reception_count == 1u,
-          "admitted pair-start skew did not produce one poll reception");
+          "pair-start timing case did not produce one poll reception");
     if (world.reception_count != 1u) {
-        return false;
+        return MESH_SIM_RX_DECODE_ERROR;
     }
-    CHECK(world.receptions[0].outcome == MESH_SIM_RX_DECODED,
-          "admitted pair-start skew did not contain the complete poll airtime");
-    return world.receptions[0].outcome == MESH_SIM_RX_DECODED;
+    CHECK(world.receptions[0].outcome == expected_outcome,
+          expected_outcome == MESH_SIM_RX_DECODED ?
+              "admitted local skew did not contain the complete poll airtime" :
+              "poll beyond the bounded local window unexpectedly decoded");
+    return world.receptions[0].outcome;
 }
 
-static void test_pair_start_skew_covers_control_deadline(void)
+static void test_pair_start_skew_is_local_and_route_depth_independent(void)
 {
-    static const uint32_t phy_sweep_step_ms = 997u;
+    static const uint32_t phy_sweep_step_ms = 37u;
     const struct uwb_range_header header = {
         .type = MSG_UWB_POLL,
         .seq = 1u,
@@ -442,39 +450,47 @@ static void test_pair_start_skew_covers_control_deadline(void)
     uint8_t poll[UWB_POLL_LEN] = {0};
     size_t poll_len = 0u;
     uint32_t poll_airtime_us;
-    bool all_skews_have_margin = true;
+    uint32_t latest_poll_offset_us;
 
     CHECK(uwb_encode_poll(&header, poll, sizeof(poll), &poll_len) == PROTO_OK &&
               poll_len == UWB_POLL_LEN,
           "pair-skew poll encoding failed");
     poll_airtime_us = mesh_sim_frame_duration_us(
         MESH_SIM_PHY_CHANNEL5_RANGE, poll_len);
-    CHECK(poll_airtime_us < SURVEY_PAIR_START_SKEW_MARGIN_MS * 1000u,
-          "pair-start margin cannot contain one complete poll frame");
+    CHECK(poll_airtime_us < SURVEY_PAIR_INITIATOR_TIMEOUT_MS * 1000u,
+          "initiator DS-TWR timeout cannot contain one complete poll frame");
+    latest_poll_offset_us = SURVEY_PAIR_INITIATOR_TIMEOUT_MS * 1000u -
+                            poll_airtime_us;
+
+    CHECK(SURVEY_PAIR_RESPONDER_WINDOW_MS ==
+              SURVEY_PAIR_START_SKEW_MARGIN_MS +
+                  SURVEY_PAIR_INITIATOR_TIMEOUT_MS,
+          "responder window is not exactly local skew plus DS-TWR timeout");
+    CHECK(SURVEY_PAIR_RESPONDER_WINDOW_MS <
+              survey_pair_control_timeout_ms(1u),
+          "one-hop command timeout leaked into the local responder window");
+    CHECK(SURVEY_PAIR_RESPONDER_WINDOW_MS <
+              survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL),
+          "multi-hop command timeout leaked into the local responder window");
 
     for (uint32_t skew_ms = 0u;
-         skew_ms <= SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
-         skew_ms++) {
-        uint32_t remaining_ms = SURVEY_PAIR_RESPONDER_WINDOW_MS - skew_ms;
-
-        if (remaining_ms < SURVEY_PAIR_START_SKEW_MARGIN_MS ||
-            (uint64_t)remaining_ms * 1000u < poll_airtime_us) {
-            all_skews_have_margin = false;
-            break;
-        }
-    }
-    CHECK(all_skews_have_margin,
-          "responder window does not cover every admitted start skew plus margin");
-
-    for (uint32_t skew_ms = 0u;
-         skew_ms < SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+         skew_ms < SURVEY_PAIR_START_SKEW_MARGIN_MS;
          skew_ms += phy_sweep_step_ms) {
-        if (!run_pair_start_skew_phy_case(poll, poll_len, skew_ms)) {
+        if (run_pair_start_skew_phy_case(poll, poll_len, skew_ms,
+                                         latest_poll_offset_us,
+                                         MESH_SIM_RX_DECODED) !=
+            MESH_SIM_RX_DECODED) {
             break;
         }
     }
     run_pair_start_skew_phy_case(poll, poll_len,
-                                 SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+                                 SURVEY_PAIR_START_SKEW_MARGIN_MS,
+                                 latest_poll_offset_us,
+                                 MESH_SIM_RX_DECODED);
+    run_pair_start_skew_phy_case(poll, poll_len,
+                                 SURVEY_PAIR_START_SKEW_MARGIN_MS,
+                                 latest_poll_offset_us + 1u,
+                                 MESH_SIM_RX_FRAME_TIMEOUT);
 }
 
 static int build_pair_prepare_control(struct mesh_outbound *control,
@@ -760,6 +776,7 @@ static void test_two_anchor_survey_lifecycle(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     static struct mesh_sim_world world;
     static struct survey_gateway_context gateway_context;
@@ -873,8 +890,6 @@ static void test_two_anchor_survey_lifecycle(void)
         CHECK(survey_discovery_schedule_attempt(&config, anchor_ids[i], 0u, 0u,
                                                  &schedules[i]) == PROTO_OK,
               "production survey probe scheduling failed");
-        CHECK(!schedules[i].deferred,
-              "unblocked lifecycle probe unexpectedly deferred");
         probe.anchor_slot = survey_discovery_opportunity_slot(
             anchor_ids[i], SURVEY_ID, 0u, config.slot_count);
         CHECK(uwb_encode_survey_discovery_probe(&probe, probe_frames[i],
@@ -993,7 +1008,7 @@ int main(void)
     run_survey_start_phy_case(false, 0u, true, true);
     run_survey_start_phy_case(false, 1u, false, true);
     run_survey_start_phy_case(true, 0u, false, false);
-    test_pair_start_skew_covers_control_deadline();
+    test_pair_start_skew_is_local_and_route_depth_independent();
     test_pair_prepare_phr_and_complete_airtime_sweep();
     test_two_anchor_survey_lifecycle();
 

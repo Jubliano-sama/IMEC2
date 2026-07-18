@@ -11,6 +11,7 @@
 #include "app_discovery_assignment_stack.h"
 #include "app_gateway_ble.h"
 #include "app_gateway_assignment_publisher.h"
+#include "app_gateway_survey_round.h"
 #include "app_gateway_survey_observability.h"
 #include "app_gateway_command_ingress.h"
 #include "app_gateway_command_lifecycle.h"
@@ -24,6 +25,7 @@
 #include "app_ml.h"
 #include "app_node_comm.h"
 #include "app_node_comm_gateway_route_refresh.h"
+#include "app_operation_policy.h"
 #include "app_state.h"
 #include "app_stack_workload_diag.h"
 #include "app_watchdog.h"
@@ -40,6 +42,7 @@
 #include "survey.h"
 #include "survey_gateway_transaction.h"
 #include "survey_pair_lease.h"
+#include "survey_round_control.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -143,6 +146,7 @@ struct anchor_discovery_claim_pending {
     uint32_t epoch;
     uint32_t delivery_handle;
     uint64_t absolute_deadline_ms;
+    uint16_t response_spread_ms;
     enum discovery_assignment_phase phase;
     uint8_t slot;
     uint8_t slot_count;
@@ -174,6 +178,7 @@ struct gateway_discovery_assignment_state {
     uint64_t claim_ack_settle_deadline_ms;
     uint64_t response_ack_settle_deadline_ms;
     uint32_t command_budget_ms;
+    uint16_t response_spread_ms;
     uint32_t generation;
     uint32_t delivery_handle;
     size_t claim_count;
@@ -228,6 +233,10 @@ static bool gateway_survey_budget_explicit;
 static uint32_t gateway_survey_discovery_delivery_handle;
 static uint32_t gateway_survey_collection_deadline_ms;
 static uint32_t gateway_survey_collection_duration_ms;
+static uint8_t gateway_survey_max_pair_reruns =
+    OPERATION_POLICY_PAIR_DEFAULT_MAX_RERUNS;
+static uint8_t gateway_survey_max_parallel_pairs =
+    OPERATION_POLICY_PAIR_DEFAULT_MAX_PARALLEL_PAIRS;
 static bool gateway_survey_collection_window_armed;
 static bool gateway_survey_collection_pending;
 static struct k_work_delayable gateway_survey_work;
@@ -269,12 +278,17 @@ struct gateway_survey_result_preflight {
     bool valid;
 };
 static struct survey_gateway_transaction gateway_survey_transaction;
+static struct app_gateway_survey_round gateway_survey_round;
 static struct gateway_survey_cleanup_delivery gateway_survey_cleanup;
 static struct gateway_survey_result_preflight gateway_survey_result_preflight;
 static uint32_t gateway_survey_transaction_client_token;
 static enum command_status gateway_survey_finish_pending_status;
 static enum gateway_command_event_reason gateway_survey_finish_pending_reason;
 static bool gateway_survey_finish_pending;
+static uint32_t gateway_survey_round_go_delivery_handle;
+static uint32_t gateway_survey_round_observation_deadline_ms;
+static size_t gateway_survey_round_cleanup_lane_index;
+static bool gateway_survey_round_cleanup_lane_valid;
 #endif
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
 K_MSGQ_DEFINE(gateway_host_command_msgq,
@@ -314,6 +328,7 @@ struct anchor_pending_command_options {
     uint32_t collection_epoch_id;
     uint32_t collection_slot_seed;
     uint32_t command_expiry_s;
+    uint32_t execute_delay_ms;
     uint16_t expected_node_count;
     bool collection_required;
 };
@@ -372,12 +387,30 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
                                                     uint8_t reason);
 static void gateway_survey_auto_note_command_timeout(const struct proto_packet *command,
                                                      enum command_id command_id);
+#if DEVICE_ROLE == ROLE_GATEWAY
+static bool gateway_survey_round_active(void);
+static bool gateway_survey_round_drive(void);
+static int gateway_survey_round_note_sample(uint64_t reporter_id,
+                                            const struct survey_sample *sample);
+static bool gateway_survey_round_note_control_result(
+    const struct proto_packet *command,
+    enum command_id command_id,
+    enum command_status status,
+    uint8_t reason);
+static void gateway_survey_round_fail_current_control(
+    enum command_id command_id,
+    uint64_t target_id,
+    enum gateway_command_event_reason failure_reason);
+static void gateway_survey_round_note_cleanup_peer(uint8_t peer_mask);
+static void gateway_survey_round_reset(void);
+#endif
 static void anchor_heartbeat_work_handler(struct k_work *work);
 
 
 /* Implementation is split by responsibility but remains one translation unit. */
 #include "app_anchor_commands.inc"
 #include "app_anchor_gateway_survey.inc"
+#include "app_anchor_gateway_survey_round.inc"
 #include "app_anchor_gateway_control.inc"
 #include "app_anchor_radio.inc"
 #include "app_anchor_init.inc"

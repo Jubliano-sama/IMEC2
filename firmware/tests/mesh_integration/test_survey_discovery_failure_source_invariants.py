@@ -57,72 +57,31 @@ def braced_block_at(source: str, marker_index: int) -> str:
 
 
 run = function_body(DISCOVERY, "app_anchor_survey_discovery_run")
-assert run.count("send_local_survey_probe(") == 2
-assert run.count("if (rf_started)") == 2
-for match in re.finditer(r"if \(rf_started\)", run):
-    rf_started_block = braced_block_at(run, match.start())
-    assert "survey_discovery_probe_attempt_note_rf_started(" in rf_started_block, (
-        "every accepted RF start must consume exactly one probe opportunity"
-    )
+assert run.count("send_local_survey_probe(") == 1
 assert "dwm3000_driver_send_frame(" not in run
-assert "while (deferred_mask != 0u" in run
-assert run.count("schedule_survey_probe_retry(") == 2
-assert "return -EBUSY" not in run, (
-    "a second pre-RF refusal must remain pending until the shared deadline"
-)
-assert "survey_discovery_probe_real_attempt_count(" in run
-deficit_index = run.index(
-    "survey_discovery_probe_real_attempt_count("
-)
-deficit_guard_index = run.rfind("if (", 0, deficit_index)
-deficit_block = braced_block_at(run, deficit_guard_index)
-deficit_condition = run[
-    deficit_guard_index:run.index("{", deficit_guard_index)
-]
-assert "survey_discovery_probe_real_attempt_count(" in deficit_condition
-assert "SURVEY_DISCOVERY_OPPORTUNITY_COUNT" in deficit_condition
-assert "prepare_discovery_report(" in deficit_block, (
-    "deadline exhaustion must still stage a report containing heard peers"
-)
+assert "while (deferred_mask != 0u" not in run
+assert "schedule_survey_probe_retry(" not in run
+assert "survey_discovery_probe_real_attempt_count(" not in run
+assert "COMMAND_RADIO_ERROR" not in run
+assert re.search(
+    r"for\s*\(uint8_t opportunity\s*=\s*0u;\s*"
+    r"opportunity\s*<\s*config->round_count",
+    run,
+), "the runtime profile must own the exact announce/listen round count"
+send_index = run.index("send_local_survey_probe(")
+ensure_index = run.index("dwm3000_driver_ensure_wake_mode(", send_index)
+listen_index = run.index("receive_survey_probes_until(", ensure_index)
+assert send_index < ensure_index < listen_index
+abort_index = run.index("if (abort_requested())")
+abort_return = run.index("return -ECANCELED", abort_index)
+success_report_index = run.rindex("prepare_discovery_report(")
+assert abort_index < abort_return < success_report_index
 assert re.search(
     r"prepare_discovery_report\s*\(\s*config->survey_id\s*,\s*"
-    r"entries\s*,\s*entry_count\s*,.*?COMMAND_RADIO_ERROR\s*\)",
-    deficit_block,
+    r"entries\s*,\s*entry_count\s*,.*?COMMAND_OK\s*\)",
+    run[success_report_index:],
     re.S,
-), (
-    "fewer than four real RF opportunities must stage the exact heard-peer "
-    "report with an explicit radio-error status"
-)
-assert "return ret < 0 ? ret : -ETIMEDOUT;" in deficit_block, (
-    "an incomplete survey must remain terminally incomplete even after its "
-    "explicit status report enters durable custody"
-)
-success_report_index = run.rindex("prepare_discovery_report(")
-assert deficit_block.find("COMMAND_RADIO_ERROR") >= 0
-assert deficit_guard_index < success_report_index
-assert "COMMAND_OK" in run[success_report_index:], (
-    "only the complete four-opportunity path may publish a successful report"
-)
-
-probe_retry = function_body(DISCOVERY, "schedule_survey_probe_retry")
-assert "survey_discovery_probe_attempt_defer(" in probe_retry
-assert "attempt->due_ms - retry_origin_ms" in probe_retry
-
-core_probe_retry = function_body(
-    CORE_SURVEY, "survey_discovery_probe_attempt_defer"
-)
-assert "node_comm_retry_backoff_ms(" in core_probe_retry
-assert "NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE" in core_probe_retry
-assert "attempt->retry_round++" in core_probe_retry
-assert "retry_origin_ms - absolute_deadline_ms" in core_probe_retry
-assert "attempt->pending = true" in core_probe_retry
-
-core_rf_started = function_body(
-    CORE_SURVEY, "survey_discovery_probe_attempt_note_rf_started"
-)
-assert "attempt->rf_started" in core_rf_started
-assert "return PROTO_ERR_STALE" in core_rf_started
-assert "attempt->pending = false" in core_rf_started
+), "every non-aborted completed window must stage its useful peer set"
 
 probe_send = function_body(DISCOVERY, "send_local_survey_probe")
 assert "dwm3000_driver_send_frame_tracked(" in probe_send

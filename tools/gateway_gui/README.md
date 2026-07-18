@@ -32,6 +32,12 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    completed BLE write is shown as transport completion only, not command
    success.
 
+For every ordinary command, the GUI freezes the command and its runtime policy,
+sends a separately correlated Here-I-Am, waits for its typed successful
+terminal, and only then sends the frozen target. Failure, timeout, or disconnect
+drops the unsent target. Manual Here-I-Am and immediate recovery/liveness
+commands are exempt so preflight cannot recurse or delay recovery.
+
 All command controls remain disabled until the read-only identity characteristic
 returns the connected gateway firmware `DEVICE_ID`. The GUI clears that identity
 on disconnect and rejects contradictions from gateway-local packets; it never
@@ -63,7 +69,8 @@ The UUIDs are copied from `firmware/app/src/app_gateway_ble.c`:
 | Packet write | `494d4543-0001-4757-8000-000000000003` |
 | Gateway identity read | `494d4543-0001-4757-8000-000000000005` |
 
-Run the strict live transport check after flashing a gateway. It fails unless
+The optional strict live transport check is useful for qualification after
+flashing a gateway. It is separate from normal GUI operation and fails unless
 the identity read and packet notification subscription work:
 
 ```sh
@@ -91,24 +98,27 @@ This GUI is therefore a host-delivery view, not a complete RF trace.
 
 - **Anchor Survey Discovery** sends a gateway-local `MSG_COMMAND` with
   `CMD_SURVEY_REACHABILITY = 0x0100` to the identity read from GATT. Its payload
-  contains required `SURVEY_ID` and `DURATION_MS`, plus `SAMPLE_COUNT` and
-  `DISCOVERY_SLOT_COUNT`. Gateway firmware converts it to
-  `SURVEY_DISCOVERY_START`, gathers reachability, and may continue into pair
-  ranging. The current gateway-role build resolves its pair-sample runtime cap
-  to `1`, so the GUI defaults to one sample; larger values can be rejected with
-  `COMMAND_DENIED`.
+  contains the survey identity and one complete versioned operation policy:
+  discovery start delay, slot duration/count, one to four rounds, report grace,
+  total budget, zero to two pair reruns, one to four samples, and a concurrency
+  cap up to 25. Gateway firmware gathers one-way or mutual reachability, plans
+  disjoint-neighborhood batches, arms each pair with PREPARE/START, then launches
+  each batch with one common future `CMD_SURVEY_GO`.
 - **Here I Am** sends local `CMD_FORCE_REDISCOVERY = 0x000c` to the gateway's
-  own `DEVICE_ID`. The current special case returns `COMMAND_OK` and schedules
-  the priority `MSG_GATEWAY_ROUTE_ADV` route-refresh flood.
+  own `DEVICE_ID`. Its correlated successful terminal follows completion of the
+  gateway's bounded `MSG_GATEWAY_ROUTE_ADV` flood custody; it does not claim
+  per-anchor reception. It also carries the current complete runtime policy.
 - **Assign discovery slots** sends local `CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104`
   to the gateway's own `DEVICE_ID`. Its optional **Expected anchors** value is
   encoded as `TLV_EXPECTED_NODE_COUNT`; when the roster is known, this lets a
   delivered CLAIM flood advance as soon as every expected unique claim arrives.
   Leave it blank when the roster is unknown so the gateway waits the complete
-  conservative multi-hop horizon. The gateway then floods the resulting table,
-  and a successful terminal `COMMAND_RESULT` reports the assigned-anchor count
-  in `REASON`. Intermediate anchor CLAIM and ACK records are labeled by
-  assignment phase and are not presented as assigned-anchor totals.
+  conservative multi-hop horizon. The GUI also exposes the total assignment
+  budget and equal randomized response spread. The gateway floods the resulting
+  table and commits the ACKed subset; a nonempty useful subset may finish with
+  `COMMAND_OK`, while terminal counters preserve missing claims or ACKs for
+  optional strict qualification. The assigned-anchor count is returned in
+  `REASON`.
 
 There is no arbitrary command composer. Although the envelope is extensible,
 firmware applies command-specific destinations, scopes, TLV validation, and

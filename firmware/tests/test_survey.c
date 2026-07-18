@@ -1,4 +1,5 @@
 #include "survey.h"
+#include "operation_policy.h"
 
 #include <assert.h>
 #include <string.h>
@@ -244,9 +245,10 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 2000u,
+        .start_delay_ms = 6000u,
         .slot_ms = 40u,
         .slot_count = 50u,
+        .round_count = 4u,
     };
     uint8_t payload[48];
     size_t payload_len = 0u;
@@ -255,7 +257,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     uint8_t tlv_len = 0u;
 
     assert(survey_discovery_config_validate(&config) == PROTO_OK);
-    assert(survey_discovery_duration_ms(&config) == 17120u);
+    assert(survey_discovery_duration_ms(&config) == 8000u);
     assert(survey_append_discovery_start_tlvs(payload,
                                               sizeof(payload),
                                               &payload_len,
@@ -282,7 +284,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     assert(tlv_value[0] == config.slot_count);
     assert(tlv_find(payload, payload_len, TLV_DURATION_MS, &tlv_value, &tlv_len) == PROTO_OK);
     assert(tlv_len == 4u);
-    assert(proto_get_u32_le(tlv_value) == 17120u);
+    assert(proto_get_u32_le(tlv_value) == 8000u);
 
     assert(survey_extract_discovery_start_tlvs(payload,
                                                payload_len,
@@ -291,6 +293,41 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     assert(decoded.start_delay_ms == config.start_delay_ms);
     assert(decoded.slot_ms == config.slot_ms);
     assert(decoded.slot_count == config.slot_count);
+    assert(decoded.round_count == config.round_count);
+}
+
+static void test_discovery_round_count_comes_from_runtime_profile(void)
+{
+    const struct survey_discovery_config config = {
+        .survey_id = 0xABCDEF01u,
+        .start_delay_ms = 6000u,
+        .slot_ms = 40u,
+        .slot_count = 50u,
+        .round_count = 2u,
+    };
+    const struct operation_policy policy = {
+        .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
+        .value.discovery = {
+            .start_delay_ms = 6000u,
+            .slot_ms = 40u,
+            .slot_count = 50u,
+            .round_count = 2u,
+            .report_grace_ms = 250u,
+            .operation_budget_ms = 600000u,
+        },
+    };
+    struct survey_discovery_config decoded = {0};
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(survey_append_discovery_start_tlvs(
+               payload, sizeof(payload), &payload_len, &config) == PROTO_OK);
+    assert(operation_policy_append_tlv(
+               payload, sizeof(payload), &payload_len, &policy) == PROTO_OK);
+    assert(survey_extract_discovery_start_tlvs(
+               payload, payload_len, &decoded) == PROTO_OK);
+    assert(decoded.round_count == 2u);
+    assert(survey_discovery_duration_ms(&decoded) == 4000u);
 }
 
 static void test_discovery_slot_validation_uses_physical_probe_budget(void)
@@ -300,6 +337,7 @@ static void test_discovery_slot_validation_uses_physical_probe_budget(void)
         .start_delay_ms = 2000u,
         .slot_ms = SURVEY_DISCOVERY_MIN_SLOT_MS,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     uint32_t tx_budget_ms = survey_discovery_probe_tx_budget_ms();
 
@@ -310,47 +348,43 @@ static void test_discovery_slot_validation_uses_physical_probe_budget(void)
     assert(survey_discovery_config_validate(&config) == PROTO_OK);
     config.slot_ms--;
     assert(survey_discovery_config_validate(&config) == PROTO_ERR_MALFORMED);
+    config.slot_ms = SURVEY_DISCOVERY_MIN_SLOT_MS;
+    config.round_count = 0u;
+    assert(survey_discovery_config_validate(&config) == PROTO_ERR_MALFORMED);
+    config.round_count = SURVEY_DISCOVERY_MAX_ROUND_COUNT + 1u;
+    assert(survey_discovery_config_validate(&config) == PROTO_ERR_MALFORMED);
 }
 
-static void test_discovery_attempt_scheduler_defers_without_consuming_attempt(void)
+static void test_discovery_round_scheduler_has_one_continuous_window(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     const uint64_t anchor_id = UINT64_C(0x1111222233334444);
-    const uint32_t nominal_duration_ms =
-        survey_discovery_duration_ms(&config) / 2u;
+    const uint32_t round_duration_ms = config.slot_ms * config.slot_count;
 
     for (uint8_t opportunity = 0u;
-         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+         opportunity < config.round_count;
          opportunity++) {
         struct survey_discovery_attempt_schedule nominal = {0};
-        struct survey_discovery_attempt_schedule deferred = {0};
 
         assert(survey_discovery_schedule_attempt(&config, anchor_id,
                                                  opportunity, 0u,
                                                  &nominal) == PROTO_OK);
-        assert(!nominal.deferred);
+        assert(nominal.window_start_ms ==
+               (uint32_t)opportunity * round_duration_ms);
+        assert(nominal.window_end_ms ==
+               (uint32_t)(opportunity + 1u) * round_duration_ms);
         assert(nominal.tx_ms <= nominal.latest_tx_start_ms);
         assert(nominal.latest_tx_start_ms < nominal.slot_end_ms);
         assert(survey_discovery_schedule_attempt(
                    &config, anchor_id, opportunity,
                    nominal.latest_tx_start_ms + 1u,
-                   &deferred) == PROTO_OK);
-        assert(deferred.deferred);
-        assert(deferred.window_start_ms ==
-               nominal.window_start_ms + nominal_duration_ms);
-        assert(deferred.tx_ms == nominal.tx_ms + nominal_duration_ms);
-        assert(deferred.slot_end_ms ==
-               nominal.slot_end_ms + nominal_duration_ms);
-        assert(deferred.tx_ms <= deferred.latest_tx_start_ms);
-        assert(survey_discovery_schedule_attempt(
-                   &config, anchor_id, opportunity,
-                   deferred.latest_tx_start_ms + 1u,
-                   &deferred) == PROTO_ERR_BUSY);
+                   &nominal) == PROTO_ERR_BUSY);
     }
 
     {
@@ -364,14 +398,16 @@ static void test_discovery_attempt_scheduler_defers_without_consuming_attempt(vo
         assert(survey_discovery_schedule_attempt(
                    &config, anchor_id, 0u,
                    after_first_miss_ms,
-                   &first) == PROTO_OK);
-        assert(first.deferred);
+                   &first) == PROTO_ERR_BUSY);
         assert(survey_discovery_schedule_attempt(
                    &config, anchor_id, 1u,
                    after_first_miss_ms,
                    &second) == PROTO_OK);
-        assert(!second.deferred);
     }
+    assert(survey_discovery_schedule_attempt(
+               &config, anchor_id, config.round_count, 0u,
+               &(struct survey_discovery_attempt_schedule){0}) ==
+           PROTO_ERR_ARG);
 }
 
 static void test_pending_discovery_report_survives_queue_and_route_pressure(void)
@@ -577,6 +613,7 @@ static void test_discovery_timing_uses_packet_age(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 50u,
+        .round_count = 4u,
     };
     struct survey_discovery_timing timing = {0};
     uint32_t start_at_ms = 0u;
@@ -587,7 +624,7 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(!timing.expired);
     assert(timing.wait_ms == 1500u);
     assert(timing.elapsed_ms == 0u);
-    assert(timing.duration_ms == 17120u);
+    assert(timing.duration_ms == 8000u);
     assert(survey_discovery_start_at_ms(&timing, 1000u, &start_at_ms) ==
            PROTO_OK);
     assert(start_at_ms == 2500u);
@@ -607,17 +644,17 @@ static void test_discovery_timing_uses_packet_age(void)
            PROTO_OK);
     assert(start_at_ms == 2500u);
 
-    assert(survey_discovery_timing_from_age(&config, 10560u, &timing) == PROTO_OK);
+    assert(survey_discovery_timing_from_age(&config, 9560u, &timing) == PROTO_OK);
     assert(!timing.pending);
     assert(timing.active);
     assert(!timing.expired);
 
-    assert(survey_discovery_timing_from_age(&config, 19120u, &timing) == PROTO_OK);
+    assert(survey_discovery_timing_from_age(&config, 10000u, &timing) == PROTO_OK);
     assert(!timing.pending);
     assert(!timing.active);
     assert(timing.expired);
-    assert(timing.elapsed_ms == 17120u);
-    assert(survey_discovery_start_at_ms(&timing, 19620u, &start_at_ms) ==
+    assert(timing.elapsed_ms == 8000u);
+    assert(survey_discovery_start_at_ms(&timing, 10500u, &start_at_ms) ==
            PROTO_ERR_ARG);
 }
 
@@ -628,13 +665,14 @@ static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     uint32_t delay_ms = 0u;
 
     assert(survey_discovery_report_delay_ms(&config, 0u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 3040u);
+    assert(delay_ms == 960u);
     assert(survey_discovery_report_delay_ms(&config, 3u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 3040u + (3u * 2270u));
+    assert(delay_ms == 960u + (3u * 2270u));
     assert(survey_discovery_report_delay_ms(&config, 6u, 2270u, &delay_ms) ==
            PROTO_ERR_MALFORMED);
     assert(survey_discovery_report_delay_ms(&config, 0u, 0u, &delay_ms) ==
@@ -648,6 +686,7 @@ static void test_discovery_report_delay_rejects_overflow(void)
         .start_delay_ms = 2000u,
         .slot_ms = 1000u,
         .slot_count = 50u,
+        .round_count = 4u,
     };
     uint32_t delay_ms = 0u;
 
@@ -664,6 +703,7 @@ static void test_discovery_packets_use_diagnostic_ids(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 50u,
+        .round_count = 4u,
     };
     struct proto_packet packet = {0};
 
@@ -2377,8 +2417,9 @@ int main(void)
     test_reach_request_tlvs_include_survey_and_duration();
     test_reach_request_parser_rejects_malformed_tlvs();
     test_discovery_start_tlvs_round_trip_timing_config();
+    test_discovery_round_count_comes_from_runtime_profile();
     test_discovery_slot_validation_uses_physical_probe_budget();
-    test_discovery_attempt_scheduler_defers_without_consuming_attempt();
+    test_discovery_round_scheduler_has_one_continuous_window();
     test_pending_discovery_report_survives_queue_and_route_pressure();
     test_discovery_report_custody_tracks_upstream_hops();
     test_discovery_slot_count_tlv_defaults_and_overrides();

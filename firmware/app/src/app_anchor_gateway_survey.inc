@@ -297,6 +297,24 @@ static int gateway_reject_survey_request(
     return error;
 }
 
+static uint8_t gateway_survey_known_max_report_hops(void)
+{
+    uint8_t max_hops = 0u;
+
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(&mesh_runtime); i++) {
+        const struct mesh_downlink_entry *route =
+            mesh_relay_downlink_at(&mesh_runtime, i);
+
+        if (route != NULL && route->valid &&
+            route->gateway_id == DEVICE_ID &&
+            route->target_id != DEVICE_ID &&
+            route->hop_count > max_hops) {
+            max_hops = route->hop_count;
+        }
+    }
+    return max_hops;
+}
+
 static int gateway_route_survey_reachability(const struct proto_packet *host_packet,
                                              const uint8_t *host_payload,
                                              size_t host_payload_len)
@@ -306,13 +324,17 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         .start_delay_ms = SURVEY_DISCOVERY_START_DELAY_MS,
         .slot_ms = SURVEY_DISCOVERY_SLOT_MS,
         .slot_count = SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT,
+        .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
     };
+    struct operation_policy_set provided_policy;
+    struct operation_policy_set operation_policy;
     struct survey_discovery_config config = discovery_config;
     struct mesh_outbound outbound = {0};
     uint32_t survey_id = 0u;
     uint32_t duration_ms = 0u;
     uint32_t discovery_duration_ms = 0u;
     uint32_t report_mesh_duration_ms = 0u;
+    uint32_t report_custody_ms;
     uint32_t collection_delay_ms = 0u;
     uint32_t command_budget_ms = SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS;
     uint32_t command_origin_ms;
@@ -345,6 +367,17 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
             host_packet, COMMAND_BUSY, 3u,
             GATEWAY_COMMAND_EVENT_REASON_BUSY, -EBUSY);
     }
+
+    ret = operation_policy_set_from_tlvs(host_payload,
+                                         host_payload_len,
+                                         &provided_policy);
+    if (ret != PROTO_OK ||
+        app_operation_policy_install(&provided_policy, 0u) < 0) {
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, EBADMSG,
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EBADMSG);
+    }
+    app_operation_policy_snapshot(&operation_policy);
 
     ret = survey_extract_reach_request_tlvs(host_payload,
                                             host_payload_len,
@@ -404,8 +437,28 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
             GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST,
             mesh_errno_from_proto(ret));
     }
+    if (provided_policy.discovery_present) {
+        if (duration_ms != provided_policy.discovery.report_grace_ms ||
+            config.slot_count != provided_policy.discovery.slot_count ||
+            (budget_explicit &&
+             command_budget_ms !=
+                provided_policy.discovery.operation_budget_ms)) {
+            return gateway_reject_survey_request(
+                host_packet, COMMAND_MALFORMED_PAYLOAD, EINVAL,
+                GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
+        }
+        config.start_delay_ms = provided_policy.discovery.start_delay_ms;
+        config.slot_ms = provided_policy.discovery.slot_ms;
+        config.slot_count = provided_policy.discovery.slot_count;
+        config.round_count = provided_policy.discovery.round_count;
+        duration_ms = provided_policy.discovery.report_grace_ms;
+        command_budget_ms = provided_policy.discovery.operation_budget_ms;
+        budget_explicit = true;
+    }
     config.survey_id = survey_id;
     discovery_duration_ms = survey_discovery_duration_ms(&config);
+    report_custody_ms = survey_discovery_report_custody_ms(
+        gateway_survey_known_max_report_hops());
     ret = survey_discovery_report_delay_ms(&config,
                                            config.slot_count - 1u,
                                            SURVEY_RESULT_MESH_SLOT_MS,
@@ -426,9 +479,9 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         UINT32_MAX - config.start_delay_ms < report_mesh_duration_ms ||
         UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms < duration_ms ||
         UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms - duration_ms <
-            SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS ||
+            report_custody_ms ||
         UINT32_MAX - config.start_delay_ms - report_mesh_duration_ms - duration_ms -
-            SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS <
+            report_custody_ms <
             SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS) {
         return gateway_reject_survey_request(
             host_packet, COMMAND_MALFORMED_PAYLOAD, 2u,
@@ -436,7 +489,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     collection_delay_ms = config.start_delay_ms + report_mesh_duration_ms +
                           duration_ms +
-                          SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS +
+                          report_custody_ms +
                           SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS;
     if (budget_explicit) {
         /*
@@ -454,6 +507,34 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                              sizeof(outbound.payload),
                                              &payload_len,
                                              &config);
+    if (ret != PROTO_OK) {
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_INTERNAL_ERROR, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
+            mesh_errno_from_proto(ret));
+    }
+    if (ret == PROTO_OK) {
+        const struct operation_policy discovery_policy = {
+            .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
+            .value.discovery = operation_policy.discovery,
+        };
+
+        ret = operation_policy_append_tlv(outbound.payload,
+                                          sizeof(outbound.payload),
+                                          &payload_len,
+                                          &discovery_policy);
+    }
+    if (ret == PROTO_OK) {
+        const struct operation_policy pair_policy = {
+            .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
+            .value.pair = operation_policy.pair,
+        };
+
+        ret = operation_policy_append_tlv(outbound.payload,
+                                          sizeof(outbound.payload),
+                                          &payload_len,
+                                          &pair_policy);
+    }
     if (ret != PROTO_OK) {
         return gateway_reject_survey_request(
             host_packet, COMMAND_INTERNAL_ERROR, (uint8_t)(-ret),
@@ -496,6 +577,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
 #if DEVICE_ROLE == ROLE_GATEWAY
     survey_gateway_transaction_init(&gateway_survey_transaction);
+    gateway_survey_round_reset();
     memset(&gateway_survey_cleanup, 0, sizeof(gateway_survey_cleanup));
     memset(&gateway_survey_result_preflight, 0,
            sizeof(gateway_survey_result_preflight));
@@ -514,6 +596,9 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     gateway_survey_pair_initiator_unusable_mask = 0u;
     gateway_survey_pair_responder_unusable_mask = 0u;
     gateway_survey_pair_observation_active = false;
+    gateway_survey_max_pair_reruns = operation_policy.pair.max_reruns;
+    gateway_survey_max_parallel_pairs =
+        operation_policy.pair.max_parallel_pairs;
     survey_gateway_response_ack_settle_init(
         &gateway_survey_response_ack_settle);
     app_gateway_survey_observability_reset(&gateway_survey_observability);
@@ -570,14 +655,16 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         &gateway_survey_work,
         K_MSEC(GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS));
     gateway_emit_host_command_result(host_packet, CMD_SURVEY_REACHABILITY, COMMAND_OK, 0u);
-    LOG_INF("gateway survey discovery broadcast: survey=%u start_delay_ms=%u slot_ms=%u slots=%u discovery_ms=%u report_train_end_ms=%u report_grace_ms=%u samples=%u seq=%u",
+    LOG_INF("gateway survey discovery broadcast: survey=%u start_delay_ms=%u slot_ms=%u slots=%u rounds=%u discovery_ms=%u report_train_end_ms=%u report_grace_ms=%u report_custody_ms=%u samples=%u seq=%u",
             survey_id,
             config.start_delay_ms,
             config.slot_ms,
             config.slot_count,
+            config.round_count,
             discovery_duration_ms,
             report_mesh_duration_ms,
             duration_ms,
+            report_custody_ms,
             sample_count,
             seq);
     return 0;
@@ -638,6 +725,11 @@ static int gateway_note_survey_pair_result(const struct proto_packet *packet,
          packet->src_id != sample.pair.responder_id)) {
         return -EPROTO;
     }
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (gateway_survey_round_active()) {
+        return gateway_survey_round_note_sample(packet->src_id, &sample);
+    }
+#endif
     if (!gateway_survey_active || !gateway_survey_auto.running ||
         !gateway_survey_pair_observation_active ||
         sample.pair.survey_id != gateway_survey_auto.pair.survey_id ||
@@ -935,6 +1027,8 @@ gateway_survey_finalize_pair_observation(void)
     if (!success &&
         (gateway_survey_pair_initiator_unusable_mask != 0u ||
          gateway_survey_pair_responder_unusable_mask != 0u) &&
+        gateway_survey_auto.pair_reruns_started <
+            gateway_survey_max_pair_reruns &&
         survey_gateway_auto_rerun_pair(&gateway_survey_auto) == PROTO_OK) {
         uint8_t run_number =
             (uint8_t)(gateway_survey_auto.pair_reruns_started + 1u);
@@ -953,7 +1047,7 @@ gateway_survey_finalize_pair_observation(void)
                 (unsigned long long)gateway_survey_auto.pair.initiator_id,
                 (unsigned long long)gateway_survey_auto.pair.responder_id,
                 run_number,
-                SURVEY_GATEWAY_PAIR_MAX_RERUNS + 1u);
+                gateway_survey_max_pair_reruns + 1u);
         return GATEWAY_SURVEY_PAIR_FINALIZE_RETRY;
     }
     event = gateway_observability_event(
@@ -1073,6 +1167,9 @@ static void gateway_survey_auto_finish_status(
     gateway_survey_active = false;
     gateway_survey_budget_explicit = false;
     gateway_survey_operation_deadline_ms = 0u;
+#if DEVICE_ROLE == ROLE_GATEWAY
+    gateway_survey_round_reset();
+#endif
     survey_gateway_response_ack_settle_init(
         &gateway_survey_response_ack_settle);
     if (gateway_survey_pending_command_valid) {
@@ -1389,6 +1486,29 @@ static int gateway_survey_auto_send_prepare(const struct survey_gateway_auto_act
                                   sizeof(outbound.payload),
                                   &payload_len,
                                   &action->pair);
+    if (ret == PROTO_OK) {
+        const struct operation_policy policy = {
+            .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
+            .value.pair = {
+                .max_reruns = gateway_survey_max_pair_reruns,
+                .max_parallel_pairs = gateway_survey_max_parallel_pairs,
+            },
+        };
+
+        ret = operation_policy_append_tlv(outbound.payload,
+                                          sizeof(outbound.payload),
+                                          &payload_len,
+                                          &policy);
+    }
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (ret == PROTO_OK && gateway_survey_round_active()) {
+        ret = survey_round_id_append_tlv(
+            outbound.payload,
+            sizeof(outbound.payload),
+            &payload_len,
+            gateway_survey_round.runtime.batch_sequence);
+    }
+#endif
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
@@ -1432,6 +1552,29 @@ static int gateway_survey_auto_send_start(const struct survey_gateway_auto_actio
                                   sizeof(outbound.payload),
                                   &payload_len,
                                   &action->pair);
+    if (ret == PROTO_OK) {
+        const struct operation_policy policy = {
+            .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
+            .value.pair = {
+                .max_reruns = gateway_survey_max_pair_reruns,
+                .max_parallel_pairs = gateway_survey_max_parallel_pairs,
+            },
+        };
+
+        ret = operation_policy_append_tlv(outbound.payload,
+                                          sizeof(outbound.payload),
+                                          &payload_len,
+                                          &policy);
+    }
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (ret == PROTO_OK && gateway_survey_round_active()) {
+        ret = survey_round_id_append_tlv(
+            outbound.payload,
+            sizeof(outbound.payload),
+            &payload_len,
+            gateway_survey_round.runtime.batch_sequence);
+    }
+#endif
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
@@ -1739,6 +1882,7 @@ static void gateway_survey_service_cleanup(void)
                     ret);
             return;
         }
+        gateway_survey_round_note_cleanup_peer(cleanup->peer_mask);
         memset(cleanup, 0, sizeof(*cleanup));
         gateway_survey_begin_cleanup();
         gateway_survey_finish_cleanup_if_complete(now_ms);
@@ -1860,6 +2004,13 @@ static void gateway_survey_abandon_current(
             &gateway_survey_pending_command, -ECANCELED, 0u, 0u);
         gateway_clear_pending_command_result(&gateway_survey_pending_command);
         gateway_survey_pending_command_valid = false;
+    }
+    if (gateway_survey_round_active()) {
+        gateway_survey_round_fail_current_control(command_id,
+                                                  gateway_survey_transaction.active_target_id,
+                                                  event_reason);
+        gateway_survey_begin_cleanup();
+        return;
     }
     ret = survey_gateway_auto_note_result(&gateway_survey_auto,
                                           command_id,
@@ -2125,6 +2276,15 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
         command, status == COMMAND_OK ? 0 : -EIO, 0u, 0u);
     gateway_survey_pending_command_valid = false;
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (gateway_survey_round_note_control_result(command,
+                                                 command_id,
+                                                 status,
+                                                 reason)) {
+        return;
+    }
+#endif
+
     ret = survey_gateway_auto_note_result(&gateway_survey_auto,
                                           command_id,
                                           command->dst_id,
@@ -2249,6 +2409,13 @@ static void gateway_survey_auto_note_command_timeout(const struct proto_packet *
     survey_gateway_transaction_require_cleanup(&gateway_survey_transaction,
                                                false,
                                                (uint64_t)k_uptime_get());
+    if (gateway_survey_round_note_control_result(command,
+                                                 command_id,
+                                                 COMMAND_TIMEOUT,
+                                                 0u)) {
+        gateway_survey_begin_cleanup();
+        return;
+    }
 #endif
 
     ret = survey_gateway_auto_note_result(&gateway_survey_auto,

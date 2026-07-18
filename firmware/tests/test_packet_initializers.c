@@ -128,6 +128,7 @@ static void test_survey_packet_initializers_reset_message_age(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     struct proto_packet packet;
 

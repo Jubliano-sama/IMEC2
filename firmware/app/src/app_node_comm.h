@@ -174,7 +174,6 @@ bool app_node_comm_forced_reclaim_lease(
 int app_node_comm_stop_preserving_queued(void);
 int app_node_comm_start(void);
 void app_node_comm_lifecycle_service(void);
-void app_node_comm_start_route_refresh(void);
 int app_node_comm_request_route_refresh(uint32_t delay_ms,
                                         const char *reason,
                                         bool forced);

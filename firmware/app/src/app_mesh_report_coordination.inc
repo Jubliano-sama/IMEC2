@@ -1497,6 +1497,73 @@ static int report_tx_queue_restore_recovery_locked(void)
     return ret;
 }
 
+/* Caller holds report_tx_queue_overflow_lock. */
+static int report_tx_queue_promote_local_locked(void)
+{
+    uint32_t queue_count;
+
+    if (app_mesh_queue_head_owned(&report_tx_queue_head_owner)) {
+        return -EBUSY;
+    }
+
+    /*
+     * A full queue can leave the next local item in the explicit recovery
+     * owner.  Swap it with the current head before rotating, so the local
+     * item runs next while the displaced transit packet remains owned.
+     */
+    if (report_tx_queue_recovery_valid &&
+        mesh_outbound_is_local_origin_priority(
+            &report_tx_queue_overflow_dropped)) {
+        if (k_msgq_get(&report_tx_msgq,
+                       &report_tx_queue_rotation_scratch,
+                       K_NO_WAIT) != 0) {
+            return -EIO;
+        }
+        if (k_msgq_put(&report_tx_msgq,
+                       &report_tx_queue_overflow_dropped,
+                       K_NO_WAIT) != 0) {
+            if (k_msgq_put(&report_tx_msgq,
+                           &report_tx_queue_rotation_scratch,
+                           K_NO_WAIT) != 0) {
+                (void)mesh_preempt_report_queue_recover(
+                    &report_tx_queue_rotation_scratch,
+                    &report_tx_msgq);
+            }
+            return -EIO;
+        }
+        report_tx_queue_overflow_dropped =
+            report_tx_queue_rotation_scratch;
+    }
+
+    queue_count = (uint32_t)k_msgq_num_used_get(&report_tx_msgq);
+    for (uint32_t i = 0u;
+         i < queue_count && i < REPORT_TX_QUEUE_DEPTH;
+         i++) {
+        if (k_msgq_peek(&report_tx_msgq,
+                        &report_tx_queue_rotation_scratch) != 0) {
+            return -EIO;
+        }
+        if (mesh_outbound_is_local_origin_priority(
+                &report_tx_queue_rotation_scratch)) {
+            return 0;
+        }
+        if (k_msgq_get(&report_tx_msgq,
+                       &report_tx_queue_rotation_scratch,
+                       K_NO_WAIT) != 0) {
+            return -EIO;
+        }
+        if (k_msgq_put(&report_tx_msgq,
+                       &report_tx_queue_rotation_scratch,
+                       K_NO_WAIT) != 0) {
+            (void)mesh_preempt_report_queue_recover(
+                &report_tx_queue_rotation_scratch,
+                &report_tx_msgq);
+            return -EIO;
+        }
+    }
+    return -ENOENT;
+}
+
 static int report_tx_queue_peek(struct mesh_outbound *outbound)
 {
     int ret;
@@ -1509,6 +1576,7 @@ static int report_tx_queue_peek(struct mesh_outbound *outbound)
         return ret;
     }
     (void)report_tx_queue_restore_recovery_locked();
+    (void)report_tx_queue_promote_local_locked();
     ret = k_msgq_peek(&report_tx_msgq, outbound);
     k_mutex_unlock(&report_tx_queue_overflow_lock);
     return ret;
@@ -1530,6 +1598,10 @@ static int report_tx_queue_append(const struct mesh_outbound *outbound)
         ret = -ENOSPC;
     } else {
         ret = k_msgq_put(&report_tx_msgq, outbound, K_NO_WAIT);
+        if (ret == 0 &&
+            mesh_outbound_is_local_origin_priority(outbound)) {
+            (void)report_tx_queue_promote_local_locked();
+        }
     }
     k_mutex_unlock(&report_tx_queue_overflow_lock);
     return ret;
@@ -1546,6 +1618,7 @@ static int report_tx_queue_begin_head(
         return ret;
     }
     (void)report_tx_queue_restore_recovery_locked();
+    (void)report_tx_queue_promote_local_locked();
     ret = app_mesh_queue_head_begin(&report_tx_queue_head_owner,
                                     &report_tx_queue_head_ops,
                                     outbound,
@@ -1586,6 +1659,7 @@ static int report_tx_queue_commit_head_locked(
                                      &mesh_send_scratch_tx);
     if (ret == 0) {
         (void)report_tx_queue_restore_recovery_locked();
+        (void)report_tx_queue_promote_local_locked();
     }
     k_mutex_unlock(&report_tx_queue_overflow_lock);
     if (ret == 0) {

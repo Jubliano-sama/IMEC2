@@ -543,35 +543,25 @@ uint32_t discovery_assignment_table_fingerprint(
     return hash == 0u ? 1u : hash;
 }
 
-int discovery_assignment_response_delay_ms(uint8_t slot,
-                                           uint8_t slot_count,
-                                           uint8_t hop_count,
+int discovery_assignment_response_delay_ms(uint16_t response_spread_ms,
                                            uint8_t retry_round,
                                            uint32_t random_value,
                                            uint32_t *delay_ms)
 {
-    uint32_t effective_hop_count;
-    uint32_t farthest_first_hop_slots;
     uint32_t retry_base;
     uint32_t jitter_window;
     uint64_t delay;
 
-    if (delay_ms == NULL || slot_count == 0u ||
-        slot_count > UWB_DISCOVERY_SLOT_COUNT || slot >= slot_count) {
+    if (delay_ms == NULL ||
+        response_spread_ms < DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
+        response_spread_ms > DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
         return PROTO_ERR_ARG;
     }
 
-    effective_hop_count = hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
-                          hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
-                          DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
-    farthest_first_hop_slots = DISCOVERY_ASSIGNMENT_MAX_HOPS - effective_hop_count;
     retry_base = retry_base_ms(retry_round);
-    jitter_window = retry_round == 0u ? DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS :
+    jitter_window = retry_round == 0u ? response_spread_ms :
                     retry_base;
     delay = DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-            ((uint64_t)slot * DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) +
-            ((uint64_t)farthest_first_hop_slots *
-             DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS) +
             (retry_round == 0u ? 0u : retry_base) +
             (random_value % jitter_window);
     if (delay > UINT32_MAX) {
@@ -622,12 +612,13 @@ uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch)
     return membership_epoch == 0u ? 1u : membership_epoch;
 }
 
-uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
+uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
                                                    uint8_t max_hop_count)
 {
     uint32_t effective_hop_count;
 
-    if (slot_count == 0u || slot_count > UWB_DISCOVERY_SLOT_COUNT) {
+    if (response_spread_ms < DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
+        response_spread_ms > DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
         return 0u;
     }
     effective_hop_count = max_hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
@@ -636,11 +627,7 @@ uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
     return discovery_assignment_response_custody_ms(
                (uint8_t)effective_hop_count) +
            DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-           ((uint32_t)(slot_count - 1u) *
-            DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) +
-           ((DISCOVERY_ASSIGNMENT_MAX_HOPS - effective_hop_count) *
-            DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS) +
-           DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS;
+           response_spread_ms - 1u;
 }
 
 uint64_t discovery_assignment_control_flood_deadline_ms(

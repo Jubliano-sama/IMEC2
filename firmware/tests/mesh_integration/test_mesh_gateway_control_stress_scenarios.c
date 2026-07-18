@@ -40,6 +40,69 @@ static bool has_action(const struct mesh_relay_result *result,
     return result != NULL && (result->actions & action) != 0u;
 }
 
+static struct operation_policy_set complete_route_operation_policy(void)
+{
+    struct operation_policy_set policy;
+
+    operation_policy_set_defaults(&policy);
+    policy.assignment_present = true;
+    policy.discovery_present = true;
+    policy.pair_present = true;
+    policy.assignment.expected_anchor_count = 50u;
+    policy.assignment.operation_budget_ms = 180000u;
+    policy.assignment.response_spread_ms = 750u;
+    policy.discovery.start_delay_ms = 9000u;
+    policy.discovery.slot_ms = 75u;
+    policy.discovery.slot_count = 10u;
+    policy.discovery.round_count = 2u;
+    policy.discovery.report_grace_ms = 1200u;
+    policy.discovery.operation_budget_ms = 300000u;
+    policy.pair.max_reruns = 1u;
+    policy.pair.max_parallel_pairs = 8u;
+    return policy;
+}
+
+static int copy_operation_policy_tlvs(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint8_t policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN],
+    size_t *policy_tlvs_len)
+{
+    size_t offset = 0u;
+    size_t copied = 0u;
+
+    if (payload == NULL || policy_tlvs == NULL || policy_tlvs_len == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    while (offset < payload_len) {
+        size_t tlv_offset = offset;
+        uint8_t type;
+        uint8_t value_len;
+        size_t tlv_len;
+
+        if (payload_len - offset < PROTO_TLV_HEADER_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = payload[offset];
+        value_len = payload[offset + 1u];
+        offset += PROTO_TLV_HEADER_LEN;
+        if (payload_len - offset < value_len) {
+            return PROTO_ERR_MALFORMED;
+        }
+        tlv_len = PROTO_TLV_HEADER_LEN + value_len;
+        if (type == TLV_OPERATION_POLICY) {
+            if (copied + tlv_len > OPERATION_POLICY_ALL_TLVS_LEN) {
+                return PROTO_ERR_NO_SPACE;
+            }
+            memcpy(&policy_tlvs[copied], &payload[tlv_offset], tlv_len);
+            copied += tlv_len;
+        }
+        offset += value_len;
+    }
+    *policy_tlvs_len = copied;
+    return PROTO_OK;
+}
+
 static size_t upstream_candidate_count(const struct mesh_relay *relay)
 {
     size_t count = 0u;
@@ -292,13 +355,20 @@ static void test_here_i_am_ttl_and_epoch_fail_closed(void)
 {
     struct mesh_relay gateway;
     struct mesh_relay chain[MESH_NETWORK_MAX_HOPS];
+    struct operation_policy_set policy = complete_route_operation_policy();
     struct mesh_outbound current;
+    uint8_t expected_policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
+    size_t expected_policy_tlvs_len = 0u;
     uint64_t previous_id = GATEWAY_ID;
 
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
                     GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH);
-    CHECK(mesh_relay_build_gateway_route_adv(&gateway, ROUTE_ADV_SEQ,
-                                              1000u, &current) == PROTO_OK);
+    CHECK(mesh_relay_build_gateway_route_adv_with_policy(
+              &gateway, ROUTE_ADV_SEQ, 1000u, &policy, &current) == PROTO_OK);
+    CHECK(copy_operation_policy_tlvs(
+              current.payload, current.payload_len,
+              expected_policy_tlvs, &expected_policy_tlvs_len) == PROTO_OK);
+    CHECK(expected_policy_tlvs_len == sizeof(expected_policy_tlvs));
     for (size_t hop = 0u; hop < MESH_NETWORK_MAX_HOPS; hop++) {
         struct mesh_relay_result result;
         const struct route_candidate *selected;
@@ -311,11 +381,34 @@ static void test_here_i_am_ttl_and_epoch_fail_closed(void)
                   1100u + (uint32_t)hop, (uint32_t)hop,
                   &result) == PROTO_OK);
         CHECK(result.status == PROTO_OK);
+        CHECK(has_action(&result,
+                         MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY));
+        CHECK(result.operation_policy.assignment_present);
+        CHECK(result.operation_policy.discovery_present);
+        CHECK(result.operation_policy.pair_present);
+        CHECK(result.operation_policy.assignment.expected_anchor_count ==
+              policy.assignment.expected_anchor_count);
+        CHECK(result.operation_policy.discovery.operation_budget_ms ==
+              policy.discovery.operation_budget_ms);
+        CHECK(result.operation_policy.pair.max_parallel_pairs ==
+              policy.pair.max_parallel_pairs);
         selected = route_selected(&chain[hop].upstream);
         CHECK(selected != NULL && selected->next_hop_id == previous_id);
         if (hop + 1u < MESH_NETWORK_MAX_HOPS) {
+            uint8_t forwarded_policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
+            size_t forwarded_policy_tlvs_len = 0u;
+
             CHECK(has_action(&result,
                               MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+            CHECK(copy_operation_policy_tlvs(
+                      result.gateway_route_adv.payload,
+                      result.gateway_route_adv.payload_len,
+                      forwarded_policy_tlvs,
+                      &forwarded_policy_tlvs_len) == PROTO_OK);
+            CHECK(forwarded_policy_tlvs_len == expected_policy_tlvs_len);
+            CHECK(memcmp(forwarded_policy_tlvs,
+                         expected_policy_tlvs,
+                         expected_policy_tlvs_len) == 0);
             current = result.gateway_route_adv;
         } else {
             CHECK(!has_action(&result,
@@ -323,6 +416,7 @@ static void test_here_i_am_ttl_and_epoch_fail_closed(void)
         }
         previous_id = id;
     }
+    CHECK(current.payload_len == MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN);
 
     {
         struct mesh_relay newer;
@@ -532,6 +626,7 @@ static void test_gateway_control_reverse_route_contract(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     struct mesh_relay anchor;
     struct mesh_relay gateway;

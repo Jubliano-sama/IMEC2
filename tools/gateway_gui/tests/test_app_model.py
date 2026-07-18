@@ -6,9 +6,19 @@ from unittest.mock import Mock, patch
 
 from tools.gateway_gui.app import DEFAULT_COMMAND_BUDGET_TEXT, GatewayGui
 from tools.gateway_gui.cir_reassembly import CirReassembler
-from tools.gateway_gui.command_telemetry import GatewayCommandRequestTracker
+from tools.gateway_gui.command_orchestration import (
+    GatewayCommandDispatch,
+    GatewayCommandOrchestrator,
+    GatewayCommandPlan,
+)
+from tools.gateway_gui.command_telemetry import (
+    GatewayCommandEvent,
+    GatewayCommandRequestTracker,
+)
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
+    CMD_FORCE_REDISCOVERY,
+    CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     MSG_COMMAND_RESULT,
@@ -18,6 +28,7 @@ from tools.gateway_gui.protocol import (
     TLV_COMMAND_STATUS,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
     TLV_DISCOVERY_ASSIGNMENT_PHASE,
+    TLV_OPERATION_POLICY,
     TLV_REASON,
     append_tlv,
     encode_cobs_packet,
@@ -84,6 +95,22 @@ def assignment_phase_packet(phase: int, epoch: int):
 
 
 class AppModelTests(unittest.TestCase):
+    @staticmethod
+    def set_default_policy_variables(
+        gui: GatewayGui, *, expected_anchors: str = ""
+    ) -> None:
+        gui.assignment_expected_anchors_text = FakeVariable(expected_anchors)  # type: ignore[assignment]
+        gui.assignment_budget_text = FakeVariable("235209")  # type: ignore[assignment]
+        gui.assignment_response_spread_text = FakeVariable("1000")  # type: ignore[assignment]
+        gui.discovery_start_delay_text = FakeVariable("6000")  # type: ignore[assignment]
+        gui.discovery_slot_ms_text = FakeVariable("40")  # type: ignore[assignment]
+        gui.discovery_slots_text = FakeVariable("6")  # type: ignore[assignment]
+        gui.discovery_round_count_text = FakeVariable("4")  # type: ignore[assignment]
+        gui.duration_text = FakeVariable("250")  # type: ignore[assignment]
+        gui.discovery_budget_text = FakeVariable("600000")  # type: ignore[assignment]
+        gui.pair_max_reruns_text = FakeVariable("2")  # type: ignore[assignment]
+        gui.pair_max_parallel_text = FakeVariable("auto (25)")  # type: ignore[assignment]
+
     @staticmethod
     def gui_model() -> GatewayGui:
         gui = GatewayGui.__new__(GatewayGui)
@@ -180,8 +207,7 @@ class AppModelTests(unittest.TestCase):
         gui.survey_id_text = FakeVariable("1234")  # type: ignore[assignment]
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
-        gui.duration_text = FakeVariable("250")  # type: ignore[assignment]
-        gui.discovery_slots_text = FakeVariable("6")  # type: ignore[assignment]
+        self.set_default_policy_variables(gui)
         gui.sample_count_text = FakeVariable("1")  # type: ignore[assignment]
         gui.status_text = FakeVariable()  # type: ignore[assignment]
         gui.transport = Mock()
@@ -191,14 +217,25 @@ class AppModelTests(unittest.TestCase):
         gui.click_location_model.state = Mock()
         gui.anchor_geometry_view = Mock()
         gui.click_diagnostics_view = Mock()
-        gui.__dict__["_begin_gateway_command"] = Mock(return_value=True)
+        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
         gui.__dict__["_show_error"] = Mock()
-        command = Mock(frame=b"frame", label="survey")
+        command = Mock(
+            frame=b"survey-frame",
+            label="survey",
+            command_id=CMD_SURVEY_REACHABILITY,
+        )
+        here_i_am = Mock(
+            frame=b"route-frame",
+            label="route",
+            command_id=CMD_FORCE_REDISCOVERY,
+        )
 
         with patch("tools.gateway_gui.app.time.time_ns", return_value=99), \
              patch("tools.gateway_gui.app.time.monotonic_ns", return_value=99), \
              patch("tools.gateway_gui.app.build_anchor_discovery_command",
-                   return_value=command) as builder:
+                   return_value=command) as builder, \
+             patch("tools.gateway_gui.app.build_here_i_am_command",
+                   return_value=here_i_am):
             gui._send_discovery()
             gui._send_discovery()
 
@@ -207,15 +244,167 @@ class AppModelTests(unittest.TestCase):
         self.assertNotEqual(survey_ids[0], survey_ids[1])
         self.assertTrue(all(1 <= survey_id <= 0xFFFFFFFF for survey_id in survey_ids))
         self.assertEqual(gui.survey_id_text.get(), str(survey_ids[-1]))
+        self.assertEqual(gui._submit_gateway_command.call_count, 2)
+        plans = [call.args[0] for call in gui._submit_gateway_command.call_args_list]
+        self.assertTrue(all(plan.preflight is not None for plan in plans))
+        self.assertTrue(all(
+            plan.preflight.session_id != plan.target.session_id for plan in plans
+        ))
+        gui.geometry_model.begin_survey.assert_not_called()
+        plans[-1].target.on_dispatch()
+        gui.geometry_model.begin_survey.assert_called_once_with(
+            survey_ids[-1],
+            host_session_id=plans[-1].target.session_id,
+            host_sequence=plans[-1].target.sequence,
+        )
+
+    def test_survey_frame_and_geometry_wait_for_successful_here_i_am(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.connected = True
+        gui.gateway_id = 0xAABBCCDDEEFF0011
+        gui.sequence = 0
+        gui._last_command_session_id = 0
+        gui._survey_id_counter = 100
+        gui._used_survey_ids = set()
+        gui.survey_id_auto = FakeVariable(True)  # type: ignore[assignment]
+        gui.survey_id_text = FakeVariable("100")  # type: ignore[assignment]
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
+        self.set_default_policy_variables(gui)
+        gui.sample_count_text = FakeVariable("1")  # type: ignore[assignment]
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.geometry_model = Mock()
+        gui.geometry_model.generation = 1
+        gui.click_location_model = Mock()
+        gui.click_location_model.state = Mock()
+        gui.anchor_geometry_view = Mock()
+        gui.click_diagnostics_view = Mock()
+        gui.command_request_tracker = GatewayCommandRequestTracker()
+        gui.command_orchestrator = GatewayCommandOrchestrator(
+            gui.command_request_tracker
+        )
+        gui.__dict__["_update_command_state"] = Mock()
+        gui.__dict__["_show_error"] = Mock()
+
+        with patch("tools.gateway_gui.app.time.monotonic_ns", return_value=99):
+            gui._send_discovery()
+
+        self.assertEqual(gui.transport.send_frame.call_count, 1)
+        gui.geometry_model.begin_survey.assert_not_called()
+        preflight = gui.command_orchestrator.current
+        self.assertIsNotNone(preflight)
+        assert preflight is not None
+        self.assertEqual(preflight.command_id, CMD_FORCE_REDISCOVERY)
+        preflight_policy = tuple(
+            value.raw for value in parse_cobs_packet(preflight.frame).tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )
+        self.assertEqual(len(preflight_policy), 3)
+        route_terminal = GatewayCommandEvent(
+            preflight.command_kind, 12, 1, 1, 0, 0,
+            preflight.command_id, 0, preflight.session_id, 1,
+            preflight.session_id, preflight.sequence, 1,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        )
+
+        gui._apply_gateway_command_transition(
+            gui.command_orchestrator.observe_event(route_terminal)
+        )
+
         self.assertEqual(gui.transport.send_frame.call_count, 2)
-        armed_ids = [call.args[0] for call in gui.geometry_model.begin_survey.call_args_list]
-        self.assertEqual(armed_ids, survey_ids)
+        target = gui.command_orchestrator.current
+        self.assertIsNotNone(target)
+        assert target is not None
+        self.assertEqual(target.command_id, CMD_SURVEY_REACHABILITY)
+        self.assertNotEqual(target.session_id, preflight.session_id)
+        target_policy = tuple(
+            value.raw for value in parse_cobs_packet(target.frame).tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )
+        self.assertEqual(target_policy, preflight_policy)
+        gui.geometry_model.begin_survey.assert_called_once_with(
+            101,
+            host_session_id=target.session_id,
+            host_sequence=target.sequence,
+        )
+
+    def test_assignment_is_snapshotted_behind_distinct_here_i_am_preflight(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.connected = True
+        gui.gateway_id = 0xAABBCCDDEEFF0011
+        gui.sequence = 0
+        gui._last_command_session_id = 0
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
+        self.set_default_policy_variables(gui, expected_anchors="5")
+        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
+        gui.__dict__["_show_error"] = Mock()
+
+        with patch("tools.gateway_gui.app.time.monotonic_ns", return_value=123):
+            gui._send_assign_discovery_slots()
+
+        gui._show_error.assert_not_called()
+        plan = gui._submit_gateway_command.call_args.args[0]
+        self.assertEqual(plan.target.command_id, CMD_ASSIGN_DISCOVERY_SLOTS)
+        self.assertIsNotNone(plan.preflight)
+        assert plan.preflight is not None
+        self.assertEqual(plan.preflight.command_id, CMD_FORCE_REDISCOVERY)
+        self.assertNotEqual(plan.preflight.session_id, plan.target.session_id)
+        target_policy = tuple(
+            value.raw for value in parse_cobs_packet(plan.target.frame).tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )
+        preflight_policy = tuple(
+            value.raw for value in parse_cobs_packet(plan.preflight.frame).tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )
+        self.assertEqual(len(target_policy), 3)
+        self.assertEqual(target_policy, preflight_policy)
+        self.assertEqual(
+            plan.target.timeout_s,
+            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0 + 2.0,
+        )
+        self.assertEqual(plan.preflight.timeout_s, 122.0)
+
+    def test_manual_here_i_am_carries_the_current_full_policy(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.connected = True
+        gui.gateway_id = 0xAABBCCDDEEFF0011
+        gui.sequence = 0
+        gui._last_command_session_id = 0
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
+        self.set_default_policy_variables(gui, expected_anchors="5")
+        gui.assignment_response_spread_text = FakeVariable("750")  # type: ignore[assignment]
+        gui.discovery_round_count_text = FakeVariable("3")  # type: ignore[assignment]
+        gui.pair_max_parallel_text = FakeVariable("8")  # type: ignore[assignment]
+        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
+        gui.__dict__["_show_error"] = Mock()
+
+        with patch("tools.gateway_gui.app.time.monotonic_ns", return_value=456):
+            gui._send_here_i_am()
+
+        plan = gui._submit_gateway_command.call_args.args[0]
+        self.assertIsNone(plan.preflight)
+        policies = tuple(
+            value.decoded for value in parse_cobs_packet(plan.target.frame).tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )
+        self.assertEqual(len(policies), 3)
+        self.assertEqual(policies[0]["expected_anchor_count"], 5)
+        self.assertEqual(policies[0]["response_spread_ms"], 750)
+        self.assertEqual(policies[1]["round_count"], 3)
+        self.assertEqual(policies[2]["max_parallel_pairs"], 8)
 
     def test_accepted_survey_telemetry_refreshes_geometry_view(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.command_timeline_model = Mock()
-        gui.command_request_tracker = Mock()
-        gui.command_request_tracker.observe_event.return_value = False
+        gui.command_request_tracker = GatewayCommandRequestTracker()
+        gui.command_orchestrator = GatewayCommandOrchestrator(
+            gui.command_request_tracker
+        )
+        gui.__dict__["_apply_gateway_command_transition"] = Mock()
         gui.mesh_diagnostics_view = Mock()
         gui.geometry_model = Mock()
         gui.geometry_model.observe_command_event.return_value = True
@@ -242,9 +431,25 @@ class AppModelTests(unittest.TestCase):
     def test_immediate_ok_result_does_not_release_command_before_typed_terminal(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.command_request_tracker = GatewayCommandRequestTracker()
-        gui.command_request_tracker.begin(2, 0x11223344, 7, now=0.0)
+        gui.command_orchestrator = GatewayCommandOrchestrator(
+            gui.command_request_tracker
+        )
+        current = GatewayCommandDispatch(
+            command_kind=1,
+            command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
+            session_id=0x11223344,
+            sequence=7,
+            frame=b"assignment",
+            label="assignment",
+            timeout_s=10.0,
+            status_text="assignment",
+        )
+        gui.command_orchestrator.begin(
+            GatewayCommandPlan(target=current, preflight=None), now=0.0
+        )
         gui.geometry_model = Mock()
         gui.geometry_model.observe_pair_packet.return_value = None
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
         gui.__dict__["_update_command_state"] = Mock()
 
         gui._observe_diagnostic_packet(assignment_result_packet(status=0, reason=0))
@@ -281,7 +486,7 @@ class AppModelTests(unittest.TestCase):
                 None,
                 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
             ),
-            227.199,
+            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0 + 2.0,
         )
         self.assertEqual(gui._command_timeout_s(20000), 22.0)
 

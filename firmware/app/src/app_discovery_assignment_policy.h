@@ -316,9 +316,21 @@ static inline bool app_discovery_assignment_semantic_terminal_success(
                accepted_claim_count >= expected_claim_count;
     }
     if (phase == APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE) {
-        return accepted_claim_count > 0u && missing_ack_count == 0u;
+        return accepted_claim_count > missing_ack_count;
     }
     return false;
+}
+
+static inline uint8_t app_discovery_assignment_collection_hop_count(
+    uint16_t expected_claim_count,
+    size_t accepted_claim_count,
+    uint8_t observed_max_hop_count)
+{
+    if (expected_claim_count == 0u ||
+        accepted_claim_count < expected_claim_count) {
+        return 0u;
+    }
+    return observed_max_hop_count;
 }
 
 static inline uint8_t app_discovery_assignment_claim_round_limit(

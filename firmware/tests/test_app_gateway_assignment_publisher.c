@@ -190,10 +190,77 @@ static void run_pressure_case(size_t count)
     assert(!diagnostics.active);
 }
 
+static void run_partial_publish_case(void)
+{
+    struct discovery_assignment_entry committed[2];
+    uint64_t claimed_ids[3] = {
+        UINT64_C(0x2100000000000001),
+        UINT64_C(0x2100000000000002),
+        UINT64_C(0x2100000000000003),
+    };
+    struct app_gateway_assignment_publisher_ops ops;
+    struct gateway_command_event base = base_event(77u);
+    struct gateway_command_event table = base;
+    struct gateway_command_event terminal = base;
+    struct mock_ble ble;
+
+    memset(&ble, 0, sizeof(ble));
+    gateway_command_observability_init(&ble.observability);
+    ops.emit_if_available = mock_emit;
+    ops.ctx = &ble;
+    assert(app_gateway_assignment_publisher_init(&ops) == 0);
+    assert(discovery_assignment_sort_anchor_ids(
+               claimed_ids, sizeof(claimed_ids) / sizeof(claimed_ids[0])) ==
+           PROTO_OK);
+
+    committed[0].anchor_id = claimed_ids[0];
+    committed[0].hash = discovery_assignment_hash(claimed_ids[0]);
+    committed[0].slot = 0u;
+    committed[1].anchor_id = claimed_ids[2];
+    committed[1].hash = discovery_assignment_hash(claimed_ids[2]);
+    committed[1].slot = 2u;
+
+    ble.connected = true;
+    ble.credit = true;
+    assert(app_gateway_assignment_publisher_stage_batch(
+               &base, committed, 2u, 0u) == 0);
+    table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
+    table.progress_count = 2u;
+    table.total_count = 3u;
+    app_gateway_assignment_publisher_stage_table_ready(&table);
+    terminal.stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE;
+    terminal.status = COMMAND_OK;
+    terminal.progress_count = 2u;
+    terminal.total_count = 3u;
+    terminal.success_count = 2u;
+    terminal.failure_count = 1u;
+    assert(app_gateway_assignment_publisher_capture_terminal(&terminal));
+
+    while (ble.sent_count < 5u) {
+        assert(ble.queue_count > 0u);
+        send_head(&ble, false);
+    }
+
+    assert(ble.sent[0].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+    assert(ble.sent[0].anchor_id == committed[0].anchor_id);
+    assert(ble.sent[0].slot == 0u);
+    assert(ble.sent[1].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+    assert(ble.sent[1].anchor_id == committed[1].anchor_id);
+    assert(ble.sent[1].slot == 2u);
+    assert(ble.sent[4].stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
+    assert(ble.sent[4].status == COMMAND_OK);
+    assert(ble.sent[4].total_count == 3u);
+    assert(ble.sent[4].success_count == 2u);
+    assert(ble.sent[4].failure_count == 1u);
+}
+
 int main(void)
 {
     run_pressure_case(3u);
     run_pressure_case(20u);
     run_pressure_case(50u);
+    run_partial_publish_case();
     return 0;
 }

@@ -272,9 +272,7 @@ static uint32_t anchor_discovery_response_delay_ms(
     uint32_t delay_ms = DISCOVERY_ASSIGNMENT_RETRY_BASE_MS;
 
     if (pending == NULL ||
-        discovery_assignment_response_delay_ms(pending->slot,
-                                               pending->slot_count,
-                                               pending->hop_count,
+        discovery_assignment_response_delay_ms(pending->response_spread_ms,
                                                pending->attempt,
                                                sys_rand32_get(),
                                                &delay_ms) != PROTO_OK) {
@@ -441,7 +439,8 @@ static int anchor_schedule_discovery_response(
     uint32_t epoch,
     enum discovery_assignment_phase phase,
     uint8_t slot,
-    uint8_t slot_count)
+    uint8_t slot_count,
+    uint16_t response_spread_ms)
 {
     uint64_t hash;
     uint32_t delay_ms;
@@ -449,7 +448,9 @@ static int anchor_schedule_discovery_response(
     if (command == NULL || epoch == 0u ||
         (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
          phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) ||
-        slot_count == 0u || slot >= slot_count) {
+        slot_count == 0u || slot >= slot_count ||
+        response_spread_ms < DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
+        response_spread_ms > DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
         return -EINVAL;
     }
     if (discovery_assignment_response_custody_matches(
@@ -477,6 +478,7 @@ static int anchor_schedule_discovery_response(
     anchor_discovery_claim_pending.phase = phase;
     anchor_discovery_claim_pending.slot = slot;
     anchor_discovery_claim_pending.slot_count = slot_count;
+    anchor_discovery_claim_pending.response_spread_ms = response_spread_ms;
     anchor_discovery_claim_pending.hop_count =
         anchor_discovery_gateway_hop_count();
     anchor_discovery_claim_pending.attempt = 0u;
@@ -500,7 +502,8 @@ static int anchor_schedule_discovery_response(
 }
 
 static int anchor_schedule_discovery_claim(const struct proto_packet *command,
-                                           uint32_t epoch)
+                                           uint32_t epoch,
+                                           uint16_t response_spread_ms)
 {
     uint8_t slot = (uint8_t)(discovery_assignment_hash(DEVICE_ID) %
                              UWB_DISCOVERY_SLOT_COUNT);
@@ -509,7 +512,8 @@ static int anchor_schedule_discovery_claim(const struct proto_packet *command,
                                               epoch,
                                               DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
                                               slot,
-                                              UWB_DISCOVERY_SLOT_COUNT);
+                                              UWB_DISCOVERY_SLOT_COUNT,
+                                              response_spread_ms);
 }
 
 static void anchor_collection_result_clear(void)
@@ -1228,6 +1232,7 @@ static void anchor_pending_options_to_gateway(
     options->collection_epoch_id = pending->collection_epoch_id;
     options->collection_slot_seed = pending->collection_slot_seed;
     options->command_expiry_s = pending->command_expiry_s;
+    options->execute_delay_ms = pending->execute_delay_ms;
     options->expected_node_count = pending->expected_node_count;
     options->collection_required = pending->collection_required;
     options->flood_required = true;
@@ -1239,6 +1244,7 @@ static int anchor_apply_discovery_assignment_command(
     size_t payload_len)
 {
     struct discovery_assignment_entry entries[UWB_DISCOVERY_SLOT_COUNT];
+    struct operation_policy_set operation_policy;
     struct gateway_command_options assignment_options = {0};
     enum discovery_assignment_phase phase = 0;
     enum app_discovery_assignment_table_decision table_decision;
@@ -1247,6 +1253,15 @@ static int anchor_apply_discovery_assignment_command(
     size_t entry_count = 0u;
     uint8_t slot_count = 0u;
     int ret;
+
+    ret = app_operation_policy_apply_payload(
+        payload,
+        payload_len,
+        0u,
+        &operation_policy);
+    if (ret < 0) {
+        return ret;
+    }
 
     ret = discovery_assignment_extract_control_tlvs(payload,
                                                     payload_len,
@@ -1280,7 +1295,8 @@ static int anchor_apply_discovery_assignment_command(
                     epoch);
             return 0;
         }
-        return anchor_schedule_discovery_claim(packet, epoch);
+        return anchor_schedule_discovery_claim(
+            packet, epoch, operation_policy.assignment.response_spread_ms);
     }
     if (phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE) {
         return -EINVAL;
@@ -1322,7 +1338,8 @@ static int anchor_apply_discovery_assignment_command(
         LOG_WRN("anchor received discovery table before claim epoch: epoch=%u count=%u; retaining committed assignment and late-claiming",
                 epoch,
                 (unsigned int)entry_count);
-        return anchor_schedule_discovery_claim(packet, epoch);
+        return anchor_schedule_discovery_claim(
+            packet, epoch, operation_policy.assignment.response_spread_ms);
     }
     if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY) {
         for (size_t i = 0u; i < entry_count; i++) {
@@ -1336,7 +1353,8 @@ static int anchor_apply_discovery_assignment_command(
                     epoch,
                     DISCOVERY_ASSIGNMENT_PHASE_ACK,
                     entries[i].slot,
-                    slot_count);
+                    slot_count,
+                    operation_policy.assignment.response_spread_ms);
             }
         }
         return 0;
@@ -1388,7 +1406,8 @@ static int anchor_apply_discovery_assignment_command(
             epoch,
             DISCOVERY_ASSIGNMENT_PHASE_ACK,
             entries[i].slot,
-            slot_count);
+            slot_count,
+            operation_policy.assignment.response_spread_ms);
         if (ret < 0) {
             return ret;
         }
@@ -1441,7 +1460,8 @@ static int anchor_apply_discovery_assignment_command(
     LOG_WRN("anchor not listed in discovery-slot assignment: epoch=%u count=%u",
             epoch,
             (unsigned int)entry_count);
-    return anchor_schedule_discovery_claim(packet, epoch);
+    return anchor_schedule_discovery_claim(
+        packet, epoch, operation_policy.assignment.response_spread_ms);
 }
 
 static void anchor_execute_command_side_effects(const struct proto_packet *packet,
@@ -1508,6 +1528,16 @@ static void anchor_execute_command_side_effects(const struct proto_packet *packe
                                                                payload_len,
                                                                status,
                                                                reason);
+        if (ret < 0 && *status == COMMAND_OK) {
+            *status = COMMAND_INTERNAL_ERROR;
+            *reason = (uint8_t)(-ret);
+        }
+    } else if (command_id == CMD_SURVEY_GO) {
+        ret = app_anchor_survey_runtime_go_round_from_command(packet,
+                                                             payload,
+                                                             payload_len,
+                                                             status,
+                                                             reason);
         if (ret < 0 && *status == COMMAND_OK) {
             *status = COMMAND_INTERNAL_ERROR;
             *reason = (uint8_t)(-ret);
@@ -1611,6 +1641,7 @@ static int anchor_schedule_broadcast_command_execution(
     anchor_pending_command_execution.options.collection_epoch_id = options->collection_epoch_id;
     anchor_pending_command_execution.options.collection_slot_seed = options->collection_slot_seed;
     anchor_pending_command_execution.options.command_expiry_s = options->command_expiry_s;
+    anchor_pending_command_execution.options.execute_delay_ms = options->execute_delay_ms;
     anchor_pending_command_execution.options.expected_node_count = options->expected_node_count;
     anchor_pending_command_execution.options.collection_required = options->collection_required;
     memcpy(anchor_pending_command_execution.payload, payload, payload_len);
@@ -1745,6 +1776,16 @@ static void anchor_handle_local_command(const struct proto_packet *packet,
             LOG_INF("anchor ignored duplicate broadcast command: cmd=0x%04x command_seq=%u",
                     (unsigned int)command_id,
                     command_options.command_seq);
+            return;
+        }
+
+        if (command_id == CMD_SURVEY_GO &&
+            (command_options.execute_delay_ms == 0u ||
+             packet->message_age_ms >= command_options.execute_delay_ms)) {
+            LOG_WRN("anchor ignored late or immediate survey GO: command_seq=%u age_ms=%u delay_ms=%u",
+                    command_options.command_seq,
+                    packet->message_age_ms,
+                    command_options.execute_delay_ms);
             return;
         }
 

@@ -31,6 +31,7 @@
 #include "app_node_comm.h"
 #include "app_node_comm_gateway_control.h"
 #include "app_node_comm_gateway_route_refresh.h"
+#include "app_operation_policy.h"
 #include "app_state.h"
 #include "app_stack_workload_diag.h"
 #include "app_wake_train_politeness.h"
@@ -513,6 +514,7 @@ enum mesh_radio_release_policy {
 static struct mesh_outbound report_tx_worker_scratch;
 static struct mesh_outbound report_tx_batch_candidates[MESH_CH9_TX_BATCH_MAX];
 static struct mesh_outbound report_tx_queue_overflow_dropped;
+static struct mesh_outbound report_tx_queue_rotation_scratch;
 static bool report_tx_queue_recovery_valid;
 static struct app_mesh_queue_head_owner report_tx_queue_head_owner;
 #endif
@@ -767,6 +769,10 @@ static bool mesh_queue_from_frame_at_internal(
     bool submit_work,
     bool *valid_mesh_frame,
     uint64_t *previous_hop_id);
+#if DEVICE_ROLE == ROLE_ANCHOR
+static bool mesh_outbound_is_local_origin_priority(
+    const struct mesh_outbound *out);
+#endif
 
 /* Implementation is split by responsibility but remains one translation unit. */
 #include "app_mesh_report_coordination.inc"

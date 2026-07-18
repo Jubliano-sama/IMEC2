@@ -102,7 +102,6 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         self.assertIn("uint8_t next_opportunity", self.flood_header)
 
     def test_protocol_clients_use_public_route_refresh_facade(self):
-        start = function_body(self.adapter, "app_node_comm_start_route_refresh")
         request = function_body(
             self.adapter, "app_node_comm_request_route_refresh"
         )
@@ -114,7 +113,6 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
             "app_node_comm_request_route_refresh_correlated_bounded",
         )
 
-        self.assertIn("app_node_comm_gateway_route_refresh_start()", start)
         self.assertIn("app_node_comm_gateway_route_refresh_request(", request)
         self.assertIn(
             "app_node_comm_request_route_refresh_correlated_bounded(",
@@ -136,33 +134,28 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
                     f"{name} bypasses the node-communication route-refresh facade",
                 )
 
-    def test_assignment_and_survey_wait_for_successful_route_refresh(self):
+        self.assertNotIn("app_node_comm_start_route_refresh", self.adapter)
+        self.assertNotIn(
+            "app_node_comm_gateway_route_refresh_start", self.header
+        )
+        self.assertNotIn(
+            "app_node_comm_start_route_refresh", (APP_SRC / "main.c").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def test_firmware_has_no_hidden_route_refresh_readiness_gate(self):
         route_host = function_body(self.anchor, "gateway_route_host_packet")
-        readiness_policy = function_body(
-            self.anchor, "gateway_host_command_requires_route_refresh_ready"
-        )
 
-        self.assertIn("CMD_ASSIGN_DISCOVERY_SLOTS", readiness_policy)
-        self.assertIn("gateway_command_uses_survey_mesh", readiness_policy)
-        self.assertNotIn("CMD_FORCE_REDISCOVERY", readiness_policy)
-
-        force_position = route_host.index(
-            "app_node_comm_request_route_refresh_correlated_bounded("
+        self.assertNotIn(
+            "gateway_host_command_requires_route_refresh_ready", self.anchor
         )
-        readiness_position = route_host.index(
-            "app_node_comm_gateway_route_refresh_ready()"
+        self.assertNotIn("app_node_comm_gateway_route_refresh_ready", route_host)
+        self.assertIn("gateway_start_discovery_assignment(", route_host)
+        self.assertIn("gateway_route_survey_command(", route_host)
+        self.assertIn(
+            "app_node_comm_request_route_refresh_correlated_bounded(", route_host
         )
-        assignment_position = route_host.index(
-            "gateway_start_discovery_assignment("
-        )
-        survey_position = route_host.index("gateway_route_survey_command(")
-        self.assertLess(force_position, readiness_position)
-        self.assertLess(readiness_position, assignment_position)
-        self.assertLess(readiness_position, survey_position)
-        self.assertIn("COMMAND_BUSY", route_host)
-        self.assertIn("GATEWAY_COMMAND_EVENT_REASON_BUSY", route_host)
-        self.assertIn("gateway_observe_host_terminal(", route_host)
-        self.assertIn("return -EBUSY", route_host)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,252 @@
+"""Versioned host-configurable operation policy shared with mesh firmware."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import struct
+from typing import Any, ClassVar
+
+
+OPERATION_POLICY_VERSION = 1
+OPERATION_POLICY_FLAGS_NONE = 0
+OPERATION_POLICY_FAMILY_ASSIGNMENT = 1
+OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY = 2
+OPERATION_POLICY_FAMILY_SURVEY_PAIR = 3
+
+COMMAND_BUDGET_MIN_MS = 1_000
+COMMAND_BUDGET_MAX_MS = 600_000
+EXPECTED_ANCHOR_COUNT_MAX = 50
+ASSIGNMENT_RESPONSE_SPREAD_MIN_MS = 20
+ASSIGNMENT_RESPONSE_SPREAD_MAX_MS = 10_000
+DISCOVERY_START_DELAY_MIN_MS = 6_000
+DISCOVERY_START_DELAY_MAX_MS = 60_000
+DISCOVERY_SLOT_MIN_MS = 30
+DISCOVERY_SLOT_MAX_MS = 1_000
+DISCOVERY_SLOT_COUNT_MIN = 1
+DISCOVERY_SLOT_COUNT_MAX = 50
+DISCOVERY_ROUND_COUNT_MIN = 1
+DISCOVERY_ROUND_COUNT_MAX = 4
+DISCOVERY_REPORT_GRACE_MIN_MS = 1
+DISCOVERY_REPORT_GRACE_MAX_MS = 60_000
+PAIR_MAX_RERUNS = 2
+PAIR_MAX_PARALLEL_PAIRS = 25
+
+ASSIGNMENT_DEFAULT_BUDGET_MS = 235_209
+ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS = 1_000
+DISCOVERY_DEFAULT_START_DELAY_MS = 6_000
+DISCOVERY_DEFAULT_SLOT_MS = 40
+DISCOVERY_DEFAULT_SLOT_COUNT = 6
+DISCOVERY_DEFAULT_ROUND_COUNT = 4
+DISCOVERY_DEFAULT_REPORT_GRACE_MS = 250
+DISCOVERY_DEFAULT_BUDGET_MS = 600_000
+PAIR_DEFAULT_MAX_RERUNS = 2
+# The GUI's "auto" mode exposes every safe pair lane and lets the firmware's
+# neighborhood conflict classifier decide how many can actually run together.
+PAIR_AUTO_MAX_PARALLEL_PAIRS = PAIR_MAX_PARALLEL_PAIRS
+
+
+def _bounded(label: str, value: int, minimum: int, maximum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{label} must be in {minimum}..{maximum}")
+
+
+@dataclass(frozen=True)
+class AssignmentOperationPolicy:
+    expected_anchor_count: int = 0
+    operation_budget_ms: int = ASSIGNMENT_DEFAULT_BUDGET_MS
+    response_spread_ms: int = ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
+
+    family: ClassVar[int] = OPERATION_POLICY_FAMILY_ASSIGNMENT
+
+    def __post_init__(self) -> None:
+        _bounded(
+            "expected anchor count",
+            self.expected_anchor_count,
+            0,
+            EXPECTED_ANCHOR_COUNT_MAX,
+        )
+        _bounded(
+            "assignment budget",
+            self.operation_budget_ms,
+            COMMAND_BUDGET_MIN_MS,
+            COMMAND_BUDGET_MAX_MS,
+        )
+        _bounded(
+            "assignment response spread",
+            self.response_spread_ms,
+            ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
+            ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
+        )
+
+    def encode_value(self) -> bytes:
+        return struct.pack(
+            "<BBBHIH",
+            OPERATION_POLICY_VERSION,
+            self.family,
+            OPERATION_POLICY_FLAGS_NONE,
+            self.expected_anchor_count,
+            self.operation_budget_ms,
+            self.response_spread_ms,
+        )
+
+
+@dataclass(frozen=True)
+class DiscoveryOperationPolicy:
+    start_delay_ms: int = DISCOVERY_DEFAULT_START_DELAY_MS
+    slot_ms: int = DISCOVERY_DEFAULT_SLOT_MS
+    slot_count: int = DISCOVERY_DEFAULT_SLOT_COUNT
+    round_count: int = DISCOVERY_DEFAULT_ROUND_COUNT
+    report_grace_ms: int = DISCOVERY_DEFAULT_REPORT_GRACE_MS
+    operation_budget_ms: int = DISCOVERY_DEFAULT_BUDGET_MS
+
+    family: ClassVar[int] = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY
+
+    def __post_init__(self) -> None:
+        _bounded(
+            "discovery start delay",
+            self.start_delay_ms,
+            DISCOVERY_START_DELAY_MIN_MS,
+            DISCOVERY_START_DELAY_MAX_MS,
+        )
+        _bounded(
+            "discovery slot duration",
+            self.slot_ms,
+            DISCOVERY_SLOT_MIN_MS,
+            DISCOVERY_SLOT_MAX_MS,
+        )
+        _bounded(
+            "discovery slot count",
+            self.slot_count,
+            DISCOVERY_SLOT_COUNT_MIN,
+            DISCOVERY_SLOT_COUNT_MAX,
+        )
+        _bounded(
+            "discovery round count",
+            self.round_count,
+            DISCOVERY_ROUND_COUNT_MIN,
+            DISCOVERY_ROUND_COUNT_MAX,
+        )
+        _bounded(
+            "discovery report grace",
+            self.report_grace_ms,
+            DISCOVERY_REPORT_GRACE_MIN_MS,
+            DISCOVERY_REPORT_GRACE_MAX_MS,
+        )
+        _bounded(
+            "discovery budget",
+            self.operation_budget_ms,
+            COMMAND_BUDGET_MIN_MS,
+            COMMAND_BUDGET_MAX_MS,
+        )
+
+    def encode_value(self) -> bytes:
+        return struct.pack(
+            "<BBBIHBBII",
+            OPERATION_POLICY_VERSION,
+            self.family,
+            OPERATION_POLICY_FLAGS_NONE,
+            self.start_delay_ms,
+            self.slot_ms,
+            self.slot_count,
+            self.round_count,
+            self.report_grace_ms,
+            self.operation_budget_ms,
+        )
+
+
+@dataclass(frozen=True)
+class PairOperationPolicy:
+    max_reruns: int = PAIR_DEFAULT_MAX_RERUNS
+    max_parallel_pairs: int = PAIR_AUTO_MAX_PARALLEL_PAIRS
+
+    family: ClassVar[int] = OPERATION_POLICY_FAMILY_SURVEY_PAIR
+
+    def __post_init__(self) -> None:
+        _bounded("pair reruns", self.max_reruns, 0, PAIR_MAX_RERUNS)
+        _bounded(
+            "parallel pairs",
+            self.max_parallel_pairs,
+            1,
+            PAIR_MAX_PARALLEL_PAIRS,
+        )
+
+    def encode_value(self) -> bytes:
+        return bytes(
+            (
+                OPERATION_POLICY_VERSION,
+                self.family,
+                OPERATION_POLICY_FLAGS_NONE,
+                self.max_reruns,
+                self.max_parallel_pairs,
+            )
+        )
+
+
+@dataclass(frozen=True)
+class OperationPolicyProfile:
+    assignment: AssignmentOperationPolicy = AssignmentOperationPolicy()
+    discovery: DiscoveryOperationPolicy = DiscoveryOperationPolicy()
+    pair: PairOperationPolicy = PairOperationPolicy()
+
+    def encoded_values(self) -> tuple[bytes, bytes, bytes]:
+        return (
+            self.assignment.encode_value(),
+            self.discovery.encode_value(),
+            self.pair.encode_value(),
+        )
+
+
+def decode_operation_policy_value(raw: bytes) -> dict[str, Any]:
+    if len(raw) < 3:
+        raise ValueError("operation policy requires a three-byte prefix")
+    version, family, flags = raw[:3]
+    if version != OPERATION_POLICY_VERSION:
+        raise ValueError(f"unsupported operation policy version {version}")
+    if flags != OPERATION_POLICY_FLAGS_NONE:
+        raise ValueError(f"unsupported operation policy flags 0x{flags:02x}")
+
+    if family == OPERATION_POLICY_FAMILY_ASSIGNMENT:
+        if len(raw) != 11:
+            raise ValueError("assignment operation policy must be 11 bytes")
+        expected, budget, spread = struct.unpack_from("<HIH", raw, 3)
+        policy = AssignmentOperationPolicy(expected, budget, spread)
+        fields = {
+            "expected_anchor_count": policy.expected_anchor_count,
+            "operation_budget_ms": policy.operation_budget_ms,
+            "response_spread_ms": policy.response_spread_ms,
+        }
+        family_name = "assignment"
+    elif family == OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY:
+        if len(raw) != 19:
+            raise ValueError("discovery operation policy must be 19 bytes")
+        values = struct.unpack_from("<IHBBII", raw, 3)
+        policy = DiscoveryOperationPolicy(*values)
+        fields = {
+            "start_delay_ms": policy.start_delay_ms,
+            "slot_ms": policy.slot_ms,
+            "slot_count": policy.slot_count,
+            "round_count": policy.round_count,
+            "report_grace_ms": policy.report_grace_ms,
+            "operation_budget_ms": policy.operation_budget_ms,
+        }
+        family_name = "survey_discovery"
+    elif family == OPERATION_POLICY_FAMILY_SURVEY_PAIR:
+        if len(raw) != 5:
+            raise ValueError("pair operation policy must be 5 bytes")
+        policy = PairOperationPolicy(raw[3], raw[4])
+        fields = {
+            "max_reruns": policy.max_reruns,
+            "max_parallel_pairs": policy.max_parallel_pairs,
+        }
+        family_name = "survey_pair"
+    else:
+        raise ValueError(f"unknown operation policy family {family}")
+
+    return {
+        "version": version,
+        "family": family_name,
+        "flags": flags,
+        **fields,
+    }

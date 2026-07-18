@@ -31,7 +31,9 @@ end-to-end evidence. It covers:
   time, repeat interval, and bounded busy-backoff helper.
 
 Here-I-Am is an announcement flood and has no per-anchor ACK/result collection
-contract. `COMMAND_OK` means the gateway accepted and scheduled the refresh; it
-does not claim that every anchor received it. Reachability evidence comes from
-the modeled radio receptions and installed route candidates, not from the host
-terminal result.
+contract. The correlated successful terminal means the gateway completed its
+own bounded local flood custody; it does not claim that every anchor received
+it. Reachability evidence comes from modeled radio receptions, assignment, and
+survey reports, not from the Here-I-Am terminal alone. Gateway firmware does
+not run this operation at startup or periodically: ordinary GUI operations send
+and await it as a separately correlated host-owned preflight.

@@ -2023,6 +2023,7 @@ static int mesh_route_refresh_build(void *ctx,
                                     struct mesh_gateway_route_adv_snapshot *snapshot,
                                     struct mesh_outbound *out)
 {
+    struct operation_policy_set operation_policy;
     int ret;
 
     ARG_UNUSED(ctx);
@@ -2030,8 +2031,13 @@ static int mesh_route_refresh_build(void *ctx,
         return PROTO_ERR_ARG;
     }
     if (!snapshot->valid) {
-        ret = mesh_relay_capture_gateway_route_adv_snapshot(
-            &mesh_runtime, sequence, now_ms, snapshot);
+        app_operation_policy_snapshot(&operation_policy);
+        ret = mesh_relay_capture_gateway_route_adv_snapshot_with_policy(
+            &mesh_runtime,
+            sequence,
+            now_ms,
+            &operation_policy,
+            snapshot);
         if (ret != PROTO_OK) {
             return ret;
         }

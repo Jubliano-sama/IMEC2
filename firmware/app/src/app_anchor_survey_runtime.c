@@ -4,6 +4,7 @@
 #include "app_board.h"
 #include "app_config.h"
 #include "app_node_comm.h"
+#include "app_operation_policy.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
 #include "status.h"
@@ -319,6 +320,7 @@ void app_anchor_survey_runtime_handle_pair_prepare(
     enum survey_pair_lease_decision decision;
     enum command_status status = COMMAND_OK;
     uint32_t lease_remaining_ms = 0u;
+    uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
     uint8_t reason = 0u;
     int ret;
 
@@ -330,7 +332,17 @@ void app_anchor_survey_runtime_handle_pair_prepare(
         return;
     }
 
-    ret = survey_extract_pair_tlvs(payload, payload_len, &pair);
+    ret = app_operation_policy_apply_payload(payload, payload_len, 0u, NULL);
+    if (ret < 0) {
+        status = COMMAND_MALFORMED_PAYLOAD;
+        reason = EBADMSG;
+    }
+    if (ret == 0) {
+        ret = survey_extract_pair_tlvs(payload, payload_len, &pair);
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_round_id_extract_tlv(payload, payload_len, &round_id);
+    }
     if (ret != PROTO_OK || packet->session_id != pair.survey_id) {
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
@@ -347,11 +359,13 @@ void app_anchor_survey_runtime_handle_pair_prepare(
             .session_id = packet->session_id,
             .command_seq = packet->seq,
         };
-        decision = survey_pair_lease_prepare(&pair_lease,
-                                             &pair,
-                                             &control_id,
-                                             k_uptime_get_32(),
-                                             SURVEY_PAIR_PREPARED_LEASE_MS);
+        decision = survey_pair_lease_prepare_round(
+            &pair_lease,
+            &pair,
+            round_id,
+            &control_id,
+            k_uptime_get_32(),
+            SURVEY_PAIR_PREPARED_LEASE_MS);
         if (decision == SURVEY_PAIR_LEASE_BUSY) {
             status = COMMAND_BUSY;
             reason = 3u;
@@ -380,9 +394,10 @@ void app_anchor_survey_runtime_handle_pair_prepare(
                                           NULL,
                                           0u);
     status_debug_printf(
-        "DBG_SURVEY_PAIR_PREPARE_RX survey=%u seq=%u initiator=0x%016llx "
+        "DBG_SURVEY_PAIR_PREPARE_RX survey=%u round=%u seq=%u initiator=0x%016llx "
         "responder=0x%016llx samples=%u status=%u reason=%u result_ret=%d\n",
         packet->session_id,
+        round_id,
         packet->seq,
         (unsigned long long)pair.initiator_id,
         (unsigned long long)pair.responder_id,
@@ -597,6 +612,7 @@ static bool pair_start_delivery_ready(void)
     struct node_comm_terminal_event event;
     struct survey_pair_control_id control_id = {0};
     uint32_t delivery_handle;
+    bool delivery_confirmed = false;
     bool ready = false;
     bool still_current;
     k_spinlock_key_t key;
@@ -634,7 +650,10 @@ static bool pair_start_delivery_ready(void)
     if (still_current) {
         pair_start_delivery_handle = 0u;
         if (event.reason == NODE_COMM_TERMINAL_DELIVERED) {
-            ready = survey_pair_lease_release_start(&pair_lease, &control_id);
+            delivery_confirmed = survey_pair_lease_release_start(&pair_lease,
+                                                                 &control_id);
+            ready = delivery_confirmed &&
+                    survey_pair_lease_ready_snapshot(&pair_lease, NULL);
         } else {
             (void)survey_pair_lease_abort(&pair_lease);
             pair_start_pending = false;
@@ -645,10 +664,14 @@ static bool pair_start_delivery_ready(void)
     if (!still_current) {
         LOG_WRN("survey start delivery terminal event was stale: handle=%u reason=%u",
                 delivery_handle, (unsigned int)event.reason);
-    } else if (!ready) {
+    } else if (!delivery_confirmed) {
         LOG_WRN("survey start result was not delivered; pair start cancelled: handle=%u reason=%u attempts=%u",
                 delivery_handle,
                 (unsigned int)event.reason,
+                event.attempts_started);
+    } else if (!ready) {
+        LOG_INF("survey start result gateway-confirmed; waiting for matching round GO: handle=%u attempts=%u",
+                delivery_handle,
                 event.attempts_started);
     } else {
         LOG_INF("survey start result gateway-confirmed before DS-TWR: handle=%u attempts=%u",
@@ -959,6 +982,7 @@ int app_anchor_survey_runtime_start_pair_from_command(
     enum survey_pair_lease_decision decision;
     bool as_responder;
     uint32_t superseded_delivery_handle = 0u;
+    uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
     k_spinlock_key_t key;
     int ret;
 
@@ -966,7 +990,13 @@ int app_anchor_survey_runtime_start_pair_from_command(
         return -EINVAL;
     }
 
-    ret = survey_extract_pair_tlvs(payload, payload_len, &pair);
+    ret = app_operation_policy_apply_payload(payload, payload_len, 0u, NULL);
+    if (ret == 0) {
+        ret = survey_extract_pair_tlvs(payload, payload_len, &pair);
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_round_id_extract_tlv(payload, payload_len, &round_id);
+    }
     if (ret != PROTO_OK || packet == NULL) {
         *status = COMMAND_MALFORMED_PAYLOAD;
         *reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
@@ -992,10 +1022,11 @@ int app_anchor_survey_runtime_start_pair_from_command(
         .session_id = packet->session_id,
         .command_seq = packet->seq,
     };
-    decision = survey_pair_lease_start(&pair_lease,
-                                       &pair,
-                                       &control_id,
-                                       k_uptime_get_32());
+    decision = survey_pair_lease_start_round(&pair_lease,
+                                             &pair,
+                                             round_id,
+                                             &control_id,
+                                             k_uptime_get_32());
     if (decision == SURVEY_PAIR_LEASE_BUSY) {
         *status = COMMAND_BUSY;
         *reason = 3u;
@@ -1022,13 +1053,68 @@ int app_anchor_survey_runtime_start_pair_from_command(
                                 "accepted-new-start");
     *status = COMMAND_OK;
     *reason = 0u;
-    LOG_INF("survey pair start %s: survey=%u initiator=0x%016llx responder=0x%016llx samples=%u local_role=%s",
+    LOG_INF("survey pair start %s: survey=%u round=%u initiator=0x%016llx responder=0x%016llx samples=%u local_role=%s",
             decision == SURVEY_PAIR_LEASE_ACCEPTED ? "accepted" : "duplicate",
             pair.survey_id,
+            round_id,
             (unsigned long long)pair.initiator_id,
             (unsigned long long)pair.responder_id,
             pair.sample_count,
             as_responder ? "responder" : "initiator");
+    return 0;
+}
+
+int app_anchor_survey_runtime_go_round_from_command(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    enum command_status *status,
+    uint8_t *reason)
+{
+    struct survey_round_go go = {0};
+    enum survey_pair_lease_decision decision;
+    bool ready;
+    k_spinlock_key_t key;
+    int ret;
+
+    if (packet == NULL || payload == NULL || status == NULL || reason == NULL ||
+        packet->msg_type != MSG_COMMAND || packet->src_id != GATEWAY_ID ||
+        packet->dst_id != MESH_BROADCAST_ID) {
+        return -EINVAL;
+    }
+    ret = survey_round_go_from_tlvs(payload, payload_len, &go);
+    if (ret != PROTO_OK || packet->session_id != go.survey_id) {
+        *status = COMMAND_MALFORMED_PAYLOAD;
+        *reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
+        return -EINVAL;
+    }
+
+    key = k_spin_lock(&survey_lock);
+    decision = survey_pair_lease_go(&pair_lease,
+                                    go.survey_id,
+                                    go.round_id,
+                                    k_uptime_get_32());
+    ready = pair_start_pending &&
+            survey_pair_lease_ready_snapshot(&pair_lease, NULL);
+    k_spin_unlock(&survey_lock, key);
+
+    if (decision != SURVEY_PAIR_LEASE_ACCEPTED &&
+        decision != SURVEY_PAIR_LEASE_DUPLICATE) {
+        *status = decision == SURVEY_PAIR_LEASE_BUSY ? COMMAND_BUSY :
+                  COMMAND_INVALID_STATE;
+        *reason = decision == SURVEY_PAIR_LEASE_EXPIRED ? 5u : 4u;
+        return decision == SURVEY_PAIR_LEASE_BUSY ? -EBUSY : -ESTALE;
+    }
+    *status = COMMAND_OK;
+    *reason = 0u;
+    if (ready) {
+        schedule(K_NO_WAIT);
+    }
+    LOG_INF("survey round GO %s: survey=%u round=%u ready=%u",
+            decision == SURVEY_PAIR_LEASE_ACCEPTED ? "accepted" : "duplicate",
+            go.survey_id,
+            go.round_id,
+            ready ? 1u : 0u);
     return 0;
 }
 

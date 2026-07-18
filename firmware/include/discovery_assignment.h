@@ -16,10 +16,9 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_ENTRIES_PER_TLV \
     (UINT8_MAX / DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS 100u
-#define DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS 20u
-#define DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS \
-    (DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS - 1u)
-#define DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS 100u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS 20u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS 10000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS 1000u
 #define DISCOVERY_ASSIGNMENT_MAX_HOPS 8u
 #define DISCOVERY_ASSIGNMENT_RETRY_BASE_MS 100u
 #define DISCOVERY_ASSIGNMENT_RETRY_MAX_MS 4000u
@@ -40,19 +39,10 @@ extern "C" {
       DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
     (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
-     ((UWB_DISCOVERY_SLOT_COUNT - 1u) * \
-      DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) + \
-     ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
-      DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS) + \
-     DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS)
-#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_HOP_INITIAL_DELAY_MS \
-    (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
-     ((UWB_DISCOVERY_SLOT_COUNT - 1u) * \
-      DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) + \
-     DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS)
+     DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS - 1u)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS \
     (DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS + \
-     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_HOP_INITIAL_DELAY_MS)
+     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS)
 #define DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS 5u
 #define DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT 2u
 #define DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS \
@@ -65,15 +55,8 @@ extern "C" {
  * protocol-response retry horizon so the later collection RX window remains
  * reachable even after a multi-hop flood.
  */
-#define DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS \
-    (2u * (DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS + \
-           DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS) + \
-     DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS + \
-     DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS + \
-     DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS + \
-     DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS)
-#define DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS \
-    DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS
+#define DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS 1000u
+#define DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS 235209u
 
 enum discovery_assignment_phase {
     DISCOVERY_ASSIGNMENT_PHASE_CLAIM = 1,
@@ -143,9 +126,7 @@ uint32_t discovery_assignment_table_fingerprint(
     const struct discovery_assignment_entry *entries,
     size_t entry_count,
     uint8_t slot_count);
-int discovery_assignment_response_delay_ms(uint8_t slot,
-                                           uint8_t slot_count,
-                                           uint8_t hop_count,
+int discovery_assignment_response_delay_ms(uint16_t response_spread_ms,
                                            uint8_t retry_round,
                                            uint32_t random_value,
                                            uint32_t *delay_ms);
@@ -156,7 +137,7 @@ uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
                                                    uint32_t response_delay_ms,
                                                    uint8_t hop_count);
 uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch);
-uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
+uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
                                                    uint8_t max_hop_count);
 uint64_t discovery_assignment_control_flood_deadline_ms(
     uint64_t now_ms,

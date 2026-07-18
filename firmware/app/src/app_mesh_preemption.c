@@ -369,13 +369,11 @@ enum app_mesh_queue_reserve_action app_mesh_queue_reserve_decide(
     bool reserved_local_origin_priority,
     bool incoming_local_origin_priority)
 {
+    (void)reserved_local_origin_priority;
+    (void)incoming_local_origin_priority;
+
     if (!reserve_valid) {
         return APP_MESH_QUEUE_RESERVE_ADMIT;
     }
-    if (!incoming_local_origin_priority) {
-        return APP_MESH_QUEUE_RESERVE_REJECT;
-    }
-    return reserved_local_origin_priority ?
-        APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS :
-        APP_MESH_QUEUE_RESERVE_REPLACE_TRANSIT_ACCOUNT_LOSS;
+    return APP_MESH_QUEUE_RESERVE_REJECT;
 }

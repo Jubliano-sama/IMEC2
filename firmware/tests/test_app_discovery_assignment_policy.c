@@ -443,15 +443,41 @@ static void test_semantic_quorum_overrides_only_redundant_tail_failure(void)
     assert(app_discovery_assignment_semantic_terminal_success(
         APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
         2u, 2u, 0u, 1u, false, false));
-    assert(!app_discovery_assignment_semantic_terminal_success(
+    assert(app_discovery_assignment_semantic_terminal_success(
         APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
         2u, 2u, 1u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+        2u, 2u, 2u, 1u, false, false));
     assert(!app_discovery_assignment_semantic_terminal_success(
         APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
         0u, 0u, 0u, 1u, false, false));
     assert(!app_discovery_assignment_semantic_terminal_success(
         APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
         2u, 2u, 0u, 1u, false, true));
+}
+
+static void test_collection_depth_stays_conservative_until_roster_is_known(void)
+{
+    /*
+     * Zero means "unknown/max-depth" to the collection-window calculator.
+     * Seeing one direct response cannot prove that an undiscovered deeper
+     * responder does not exist.
+     */
+    assert(app_discovery_assignment_collection_hop_count(
+               0u, 1u, 1u) == 0u);
+    assert(app_discovery_assignment_collection_hop_count(
+               5u, 1u, 1u) == 0u);
+    assert(app_discovery_assignment_collection_hop_count(
+               5u, 4u, 3u) == 0u);
+
+    /* Once the expected roster is complete, observed depth may shorten it. */
+    assert(app_discovery_assignment_collection_hop_count(
+               5u, 5u, 3u) == 3u);
+    assert(app_discovery_assignment_collection_hop_count(
+               5u, 6u, 2u) == 2u);
+    assert(app_discovery_assignment_collection_hop_count(
+               5u, 5u, 0u) == 0u);
 }
 
 static void test_low_power_failure_recovers_and_retries_once(void)
@@ -515,6 +541,7 @@ int main(void)
     test_stale_publish_work_cannot_run_in_next_assignment();
     test_failed_publish_submission_releases_generation();
     test_semantic_quorum_overrides_only_redundant_tail_failure();
+    test_collection_depth_stays_conservative_until_roster_is_known();
     test_low_power_failure_recovers_and_retries_once();
     test_low_power_recovery_retry_can_complete();
     test_low_power_recovery_failure_does_not_retry();

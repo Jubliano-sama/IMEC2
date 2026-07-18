@@ -26,6 +26,7 @@ add_library(core
     src/mesh_route_path.c
     src/node_comm.c
     src/node_transaction.c
+    src/operation_policy.c
     src/watchdog_adoption.c
     src/mesh_preemption.c
     src/mesh_runtime.c
@@ -38,6 +39,9 @@ add_library(core
     src/status.c
     src/route.c
     src/survey.c
+    src/survey_pair_planner.c
+    src/survey_pair_round_runtime.c
+    src/survey_round_control.c
     src/survey_gateway_transaction.c
     src/survey_pair_lease.c
 )
@@ -54,6 +58,12 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
 add_test(NAME protocol COMMAND test_protocol)
+
+add_executable(test_operation_policy tests/test_operation_policy.c)
+target_link_libraries(test_operation_policy PRIVATE core)
+add_test(NAME operation_policy COMMAND test_operation_policy)
+set_tests_properties(operation_policy PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol")
 
 add_executable(test_discovery_assignment tests/test_discovery_assignment.c)
 target_link_libraries(test_discovery_assignment PRIVATE core)
@@ -76,6 +86,12 @@ target_link_libraries(test_survey_pair_lease PRIVATE core)
 add_test(NAME survey_pair_lease COMMAND test_survey_pair_lease)
 set_tests_properties(survey_pair_lease
     PROPERTIES LABELS "mesh_integration;hardware_models;survey")
+
+add_executable(test_survey_round_control tests/test_survey_round_control.c)
+target_link_libraries(test_survey_round_control PRIVATE core)
+add_test(NAME survey_round_control COMMAND test_survey_round_control)
+set_tests_properties(survey_round_control
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;protocol")
 
 add_executable(test_survey_gateway_transaction
     tests/test_survey_gateway_transaction.c)
@@ -556,6 +572,8 @@ set_tests_properties(mesh_route_path
 add_executable(test_mesh_preemption tests/test_mesh_preemption.c)
 target_link_libraries(test_mesh_preemption PRIVATE core)
 add_test(NAME mesh_preemption COMMAND test_mesh_preemption)
+set_tests_properties(mesh_preemption PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;preemption")
 
 add_executable(test_app_mesh_preemption
     tests/test_app_mesh_preemption.c
@@ -564,6 +582,19 @@ add_executable(test_app_mesh_preemption
 target_include_directories(test_app_mesh_preemption PRIVATE app/src)
 target_link_libraries(test_app_mesh_preemption PRIVATE core)
 add_test(NAME app_mesh_preemption COMMAND test_app_mesh_preemption)
+set_tests_properties(app_mesh_preemption PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;preemption")
+add_test(NAME local_first_custody_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_local_first_custody_source_invariants.py)
+set_tests_properties(local_first_custody_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;preemption;static_analysis")
+
+add_test(NAME gateway_survey_dynamic_deadline_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_survey_dynamic_deadline_source_invariants.py)
+set_tests_properties(gateway_survey_dynamic_deadline_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;timing;static_analysis")
 
 add_executable(test_app_mesh_collection_deferral
     tests/test_app_mesh_collection_deferral.c
@@ -628,6 +659,8 @@ add_executable(test_app_mesh_ch9_ack
 target_include_directories(test_app_mesh_ch9_ack PRIVATE app/src)
 target_link_libraries(test_app_mesh_ch9_ack PRIVATE core)
 add_test(NAME app_mesh_ch9_ack COMMAND test_app_mesh_ch9_ack)
+set_tests_properties(app_mesh_ch9_ack PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;preemption")
 
 add_executable(test_app_mesh_local_delivery
     tests/test_app_mesh_local_delivery.c
@@ -662,6 +695,18 @@ add_test(NAME survey_pair_control_lifecycle_source_invariants
 set_tests_properties(survey_pair_control_lifecycle_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
 
+add_test(NAME anchor_survey_round_barrier_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_anchor_survey_round_barrier_source_invariants.py)
+set_tests_properties(anchor_survey_round_barrier_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
+
+add_test(NAME gateway_survey_round_glue_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_survey_round_glue_source_invariants.py)
+set_tests_properties(gateway_survey_round_glue_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
+
 add_test(NAME dwm3000_receive_source_invariants
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_dwm3000_receive_source_invariants.py)
@@ -671,6 +716,13 @@ set_tests_properties(dwm3000_receive_source_invariants
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)
+
+add_executable(test_mesh_route_adv_policy
+    tests/test_mesh_route_adv_policy.c)
+target_link_libraries(test_mesh_route_adv_policy PRIVATE core)
+add_test(NAME mesh_route_adv_policy COMMAND test_mesh_route_adv_policy)
+set_tests_properties(mesh_route_adv_policy PROPERTIES
+    LABELS "mesh_integration;hardware_models;routing;protocol")
 
 add_executable(test_mesh_downlink_capacity tests/test_mesh_downlink_capacity.c)
 target_link_libraries(test_mesh_downlink_capacity PRIVATE core)
@@ -697,6 +749,24 @@ add_test(NAME report COMMAND test_report)
 add_executable(test_survey tests/test_survey.c)
 target_link_libraries(test_survey PRIVATE core)
 add_test(NAME survey COMMAND test_survey)
+
+add_executable(test_survey_pair_round_runtime
+    tests/test_survey_pair_round_runtime.c)
+target_link_libraries(test_survey_pair_round_runtime PRIVATE core)
+add_test(NAME survey_pair_round_runtime
+    COMMAND test_survey_pair_round_runtime)
+set_tests_properties(survey_pair_round_runtime
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey")
+
+add_executable(test_app_gateway_survey_round
+    tests/test_app_gateway_survey_round.c
+    app/src/app_gateway_survey_round.c)
+target_include_directories(test_app_gateway_survey_round PRIVATE app/src)
+target_link_libraries(test_app_gateway_survey_round PRIVATE core)
+add_test(NAME app_gateway_survey_round
+    COMMAND test_app_gateway_survey_round)
+set_tests_properties(app_gateway_survey_round
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey")
 
 add_executable(test_survey_completion_policy
     tests/test_survey_completion_policy.c)

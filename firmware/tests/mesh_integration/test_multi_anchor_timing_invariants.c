@@ -369,23 +369,24 @@ static void test_discovery_collision_sweep_and_old_spacing_sensitivity(void)
           "1 ms discovery-slot mutation did not reproduce winner-takes-all");
 }
 
-static void test_fixed_survey_retry_deadlock_is_reproduced(void)
+static void test_survey_round_randomization_breaks_fixed_collisions(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = UINT32_C(0x50665006),
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_WAKE, UWB_SURVEY_DISCOVERY_PROBE_LEN);
     const uint64_t rx_transition_us = runtime_prepare_rx_us(
         DWM3000_TIMING_PHY_CH5_WAKE);
     uint64_t ids[6] = {0};
-    bool fixed_retry_decoded = false;
+    bool fixed_round_decoded = false;
 
-    CHECK(SURVEY_DISCOVERY_OPPORTUNITY_COUNT == SURVEY_REPLY_OPPORTUNITY_COUNT,
-          "survey opportunity count drifted from four");
+    CHECK(config.round_count == SURVEY_REPLY_OPPORTUNITY_COUNT,
+          "default discovery rounds drifted from the reply opportunity count");
     CHECK(rx_transition_us > 0u &&
               rx_transition_us <=
                   (uint64_t)SURVEY_DISCOVERY_RX_GUARD_MS * 1000u,
@@ -416,7 +417,7 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
                                                         config.slot_count),
                   "forced initial survey collision was not constructed");
             for (uint8_t opportunity = 1u;
-                 opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                 opportunity < config.round_count;
                  opportunity++) {
                 uint32_t first_ms = 0u;
                 uint32_t second_ms = 0u;
@@ -442,7 +443,7 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
                 }
             }
             CHECK(diversified,
-                  "same initial survey slot repeated collision through all retries");
+                  "same initial survey slot repeated collision through all rounds");
         }
 
         for (uint8_t permutation = 0u; permutation < anchor_count; permutation++) {
@@ -451,10 +452,11 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
             uint8_t attempted[6] = {0};
 
             for (uint8_t opportunity = 0u;
-                 opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                 opportunity < config.round_count;
                  opportunity++) {
                 struct interval tx[6] = {0};
                 bool collided[6] = {false};
+                bool transmitted[6] = {false};
                 for (uint8_t order = 0u; order < anchor_count; order++) {
                     uint8_t index = (uint8_t)((order + permutation) % anchor_count);
                     struct survey_discovery_attempt_schedule schedule;
@@ -473,16 +475,14 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
                         schedule_ret = survey_discovery_schedule_attempt(
                             &config, ids[index], opportunity, blocked_until_ms,
                             &schedule);
-                        CHECK(schedule_ret == PROTO_OK && schedule.deferred,
-                              "blocked nominal survey window consumed an attempt");
-                    } else {
-                        CHECK(!schedule.deferred,
-                              "unblocked survey attempt unexpectedly deferred");
+                        CHECK(schedule_ret == PROTO_ERR_BUSY,
+                              "late survey round was retried outside its slot");
                     }
                     if (schedule_ret != PROTO_OK) {
                         continue;
                     }
                     attempted[index]++;
+                    transmitted[index] = true;
                     tx[index].start_us = (uint64_t)schedule.tx_ms * 1000u;
                     tx[index].end_us = tx[index].start_us + airtime_us;
                     CHECK(tx[index].start_us >=
@@ -508,15 +508,19 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
                     bool lost = opportunity < 2u && i == 0u;
                     bool late = opportunity < 2u && i == anchor_count - 1u;
 
-                    if (!collided[i] && !lost && !late) {
+                    if (transmitted[i] && !collided[i] && !lost && !late) {
                         had_available[i] = true;
                         accepted[i] = true;
                     }
                 }
             }
             for (uint8_t i = 0u; i < anchor_count; i++) {
-                CHECK(attempted[i] == SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
-                      "blocked survey window reduced the real TX attempt count");
+                const uint8_t expected_attempts =
+                    i == 1u ? (uint8_t)(config.round_count - 1u) :
+                              config.round_count;
+
+                CHECK(attempted[i] == expected_attempts,
+                      "a missed survey round was not skipped exactly once");
                 if (had_available[i]) {
                     CHECK(accepted[i],
                           "reachable anchor with an available opportunity was lost");
@@ -537,369 +541,191 @@ static void test_fixed_survey_retry_deadlock_is_reproduced(void)
         struct interval second = first;
 
         if (!(first.start_us < second.end_us && second.start_us < first.end_us)) {
-            fixed_retry_decoded = true;
+            fixed_round_decoded = true;
         }
     }
-    CHECK(!fixed_retry_decoded,
-          "fixed same-slot retry sensitivity mutation did not deadlock");
+    CHECK(!fixed_round_decoded,
+          "fixed same-slot round mutation did not reproduce a deadlock");
 }
 
-static void test_survey_deferred_phase_runtime_invariants(void)
+static void test_survey_continuous_round_window_invariants(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = UINT32_C(0x50665006),
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     const uint64_t anchor_id = UINT64_C(0xa700000000000011);
-    struct survey_discovery_attempt_schedule nominal[4];
-    struct survey_discovery_attempt_schedule deferred;
-    uint32_t tx_budget_ms = survey_discovery_probe_tx_budget_ms();
-    uint32_t airtime_only_ms = (uint32_t)(
-        (dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,
-                                        UWB_SURVEY_DISCOVERY_PROBE_LEN) + 999u) /
-        1000u) + SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS;
-    uint8_t real_attempts = 0u;
+    const uint32_t round_duration_ms =
+        (uint32_t)config.slot_ms * config.slot_count;
+    const uint32_t tx_budget_ms = survey_discovery_probe_tx_budget_ms();
+    struct survey_discovery_attempt_schedule nominal[
+        SURVEY_DISCOVERY_MAX_ROUND_COUNT];
 
-    CHECK(tx_budget_ms >= 20u + SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS,
-          "survey TX budget omitted the blocking send-timeout envelope");
-    CHECK(airtime_only_ms < tx_budget_ms,
-          "timeout-envelope mutation is not sensitive to airtime-only planning");
-    for (uint8_t opportunity = 0u;
-         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
-         opportunity++) {
-        CHECK(survey_discovery_schedule_attempt(&config, anchor_id, opportunity,
-                                                 0u, &nominal[opportunity]) ==
-                  PROTO_OK && !nominal[opportunity].deferred,
-              "nominal survey attempt scheduling failed");
-        CHECK(nominal[opportunity].tx_ms <=
-                  nominal[opportunity].latest_tx_start_ms &&
-                  nominal[opportunity].latest_tx_start_ms + tx_budget_ms <=
-                      nominal[opportunity].slot_end_ms,
-              "nominal survey attempt can start too late to finish");
-    }
+    CHECK(survey_discovery_duration_ms(&config) ==
+              round_duration_ms * config.round_count,
+          "survey discovery duration is not the continuous sum of its rounds");
+    CHECK(tx_budget_ms >=
+              SURVEY_DISCOVERY_TX_TIMEOUT_MS +
+                  SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS,
+          "survey TX budget omitted the blocking send timeout");
 
-    CHECK(survey_discovery_schedule_attempt(
-              &config, anchor_id, 0u,
-              nominal[0].latest_tx_start_ms + 1u, &deferred) == PROTO_OK &&
-              deferred.deferred,
-          "blocked nominal opportunity was not preserved for reserve");
-    for (uint8_t opportunity = 1u;
-         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
-         opportunity++) {
-        CHECK(nominal[opportunity].window_end_ms <= deferred.window_start_ms,
-              "reserve TX preempted a later chronological nominal listen window");
-        real_attempts++;
-    }
-    CHECK(deferred.tx_ms <= deferred.latest_tx_start_ms &&
-              deferred.latest_tx_start_ms + tx_budget_ms <=
-                  deferred.slot_end_ms,
-          "deferred survey attempt can start too late to finish");
-    real_attempts++;
-    CHECK(real_attempts == SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
-          "blocked nominal window reduced four real survey transmissions");
-    CHECK(survey_discovery_schedule_attempt(
-              &config, anchor_id, 0u,
-              deferred.latest_tx_start_ms + 1u, &deferred) == PROTO_ERR_BUSY,
-          "missed bounded reserve did not fail explicitly");
+    for (uint8_t round = 0u; round < config.round_count; round++) {
+        uint32_t window_start_ms = UINT32_MAX;
+        uint32_t window_end_ms = UINT32_MAX;
+        struct survey_discovery_attempt_schedule missed;
 
-    {
-        struct survey_discovery_attempt_schedule timeout_sensitive;
-        uint32_t airtime_only_latest = nominal[0].slot_end_ms - airtime_only_ms;
-
-        CHECK(airtime_only_latest > nominal[0].latest_tx_start_ms,
-              "airtime-only mutation did not create a late unsafe start");
+        CHECK(survey_discovery_opportunity_window_ms(
+                  &config, round, &window_start_ms, &window_end_ms) == PROTO_OK,
+              "survey round window calculation failed");
+        CHECK(window_start_ms == (uint32_t)round * round_duration_ms &&
+                  window_end_ms ==
+                      (uint32_t)(round + 1u) * round_duration_ms,
+              "survey rounds are not contiguous equal windows");
         CHECK(survey_discovery_schedule_attempt(
-                  &config, anchor_id, 0u, airtime_only_latest,
-                  &timeout_sensitive) == PROTO_OK &&
-                  timeout_sensitive.deferred,
-              "send-timeout envelope failed to defer an airtime-only late start");
+                  &config, anchor_id, round, 0u, &nominal[round]) == PROTO_OK,
+              "nominal survey round scheduling failed");
+        CHECK(nominal[round].window_start_ms == window_start_ms &&
+                  nominal[round].window_end_ms == window_end_ms &&
+                  nominal[round].tx_ms <=
+                      nominal[round].latest_tx_start_ms &&
+                  nominal[round].latest_tx_start_ms + tx_budget_ms <=
+                      nominal[round].slot_end_ms,
+              "survey probe is not fully contained in its round slot");
+        CHECK(survey_discovery_schedule_attempt(
+                  &config, anchor_id, round,
+                  nominal[round].latest_tx_start_ms + 1u,
+                  &missed) == PROTO_ERR_BUSY,
+              "a late survey round was moved into a retry envelope");
+
+        if (round + 1u < config.round_count) {
+            CHECK(survey_discovery_schedule_attempt(
+                      &config, anchor_id, (uint8_t)(round + 1u),
+                      nominal[round].latest_tx_start_ms + 1u,
+                      &missed) == PROTO_OK,
+                  "missing one round prevented the next independent round");
+        }
+    }
+
+    for (uint8_t round_count = 1u;
+         round_count <= SURVEY_DISCOVERY_MAX_ROUND_COUNT;
+         round_count++) {
+        struct survey_discovery_config variable = config;
+        uint32_t start_ms = 0u;
+        uint32_t end_ms = 0u;
+
+        variable.round_count = round_count;
+        CHECK(survey_discovery_duration_ms(&variable) ==
+                  round_duration_ms * round_count,
+              "runtime round count did not scale the discovery duration");
+        CHECK(survey_discovery_opportunity_window_ms(
+                  &variable, (uint8_t)(round_count - 1u),
+                  &start_ms, &end_ms) == PROTO_OK &&
+                  end_ms == survey_discovery_duration_ms(&variable),
+              "last configured round did not end at the discovery deadline");
+        CHECK(survey_discovery_opportunity_window_ms(
+                  &variable, round_count, &start_ms, &end_ms) ==
+                  PROTO_ERR_ARG,
+              "scheduler accepted a round beyond the runtime count");
     }
 
     {
-        uint32_t epoch_ms = UINT32_MAX - nominal[3].window_start_ms + 5u;
-        uint32_t absolute_window_start = epoch_ms + nominal[3].window_start_ms;
-        uint32_t absolute_tx = epoch_ms + nominal[3].tx_ms;
-        uint32_t absolute_slot_end = epoch_ms + nominal[3].slot_end_ms;
+        const uint8_t last_round = (uint8_t)(config.round_count - 1u);
+        const uint32_t epoch_ms =
+            UINT32_MAX - nominal[last_round].window_start_ms + 5u;
+        const uint32_t absolute_window_start =
+            epoch_ms + nominal[last_round].window_start_ms;
+        const uint32_t absolute_tx = epoch_ms + nominal[last_round].tx_ms;
+        const uint32_t absolute_slot_end =
+            epoch_ms + nominal[last_round].slot_end_ms;
 
         CHECK((int32_t)(absolute_tx - absolute_window_start) >= 0 &&
                   (int32_t)(absolute_slot_end - absolute_tx) > 0,
-              "UINT32 uptime wrap reversed a valid survey attempt interval");
+              "UINT32 uptime wrap reversed a valid survey round interval");
     }
 }
 
-struct survey_probe_retry_model_result {
-    uint32_t tx_ms;
-    uint16_t retry_rounds;
-    uint8_t pre_rf_refusals;
-    uint8_t real_rf_starts;
-    bool completion_failed;
-    bool deadline_expired;
-};
-
-static struct survey_probe_retry_model_result
-run_survey_probe_retry_model(
-    const struct survey_discovery_config *config,
-    uint64_t anchor_id,
-    uint8_t opportunity,
-    uint8_t additional_pre_rf_refusals,
-    uint32_t reserve_lateness_ms,
-    bool completion_fails_after_rf_start)
+static void test_survey_partial_rounds_still_produce_reports(void)
 {
-    struct survey_probe_retry_model_result result = {
-        /* The nominal scheduled window was refused before RF. */
-        .pre_rf_refusals = 1u,
-    };
-    struct survey_discovery_probe_attempt attempt;
-    uint32_t duration_ms = survey_discovery_duration_ms(config);
-    uint32_t retry_origin_ms = duration_ms / 2u + reserve_lateness_ms;
-    uint32_t tx_budget_ms = survey_discovery_probe_tx_budget_ms();
-
-    CHECK(survey_discovery_probe_attempt_begin(&attempt, opportunity) ==
-              PROTO_OK,
-          "survey probe model could not begin an opportunity");
-
-    while (retry_origin_ms < duration_ms) {
-        uint32_t due_ms;
-        int ret = survey_discovery_probe_attempt_defer(
-            &attempt, config, anchor_id, retry_origin_ms, duration_ms);
-
-        if (ret != PROTO_OK) {
-            result.deadline_expired = true;
-            break;
-        }
-        due_ms = attempt.due_ms;
-        result.retry_rounds = attempt.retry_round;
-        if (due_ms >= duration_ms ||
-            duration_ms - due_ms <= tx_budget_ms) {
-            result.deadline_expired = true;
-            break;
-        }
-        if (additional_pre_rf_refusals > 0u) {
-            additional_pre_rf_refusals--;
-            result.pre_rf_refusals++;
-            retry_origin_ms = due_ms;
-            continue;
-        }
-
-        result.tx_ms = due_ms;
-        CHECK(survey_discovery_probe_attempt_note_rf_started(&attempt) ==
-                  PROTO_OK,
-              "survey probe model could not commit an RF start");
-        result.real_rf_starts = (uint8_t)
-            survey_discovery_probe_real_attempt_count(&attempt, 1u);
-        result.completion_failed = completion_fails_after_rf_start;
-        break;
-    }
-    if (result.real_rf_starts == 0u) {
-        result.deadline_expired = true;
-    }
-    return result;
-}
-
-static void test_survey_real_opportunity_retry_sweep(void)
-{
-    const struct survey_discovery_config base_config = {
+    const struct survey_discovery_config config = {
         .survey_id = UINT32_C(0x50666000),
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
-    uint32_t second_block_recoveries = 0u;
-    uint32_t completion_timeout_starts = 0u;
-    uint32_t explicit_deadlines = 0u;
+    const uint64_t anchor_id = UINT64_C(0xa7000000000000fe);
+    const struct survey_reachability_entry peer = {
+        .peer_id = UINT64_C(0xa7000000000000ff),
+        .rssi_dbm = -71,
+        .quality = 80u,
+    };
+    struct survey_gateway_context gateway;
+    struct proto_packet packet;
+    struct survey_reachability_entry decoded[1];
+    uint8_t payload[64];
+    uint32_t survey_id = 0u;
+    uint64_t decoded_anchor_id = 0u;
+    size_t payload_len = 0u;
+    size_t entry_count = 0u;
+    uint8_t rf_starts = 0u;
 
-    for (uint8_t anchor_count = 1u;
-         anchor_count <= SURVEY_GATEWAY_MAX_REPORTS;
-         anchor_count++) {
-        struct survey_discovery_config config = base_config;
-        uint32_t duration_ms;
-        uint32_t nominal_duration_ms;
-        uint32_t late_offsets_ms[4];
-        uint32_t first_retry_times[SURVEY_GATEWAY_MAX_REPORTS] = {0};
-        size_t distinct_first_retry_times = 0u;
+    for (uint8_t round = 0u; round < config.round_count; round++) {
+        struct survey_discovery_attempt_schedule schedule;
 
-        config.survey_id += anchor_count;
-        duration_ms = survey_discovery_duration_ms(&config);
-        nominal_duration_ms = duration_ms / 2u;
-        late_offsets_ms[0] = 0u;
-        late_offsets_ms[1] = nominal_duration_ms / 8u;
-        late_offsets_ms[2] = nominal_duration_ms / 3u;
-        late_offsets_ms[3] = nominal_duration_ms - 1u;
-
-        for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
-            uint64_t anchor_id = UINT64_C(0xa700000000000001) + anchor;
-
-            for (size_t late_index = 0u;
-                 late_index < ARRAY_SIZE(late_offsets_ms);
-                 late_index++) {
-                for (uint8_t additional_blocks = 0u;
-                     additional_blocks <= 3u;
-                     additional_blocks++) {
-                    uint8_t total_real_starts = 0u;
-
-                    for (uint8_t opportunity = 0u;
-                         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
-                         opportunity++) {
-                        bool completion_fails =
-                            ((anchor + opportunity + additional_blocks +
-                              late_index) & 1u) != 0u;
-                        struct survey_probe_retry_model_result result =
-                            run_survey_probe_retry_model(
-                                &config, anchor_id, opportunity,
-                                additional_blocks,
-                                late_offsets_ms[late_index],
-                                completion_fails);
-
-                        CHECK(result.real_rf_starts <= 1u,
-                              "one probe opportunity started RF more than once");
-                        CHECK(result.real_rf_starts != 0u ||
-                                  result.deadline_expired,
-                              "unconsumed probe opportunity vanished before the deadline");
-                        CHECK(result.pre_rf_refusals >= 1u &&
-                                  result.real_rf_starts <=
-                                      result.retry_rounds,
-                              "pre-RF refusal consumed a real probe opportunity");
-                        if (result.real_rf_starts != 0u) {
-                            CHECK(result.tx_ms +
-                                      survey_discovery_probe_tx_budget_ms() <
-                                      duration_ms,
-                                  "retry could not complete inside the discovery horizon");
-                            total_real_starts++;
-                            if (result.pre_rf_refusals >= 2u) {
-                                second_block_recoveries++;
-                            }
-                            if (result.completion_failed) {
-                                completion_timeout_starts++;
-                            }
-                        } else {
-                            explicit_deadlines++;
-                        }
-                    }
-
-                    if (late_index == 0u && additional_blocks <= 1u) {
-                        CHECK(total_real_starts ==
-                                  SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
-                              "a second pre-RF refusal reduced the four real opportunities");
-                    }
-                }
-            }
-
-            {
-                struct survey_probe_retry_model_result first =
-                    run_survey_probe_retry_model(
-                        &config, anchor_id, 0u, 0u, 0u, false);
-
-                CHECK(first.real_rf_starts == 1u,
-                      "first deferred probe did not fit the reserve horizon");
-                first_retry_times[anchor] = first.tx_ms;
-            }
-        }
-
-        for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
-            bool seen = false;
-
-            for (uint8_t prior = 0u; prior < anchor; prior++) {
-                seen |= first_retry_times[prior] ==
-                        first_retry_times[anchor];
-            }
-            distinct_first_retry_times += seen ? 0u : 1u;
-        }
-        if (anchor_count > 1u) {
-            CHECK(distinct_first_retry_times > 1u,
-                  "identity-seeded retries kept every anchor synchronized");
+        CHECK(survey_discovery_schedule_attempt(
+                  &config, anchor_id, round, 0u, &schedule) == PROTO_OK,
+              "partial-round fixture could not schedule a probe");
+        if ((round & 1u) != 0u) {
+            rf_starts++;
         }
     }
+    CHECK(rf_starts > 0u && rf_starts < config.round_count,
+          "partial-round fixture did not omit any RF starts");
 
-    CHECK(second_block_recoveries > 0u,
-          "busy-phase sweep never recovered a twice-blocked opportunity");
-    CHECK(completion_timeout_starts > 0u,
-          "late-TX sweep did not count RF starts before completion timeout");
-    CHECK(explicit_deadlines > 0u,
-          "busy-phase sweep did not exercise bounded deadline exhaustion");
+    CHECK(survey_append_reach_report_tlvs(
+              payload, sizeof(payload), &payload_len,
+              config.survey_id, anchor_id, &peer, 1u) == PROTO_OK,
+          "partial discovery could not encode its useful peer report");
+    CHECK(survey_init_discovery_report_packet(
+              &packet, anchor_id, UINT64_C(0xa001000000000001),
+              config.survey_id, 77u, (uint8_t)payload_len) == PROTO_OK,
+          "partial discovery could not wrap its report");
+    CHECK(survey_extract_reach_report_tlvs(
+              payload, payload_len, &survey_id, &decoded_anchor_id,
+              decoded, ARRAY_SIZE(decoded), &entry_count) == PROTO_OK &&
+              survey_id == config.survey_id &&
+              decoded_anchor_id == anchor_id &&
+              entry_count == 1u &&
+              decoded[0].peer_id == peer.peer_id &&
+              packet.session_id == survey_id,
+          "partial discovery report did not survive wire decoding");
+    CHECK(survey_gateway_begin(&gateway, config.survey_id, 1u) == PROTO_OK &&
+              survey_gateway_note_reach_report(
+                  &gateway, survey_id, decoded_anchor_id,
+                  decoded, entry_count) == PROTO_OK &&
+              gateway.report_count == 1u,
+          "gateway rejected a useful report after skipped rounds");
 
-    {
-        struct survey_discovery_probe_attempt
-            attempts[SURVEY_DISCOVERY_OPPORTUNITY_COUNT];
-
-        for (uint8_t opportunity = 0u;
-             opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
-             opportunity++) {
-            CHECK(survey_discovery_probe_attempt_begin(
-                      &attempts[opportunity], opportunity) == PROTO_OK,
-                  "exact-count fixture could not begin an opportunity");
-            CHECK(survey_discovery_probe_attempt_note_rf_started(
-                      &attempts[opportunity]) == PROTO_OK,
-                  "exact-count fixture could not commit an RF start");
-        }
-        CHECK(survey_discovery_probe_real_attempt_count(
-                  attempts, ARRAY_SIZE(attempts)) ==
-                  SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
-              "four distinct opportunities did not produce exactly four starts");
-        CHECK(survey_discovery_probe_attempt_note_rf_started(&attempts[0]) ==
-                  PROTO_ERR_STALE &&
-                  survey_discovery_probe_real_attempt_count(
-                      attempts, ARRAY_SIZE(attempts)) ==
-                      SURVEY_DISCOVERY_OPPORTUNITY_COUNT,
-              "a completion retry consumed a fifth real opportunity");
-    }
-
-    {
-        struct survey_discovery_probe_attempt attempt;
-        uint32_t deadline_ms = survey_discovery_duration_ms(&base_config);
-
-        CHECK(survey_discovery_probe_attempt_begin(&attempt, 0u) == PROTO_OK,
-              "deadline fixture could not begin an opportunity");
-        CHECK(survey_discovery_probe_attempt_defer(
-                  &attempt, &base_config,
-                  UINT64_C(0xa7000000000000fe), deadline_ms,
-                  deadline_ms) == PROTO_ERR_BUSY &&
-                  survey_discovery_probe_real_attempt_count(&attempt, 1u) == 0u,
-              "an exact-deadline refusal consumed an RF opportunity");
-        CHECK(survey_discovery_probe_attempt_defer(
-                  &attempt, &base_config,
-                  UINT64_C(0xa7000000000000fe), deadline_ms - 1u,
-                  deadline_ms) == PROTO_OK &&
-                  attempt.due_ms == deadline_ms && attempt.pending &&
-                  survey_discovery_probe_real_attempt_count(&attempt, 1u) == 0u,
-              "deadline clipping lost the pending unconsumed opportunity");
-    }
-
-    {
-        struct survey_gateway_context gateway;
-        struct proto_packet packet;
-        uint8_t payload[32];
-        uint32_t survey_id = 0u;
-        uint64_t anchor_id = 0u;
-        size_t payload_len = 0u;
-        size_t entry_count = 99u;
-
-        CHECK(survey_append_reach_report_tlvs(
-                  payload, sizeof(payload), &payload_len,
-                  base_config.survey_id,
-                  UINT64_C(0xa7000000000000fe), NULL, 0u) == PROTO_OK,
-              "deadline exhaustion could not encode an empty report");
-        CHECK(survey_init_discovery_report_packet(
-                  &packet, UINT64_C(0xa7000000000000fe),
-                  UINT64_C(0xa001000000000001), base_config.survey_id,
-                  77u, (uint8_t)payload_len) == PROTO_OK,
-              "deadline exhaustion could not wrap its empty report");
-        CHECK(survey_extract_reach_report_tlvs(
-                  payload, payload_len, &survey_id, &anchor_id,
-                  NULL, 0u, &entry_count) == PROTO_OK &&
-                  entry_count == 0u &&
-                  packet.session_id == survey_id &&
-                  packet.src_id == anchor_id,
-              "deadline empty report did not survive wire decoding");
-        CHECK(survey_gateway_begin(&gateway, base_config.survey_id, 1u) ==
-                  PROTO_OK &&
-                  survey_gateway_note_reach_report(
-                      &gateway, survey_id, anchor_id, NULL,
-                      entry_count) == PROTO_OK &&
-                  gateway.report_count == 1u,
-              "gateway did not count the deadline exhaustion report");
-    }
+    payload_len = 0u;
+    entry_count = 99u;
+    CHECK(survey_append_reach_report_tlvs(
+              payload, sizeof(payload), &payload_len,
+              config.survey_id + 1u, anchor_id, NULL, 0u) == PROTO_OK,
+          "zero-peer discovery could not encode its completion report");
+    CHECK(survey_extract_reach_report_tlvs(
+              payload, payload_len, &survey_id, &decoded_anchor_id,
+              NULL, 0u, &entry_count) == PROTO_OK &&
+              entry_count == 0u,
+          "zero-peer discovery report did not survive wire decoding");
+    CHECK(survey_gateway_begin(&gateway, survey_id, 1u) == PROTO_OK &&
+              survey_gateway_note_reach_report(
+                  &gateway, survey_id, decoded_anchor_id,
+                  NULL, entry_count) == PROTO_OK &&
+              gateway.report_count == 1u,
+          "gateway rejected a zero-peer discovery completion report");
 }
 
 static uint32_t reconstructed_survey_start_ms(
@@ -930,6 +756,7 @@ static void test_survey_repeat_age_convergence_sweep(void)
                 .start_delay_ms = 2000u,
                 .slot_ms = 40u,
                 .slot_count = 6u,
+                .round_count = 4u,
             };
             uint32_t expected_start_ms = origin_ms + config.start_delay_ms;
             uint32_t expected_deadline_ms = expected_start_ms +
@@ -967,7 +794,7 @@ static void test_survey_repeat_age_convergence_sweep(void)
                 }
 
                 for (uint8_t opportunity = 0u;
-                     opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT;
+                     opportunity < config.round_count;
                      opportunity++) {
                     struct survey_discovery_attempt_schedule schedule;
 
@@ -1015,6 +842,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                     .start_delay_ms = SURVEY_GATEWAY_START_DELAY_MS,
                     .slot_ms = discovery_slot_widths_ms[width_index],
                     .slot_count = slot_count,
+                    .round_count = 4u,
                 };
                 uint32_t discovery_duration_ms =
                     survey_discovery_duration_ms(&config);
@@ -1098,11 +926,11 @@ static void test_survey_gateway_collection_budget_sweep(void)
                             SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
-                        CHECK(first_report_ms == 9040u,
+                        CHECK(first_report_ms == 6960u,
                               "six-slot survey first-report timing drifted");
-                        CHECK(last_report_start_ms == 20390u,
+                        CHECK(last_report_start_ms == 18310u,
                               "six-slot survey final-report timing drifted");
-                        CHECK(no_anchor_evidence_ms == 23660u,
+                        CHECK(no_anchor_evidence_ms == 21580u,
                               "six-slot survey evidence horizon drifted");
                         CHECK(current_wake_ms ==
                                   SURVEY_GATEWAY_BENCH_BUDGET_MS &&
@@ -1116,8 +944,10 @@ static void test_survey_gateway_collection_budget_sweep(void)
                         config.slot_ms == 40u &&
                         report_grace_windows_ms[grace_index] == 1000u) {
                         covered_50_slot_case = true;
-                        CHECK(SURVEY_GATEWAY_BENCH_BUDGET_MS < first_report_ms,
-                              "20-second budget unexpectedly covered 50-slot discovery");
+                        CHECK(first_report_ms == 14000u &&
+                                  first_report_ms <
+                                      SURVEY_GATEWAY_BENCH_BUDGET_MS,
+                              "runtime rounds did not shorten 50-slot discovery");
                         CHECK(gateway_command_budget_window_ms(
                                   true, SURVEY_GATEWAY_BENCH_BUDGET_MS, 1u,
                                   no_anchor_evidence_ms) ==
@@ -1287,14 +1117,15 @@ static bool build_survey_probe_reports(
         .survey_id = UINT32_C(0x50665000) + seed,
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
-        .slot_count = 6u,
+        .slot_count = anchor_count < 6u ? 6u : anchor_count,
+        .round_count = 4u,
     };
     const uint64_t anchor_base = UINT64_C(0xa700000000000001) +
         (uint64_t)seed * UINT64_C(0x10001);
     const uint64_t airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_WAKE, UWB_SURVEY_DISCOVERY_PROBE_LEN);
     struct survey_probe_event events[
-        SURVEY_GATEWAY_MAX_REPORTS * SURVEY_DISCOVERY_OPPORTUNITY_COUNT];
+        SURVEY_GATEWAY_MAX_REPORTS * SURVEY_DISCOVERY_MAX_ROUND_COUNT];
     size_t event_count = 0u;
 
     memset(reports, 0,
@@ -1309,7 +1140,7 @@ static bool build_survey_probe_reports(
         reports[anchor].entries = entries[anchor];
     }
     for (uint8_t opportunity = 0u;
-         opportunity < SURVEY_DISCOVERY_OPPORTUNITY_COUNT; opportunity++) {
+         opportunity < config.round_count; opportunity++) {
         const size_t first_event = event_count;
 
         for (uint8_t anchor = 0u; anchor < anchor_count; anchor++) {
@@ -1317,7 +1148,7 @@ static bool build_survey_probe_reports(
 
             if (survey_discovery_schedule_attempt(
                     &config, anchor_base + anchor, opportunity, 0u,
-                    &schedule) != PROTO_OK || schedule.deferred) {
+                    &schedule) != PROTO_OK) {
                 return false;
             }
             events[event_count] = (struct survey_probe_event) {
@@ -1490,7 +1321,7 @@ static void test_survey_probe_pair_graph_stress_sweep(void)
                connected, explicit_unconnectable);
         CHECK(model_valid, "survey pair-graph model failed internally");
         CHECK(nonempty_reports == SURVEY_PAIR_GRAPH_SWEEP_SEEDS,
-              "collision retries left an anchor without reportable peers");
+              "randomized rounds left an anchor without reportable peers");
         CHECK(connected == SURVEY_PAIR_GRAPH_SWEEP_SEEDS &&
                   explicit_unconnectable == 0u,
               "connectable survey reports produced a disconnected pair graph");
@@ -1526,9 +1357,9 @@ int main(void)
     test_survey_phase_sweep_and_old_defect_sensitivity();
     test_claim_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
-    test_fixed_survey_retry_deadlock_is_reproduced();
-    test_survey_deferred_phase_runtime_invariants();
-    test_survey_real_opportunity_retry_sweep();
+    test_survey_round_randomization_breaks_fixed_collisions();
+    test_survey_continuous_round_window_invariants();
+    test_survey_partial_rounds_still_produce_reports();
     test_survey_repeat_age_convergence_sweep();
     test_survey_gateway_collection_budget_sweep();
     test_survey_control_global_budget_multi_pair_sweep();

@@ -67,10 +67,11 @@ assert re.search(
     ASSIGNMENT_DEFINES,
 )
 assert re.search(
-    r"DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS\s*\+\s*"
-    r"DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS\s*\+\s*"
-    r"DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS\s*\+\s*"
-    r"DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS",
+    r"#define\s+DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS\s+1000u",
+    ASSIGNMENT_DEFINES,
+)
+assert re.search(
+    r"#define\s+DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS\s+235209u",
     ASSIGNMENT_DEFINES,
 )
 assert re.search(
@@ -248,11 +249,14 @@ assert "gateway_discovery_assignment_arm_claim_ack_settle_locked()" in (
 complete_success = function_body(
     ANCHOR, "gateway_discovery_assignment_complete_success_locked"
 )
-assert "gateway_discovery_assignment_missing_ack_count_locked() != 0u" in complete_success
+# Ordinary assignment publishes any useful ACKed subset. Missing ACKs remain
+# explicit failures, but they do not revoke the anchors that committed.
+assert "gateway_discovery_assignment_missing_ack_count_locked() != 0u" not in complete_success
 assert "discovery_assignment_response_ack_settle_pending(" in complete_success
+assert "gateway_discovery_assignment_state.ack_mask" in complete_success
 membership = complete_success.index("gateway_set_registered_membership_roster(")
 stage_batch = complete_success.index(
-    "app_gateway_assignment_publisher_stage_sorted_ids("
+    "app_gateway_assignment_publisher_stage_batch("
 )
 stage_table = complete_success.index(
     "app_gateway_assignment_publisher_stage_table_ready("
@@ -265,11 +269,23 @@ membership_failure = complete_success[membership:stage_batch]
 assert "gateway_discovery_assignment_fail_locked(" in membership_failure
 assert "COMMAND_INTERNAL_ERROR" in membership_failure
 assert "discovery_assignment_membership_epoch(" in complete_success
+membership_call = complete_success[
+    membership : complete_success.index(");", membership) + 2
+]
+stage_batch_call = complete_success[
+    stage_batch : complete_success.index(");", stage_batch) + 2
+]
+assert "committed_anchor_ids" in membership_call
+assert "committed_count" in membership_call
+assert "committed_entries" in stage_batch_call
+assert "committed_count" in stage_batch_call
+assert "failure_count" in complete_success
 assert function_body(PUBLISHER, "app_gateway_assignment_publisher_stage_batch")
 assert function_body(PUBLISHER, "app_gateway_assignment_publisher_stage_sorted_ids")
 
 window = function_body(ANCHOR, "gateway_discovery_assignment_window_ms_locked")
 assert "app_discovery_assignment_table_windows_remaining(" in window
+assert "app_discovery_assignment_collection_hop_count(" in window
 assert "return remaining_ms;" not in window
 finalize = function_body(
     ANCHOR, "gateway_discovery_assignment_finalize_work_handler"
@@ -282,8 +298,18 @@ assert "DBG_DISCOVERY_SLOT_TABLE_BACKOFF" in finalize
 publish_work = function_body(
     ANCHOR, "gateway_discovery_assignment_publish_work_handler"
 )
-assert "expected_claim_count" in publish_work
-assert "gateway_discovery_assignment_fail_locked(" in publish_work
+# Expected count is an early-completion hint and host qualification target. A
+# useful partial claim set must still advance to table publication when its
+# conservative collection window closes.
+strict_expected_failure = re.search(
+    r"expected_claim_count\s*!=\s*0u\s*&&\s*"
+    r"gateway_discovery_assignment_state\.claim_count\s*<\s*"
+    r"gateway_discovery_assignment_state\.expected_claim_count\s*\)\s*\{\s*"
+    r"gateway_discovery_assignment_fail_locked\(",
+    publish_work,
+    re.S,
+)
+assert strict_expected_failure is None
 assert "DBG_DISCOVERY_SLOT_CLAIM_BACKOFF" in publish_work
 assert "discovery_assignment_retry_backoff_ms(" in publish_work
 table_publish = publish_work.index("gateway_discovery_assignment_publish_table()")

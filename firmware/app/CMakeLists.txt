@@ -380,6 +380,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
     src/app_gateway_survey_observability.c
+    src/app_gateway_survey_round.c
     src/app_gateway_collection_eack.c
     src/app_gateway_eack_retry.c
     src/app_gateway_eack_policy.c
@@ -395,6 +396,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_node_comm_gateway_control.c
     src/app_node_comm_sync.c
     src/app_node_comm_gateway_route_refresh.c
+    src/app_operation_policy.c
     src/app_gateway_command_ingress.c
     src/app_gateway_command_lifecycle.c
     src/app_mesh_gateway_command_flow.c
@@ -475,11 +477,15 @@ else()
         ../src/mesh_relay.c
         ../src/mesh_relay_channel9.c
         ../src/mesh_route_path.c
+        ../src/operation_policy.c
         ../src/report.c
         ../src/serial_frame.c
         ../src/status.c
         ../src/route.c
         ../src/survey.c
+        ../src/survey_pair_planner.c
+        ../src/survey_pair_round_runtime.c
+        ../src/survey_round_control.c
         ../src/survey_gateway_transaction.c
         ../src/survey_pair_lease.c
     )

@@ -20,10 +20,11 @@ from .command_telemetry import (
     CommandTelemetryDecodeError, GatewayCommandRequestTracker,
     decode_gateway_command_event,
 )
+from .command_orchestration import GatewayCommandOrchestrator
 from .protocol import (
     COMMAND_STATUS_NAMES, MSG_CLICK_REPORT, MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT, Packet, TLV_ANCHOR_ID, TLV_CLICKER_ID,
-    TLV_COMMAND_STATUS, TLV_EVENT_SEQ,
+    TLV_COMMAND_ID, TLV_COMMAND_STATUS, TLV_EVENT_SEQ,
 )
 
 
@@ -35,6 +36,7 @@ class GatewayDiagnosticsMixin:
     _show_error: Callable[[str], None]
     _packet_summary: Callable[[Packet], str]
     _update_command_state: Callable[[], None]
+    _apply_gateway_command_transition: Callable[[Any], None]
     status_text: Any
     def _initialize_gateway_diagnostics(self) -> None:
         self.geometry_model = SurveyGeometryModel()
@@ -43,6 +45,9 @@ class GatewayDiagnosticsMixin:
         self.wake_attempt_adapter = PendingWakeAttemptAdapter()
         self.command_timeline_model = CommandTimelineModel()
         self.command_request_tracker = GatewayCommandRequestTracker()
+        self.command_orchestrator = GatewayCommandOrchestrator(
+            self.command_request_tracker
+        )
         self.topology_model = TopologyBaselineModel(
             Path.home() / ".config" / "imec2-gateway-gui" / "anchor-baseline.json"
         )
@@ -92,9 +97,9 @@ class GatewayDiagnosticsMixin:
                 self._show_error(f"Malformed gateway command telemetry: {exc}")
                 return
             self.command_timeline_model.observe(event)
-            released = self.command_request_tracker.observe_event(event)
-            if released:
-                self._update_command_state()
+            self._apply_gateway_command_transition(
+                self.command_orchestrator.observe_event(event)
+            )
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
             if self.geometry_model.observe_command_event(event):
                 self.anchor_geometry_view.show_model(self.geometry_model)
@@ -105,11 +110,17 @@ class GatewayDiagnosticsMixin:
                 self.mesh_diagnostics_view.show_topology(comparison, anchors)
             return
         if packet.msg_type == MSG_COMMAND_RESULT:
+            command_id = packet.value(TLV_COMMAND_ID)
             status = packet.value(TLV_COMMAND_STATUS)
-            if isinstance(status, int) and status != 0 and self.command_request_tracker.observe_command_result(
-                packet.session_id, packet.seq, status
-            ):
-                self._update_command_state()
+            if isinstance(command_id, int) and isinstance(status, int):
+                self._apply_gateway_command_transition(
+                    self.command_orchestrator.observe_command_result(
+                        command_id=command_id,
+                        host_session_id=packet.session_id,
+                        host_sequence=packet.seq,
+                        command_status=status,
+                    )
+                )
         observation = self.geometry_model.observe_pair_packet(packet)
         if observation is not None:
             self.anchor_geometry_view.show_model(self.geometry_model)
@@ -138,20 +149,14 @@ class GatewayDiagnosticsMixin:
         self.anchor_geometry_view.show_model(self.geometry_model)
         self.click_diagnostics_view.show(self.click_location_model.state, {})
 
-    def _begin_gateway_command(self, command_kind: int, session_id: int,
-                               sequence: int,
-                               *, timeout_s: float | None = None) -> bool:
-        if self.command_request_tracker.begin(
-                command_kind, session_id, sequence, timeout_s=timeout_s):
-            self._update_command_state()
-            return True
-        self.status_text.set("A gateway command is already active")
-        return False
-
     def _expire_gateway_command(self) -> None:
-        if self.command_request_tracker.expire():
-            self.status_text.set("Gateway command timed out; controls are available again")
-            self._update_command_state()
+        transition = self.command_orchestrator.expire()
+        if transition.matched:
+            self._apply_gateway_command_transition(transition)
+            if transition.phase != "preflight":
+                self.status_text.set(
+                    "Gateway command timed out; controls are available again"
+                )
 
     def _wake_evidence(self, packet: Packet) -> WakeEvidence:
         event_seq = packet.value(TLV_EVENT_SEQ)

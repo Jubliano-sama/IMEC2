@@ -34,13 +34,19 @@ extern "C" {
 #define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
 #define SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS 5000u
-#define SURVEY_PAIR_START_SKEW_MARGIN_MS 5000u
+#define SURVEY_PAIR_INITIATOR_TIMEOUT_MS 150u
+#define SURVEY_PAIR_START_SKEW_MARGIN_MS 1000u
+/*
+ * START transport may take many seconds across the mesh, but matching round
+ * GO gives both endpoints one shared execution time. The channel-5 RX window
+ * therefore covers only local scheduling skew plus one DS-TWR attempt; it
+ * must never inherit a multi-hop command-result timeout.
+ */
 #define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
-    (SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +                                \
-     SURVEY_PAIR_START_SKEW_MARGIN_MS)
+    (SURVEY_PAIR_START_SKEW_MARGIN_MS + SURVEY_PAIR_INITIATOR_TIMEOUT_MS)
 #define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS 30000u
-#define SURVEY_PAIR_PREPARED_LEASE_MS 240000u
-#if SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS >                                  \
+#define SURVEY_PAIR_PREPARED_LEASE_MS 660000u
+#if SURVEY_PAIR_INITIATOR_TIMEOUT_MS >                                       \
     (UINT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS)
 #error "Survey pair responder window overflows uint32_t"
 #endif
@@ -62,16 +68,16 @@ extern "C" {
     SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS
 #error "Known survey route-depth timeout exceeds the fallback ceiling"
 #endif
-#if SURVEY_PAIR_RESPONDER_WINDOW_MS <= SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS
-#error "Survey pair responder window must include positive start-skew margin"
+#if SURVEY_PAIR_RESPONDER_WINDOW_MS <= SURVEY_PAIR_START_SKEW_MARGIN_MS
+#error "Survey pair responder window must include one DS-TWR attempt"
 #endif
 #if SURVEY_PAIR_PREPARED_LEASE_MS > 2147483647u
 #error "Survey pair prepared lease must fit wrap-safe signed time arithmetic"
 #endif
 #if SURVEY_PAIR_PREPARED_LEASE_MS <                                      \
-    ((2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS) +                     \
+    (SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS +                       \
      SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS)
-#error "Survey pair prepared lease cannot cover bounded prepare/start control"
+#error "Survey pair prepared lease cannot cover one gateway operation and cleanup"
 #endif
 #define SURVEY_REACHABILITY_ENTRY_LEN 10u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
@@ -96,8 +102,7 @@ extern "C" {
 #define SURVEY_DISCOVERY_MIN_SLOT_MS 30u
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
-#define SURVEY_DISCOVERY_OPPORTUNITY_COUNT 4u
-#define SURVEY_DISCOVERY_RETRY_BASE_MS 40u
+#define SURVEY_DISCOVERY_MAX_ROUND_COUNT 4u
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS 5000u
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS 4000u
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS \
@@ -143,6 +148,7 @@ struct survey_discovery_config {
     uint32_t start_delay_ms;
     uint16_t slot_ms;
     uint8_t slot_count;
+    uint8_t round_count;
 };
 
 struct survey_ml_anchor_pair_request {
@@ -164,16 +170,6 @@ struct survey_discovery_attempt_schedule {
     uint32_t latest_tx_start_ms;
     uint32_t slot_end_ms;
     uint32_t window_end_ms;
-    bool deferred;
-};
-
-struct survey_discovery_probe_attempt {
-    uint32_t due_ms;
-    uint16_t retry_round;
-    uint8_t opportunity;
-    bool initialized;
-    bool pending;
-    bool rf_started;
 };
 
 enum survey_pending_report_action {
@@ -304,20 +300,6 @@ int survey_discovery_schedule_attempt(
     uint8_t opportunity,
     uint32_t earliest_relative_ms,
     struct survey_discovery_attempt_schedule *schedule);
-int survey_discovery_probe_attempt_begin(
-    struct survey_discovery_probe_attempt *attempt,
-    uint8_t opportunity);
-int survey_discovery_probe_attempt_defer(
-    struct survey_discovery_probe_attempt *attempt,
-    const struct survey_discovery_config *config,
-    uint64_t anchor_id,
-    uint32_t retry_origin_ms,
-    uint32_t absolute_deadline_ms);
-int survey_discovery_probe_attempt_note_rf_started(
-    struct survey_discovery_probe_attempt *attempt);
-size_t survey_discovery_probe_real_attempt_count(
-    const struct survey_discovery_probe_attempt *attempts,
-    size_t attempt_count);
 int survey_pending_report_begin(struct survey_pending_report_state *state,
                                 uint32_t survey_id,
                                 uint32_t now_ms,

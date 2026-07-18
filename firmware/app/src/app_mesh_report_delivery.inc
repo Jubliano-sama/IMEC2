@@ -620,9 +620,6 @@ static int mesh_queue_anchor_cir_fragment(struct mesh_outbound *outbound,
     }
     outbound->queued_at_ms = k_uptime_get_32();
     mesh_attach_paused_delivery_loss(outbound, "queue-anchor-cir-fragment");
-    mesh_reclaim_for_local_origin_priority(outbound,
-                                           "local-origin-cir-ready",
-                                           false);
     ret = report_tx_queue_append(outbound);
     if (ret != 0) {
         return -ENOSPC;
@@ -685,17 +682,6 @@ static void report_tx_work_handler(struct k_work *work)
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     report_queue_pending = report_tx_queue_used() > 0u;
-    if (report_queue_pending &&
-        report_tx_queue_peek(outbound) == 0 &&
-        mesh_outbound_is_local_origin_priority(outbound)) {
-        mesh_reclaim_for_local_origin_priority(outbound,
-                                               "local-origin-report-ready",
-                                               true);
-        relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
-        ch9_ack_wait_active = mesh_ch9_tx_pending.active;
-        route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                               mesh_route_waiting_tx_active();
-    }
     rx_queue_pending = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                         k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
     route_handoff_active = mesh_route_reply_handoff_active();
@@ -992,11 +978,7 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     struct mesh_outbound queued;
     struct app_mesh_paused_delivery_store_result drop_result = {0};
     uint32_t queue_depth = 0u;
-    uint16_t dropped_seq = 0u;
-    uint8_t dropped_msg_type = 0u;
     bool admitted = false;
-    bool displaced = false;
-    bool displaced_local_custody = false;
     bool owner_active_at_failure = false;
     bool queued_local_priority;
     int ret;
@@ -1004,9 +986,6 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     queued = *outbound;
     queued.queued_at_ms = k_uptime_get_32();
     mesh_attach_paused_delivery_loss(&queued, "queue-anchor-report");
-    mesh_reclaim_for_local_origin_priority(&queued,
-                                           "local-origin-report-queued",
-                                           false);
     queued_local_priority = mesh_outbound_is_local_origin_priority(&queued);
 
     ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
@@ -1020,6 +999,9 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     if (!report_tx_queue_recovery_valid &&
         k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT) == 0) {
         admitted = true;
+        if (queued_local_priority) {
+            (void)report_tx_queue_promote_local_locked();
+        }
     } else if (report_tx_queue_recovery_valid ||
                app_mesh_queue_head_owned(&report_tx_queue_head_owner)) {
         enum app_mesh_queue_reserve_action reserve_action =
@@ -1030,33 +1012,17 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
                         &report_tx_queue_overflow_dropped),
                 queued_local_priority);
 
-        /*
-         * The sender owns the immutable head, so a full-queue producer may
-         * append only through the explicit recovery slot.  A newer local
-         * report may displace that slot; transit is left to upstream retry.
-         */
+        /* The immutable head and recovery slot each remain single owners. */
         if (reserve_action == APP_MESH_QUEUE_RESERVE_ADMIT) {
             report_tx_queue_overflow_dropped = queued;
             report_tx_queue_recovery_valid = true;
             admitted = true;
-        } else if (reserve_action ==
-                       APP_MESH_QUEUE_RESERVE_REPLACE_TRANSIT_ACCOUNT_LOSS ||
-                   reserve_action ==
-                       APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS) {
-            dropped_msg_type = report_tx_queue_overflow_dropped.packet.msg_type;
-            dropped_seq = report_tx_queue_overflow_dropped.packet.seq;
-            displaced_local_custody =
-                reserve_action ==
-                    APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS;
-            app_mesh_paused_delivery_note_drop(&mesh_paused_delivery,
-                                               &drop_result);
-            mesh_attach_paused_delivery_loss(&queued,
-                                             "queue-anchor-report-reserved-replace");
-            report_tx_queue_overflow_dropped = queued;
-            displaced = true;
-            admitted = true;
         }
-    } else {
+    } else if (queued_local_priority) {
+        /*
+         * Make room for local work by transferring one queued transit packet
+         * to the recovery owner.  No packet is released or counted lost.
+         */
         ret = -ENOSPC;
         for (uint32_t i = 0u;
              i < REPORT_TX_QUEUE_DEPTH &&
@@ -1080,26 +1046,12 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
             }
             ret = -ENOSPC;
         }
-        if (ret != 0 && queued_local_priority &&
-            !report_tx_queue_recovery_valid &&
-            k_msgq_get(&report_tx_msgq,
-                       &report_tx_queue_overflow_dropped,
-                       K_NO_WAIT) == 0) {
-            ret = 0;
-        }
         if (ret == 0) {
-            dropped_msg_type = report_tx_queue_overflow_dropped.packet.msg_type;
-            dropped_seq = report_tx_queue_overflow_dropped.packet.seq;
-            displaced_local_custody = mesh_outbound_is_local_origin_priority(
-                &report_tx_queue_overflow_dropped);
             ret = k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT);
             if (ret == 0) {
-                app_mesh_paused_delivery_note_drop(&mesh_paused_delivery,
-                                                   &drop_result);
-                mesh_attach_paused_delivery_loss(&queued,
-                                                 "queue-anchor-report-replace");
-                displaced = true;
+                report_tx_queue_recovery_valid = true;
                 admitted = true;
+                (void)report_tx_queue_promote_local_locked();
             } else {
                 (void)mesh_preempt_report_queue_recover(
                     &report_tx_queue_overflow_dropped,
@@ -1126,26 +1078,6 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
         LOG_WRN("anchor report queue full; gateway-bound report dropped: lost=%u",
                 drop_result.lost_count);
         return -ENOSPC;
-    }
-
-    if (displaced) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
-        high_debug_log_event("ANCHOR_REPORT_QUEUE",
-                             "phase=replace-oldest old_msg=0x%02x old_seq=%u old_local=%u new_msg=0x%02x new_seq=%u lost=%u queue_depth=%u",
-                             dropped_msg_type,
-                             dropped_seq,
-                             displaced_local_custody ? 1u : 0u,
-                             queued.packet.msg_type,
-                             queued.packet.seq,
-                             drop_result.lost_count,
-                             queue_depth);
-        LOG_WRN("anchor report queue full; replaced oldest report: old_msg=0x%02x old_seq=%u old_local=%u new_msg=0x%02x new_seq=%u lost=%u",
-                dropped_msg_type,
-                dropped_seq,
-                displaced_local_custody ? 1u : 0u,
-                queued.packet.msg_type,
-                queued.packet.seq,
-                drop_result.lost_count);
     }
 
     if ((queued.packet.flags & FLAG_COUNT_AS_CLICK) != 0u) {
@@ -2069,6 +2001,15 @@ after_gateway_ack:
     }
     if (result->actions & MESH_RELAY_ACTION_UPDATE_ROUTE_REQ) {
         (void)mesh_schedule_route_request_action(result, rx, true);
+    }
+    if (result->actions & MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY) {
+        int ret = app_operation_policy_install(
+            &result->operation_policy,
+            APP_OPERATION_POLICY_ALL_MASK);
+
+        if (ret < 0) {
+            LOG_WRN("mesh route policy install failed: %d", ret);
+        }
     }
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) {
         int ret;

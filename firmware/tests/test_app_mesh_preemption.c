@@ -645,16 +645,16 @@ static void test_parent_loss_keeps_exactly_one_retry_owner(void)
                false, true, true) == APP_MESH_PARENT_LOSS_CUSTODY_NONE);
 }
 
-static void test_queue_recovery_reserve_accounts_every_replacement(void)
+static void test_queue_recovery_reserve_never_replaces_existing_custody(void)
 {
     assert(app_mesh_queue_reserve_decide(false, false, false) ==
            APP_MESH_QUEUE_RESERVE_ADMIT);
     assert(app_mesh_queue_reserve_decide(true, false, false) ==
            APP_MESH_QUEUE_RESERVE_REJECT);
     assert(app_mesh_queue_reserve_decide(true, false, true) ==
-           APP_MESH_QUEUE_RESERVE_REPLACE_TRANSIT_ACCOUNT_LOSS);
+           APP_MESH_QUEUE_RESERVE_REJECT);
     assert(app_mesh_queue_reserve_decide(true, true, true) ==
-           APP_MESH_QUEUE_RESERVE_REPLACE_LOCAL_ACCOUNT_LOSS);
+           APP_MESH_QUEUE_RESERVE_REJECT);
     assert(app_mesh_queue_reserve_decide(true, true, false) ==
            APP_MESH_QUEUE_RESERVE_REJECT);
 }
@@ -672,6 +672,6 @@ int main(void)
     test_queue_head_owner_blocks_rotation_but_allows_append();
     test_queue_head_owner_rejects_stale_or_changed_head();
     test_parent_loss_keeps_exactly_one_retry_owner();
-    test_queue_recovery_reserve_accounts_every_replacement();
+    test_queue_recovery_reserve_never_replaces_existing_custody();
     return 0;
 }

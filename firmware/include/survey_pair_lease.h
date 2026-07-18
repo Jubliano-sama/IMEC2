@@ -2,6 +2,7 @@
 #define SURVEY_PAIR_LEASE_H
 
 #include "survey.h"
+#include "survey_round_control.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,11 +41,15 @@ struct survey_pair_lease {
     struct survey_pair_control_id start_id;
     struct survey_pair_control_id last_accepted_id;
     uint32_t prepared_deadline_ms;
+    uint16_t round_id;
     enum survey_pair_lease_phase phase;
     bool prepare_id_valid;
     bool start_id_valid;
     bool last_accepted_id_valid;
+    /* Exact START command-result delivery has reached gateway confirmation. */
     bool start_released;
+    /* Matching nonzero-round GO has arrived; legacy round zero needs no GO. */
+    bool go_released;
 };
 
 /* Reset is the only operation that intentionally forgets accepted command IDs. */
@@ -60,6 +65,13 @@ enum survey_pair_lease_decision survey_pair_lease_prepare(
     const struct survey_pair_control_id *control_id,
     uint32_t now_ms,
     uint32_t lease_ms);
+enum survey_pair_lease_decision survey_pair_lease_prepare_round(
+    struct survey_pair_lease *lease,
+    const struct survey_pair *pair,
+    uint16_t round_id,
+    const struct survey_pair_control_id *control_id,
+    uint32_t now_ms,
+    uint32_t lease_ms);
 
 /*
  * START must name the prepared pair and have a newer command sequence. The
@@ -70,6 +82,22 @@ enum survey_pair_lease_decision survey_pair_lease_start(
     struct survey_pair_lease *lease,
     const struct survey_pair *pair,
     const struct survey_pair_control_id *control_id,
+    uint32_t now_ms);
+enum survey_pair_lease_decision survey_pair_lease_start_round(
+    struct survey_pair_lease *lease,
+    const struct survey_pair *pair,
+    uint16_t round_id,
+    const struct survey_pair_control_id *control_id,
+    uint32_t now_ms);
+
+/*
+ * A GO releases only the matching nonzero survey round. Repeated or late GO
+ * calls are harmless and never release a different prepared pair.
+ */
+enum survey_pair_lease_decision survey_pair_lease_go(
+    struct survey_pair_lease *lease,
+    uint32_t survey_id,
+    uint16_t round_id,
     uint32_t now_ms);
 
 bool survey_pair_lease_pending_snapshot(const struct survey_pair_lease *lease,

@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import unittest
 
+from tools.gateway_gui.operation_policy import (
+    AssignmentOperationPolicy,
+    DiscoveryOperationPolicy,
+    OperationPolicyProfile,
+    PairOperationPolicy,
+)
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
@@ -31,6 +37,7 @@ from tools.gateway_gui.protocol import (
     TLV_DISCOVERY_ASSIGNMENT_PHASE,
     TLV_DISCOVERY_ASSIGNMENT_TABLE,
     TLV_EXPECTED_NODE_COUNT,
+    TLV_OPERATION_POLICY,
     TLV_DISTANCE_MM,
     TLV_DISTANCE_SAMPLES_MM,
     TLV_DURATION_MS,
@@ -462,8 +469,12 @@ class ProtocolTests(unittest.TestCase):
             assignment.packet.value(TLV_COMMAND_BUDGET_MS),
             DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
         )
-        with self.assertRaisesRegex(ValueError, "assignment command budget"):
-            build_assign_discovery_slots_command(**common)
+        self.assertEqual(
+            build_assign_discovery_slots_command(**common).packet.value(
+                TLV_COMMAND_BUDGET_MS
+            ),
+            15000,
+        )
 
         maximum = {**common, "command_budget_ms": 600000}
         self.assertEqual(
@@ -477,6 +488,95 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(ValueError, "command budget"):
                     build_here_i_am_command(**{**common, "command_budget_ms": invalid})
+
+    def test_v1_operation_policy_is_repeated_decoded_and_legacy_equal(self) -> None:
+        profile = OperationPolicyProfile(
+            assignment=AssignmentOperationPolicy(5, 300_000, 750),
+            discovery=DiscoveryOperationPolicy(
+                9_000, 80, 12, 3, 1_500, 500_000
+            ),
+            pair=PairOperationPolicy(1, 8),
+        )
+        common = {
+            "host_id": DEFAULT_HOST_ID,
+            "gateway_id": 0xAABBCCDDEEFF0011,
+            "operation_policy": profile,
+        }
+        survey = build_anchor_discovery_command(
+            **common,
+            session_id=10,
+            seq=11,
+            survey_id=12,
+            duration_ms=1_500,
+            discovery_slot_count=12,
+            sample_count=1,
+            command_budget_ms=500_000,
+        )
+        assignment = build_assign_discovery_slots_command(
+            **common,
+            session_id=13,
+            seq=14,
+            expected_anchor_count=5,
+            command_budget_ms=300_000,
+        )
+        here_i_am = build_here_i_am_command(
+            **common,
+            session_id=15,
+            seq=16,
+        )
+
+        expected_values = profile.encoded_values()
+        for command in (survey, assignment, here_i_am):
+            with self.subTest(command=command.label):
+                policy_tlvs = tuple(
+                    value for value in command.packet.tlvs
+                    if value.type_id == TLV_OPERATION_POLICY
+                )
+                self.assertEqual(
+                    tuple(value.raw for value in policy_tlvs), expected_values
+                )
+                self.assertEqual(
+                    [value.decoded["family"] for value in policy_tlvs],
+                    ["assignment", "survey_discovery", "survey_pair"],
+                )
+                self.assertTrue(all(
+                    value.name == "OPERATION_POLICY" for value in policy_tlvs
+                ))
+
+        self.assertEqual(survey.packet.value(TLV_DURATION_MS), 1_500)
+        self.assertEqual(survey.packet.value(TLV_DISCOVERY_SLOT_COUNT), 12)
+        self.assertEqual(survey.packet.value(TLV_COMMAND_BUDGET_MS), 500_000)
+        self.assertEqual(assignment.packet.value(TLV_EXPECTED_NODE_COUNT), 5)
+        self.assertEqual(assignment.packet.value(TLV_COMMAND_BUDGET_MS), 300_000)
+
+        with self.assertRaisesRegex(ValueError, "legacy duration"):
+            build_anchor_discovery_command(
+                **common, session_id=20, seq=21, survey_id=22,
+                duration_ms=1_499, discovery_slot_count=12, sample_count=1,
+                command_budget_ms=500_000,
+            )
+        with self.assertRaisesRegex(ValueError, "legacy discovery slot"):
+            build_anchor_discovery_command(
+                **common, session_id=20, seq=21, survey_id=22,
+                duration_ms=1_500, discovery_slot_count=11, sample_count=1,
+                command_budget_ms=500_000,
+            )
+        with self.assertRaisesRegex(ValueError, "legacy command budget"):
+            build_anchor_discovery_command(
+                **common, session_id=20, seq=21, survey_id=22,
+                duration_ms=1_500, discovery_slot_count=12, sample_count=1,
+                command_budget_ms=499_999,
+            )
+        with self.assertRaisesRegex(ValueError, "legacy expected"):
+            build_assign_discovery_slots_command(
+                **common, session_id=23, seq=24,
+                expected_anchor_count=4, command_budget_ms=300_000,
+            )
+        with self.assertRaisesRegex(ValueError, "legacy command budget"):
+            build_assign_discovery_slots_command(
+                **common, session_id=23, seq=24,
+                expected_anchor_count=5, command_budget_ms=300_001,
+            )
 
     def test_discovery_assignment_tlvs_and_clock_offsets_decode_exact_wire_shapes(self) -> None:
         entries = (

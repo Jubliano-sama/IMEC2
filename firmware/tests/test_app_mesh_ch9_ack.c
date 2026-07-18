@@ -535,13 +535,13 @@ static void test_forced_hop_transit_retries_without_local_pressure(void)
            APP_MESH_CH9_TIMEOUT_RETRY);
 }
 
-static void test_local_priority_pressure_displaces_transit_timeout(void)
+static void test_local_priority_pressure_preserves_transit_timeout_owner(void)
 {
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
 
     assert(app_mesh_ch9_timeout_pressure_decide(
                &sent, true, true, true, RELAY_ID) ==
-           APP_MESH_CH9_TIMEOUT_DROP_TRANSIT);
+           APP_MESH_CH9_TIMEOUT_RETRY);
 }
 
 static void test_downstream_pressure_defers_nonpriority_local_timeout(void)
@@ -1169,7 +1169,7 @@ int main(void)
     test_durable_gateway_result_stays_in_core_tracker();
     test_anchor_tracks_transit_direct_gateway_send();
     test_forced_hop_transit_retries_without_local_pressure();
-    test_local_priority_pressure_displaces_transit_timeout();
+    test_local_priority_pressure_preserves_transit_timeout_owner();
     test_downstream_pressure_defers_nonpriority_local_timeout();
     test_downstream_pressure_allows_local_click_preemption();
     test_timeout_pressure_is_inactive_without_downstream();

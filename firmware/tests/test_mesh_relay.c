@@ -194,7 +194,8 @@ static void test_mesh_relay_result_preserves_required_simultaneous_outputs(void)
 {
     struct mesh_relay_result result = {0};
 
-    assert(sizeof(result) <= (3u * sizeof(struct mesh_outbound)) + 32u);
+    assert(sizeof(result) <= (3u * sizeof(struct mesh_outbound)) +
+                             sizeof(struct operation_policy_set) + 40u);
 
     result.route_reply.packet.msg_type = MSG_ROUTE_REPLY;
     result.route_reply.packet.seq = 101u;
@@ -2564,13 +2565,17 @@ static void test_busy_survey_discovery_broadcast_still_forwards(void)
     assert(result.forward.packet.ttl == 2u);
 }
 
-static void test_downlink_routes_survive_age_until_delivery_failure(void)
+static void test_downlink_routes_require_repeated_delivery_failures(void)
 {
     struct mesh_relay gateway;
     uint64_t next_hop_id = 0u;
 
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY, GATEWAY, GATEWAY, 30u);
-    seed_downlink(&gateway, ANCHOR_A, ANCHOR_B, 30u, 2u, 75u, 1000u);
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        ANCHOR_A,
+                                                        ANCHOR_B,
+                                                        75u,
+                                                        1000u) == PROTO_OK);
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_OK);
     assert(next_hop_id == ANCHOR_B);
 
@@ -2579,6 +2584,30 @@ static void test_downlink_routes_survive_age_until_delivery_failure(void)
     assert(next_hop_id == ANCHOR_B);
 
     mesh_relay_note_delivery_failure_at(&gateway, ANCHOR_A, 31001u);
+    mesh_relay_note_delivery_failure_at(&gateway, ANCHOR_A, 31002u);
+    assert(mesh_relay_find_downlink(&gateway, ANCHOR_A) != NULL);
+
+    /* Fresh accepted evidence for the same path resets its failure history. */
+    assert(mesh_relay_note_gateway_survey_reverse_route(&gateway,
+                                                        ANCHOR_A,
+                                                        ANCHOR_B,
+                                                        80u,
+                                                        31003u) == PROTO_OK);
+    for (uint32_t failure = 0u; failure < ROUTE_RETRIES_PER_CANDIDATE; failure++) {
+        mesh_relay_note_delivery_failure_at(&gateway,
+                                            ANCHOR_A,
+                                            31004u + failure);
+        assert(mesh_relay_find_downlink(&gateway, ANCHOR_A) != NULL);
+        assert(mesh_relay_select_next_hop(&gateway,
+                                          ANCHOR_A,
+                                          &next_hop_id) == PROTO_OK);
+        assert(next_hop_id == ANCHOR_B);
+    }
+
+    mesh_relay_note_delivery_failure_at(
+        &gateway,
+        ANCHOR_A,
+        31004u + ROUTE_RETRIES_PER_CANDIDATE);
     assert(mesh_relay_find_downlink(&gateway, ANCHOR_A) == NULL);
     assert(mesh_relay_select_next_hop(&gateway, ANCHOR_A, &next_hop_id) == PROTO_ERR_NOT_FOUND);
 }
@@ -10908,7 +10937,8 @@ static void test_max_depth_route_control_builders_fit_wire_bounds(void)
         }
     }
 
-    assert(route_adv.payload_len == MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN);
+    assert(route_adv.payload_len ==
+           MESH_GATEWAY_ROUTE_ADV_LEGACY_MAX_PAYLOAD_LEN);
     mesh_relay_init(&requester,
                     MESH_RELAY_ROLE_ANCHOR,
                     requester_id,
@@ -10997,7 +11027,7 @@ int main(void)
     test_collection_outbox_snapshot_rejects_completed_record();
     test_collection_eack_broadcast_rejects_wrong_gateway_epoch();
     test_busy_survey_discovery_broadcast_still_forwards();
-    test_downlink_routes_survive_age_until_delivery_failure();
+    test_downlink_routes_require_repeated_delivery_failures();
     test_downlink_route_selection_uses_weighted_quality();
     test_start_tx_accepts_aged_upstream_route_until_failures();
     test_downlink_next_hop_send_completes_immediately();

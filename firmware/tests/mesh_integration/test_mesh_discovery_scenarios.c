@@ -433,29 +433,28 @@ static int validate_discovery_response(
     return 0;
 }
 
-static int verify_farthest_first_staggering(void)
+static int verify_response_spread_is_hop_independent(void)
 {
-    uint32_t previous_delay = 0u;
+    uint32_t first_delay = 0u;
 
     for (uint8_t hop = DISCOVERY_ASSIGNMENT_MAX_HOPS; hop > 0u; hop--) {
         uint32_t delay_ms = 0u;
-        int ret = discovery_assignment_response_delay_ms(3u,
-                                                         ANCHOR_COUNT,
-                                                         hop,
+        int ret = discovery_assignment_response_delay_ms(
+                                                         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                                                          0u,
                                                          7u,
                                                          &delay_ms);
 
         REQUIRE(ret == PROTO_OK,
-                "stagger helper hop=%u ret=%d", hop, ret);
-        if (hop != DISCOVERY_ASSIGNMENT_MAX_HOPS) {
-            REQUIRE(delay_ms - previous_delay ==
-                        DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS,
-                    "farthest-first hop=%u delay=%" PRIu32
-                    " previous=%" PRIu32,
-                    hop, delay_ms, previous_delay);
+                "spread helper hop=%u ret=%d", hop, ret);
+        if (hop == DISCOVERY_ASSIGNMENT_MAX_HOPS) {
+            first_delay = delay_ms;
+        } else {
+            REQUIRE(delay_ms == first_delay,
+                    "hop-ranked response delay hop=%u delay=%" PRIu32
+                    " first=%" PRIu32,
+                    hop, delay_ms, first_delay);
         }
-        previous_delay = delay_ms;
     }
     return 0;
 }
@@ -580,7 +579,7 @@ static int collect_claims(struct mesh_sim_world *world,
                           struct scenario_summary *summary)
 {
     const uint32_t window_ms = discovery_assignment_collection_window_ms(
-        ANCHOR_COUNT,
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
         DISCOVERY_ASSIGNMENT_MAX_HOPS);
     size_t first_round_count = 0u;
 
@@ -624,9 +623,7 @@ static int collect_claims(struct mesh_sim_world *world,
                 random_value = 0u;
             }
             ret = discovery_assignment_response_delay_ms(
-                anchors[i].claim_slot,
-                ANCHOR_COUNT,
-                anchors[i].hop_count,
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                 round,
                 random_value,
                 &delay_ms);
@@ -940,7 +937,7 @@ static int publish_table_and_collect_acks(
 {
     const uint32_t collection_window_ms =
         discovery_assignment_collection_window_ms(
-            ANCHOR_COUNT,
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
             DISCOVERY_ASSIGNMENT_MAX_HOPS);
     size_t first_round_acked = 0u;
     size_t expected_initial_misses = 0u;
@@ -1092,9 +1089,7 @@ static int publish_table_and_collect_acks(
                     random_value = 0u;
                 }
                 ret = discovery_assignment_response_delay_ms(
-                    anchors[i].assignment_slot,
-                    ANCHOR_COUNT,
-                    anchors[i].hop_count,
+                    DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                     0u,
                     random_value,
                     &delay_ms);
@@ -1261,7 +1256,7 @@ static int test_discovery_assignment_radio_scenario(struct scenario_summary *sum
     if (ret != 0) {
         return ret;
     }
-    ret = verify_farthest_first_staggering();
+    ret = verify_response_spread_is_hop_independent();
     if (ret != 0) {
         return ret;
     }

@@ -241,11 +241,21 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return append_flood_control_tlvs(payload,
-                                     payload_cap,
-                                     offset,
-                                     &flood_control,
-                                     fields->flood_packet_age_ms);
+    ret = append_flood_control_tlvs(payload,
+                                    payload_cap,
+                                    offset,
+                                    &flood_control,
+                                    fields->flood_packet_age_ms);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return mesh_relay_operation_policy_append_exact(
+        payload,
+        payload_cap,
+        offset,
+        fields->operation_policy_tlvs,
+        fields->operation_policy_tlvs_len,
+        fields->operation_policy_present);
 }
 
 static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
@@ -334,9 +344,16 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
                        &fields->flood_packet_age_ms);
     if (ret == PROTO_ERR_NOT_FOUND) {
         fields->flood_packet_age_ms = 0u;
-        return PROTO_OK;
+    } else if (ret != PROTO_OK) {
+        return ret;
     }
-    return ret;
+    return mesh_relay_operation_policy_parse_exact(
+        payload,
+        payload_len,
+        &fields->operation_policy,
+        fields->operation_policy_tlvs,
+        &fields->operation_policy_tlvs_len,
+        &fields->operation_policy_present);
 }
 
 static int build_route_reply_ack(struct mesh_relay *relay,
@@ -524,7 +541,14 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
             PROTO_OK ||
         (fields->gateway_capacity_state != RELAY_CAP_UNKNOWN &&
          fields->capacity_validity_interval_ms == 0u) ||
-        fields->route_cost != gateway_route_cost(fields->hop_count, fields->path_quality_min)) {
+        fields->route_cost != gateway_route_cost(fields->hop_count, fields->path_quality_min) ||
+        (fields->operation_policy_present &&
+         (fields->operation_policy_tlvs_len !=
+              OPERATION_POLICY_ALL_TLVS_LEN ||
+          mesh_relay_operation_policy_set_validate_complete(
+              &fields->operation_policy) != PROTO_OK)) ||
+        (!fields->operation_policy_present &&
+         fields->operation_policy_tlvs_len != 0u)) {
         return false;
     }
     return true;
@@ -692,6 +716,10 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV;
     } else if (ret != PROTO_ERR_STALE) {
         return ret;
+    }
+    if (fields.operation_policy_present) {
+        result->operation_policy = fields.operation_policy;
+        result->actions |= MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY;
     }
 
     return PROTO_OK;

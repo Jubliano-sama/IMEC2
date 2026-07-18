@@ -111,6 +111,7 @@ static void test_survey_start_repeats_age_from_one_origin(void)
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
         .slot_count = 6u,
+        .round_count = 4u,
     };
     struct app_mesh_flood_result result;
     struct flood_test_ctx ctx = {

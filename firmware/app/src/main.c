@@ -527,7 +527,6 @@ int main(void)
         if (ret < 0) {
             LOG_ERR("gateway BLE PC link unavailable: %d", ret);
         }
-        app_node_comm_start_route_refresh();
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
         status_debug_printf("DBG_GATEWAY_BOOT stage=ch9_begin uptime=%u\n",
                             k_uptime_get_32());

@@ -5,10 +5,10 @@
 The connected-routing gateway emits compact typed command events to the existing
 gateway BLE packet stream. These records cover:
 
-- `CMD_ASSIGN_DISCOVERY_SLOTS` (`0x0104`), used by the host-facing anchor
-  enumeration / "Here I Am" workflow.
+- `CMD_ASSIGN_DISCOVERY_SLOTS` (`0x0104`), used by host-facing anchor
+  enumeration and logical-slot assignment after a separate Here-I-Am.
 - `CMD_SURVEY_REACHABILITY` (`0x0100`) and its automatic pair preparation and
-  start commands.
+  start commands, plus the common `CMD_SURVEY_GO` (`0x0105`) barrier.
 - `CMD_FORCE_REDISCOVERY` (`0x000C`) route refresh status.
 
 The records replace neither command results nor survey pair result packets.
@@ -63,9 +63,9 @@ reconnect. Click and already-pending terminal records retain BLE priority.
 Survey report progress is reconstructed after collection from the gateway's
 retained table of at most 50 accepted reports, so a full BLE queue while reports
 arrive cannot erase anchor membership. Pair-start and pair-result progress is
-admitted one pair at a time. If telemetry has no custody capacity, orchestration
-pauses at the next between-pair boundary while command state and radio deadlines
-already in flight remain unchanged; it never allocates a 1225-event pair log.
+admitted at a lane boundary. If telemetry has no custody capacity, that lane's
+terminal remains pending while unrelated lanes retain their exact radio and
+cleanup state; the gateway never allocates a topology-sized event log.
 
 ## Event Payload V1
 
@@ -171,10 +171,11 @@ discovery reports ends with `NO_ANCHORS`; user interfaces should render that
 survey-specific condition as "No survey reports were received", because it
 does not mean that no powered or normally enumerable anchors exist.
 
-Survey discovery runs four collision-diversified probe opportunities before
-the gateway closes collection. A terminal `NO_ANCHORS` reason therefore means
-that no unique eligible anchor report arrived across the complete expanded
-probe and report horizon; it must not be emitted after only the initial slot.
+Survey discovery runs the runtime profile's one to four randomized rounds
+before the gateway closes collection. A terminal `NO_ANCHORS` reason therefore
+means that no unique eligible anchor report arrived across that continuous
+configured discovery and report horizon; it must not be emitted after only the
+initial slot.
 An explicit host command limit is an overall cancellation deadline, not
 permission to divide and shorten that indivisible collection horizon. If the
 limit expires before collection can finish, the terminal reason is `TIMEOUT`;
@@ -184,7 +185,7 @@ the gateway may emit `NO_ANCHORS` only after the natural horizon completes.
 
 Enumeration and survey discovery are capped at 50 anchors. Each survey report
 is capped at twelve peers, and the planner caps each anchor at six pairs. Survey
-runtime result accounting is capped at 16 samples per pair. Compile-time guards
+round runtime result accounting is capped at four samples per pair. Compile-time guards
 bind these capacities and keep the discovery table publisher below a 4 KiB
 local-frame budget.
 
@@ -194,7 +195,6 @@ The retained admission snapshot is stage 2 (`QUEUED`), which is also proof that
 stage 1 (`ACCEPTED`) occurred; stage 1 may therefore be coalesced rather than
 emitted as a separate record when bounded transport storage is under pressure.
 Event flow control never changes channel-5 priority, an already-started radio
-deadline, retries, or survey decisions. Pair orchestration pauses only at a safe
-between-pair boundary. Temporary transport refusal leaves the event pending and
-does not update loss state; only exhausted bounded semantic storage can report
-irreversible loss.
+deadline, retries, or survey decisions. Temporary transport refusal leaves the
+exact lane or round boundary pending and does not update loss state; only
+exhausted bounded semantic storage can report irreversible loss.

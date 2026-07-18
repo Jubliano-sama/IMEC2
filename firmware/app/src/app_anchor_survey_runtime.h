@@ -65,6 +65,12 @@ int app_anchor_survey_runtime_start_pair_from_command(
     size_t payload_len,
     enum command_status *status,
     uint8_t *reason);
+int app_anchor_survey_runtime_go_round_from_command(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    enum command_status *status,
+    uint8_t *reason);
 int app_anchor_survey_runtime_bind_pair_start_delivery(
     const struct proto_packet *command,
     uint32_t delivery_handle);
