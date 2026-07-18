@@ -45,6 +45,19 @@ assert reject.count("gateway_observe_host_terminal(") == 1
 
 reachability = function_body(ANCHOR, "gateway_route_survey_reachability")
 assert "gateway_command_survey_sample_admission(" in reachability
+assert (
+    "uint32_t command_budget_ms = "
+    "SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS;"
+) in reachability, "survey must retain its dedicated 600-second default"
+assert re.search(
+    r"gateway_command_extract_budget_ms\s*\([^;]*"
+    r"SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS\s*,",
+    reachability,
+    re.DOTALL,
+), "survey budget extraction must use its protocol-specific default"
+assert "GATEWAY_COMMAND_BUDGET_MAX_MS" not in reachability, (
+    "raising the explicit command maximum must not silently extend survey default"
+)
 assert re.search(
     r"gateway_command_budget_window_ms\s*\(\s*true\s*,\s*"
     r"command_budget_ms\s*,\s*1u\s*,\s*collection_delay_ms\s*\)",
@@ -52,15 +65,32 @@ assert re.search(
 ), "survey collection must remain one indivisible phase under an explicit budget"
 
 control_timeout = function_body(ANCHOR, "gateway_survey_control_timeout_ms")
+natural_timeout = function_body(
+    ANCHOR, "gateway_survey_natural_control_timeout_ms"
+)
 assert "gateway_survey_remaining_control_phases" not in ANCHOR, (
     "survey control deadlines must not be divided across future pair phases"
+)
+assert "survey_gateway_reverse_hint_for_target(" in natural_timeout
+assert "survey_pair_control_timeout_ms(reverse_hint.hop_count)" in natural_timeout
+assert "SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS" in natural_timeout, (
+    "unknown route depth must keep the established 90-second fallback"
 )
 assert re.search(
     r"gateway_command_budget_window_ms\s*\(\s*true\s*,\s*"
     r"remaining_ms\s*,\s*1u\s*,\s*"
-    r"SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS\s*\)",
+    r"natural_timeout_ms\s*\)",
     control_timeout,
 ), "each survey control must use the natural timeout clipped by the global deadline"
+
+report_accept = function_body(ANCHOR, "gateway_handle_survey_discovery_report")
+assert "survey_gateway_hop_count_from_report_ttl(packet->ttl)" in report_accept
+
+cleanup = function_body(ANCHOR, "gateway_survey_prepare_cleanup_delivery")
+assert "gateway_survey_natural_control_timeout_ms(target_id)" in cleanup
+assert "gateway_survey_operation_deadline_ms" not in cleanup, (
+    "cleanup must retain its bounded natural deadline after the host deadline"
+)
 
 assert reachability.count("gateway_emit_host_command_result(") == 1
 assert re.search(

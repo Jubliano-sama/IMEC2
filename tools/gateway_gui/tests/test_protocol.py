@@ -7,6 +7,7 @@ from tools.gateway_gui.protocol import (
     CMD_FORCE_REDISCOVERY,
     CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
+    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     GATEWAY_STREAM_MAGIC,
     GATEWAY_STREAM_FLAG_TRUNCATED,
     GATEWAY_STREAM_RECORD_HEADER_LEN,
@@ -29,6 +30,7 @@ from tools.gateway_gui.protocol import (
     TLV_DISCOVERY_ASSIGNMENT_HASH,
     TLV_DISCOVERY_ASSIGNMENT_PHASE,
     TLV_DISCOVERY_ASSIGNMENT_TABLE,
+    TLV_EXPECTED_NODE_COUNT,
     TLV_DISTANCE_MM,
     TLV_DISTANCE_SAMPLES_MM,
     TLV_DURATION_MS,
@@ -397,6 +399,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([value.type_id for value in command.packet.tlvs], [TLV_COMMAND_ID])
         self.assertIn("ASSIGN_DISCOVERY_SLOTS", command.packet.tlvs[0].display)
 
+        bounded = build_assign_discovery_slots_command(
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=gateway_id,
+            session_id=0x99AABBCD,
+            seq=13,
+            expected_anchor_count=50,
+        )
+        self.assertEqual(bounded.packet.value(TLV_EXPECTED_NODE_COUNT), 50)
+        with self.assertRaisesRegex(ValueError, "expected anchor count"):
+            build_assign_discovery_slots_command(
+                host_id=DEFAULT_HOST_ID,
+                gateway_id=gateway_id,
+                session_id=1,
+                seq=1,
+                expected_anchor_count=51,
+            )
+
         with self.assertRaisesRegex(ValueError, "gateway ID must differ from host ID"):
             build_assign_discovery_slots_command(
                 host_id=DEFAULT_HOST_ID,
@@ -415,7 +434,6 @@ class ProtocolTests(unittest.TestCase):
         }
         commands = (
             build_here_i_am_command(**common),
-            build_assign_discovery_slots_command(**common),
             build_anchor_discovery_command(
                 **common,
                 survey_id=3,
@@ -432,6 +450,28 @@ class ProtocolTests(unittest.TestCase):
                     if value.type_id == TLV_COMMAND_BUDGET_MS
                 )
                 self.assertEqual(budget_tlv.name, "COMMAND_BUDGET_MS")
+
+        assignment = build_assign_discovery_slots_command(
+            **{
+                **common,
+                "command_budget_ms":
+                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+            }
+        )
+        self.assertEqual(
+            assignment.packet.value(TLV_COMMAND_BUDGET_MS),
+            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+        )
+        with self.assertRaisesRegex(ValueError, "assignment command budget"):
+            build_assign_discovery_slots_command(**common)
+
+        maximum = {**common, "command_budget_ms": 600000}
+        self.assertEqual(
+            build_assign_discovery_slots_command(**maximum).packet.value(
+                TLV_COMMAND_BUDGET_MS
+            ),
+            600000,
+        )
 
         for invalid in (999, 600001):
             with self.subTest(invalid=invalid):

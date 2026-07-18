@@ -101,11 +101,14 @@ This GUI is therefore a host-delivery view, not a complete RF trace.
   own `DEVICE_ID`. The current special case returns `COMMAND_OK` and schedules
   the priority `MSG_GATEWAY_ROUTE_ADV` route-refresh flood.
 - **Assign discovery slots** sends local `CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104`
-  to the gateway's own `DEVICE_ID` with no host-supplied assignment TLVs. The
-  gateway collects anchor claims and floods the resulting table. A successful
-  terminal `COMMAND_RESULT` reports the assigned-anchor count in `REASON`.
-  Intermediate anchor CLAIM and ACK records are labeled by assignment phase and
-  are not presented as assigned-anchor totals.
+  to the gateway's own `DEVICE_ID`. Its optional **Expected anchors** value is
+  encoded as `TLV_EXPECTED_NODE_COUNT`; when the roster is known, this lets a
+  delivered CLAIM flood advance as soon as every expected unique claim arrives.
+  Leave it blank when the roster is unknown so the gateway waits the complete
+  conservative multi-hop horizon. The gateway then floods the resulting table,
+  and a successful terminal `COMMAND_RESULT` reports the assigned-anchor count
+  in `REASON`. Intermediate anchor CLAIM and ACK records are labeled by
+  assignment phase and are not presented as assigned-anchor totals.
 
 There is no arbitrary command composer. Although the envelope is extensible,
 firmware applies command-specific destinations, scopes, TLV validation, and

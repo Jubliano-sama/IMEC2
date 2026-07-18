@@ -539,6 +539,7 @@ static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)
     case MSG_RELAY_BUSY:
         return C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH;
     case MSG_COMMAND:
+    case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_DISCOVERY_START:
         return C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
     case MSG_GATEWAY_COLLECTION_EACK:
@@ -1121,6 +1122,30 @@ static bool mesh_gateway_delivery_requires_semantic_acceptance(
     default:
         return false;
     }
+}
+
+static bool mesh_gateway_delivery_is_internal_control(
+    const struct mesh_rx_pending *pending)
+{
+    uint16_t command_id = 0u;
+    enum discovery_assignment_phase phase;
+    uint32_t epoch = 0u;
+
+    if (pending == NULL || pending->packet.msg_type != MSG_COMMAND_RESULT ||
+        gateway_command_extract_id(pending->payload,
+                                   pending->payload_len,
+                                   &command_id) != PROTO_OK ||
+        command_id != CMD_ASSIGN_DISCOVERY_SLOTS ||
+        discovery_assignment_extract_control_tlvs(pending->payload,
+                                                  pending->payload_len,
+                                                  &phase,
+                                                  &epoch) != PROTO_OK ||
+        epoch == 0u) {
+        return false;
+    }
+
+    return phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
+           phase == DISCOVERY_ASSIGNMENT_PHASE_ACK;
 }
 
 static int mesh_gateway_accept_semantic_delivery(
@@ -2463,6 +2488,26 @@ static void mesh_debug_channel9_unavailable(const char *context,
                         now_ms,
                         plan->start_ms,
                         plan->window_ms);
+
+    status_debug_printf("DBG_CH9_ROUTE_STATE epoch=%u selected=%u\n",
+                        mesh_runtime.upstream.current_epoch,
+                        mesh_runtime.upstream.selected_index);
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &mesh_runtime.upstream.candidates[i];
+
+        if (!candidate->valid) {
+            continue;
+        }
+        status_debug_printf("DBG_CH9_ROUTE_CAND i=%u epoch=%u next=0x%llx hop=%u timing=%u fail=%u hold=%u\n",
+                            i,
+                            candidate->route_epoch,
+                            (unsigned long long)candidate->next_hop_id,
+                            candidate->hop_count,
+                            candidate->channel9_timing_valid ? 1u : 0u,
+                            candidate->failure_count,
+                            candidate->hold_down_until_ms);
+    }
 
     for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
         const struct mesh_relay_event_timing_entry *entry = &mesh_runtime.event_timings[i];

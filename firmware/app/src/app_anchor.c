@@ -23,6 +23,7 @@
 #include "app_mesh_report.h"
 #include "app_ml.h"
 #include "app_node_comm.h"
+#include "app_node_comm_gateway_route_refresh.h"
 #include "app_state.h"
 #include "app_stack_workload_diag.h"
 #include "app_watchdog.h"
@@ -58,15 +59,25 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #define ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS 1000u
 #define GATEWAY_HOST_COMMAND_QUEUE_DEPTH 2u
 #define GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS 8u
-#define DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS 4u
-#define DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS 4u
-#define DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S 20u
+#define DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S 120u
 #define GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS 5u
 #define GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS 5u
 #define GATEWAY_SURVEY_TRANSACTION_POLL_MS 50u
 
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
              "gateway enumeration must cover the connected anchor maximum");
+BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
+             DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS,
+             "default assignment budget must cover claim and table response horizons");
+BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS <=
+             GATEWAY_COMMAND_BUDGET_MAX_MS,
+             "default assignment budget must fit the shared command budget limit");
+BUILD_ASSERT((DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S * 1000u) >=
+             DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS,
+             "assignment command expiry must cover the maximum response custody horizon");
+BUILD_ASSERT(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS <=
+             GATEWAY_COMMAND_BUDGET_MAX_MS,
+             "default survey budget must fit the shared command budget limit");
 BUILD_ASSERT(SURVEY_GATEWAY_MAX_REPORTS == MESH_CONNECTED_MAX_ANCHORS,
              "gateway survey storage must cover the connected anchor maximum");
 BUILD_ASSERT(SURVEY_DISCOVERY_MAX_SLOT_COUNT >= MESH_CONNECTED_MAX_ANCHORS,
@@ -87,6 +98,14 @@ BUILD_ASSERT(REPORT_TX_QUEUE_DEPTH >= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
 BUILD_ASSERT(APP_DISCOVERY_ASSIGNMENT_PUBLISH_LARGE_LOCAL_BYTES <=
              APP_DISCOVERY_ASSIGNMENT_PUBLISH_LARGE_LOCAL_LIMIT_BYTES,
              "gateway discovery table publisher must stay below a 4 KiB stack frame");
+BUILD_ASSERT(DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS >
+             GATEWAY_COMMAND_RESULT_TIMEOUT_MS,
+             "assignment response custody must outlive the generic command-result deadline");
+BUILD_ASSERT(DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS >=
+             NODE_COMM_PROTOCOL_RESPONSE_MAX_ATTEMPTS *
+                 (NODE_COMM_PROTOCOL_RESPONSE_RETRY_BACKOFF_MAX_MS +
+                  ROUTE_GATEWAY_ACK_TIMEOUT_MS),
+             "assignment response custody must cover every bounded protocol-response retry");
 
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
@@ -119,6 +138,7 @@ struct anchor_discovery_claim_pending {
     struct proto_packet command;
     uint32_t epoch;
     uint32_t delivery_handle;
+    uint64_t absolute_deadline_ms;
     enum discovery_assignment_phase phase;
     uint8_t slot;
     uint8_t slot_count;
@@ -146,7 +166,8 @@ struct gateway_discovery_assignment_state {
     uint32_t epoch;
     uint32_t claim_command_seq;
     uint32_t table_command_seq;
-    uint32_t operation_deadline_ms;
+    uint64_t operation_deadline_ms;
+    uint64_t response_ack_settle_deadline_ms;
     uint32_t command_budget_ms;
     uint32_t generation;
     uint32_t delivery_handle;
@@ -158,11 +179,13 @@ struct gateway_discovery_assignment_state {
     uint8_t claim_admission_retry_round;
     uint8_t table_admission_retry_round;
     uint8_t max_hop_count;
+    uint16_t expected_claim_count;
     uint16_t duplicate_count;
     bool round_open;
     bool budget_explicit;
     bool claim_delivery_succeeded;
     bool table_delivery_succeeded;
+    bool response_ack_settle_armed;
     bool active;
 };
 #endif

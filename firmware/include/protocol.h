@@ -285,6 +285,7 @@ enum tlv_type {
     TLV_DETECTION_SOURCE = 0xAA,
     TLV_COMMAND_BUDGET_MS = 0xAB,
     TLV_EACK_PACKET_SEQUENCE = 0xAC,
+    TLV_ROUTE_NODE_PATH = 0xAD,
 };
 
 enum detection_source {

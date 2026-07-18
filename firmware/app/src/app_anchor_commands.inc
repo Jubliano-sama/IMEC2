@@ -338,7 +338,7 @@ static int anchor_send_discovery_response(
     outbound.payload_len = (uint16_t)payload_len;
     ret = app_node_comm_submit_protocol_response(
         &outbound,
-        (uint64_t)k_uptime_get() + GATEWAY_COMMAND_RESULT_TIMEOUT_MS,
+        pending->absolute_deadline_ms,
         ((uint32_t)CMD_ASSIGN_DISCOVERY_SLOTS << 16) |
             pending->command.seq,
         delivery_handle_out);
@@ -403,10 +403,35 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
         &anchor_discovery_claim_pending,
         &anchor_discovery_claim_pending.delivery_handle);
     if (ret < 0) {
-        LOG_ERR("anchor discovery-slot response admission failed: phase=%u epoch=%u ret=%d",
+        bool transient = ret == -EBUSY || ret == -EAGAIN ||
+                         ret == -ENOSPC;
+
+        if (transient &&
+            (uint64_t)k_uptime_get() <
+                anchor_discovery_claim_pending.absolute_deadline_ms) {
+            uint32_t retry_ms = discovery_assignment_retry_backoff_ms(
+                anchor_discovery_claim_pending.attempt,
+                sys_rand32_get());
+
+            if (anchor_discovery_claim_pending.attempt < UINT8_MAX) {
+                anchor_discovery_claim_pending.attempt++;
+            }
+            status_debug_printf("DBG_DISCOVERY_SLOT_RESPONSE_ADMISSION_RETRY phase=%u epoch=%u ret=%d delay=%u attempt=%u\n",
+                                anchor_discovery_claim_pending.phase,
+                                anchor_discovery_claim_pending.epoch,
+                                ret,
+                                retry_ms,
+                                anchor_discovery_claim_pending.attempt);
+            (void)mesh_route_work_reschedule(
+                &anchor_discovery_claim_work,
+                retry_ms);
+            return;
+        }
+        LOG_ERR("anchor discovery-slot response admission failed: phase=%u epoch=%u ret=%d transient=%u",
                 anchor_discovery_claim_pending.phase,
                 anchor_discovery_claim_pending.epoch,
-                ret);
+                ret,
+                transient ? 1u : 0u);
         anchor_discovery_claim_pending.active = false;
     }
 }
@@ -427,12 +452,18 @@ static int anchor_schedule_discovery_response(
         slot_count == 0u || slot >= slot_count) {
         return -EINVAL;
     }
-    if (anchor_discovery_claim_pending.active &&
-        anchor_discovery_claim_pending.epoch == epoch &&
-        anchor_discovery_claim_pending.phase == phase &&
-        anchor_discovery_claim_pending.command.session_id ==
-            command->session_id &&
-        anchor_discovery_claim_pending.command.seq == command->seq) {
+    if (discovery_assignment_response_custody_matches(
+            anchor_discovery_claim_pending.active,
+            anchor_discovery_claim_pending.epoch,
+            anchor_discovery_claim_pending.phase,
+            anchor_discovery_claim_pending.command.session_id,
+            epoch,
+            phase,
+            command->session_id)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_RESPONSE_RETAIN phase=%u epoch=%u handle=%u\n",
+                            phase,
+                            epoch,
+                            anchor_discovery_claim_pending.delivery_handle);
         return 0;
     }
     if (anchor_discovery_claim_pending.delivery_handle != 0u) {
@@ -452,6 +483,11 @@ static int anchor_schedule_discovery_response(
     anchor_discovery_claim_pending.active = true;
     delay_ms = anchor_discovery_response_delay_ms(
         &anchor_discovery_claim_pending);
+    anchor_discovery_claim_pending.absolute_deadline_ms =
+        discovery_assignment_response_deadline_ms(
+            (uint64_t)k_uptime_get(),
+            delay_ms,
+            anchor_discovery_claim_pending.hop_count);
     (void)mesh_route_work_reschedule(&anchor_discovery_claim_work, delay_ms);
     status_debug_printf("DBG_DISCOVERY_SLOT_RESPONSE_SCHEDULED phase=%u epoch=%u delay=%u slot=%u hop=%u hash=0x%016llx\n",
                         phase,
@@ -1287,6 +1323,23 @@ static int anchor_apply_discovery_assignment_command(
                 epoch,
                 (unsigned int)entry_count);
         return anchor_schedule_discovery_claim(packet, epoch);
+    }
+    if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY) {
+        for (size_t i = 0u; i < entry_count; i++) {
+            if (entries[i].anchor_id == DEVICE_ID) {
+                status_debug_printf("DBG_DISCOVERY_SLOT_TABLE_REPLAY epoch=%u generation=%u slot=%u\n",
+                                    epoch,
+                                    packet->session_id,
+                                    entries[i].slot);
+                return anchor_schedule_discovery_response(
+                    packet,
+                    epoch,
+                    DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                    entries[i].slot,
+                    slot_count);
+            }
+        }
+        return 0;
     }
 
     (void)k_work_cancel_delayable(&anchor_discovery_claim_work);

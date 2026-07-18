@@ -192,6 +192,14 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
             memset(node, 0, sizeof(*node));
             return mesh_sim_fail(world, MESH_SIM_ERR_ARG);
         }
+        if (role != MESH_SIM_ROLE_GATEWAY && id != gateway_id &&
+            mesh_relay_attach_anchor_downlink_store(
+                &node->relay,
+                &node->anchor_route_store) != PROTO_OK) {
+            world->role_count--;
+            memset(node, 0, sizeof(*node));
+            return mesh_sim_fail(world, MESH_SIM_ERR_ARG);
+        }
         node->relay_initialized = true;
         {
             const struct mesh_runtime_ops ops = {
@@ -347,14 +355,15 @@ int mesh_sim_install_route(struct mesh_sim_world *world,
     struct route_candidate candidate;
 
     if (!mesh_sim_node_index_valid(world, node_index) ||
-        !mesh_sim_node_index_valid(world, next_hop_index) || hop_count == 0u ||
+        !mesh_sim_node_index_valid(world, next_hop_index) ||
         !world->reachable[node_index][next_hop_index]) {
         return MESH_SIM_ERR_ARG;
     }
     node = &world->roles[node_index];
     next_hop = &world->roles[next_hop_index];
     if (!node->relay_initialized || node->role == MESH_SIM_ROLE_GATEWAY ||
-        route_epoch != node->relay.upstream.current_epoch) {
+        route_epoch != node->relay.upstream.current_epoch ||
+        (next_hop->role == MESH_SIM_ROLE_GATEWAY) != (hop_count == 0u)) {
         return MESH_SIM_ERR_ARG;
     }
     candidate = (struct route_candidate) {

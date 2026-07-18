@@ -6,6 +6,8 @@
 
 struct app_mesh_route_ready_handoff_state {
     bool selected_route_valid;
+    bool selected_timing_valid;
+    bool selected_is_unscheduled_gateway;
     bool rx_queue_pending;
     bool deferred_peer_valid;
     uint64_t selected_peer_id;

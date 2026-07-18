@@ -73,6 +73,7 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
      (RREP_ACK_ATTEMPT_MAX_MS + MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS + \
       MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS + 50u))
 #define MESH_ROUTE_TEST_REPLY_CAPTURE_MAX 4u
+#define MESH_ROUTE_REPLY_READY_POLL_MS 25u
 #define MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX 64u
 #define MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS 6000u
 #define MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS
@@ -97,6 +98,9 @@ BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS +
              MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS <
              MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
              "route-ad response delay must fit the route reply listen window");
+BUILD_ASSERT(MESH_ROUTE_REPLY_READY_POLL_MS <
+             MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+             "route-ready listener polling must release channel 5 before the next channel-9 retry boundary");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "direct gateway ACK scratch must fit the mesh payload limit");
 BUILD_ASSERT(MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX <= UWB_MESH_MAX_PAYLOAD_LEN,
@@ -138,6 +142,10 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS \
     (MESH_CH9_TX_CONFIG_GUARD_MS + MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS + \
      MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS)
+BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
+             MESH_CH9_TX_CONFIG_GUARD_MS <
+             MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS,
+             "gateway immediate ACK turnaround must fit the sender receive window");
 #define MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS MESH_EVENT_DEFAULT_WINDOW_MS
 #define MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS \
     (MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS + \
@@ -225,6 +233,9 @@ BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS +
 BUILD_ASSERT(UWB_WAKE_CLAIM_LEN + MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_LEN <=
              MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN,
              "mesh route-test compact wake route request must fit standard channel-5 PHR");
+BUILD_ASSERT(MESH_ROUTE_DISCOVERY_MIN_PAYLOAD_LEN >
+             MESH_ROUTE_REQ_DISCOVERY_TLV_BYTES,
+             "mandatory route ancestry requires the standalone control frame");
 BUILD_ASSERT(MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS < WAKE_ADV_MS,
              "route wake TX gaps must leave a click receive opportunity inside one wake train");
 BUILD_ASSERT(MESH_ROUTE_REPLY_LISTEN_WORST_CASE_MS <
@@ -346,6 +357,11 @@ static struct app_mesh_rf_retry_bank mesh_report_rf_retry_bank = {
 static atomic_t mesh_rx_response_active_state;
 static atomic_t mesh_rx_handler_active_state;
 static atomic_t mesh_transport_paused_state;
+static atomic_t mesh_route_ready_generation;
+#if DEVICE_ROLE == ROLE_ANCHOR
+static struct app_mesh_c5_control_route_history
+    mesh_c5_control_route_history;
+#endif
 static K_MUTEX_DEFINE(mesh_rx_handler_lock);
 static const char *mesh_rx_handler_lock_owner;
 static uint32_t mesh_rx_handler_lock_since_ms;
@@ -388,8 +404,11 @@ struct mesh_ch9_tx_pending_batch {
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 static struct mesh_ch9_tx_pending_batch mesh_ch9_tx_pending;
+static struct mesh_anchor_downlink_store mesh_anchor_downlink_store;
 BUILD_ASSERT(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
              "report queue ownership has exactly one recovery reserve");
+BUILD_ASSERT(sizeof(mesh_anchor_downlink_store) == 1648u,
+             "anchor downlink and route ancestry RAM contract changed");
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4184u,
              "connected anchor pending batch RAM contract changed");
@@ -439,6 +458,22 @@ int app_mesh_report_attach_gateway_ack_store(void)
     }
     mesh_gateway_ack_store_attached = true;
     return 0;
+#else
+    return -ENOTSUP;
+#endif
+}
+
+int app_mesh_report_attach_anchor_downlink_store(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    int ret;
+
+    if (mesh_runtime.anchor_downlink_store != NULL) {
+        return -EALREADY;
+    }
+    ret = mesh_relay_attach_anchor_downlink_store(
+        &mesh_runtime, &mesh_anchor_downlink_store);
+    return ret == PROTO_OK ? 0 : -EIO;
 #else
     return -ENOTSUP;
 #endif

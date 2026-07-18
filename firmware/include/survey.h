@@ -23,6 +23,15 @@ extern "C" {
  */
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
 #define SURVEY_DEFAULT_TTL 4u
+#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 600000u
+/*
+ * A known reverse path gets a route-depth-aware natural control deadline.
+ * The base covers one complete gateway-ACK custody/retry horizon; each
+ * additional RF hop reserves another bounded relay/control interval. Unknown
+ * or invalid route depth deliberately retains the established 90 s ceiling.
+ */
+#define SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS 30000u
+#define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
 #define SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS 5000u
 #define SURVEY_PAIR_START_SKEW_MARGIN_MS 5000u
@@ -37,6 +46,21 @@ extern "C" {
 #endif
 #if SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS > 2147483647u
 #error "Survey pair control timeout must fit wrap-safe signed time arithmetic"
+#endif
+#if SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS == 0u ||                          \
+    SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS == 0u
+#error "Survey pair control route-depth budgets must be positive"
+#endif
+#if SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS >                                \
+    (UINT32_MAX - ((SURVEY_DEFAULT_TTL - 1u) *                           \
+                   SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS))
+#error "Survey pair route-depth timeout overflows uint32_t"
+#endif
+#if (SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +                               \
+     ((SURVEY_DEFAULT_TTL - 1u) *                                       \
+      SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS)) >                         \
+    SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS
+#error "Known survey route-depth timeout exceeds the fallback ceiling"
 #endif
 #if SURVEY_PAIR_RESPONDER_WINDOW_MS <= SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS
 #error "Survey pair responder window must include positive start-skew margin"
@@ -166,6 +190,7 @@ struct survey_gateway_reverse_hint {
     uint64_t target_id;
     uint64_t next_hop_id;
     uint8_t quality;
+    uint8_t hop_count;
     bool valid;
 };
 
@@ -175,6 +200,7 @@ struct survey_gateway_report_slot {
     uint64_t reverse_next_hop_id;
     size_t entry_count;
     uint8_t reverse_quality;
+    uint8_t reverse_hop_count;
     bool reverse_hint_valid;
     bool valid;
 };
@@ -186,6 +212,22 @@ struct survey_gateway_pair_entry {
 
 _Static_assert(sizeof(struct survey_gateway_pair_entry) == 16u,
                "gateway survey pair storage must contain endpoints only");
+
+/*
+ * Caller-owned launch metadata for one entry in the existing pair plan. The
+ * planner never reorders the pair array: pairs with the same round index may
+ * run together, in pair_index_in_round order.
+ */
+struct survey_pair_round_metadata {
+    uint8_t round_index;
+    uint8_t pair_index_in_round;
+    uint8_t pair_count_in_round;
+};
+
+_Static_assert(SURVEY_GATEWAY_MAX_PAIRS <= UINT8_MAX,
+               "survey round metadata indices must cover every pair");
+_Static_assert(sizeof(struct survey_pair_round_metadata) == 3u,
+               "survey round metadata must remain compact");
 
 struct survey_gateway_context {
     uint32_t survey_id;
@@ -314,7 +356,21 @@ int survey_gateway_reverse_hint_for_target(
     const struct survey_gateway_context *context,
     uint64_t target_id,
     struct survey_gateway_reverse_hint *reverse_hint);
+uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl);
+uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count);
 int survey_gateway_plan_pairs(struct survey_gateway_context *context);
+/*
+ * Packs the existing pair plan into deterministic concurrent rounds without
+ * copying its reachability graph. Cross-pair conflicts are derived directly
+ * from the first accepted report slots. Saturated peer lists use the retained
+ * gateway hop depth only as a conservative fallback: a depth difference of at
+ * least two proves separation, while unknown or adjacent depths serialize.
+ */
+int survey_gateway_plan_pair_rounds(
+    const struct survey_gateway_context *context,
+    struct survey_pair_round_metadata *metadata,
+    size_t metadata_cap,
+    size_t *round_count);
 int survey_gateway_pair_at(const struct survey_gateway_context *context,
                            size_t pair_index,
                            struct survey_pair *pair);

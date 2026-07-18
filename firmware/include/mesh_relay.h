@@ -3,6 +3,7 @@
 
 #include "mesh.h"
 #include "mesh_capacity.h"
+#include "mesh_route_path.h"
 #include "protocol.h"
 #include "route.h"
 
@@ -16,6 +17,9 @@ extern "C" {
 
 #define MESH_BROADCAST_ID 0u
 #define MESH_RELAY_DOWNLINK_ROUTES 16u
+#define MESH_RELAY_ANCHOR_DOWNLINK_ROUTES MESH_CONNECTED_MAX_ANCHORS
+#define MESH_RELAY_ANCHOR_DOWNLINK_OVERFLOW_ROUTES \
+    (MESH_RELAY_ANCHOR_DOWNLINK_ROUTES - MESH_RELAY_DOWNLINK_ROUTES)
 #define MESH_RELAY_DUP_CACHE_SIZE 16u
 #define MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX MESH_CONNECTED_MAX_ANCHORS
 #define MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN 4u
@@ -50,10 +54,8 @@ extern "C" {
 #define FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS 600u
 #define FLOOD_DEFAULT_RETRY_COUNT 2u
 #define MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN \
-    (PROTO_TLV_U64_ENCODED_LEN + \
-     (5u * PROTO_TLV_U32_ENCODED_LEN) + \
-     (5u * PROTO_TLV_U16_ENCODED_LEN) + \
-     (4u * PROTO_TLV_U8_ENCODED_LEN))
+    (MESH_GATEWAY_ROUTE_ADV_FIXED_TLV_BYTES + \
+     PROTO_TLV_U64_ENCODED_LEN)
 #define C5_POLITE_SNIFF_MS 20u
 #define C5_POLITE_BACKOFF_MIN_MS 20u
 #define C5_POLITE_BACKOFF_MAX_MS 1600u
@@ -89,6 +91,11 @@ extern "C" {
 #define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 2u
 #define MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION 1u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
+#define MESH_RELAY_GATEWAY_ACK_RETENTION_MS \
+    (COMMAND_RESULT_EXPIRY_DEFAULT_S * 1000u)
+
+_Static_assert(COMMAND_RESULT_EXPIRY_DEFAULT_S <= UINT32_MAX / 1000u,
+               "gateway ACK retention must fit wrap-safe uptime arithmetic");
 
 enum flood_epoch_type {
     FLOOD_EPOCH_TYPE_ROUTE_SOLICIT = 1u,
@@ -243,6 +250,8 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_TX_COLLECTION_CLOSED = 1u << 25,
     MESH_RELAY_ACTION_UPDATE_ROUTE_REQ = 1u << 26,
     MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL = 1u << 27,
+    /* The original transit outbox remains owned until this ACK is sent. */
+    MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING = 1u << 28,
 };
 
 enum mesh_relay_tx_state {
@@ -250,6 +259,7 @@ enum mesh_relay_tx_state {
     MESH_RELAY_TX_WAIT_GATEWAY_ACK = 1,
     MESH_RELAY_TX_WAIT_RETRY_BACKOFF = 2,
     MESH_RELAY_TX_WAIT_RESULT_GRANT = 3,
+    MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD = 4,
 };
 
 struct mesh_outbound {
@@ -336,6 +346,25 @@ struct mesh_gateway_ack_store {
         identities[MESH_RELAY_GATEWAY_ACK_CAPACITY];
 };
 
+struct mesh_upstream_ancestry_entry {
+    struct mesh_route_path path;
+    uint64_t next_hop_id;
+    uint32_t route_epoch;
+    bool valid;
+};
+
+/*
+ * Anchor-only overflow for reverse routes learned from a large descendant
+ * fan-out. The pointer shares the gateway-only ACK-store slot in mesh_relay,
+ * so gateway and clicker RAM do not pay for this storage.
+ */
+struct mesh_anchor_downlink_store {
+    struct mesh_downlink_entry
+        entries[MESH_RELAY_ANCHOR_DOWNLINK_OVERFLOW_ROUTES];
+    struct mesh_upstream_ancestry_entry
+        upstream_ancestry[ROUTE_MAX_CANDIDATES];
+};
+
 _Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 16u,
                "gateway ACK identity must remain compact");
 _Static_assert(sizeof(struct mesh_gateway_ack_origin_entry) == 16u,
@@ -346,6 +375,13 @@ _Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u,
                "gateway ACK history must cover 50 four-packet batches");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY <= UINT8_MAX,
                "per-origin identity counts must not overflow");
+_Static_assert(MESH_RELAY_ANCHOR_DOWNLINK_ROUTES >=
+                   MESH_RELAY_DOWNLINK_ROUTES,
+               "anchor downlink capacity must include the inline table");
+_Static_assert(MESH_RELAY_ANCHOR_DOWNLINK_ROUTES <= UINT8_MAX,
+               "downlink rollback indices must fit one byte");
+_Static_assert(ROUTE_MAX_CANDIDATES == 3u,
+               "anchor ancestry store must cover every upstream candidate");
 
 struct mesh_relay_event_timing_entry {
     uint64_t next_hop_id;
@@ -390,6 +426,7 @@ struct mesh_pending_tx {
     uint32_t retry_after_ms;
     uint32_t queued_at_ms;
     bool result_offer_active;
+    bool gateway_ack_forward_pending;
     uint8_t busy_retry_round;
 };
 
@@ -473,7 +510,10 @@ struct mesh_relay {
     struct mesh_result_bundle_queue result_bundle;
     struct mesh_result_offer_reservation result_offer_reservation;
     struct mesh_relay_diagnostics diagnostics;
-    struct mesh_gateway_ack_store *gateway_ack_store;
+    union {
+        struct mesh_gateway_ack_store *gateway_ack_store;
+        struct mesh_anchor_downlink_store *anchor_downlink_store;
+    };
     uint8_t duplicate_next;
     uint8_t flood_seen_next;
     uint16_t next_seq;
@@ -513,6 +553,14 @@ void mesh_relay_init(struct mesh_relay *relay,
 void mesh_gateway_ack_store_init(struct mesh_gateway_ack_store *store);
 int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
                                         struct mesh_gateway_ack_store *store);
+void mesh_anchor_downlink_store_init(struct mesh_anchor_downlink_store *store);
+int mesh_relay_attach_anchor_downlink_store(
+    struct mesh_relay *relay,
+    struct mesh_anchor_downlink_store *store);
+size_t mesh_relay_downlink_capacity(const struct mesh_relay *relay);
+const struct mesh_downlink_entry *mesh_relay_downlink_at(
+    const struct mesh_relay *relay,
+    size_t index);
 const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_relay *relay,
                                                            uint64_t target_id);
 /* Caller must first accept a current-survey local gateway report and its RX metadata. */
@@ -534,6 +582,7 @@ int mesh_relay_note_gateway_control_reverse_route(
     uint8_t link_quality,
     uint8_t origin_ttl,
     uint32_t now_ms);
+void mesh_relay_remove_direct_gateway_route(struct mesh_relay *relay);
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
                                uint64_t *next_hop_id);
@@ -745,8 +794,9 @@ void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);
 void mesh_relay_note_route_reply_retry(struct mesh_relay *relay);
-void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
-                                      uint64_t dst_id);
+void mesh_relay_note_delivery_failure_at(struct mesh_relay *relay,
+                                         uint64_t dst_id,
+                                         uint32_t now_ms);
 int mesh_relay_tick(struct mesh_relay *relay,
                     uint32_t now_ms,
                     struct mesh_relay_result *result);
@@ -762,6 +812,16 @@ int mesh_relay_handle_rx(struct mesh_relay *relay,
                          uint8_t link_quality,
                          uint32_t now_ms,
                          struct mesh_relay_result *result);
+/*
+ * Complete transit custody only after the exact child-directed gateway ACK
+ * returned by the pending-forward action has physically sent. Queue refusal,
+ * send failure, or reset before this commit leaves the original outbox live.
+ */
+int mesh_relay_commit_transit_gateway_ack_forward(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *forwarded_ack,
+    uint32_t now_ms,
+    uint32_t *actions);
 /*
  * Commit a gateway-local delivery only after the protocol owner has durably
  * accepted it. On success, result contains the exact gateway ACK action and

@@ -879,8 +879,6 @@ uint32_t gateway_command_budget_window_ms(bool explicit_budget,
                                           uint8_t phases_remaining,
                                           uint32_t natural_window_ms)
 {
-    uint32_t fair_share_ms;
-
     if (natural_window_ms == 0u || phases_remaining == 0u) {
         return 0u;
     }
@@ -890,12 +888,8 @@ uint32_t gateway_command_budget_window_ms(bool explicit_budget,
     if (remaining_ms == 0u) {
         return 0u;
     }
-    fair_share_ms = remaining_ms / phases_remaining;
-    if (fair_share_ms == 0u) {
-        fair_share_ms = 1u;
-    }
-    return fair_share_ms < natural_window_ms ? fair_share_ms :
-                                               natural_window_ms;
+    return remaining_ms < natural_window_ms ? remaining_ms :
+                                              natural_window_ms;
 }
 
 uint32_t gateway_command_budget_weighted_window_ms(bool explicit_budget,
@@ -904,8 +898,6 @@ uint32_t gateway_command_budget_weighted_window_ms(bool explicit_budget,
                                                    uint8_t total_weight,
                                                    uint32_t natural_window_ms)
 {
-    uint64_t weighted_ms;
-
     if (!explicit_budget) {
         return natural_window_ms;
     }
@@ -914,12 +906,8 @@ uint32_t gateway_command_budget_weighted_window_ms(bool explicit_budget,
         phase_weight > total_weight) {
         return 0u;
     }
-    weighted_ms = ((uint64_t)remaining_ms * phase_weight) / total_weight;
-    if (weighted_ms == 0u) {
-        weighted_ms = 1u;
-    }
-    return weighted_ms < natural_window_ms ? (uint32_t)weighted_ms :
-                                             natural_window_ms;
+    return remaining_ms < natural_window_ms ? remaining_ms :
+                                              natural_window_ms;
 }
 
 uint8_t gateway_command_budget_retry_limit(bool explicit_budget,

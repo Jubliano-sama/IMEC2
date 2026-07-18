@@ -34,6 +34,19 @@ def function_body(source: str, name: str) -> str:
 
 
 class GatewayDurableAcceptSourceInvariantTests(unittest.TestCase):
+    def test_assignment_claims_and_acks_do_not_depend_on_ble_stream_custody(self):
+        classifier = function_body(
+            APP, "mesh_gateway_delivery_is_internal_control"
+        )
+        drain = function_body(APP, "mesh_drain_rx_queue_locked")
+
+        self.assertIn("MSG_COMMAND_RESULT", classifier)
+        self.assertIn("CMD_ASSIGN_DISCOVERY_SLOTS", classifier)
+        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_CLAIM", classifier)
+        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_ACK", classifier)
+        self.assertIn("reservation_ret = internal_control ? 1", drain)
+        self.assertIn("!internal_control", drain)
+
     def test_semantic_acceptance_precedes_duplicate_commit_and_ack_actions(self):
         drain = function_body(APP, "mesh_drain_rx_queue_locked")
 

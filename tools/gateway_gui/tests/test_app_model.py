@@ -10,6 +10,7 @@ from tools.gateway_gui.command_telemetry import GatewayCommandRequestTracker
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     DEFAULT_HOST_ID,
+    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
@@ -275,6 +276,13 @@ class AppModelTests(unittest.TestCase):
 
         self.assertIsNone(gui._command_budget_ms())
         self.assertEqual(gui._command_timeout_s(None), 602.0)
+        self.assertEqual(
+            gui._command_timeout_s(
+                None,
+                DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+            ),
+            227.199,
+        )
         self.assertEqual(gui._command_timeout_s(20000), 22.0)
 
     def test_manual_survey_id_mode_honors_exact_entry(self) -> None:

@@ -26,6 +26,15 @@ void app_mesh_route_ready_handoff_on_ready(
     }
 
     result->peer_id = state->selected_peer_id;
+    if (state->selected_timing_valid ||
+        state->selected_is_unscheduled_gateway) {
+        if (state->deferred_peer_valid &&
+            state->deferred_peer_id == state->selected_peer_id) {
+            result->clear_deferred_peer = true;
+        }
+        result->try_waiting_tx = true;
+        return;
+    }
     if (state->rx_queue_pending) {
         result->remember_deferred_peer = true;
         result->schedule_rx_drain = true;

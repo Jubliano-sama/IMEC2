@@ -81,14 +81,25 @@ will prove the new behavior.
   control-plane traffic. They take priority over queued local-origin click
   report delivery, transit payload relay, ACK retries, route maintenance, and
   background maintenance at the first safe radio boundary.
+- Gateway route-control readiness starts false after initialization or reset.
+  Only a successfully completed startup "Here I Am" flood or a successfully
+  completed host-correlated forced route refresh may set it true, and the latch
+  is set before the correlated success terminal is published. Failed refreshes
+  and later uncorrelated periodic maintenance never create readiness. While the
+  latch is false, assignment and survey BLE commands terminate immediately with
+  a retryable busy result and must not submit any protocol flood. Forced route
+  rediscovery remains admissible so the host can establish readiness.
 - After an anchor accepts a gateway-originated channel 5 control follow-up, the
   communication service installs or refreshes the upstream response candidate
   from the frame's actual previous hop before the protocol handler can commit
   state. The remaining control TTL must agree with a direct or bounded relayed
   path. This fresh reverse hint creates no gateway connection or channel 9
-  reservation; it only prevents an immediate command response from starting a
-  redundant route-discovery cycle. Inconsistent source, hop, TTL, epoch, or
-  quality evidence rejects the control frame before it can strand protocol
+  reservation. An initial channel-9-preferred response must first negotiate a
+  real PROPOSE/ACCEPT rhythm with that selected non-gateway parent, preserving
+  the response as pre-RF custody while negotiation retries. It may start full
+  gateway route discovery only when no selected logical parent exists or that
+  parent timing repair fails terminally. Inconsistent source, hop, TTL, epoch,
+  or quality evidence rejects the control frame before it can strand protocol
   state.
 - When a connected anchor has gateway-bound packets produced locally by its own
   click/ranging or command-result work, that local-origin work outranks transit
@@ -124,6 +135,11 @@ will prove the new behavior.
   offer an alternate route.
 - Route-request wake trains must be clearly distinguishable from click/ranging
   wake trains.
+- The bench-only forced-hop anchor must ignore a route-class wake claim sent
+  directly by the gateway when either relayed route requests or relayed gateway
+  control is required. It remains available for the relay's following wake and
+  control flood; relayed route-class claims and every click/ranging claim keep
+  their normal behavior. This filter is disabled in production anchor presets.
 - Every wake train must be channel-5 activity polite. Before transmitting the
   train, and again immediately after the train, the transmitter must sample
   channel 5 for a fixed 20 ms slice. Any valid frame or RF progress that reaches
@@ -168,7 +184,9 @@ will prove the new behavior.
   retryable end to end. After the commits, duplicate reception is ACK-sticky and
   must not apply the protocol mutation or BLE delivery twice. Collection results
   remain in collection-EACK custody, so a generic gateway ACK cannot complete
-  their sender-side transaction.
+  their sender-side transaction. The gateway keeps each accepted ACK identity
+  for at least the sender's maximum custody lifetime; the shorter route
+  deduplication window cannot expire an ACK while the sender may still retry.
 - For relay paths, ACKs are sent in the sender's next channel 9 transmit
   window. This applies to hop-level ACKs and to gateway-level ACKs that are
   bubbling back through anchors.
@@ -182,6 +200,12 @@ will prove the new behavior.
   gateway's reply. It must not transmit more packets than that budget allows.
 - Direct-to-gateway channel 9 packets in the same slot carry a batch identity
   and a marker that identifies the final packet in that batch.
+- For a single accepted direct-to-gateway packet that requests a gateway ACK,
+  the gateway attempts that ACK in the same channel 9 radio turn after the
+  fixed turnaround guard. Only a failed RF start hands the exact ACK to the
+  reliable control-response service. Queueing it before the immediate attempt
+  can miss the sender's bounded receive window even though semantic acceptance
+  already succeeded.
 - The gateway answers a direct-to-gateway batch only after the final packet
   marker is received. That answer is one gateway batch ACK covering all packets
   from that batch that the gateway accepted.
@@ -190,6 +214,17 @@ will prove the new behavior.
   listed packets as gateway-accepted.
 - In a multi-hop route, hop-level ACKs bubble back one hop at a time toward the
   original transmitter.
+- A relay that receives a gateway ACK for transit work keeps the original
+  packet and outbox in custody while it hands that exact ACK toward the child.
+  Queue refusal, a conflicting same-peer ACK already in the bounded ACK table,
+  send failure, or reset before the child-directed ACK transmits cannot mark
+  the transit packet gateway-accepted. The ACK table may recognize an exact
+  duplicate but must not replace an older unsent forwarded gateway ACK with a
+  different one. Only a successful child-directed channel 9 transmission
+  completes the relay's original transit custody. If the bounded handoff
+  window expires, the relay requeues the immutable original packet so the
+  gateway can repeat its ACK; that recovery does not count as an upstream
+  parent failure because gateway acceptance already proved that path.
 - If a gateway ACK and a hop-level ACK are both queued for the same channel 9
   transmit opportunity, the gateway ACK has priority because it reassures the
   original transmitter that the packet was successfully received.
@@ -281,9 +316,33 @@ independent nodes from repeating the same synchronized collision.
 Protocol-priority command responses retain sixteen RF opportunities within the
 caller's absolute deadline. This lets a survey PREPARE or START result outlive
 the gateway's required four-copy channel-5 control flood and return during the
-following channel-9 receive horizon; survey pair responses use the same
-90-second result deadline as the gateway transaction. The bounded control flood
-itself still requires exactly four real RF opportunities.
+following channel-9 receive horizon. A survey pair control with an accepted
+reverse route uses a 30-second direct-route deadline plus 15 seconds for each
+additional hop, up to 75 seconds at the survey TTL limit; missing or invalid
+route-depth evidence keeps the conservative 90-second ceiling. An explicit
+host operation budget clips that natural deadline but is never divided among
+future phases. The bounded control flood itself still requires exactly four
+real RF opportunities.
+
+A targeted gateway command follows the accepted reverse path hop by hop on
+channel 5. A relay captures a non-local `MSG_COMMAND` or
+`MSG_SURVEY_PAIR_PREPARE` only when it has a current-epoch downlink for that
+exact destination, the next hop is a valid downstream peer, and forwarding
+cannot loop to the previous hop. It decrements TTL and emits a wake train plus
+the bounded four-copy control flood toward that next hop without replacing its
+own upstream route. Multiple target-specific downlinks may name the same next
+hop, so several origins can share a relay without collapsing their identities
+or deleting one another's route state. This control lane may forward while an
+unrelated reliable custody record waits for channel 9; the control must not
+modify or complete that custody record, while ordinary transit remains busy.
+
+An anchor relay retains reverse routes for all 50 supported descendant
+identities by extending its sixteen-entry inline table with anchor-only
+storage. The gateway and clicker do not allocate that overflow. These logical
+routes do not create extra radio schedules: descendants that name one physical
+next hop still share the anchor's single downstream channel-9 reservation.
+Route-epoch invalidation and explicit route clearing apply to both inline and
+overflow entries, so capacity cannot preserve stale control paths.
 
 After accepting a survey PREPARE or START response that advances to another
 control phase, the gateway keeps channel 9 available for one continuous 3000 ms
@@ -327,13 +386,77 @@ not overwrite the first payload or enlarge every ordinary queue record.
 
 Gateway survey start, assignment claim, and assignment-table workflows track
 the terminal event for their exact bounded-control handle. Correlated replies
-may be accepted after the first RF copy, but the complete collection or ACK
-window starts only after the handle reports `delivered`, meaning all four real
-RF opportunities ran. Queue admission, pre-RF deferral, and a blocked worker do
-not consume a protocol round. `No anchors` is valid only after a delivered claim
-or survey-start flood and its full response horizon; a flood deadline is a
-timeout, while exhausted or permanent RF delivery failure remains a radio
-failure with its communication terminal reason.
+may be accepted after the first RF copy, but an unknown-roster collection or
+incomplete ACK window starts only after the handle reports `delivered`, meaning
+all four real RF opportunities ran. When the host supplied an authoritative
+expected-anchor count, a complete set of unique validated CLAIM responses is
+stronger delivery evidence than a later failure of redundant flood copies; the
+same applies after every assigned anchor returned a valid TABLE ACK. That
+semantic override requires at least one real RF attempt, an unexpired operation,
+and a terminal reason other than cancellation. Queue admission, pre-RF
+deferral, zero-attempt failure, cancellation, and a blocked worker do not consume
+or complete a protocol round. `No anchors` is valid only after a delivered claim
+or survey-start flood and its full response horizon; without complete semantic
+evidence, a flood deadline is a timeout and exhausted or permanent RF delivery
+failure remains a radio failure with its communication terminal reason.
+
+Assignment CLAIM and ACK response custody must remain live through that full
+bounded-control blackout and the following collection window. Its absolute
+deadline therefore covers every reliable protocol-response attempt at the
+maximum retry backoff plus gateway-ACK wait; the generic 12-second command
+result deadline is not sufficient for this path.
+
+Assignment response timing follows the accepted route depth. Direct responses
+retain custody for 30 seconds, and each additional hop adds 10 seconds, up to
+100 seconds at the eight-hop network limit; unknown or invalid depth uses that
+100-second bound. The response envelope also includes the complete 100 ms base,
+20 ms discovery-slot spacing, farthest-first 100 ms hop staggering, and the
+full initial 0-19 ms jitter. The conservative eight-hop, 50-slot response
+horizon is 101099 ms: 100000 ms of custody plus 1099 ms of base, slot spacing,
+and jitter. Shorter accepted routes use their smaller hop-scaled horizon.
+
+Each assignment phase has one logical bounded-control flood with a separate
+10000 ms terminal deadline, followed by one response horizon. The transport
+already provides four real RF opportunities, so wrapping those attempts in
+four outer CLAIM rounds and four outer table rounds only repeated the full
+failure delay. A healthy phase still advances as soon as its flood is terminal
+and its required responses are complete. When the command includes the
+authoritative optional `TLV_EXPECTED_NODE_COUNT`, CLAIM collection may close as
+soon as that many unique valid claims have arrived and the active flood reaches
+a non-cancelled terminal event. A late failure from redundant copies does not
+revoke the already complete quorum. Without that count, CLAIM still requires a
+delivered four-copy flood and one complete conservative horizon so an
+unknown-depth anchor is not silently excluded. Supplying a count that is too
+small intentionally excludes later claims, so hosts must omit it when the
+roster is unknown.
+
+After every table ACK has arrived, the gateway keeps the assignment transaction
+alive for a continuous 3000 ms settle interval. A duplicate valid ACK restarts
+that interval, allowing its transport ACK to finish across a shared relay; only
+the expiry of the quiet interval makes the assignment terminal. The minimum and
+default assignment budget are therefore 225199 ms: two phases of 10000 +
+101099 ms, a 3000 ms final ACK settle, and a one-millisecond exclusive-deadline
+guard. These values are ceilings rather than fixed waits, so complete healthy
+responses schedule the next state immediately while a broken route remains
+bounded.
+
+The shared explicit host-budget range is 1000-600000 ms. Assignment-specific
+explicit budgets must be at least 225199 ms. An automatic survey still receives
+its dedicated 600000 ms operation default; reducing the shared cap from the
+obsolete 900000 ms assignment accommodation does not shorten that survey
+default.
+
+Valid assignment CLAIM and ACK results are internal protocol controls, so the
+gateway does not make their semantic acceptance depend on BLE stream capacity.
+They still require complete semantic validation, duplicate handling, state
+commit, and transport ACK finalization. Host-visible assignment mapping remains
+deferred until the final roster is ACK-complete.
+
+An anchor owns one exact discovery response per assignment operation epoch and
+phase. Repeated flood envelopes for that same epoch and phase retain the
+existing response delay, frozen payload, and communication handle even when
+their transport packet identity differs; only a different phase or operation
+epoch may supersede that response under the assignment state machine.
 
 Discovery-slot assignment distinguishes the operation epoch from the table
 generation. The generation is the common nonzero command sequence, flood epoch,
@@ -345,7 +468,12 @@ persists an unprovisioned tombstone with the same identity, so reset cannot make
 an old smaller table authoritative again. An exact table replay may re-arm a
 missing ACK after the earlier response delivery has terminated. Gateway mapping
 telemetry is staged only after the final roster is ACK-complete, so a late claim
-cannot leave the GUI with an older roster.
+cannot leave the GUI with an older roster. Before emitting that telemetry or a
+successful host result, the gateway persists the same sorted IDs as its
+registered membership roster under a deterministic nonzero 16-bit epoch derived
+from the assignment epoch. Admission or persistence failure terminates the
+assignment explicitly, so later membership-scoped commands cannot run against a
+roster that only appeared to have been committed.
 
 The service can be quiesced, paused, resumed, or stopped without letting a
 protocol steal transport state. A pause has one generation-checked owner and a
@@ -477,7 +605,10 @@ Route acquisition should proceed as follows:
    the origin, and decides whether it can relay toward the requested target.
 6. If the idle anchor already has a usable route to the requested target, it
    answers the route request directly with a route reply and does not
-   rebroadcast that route request.
+   rebroadcast that route request. Split horizon is mandatory: a route whose
+   selected next hop is the request's physical previous hop is not usable for
+   this response, because advertising it back to that child would create a
+   two-node upstream loop after either side enters hold-down.
 7. If the idle anchor does not have a usable route to the requested target and
    the route request TTL still allows another hop, it may rebroadcast the route
    request after the route-request forwarding delay. Because the original route
@@ -503,15 +634,41 @@ Route acquisition should proceed as follows:
    Across all hops, the reply chain must still fit inside the original
    origin's advertised reply budget. The slots must be large enough for one
    complete route-reply packet plus the required guard time, and each responder
-   must use random jitter so multiple responders are unlikely to collide.
+   must use random jitter so multiple responders are unlikely to collide. The
+   reply starts with the network-wide maximum hop limit, and each reverse-path
+   forward decrements it, so the packet still has a nonzero TTL when it reaches
+   an origin at the deepest supported request depth.
 11. A downstream anchor with a usable route, including a route learned from a
    successful direct channel 9 gateway probe, sends a route reply back along
    the reverse path. The gateway itself remains a channel 9 receiver for normal
-   route acquisition; it does not send normal channel 5 route replies.
+   route acquisition; it does not send normal channel 5 route replies. A direct
+   gateway candidate is therefore immediately usable without negotiated
+   channel 9 timing, and route-ready handling must never send an event proposal
+   to the gateway. Event negotiation is only for an anchor next hop.
 12. Each route reply hop is ACKed on channel 5 so the sender knows the reply was
-   received.
+    received.
 13. The packet producer ACKs the final route reply on channel 5.
-14. The participants enter the negotiated channel 9 rhythm.
+14. If the route reply accepts and echoes the origin's optional channel 9
+    timing, both immediate peers install that exact rhythm and the producer
+    uses it for the waiting uplink. A second timing proposal is allowed only
+    when the accepted rhythm is absent or no longer usable; route-ready
+    handling must not replace a fresh accepted rhythm before its first data
+    opportunity.
+15. If another receive owner processes that route reply and publishes the
+    usable route while the origin's channel 5 reply listener is still active,
+    that listener must observe route readiness through a bounded receive slice
+    and release the radio as a successful capture. It must not hold channel 5
+    until the original reply deadline and let the accepted channel 9 rhythm
+    become stale.
+16. For gateway control floods, only the first accepted RF copy of one exact
+    route epoch, message type, session, and sequence may install or replace the
+    receiver's reverse gateway hint. Later direct or relayed echoes of that
+    same transport identity may still be forwarded and passed to the protocol
+    owner, but they cannot create an alternate upstream candidate or remove a
+    newer direct route. The physical previous hop is deliberately excluded
+    from this identity: changing only the relay path is what makes a flood echo
+    dangerous. A new control identity can provide fresh route evidence, so
+    real topology changes remain discoverable.
 
 During channel 9 event negotiation, an ACCEPT is valid only while the matching
 proposal to that immediate peer is active, the physical previous hop and packet
@@ -551,11 +708,28 @@ preserve the discovery identity and timing:
 
 - The origin, requested target, route epoch, flood/discovery identity, slot
   seed, hop count, and path quality.
+- One mandatory bounded route-node path containing at most nine unicast node
+  IDs. A request lists nodes from its origin through its current transmitter;
+  a route reply or gateway advertisement lists nodes from its target or gateway
+  through its current transmitter. Its node count is exactly hop count plus
+  one, and the final ID must be the physical previous hop at the receiver.
 - Optional channel 9 timing proposed by the origin for the downstream route.
 - A reply-window delay that tells responders how long remains before the origin
   is ready to listen for route replies.
 - Optional flags, including forced-relay behavior when a direct gateway answer
   must be ignored.
+
+Every route-node path is exact rather than a hop-depth approximation. A
+receiver rejects a missing path, malformed length, repeated ID, unexpected
+root or tail, or a path that already contains its own ID. A forwarder appends
+its local ID before incrementing hop count and refuses to forward when the
+nine-node bound is exhausted. An anchor retains the exact path for each of its
+three upstream candidates in role-specific sidecar storage, so the gateway's
+tightly bounded route-candidate RAM does not grow. When answering a gateway
+route request, the selected upstream path must be disjoint from the complete
+request path. This ancestry check prevents cycles involving three or more
+anchors; the immediate-next-hop split-horizon check remains mandatory because
+it rejects the two-node case directly.
 
 Route-request TTL broadens across repeated discovery attempts:
 
@@ -567,6 +741,24 @@ Route-request TTL broadens across repeated discovery attempts:
   request TTL requires explicit user permission and an update to this contract.
 - After attempt 4, later attempts keep using TTL 6 while the backoff continues
   to increase.
+
+Route-control TTL is admitted before any route, ancestry, timing, duplicate,
+or reply state changes. Every accepted control packet has nonzero remaining
+TTL. For a route request, remaining TTL plus the carried hop count must recover
+one of the defined origin waves 1, 2, 4, or 6. A gateway advertisement must
+recover the network-wide origin TTL of 8 from that same sum. A route reply may
+carry remaining TTL 1 through 8, and a route-reply ACK is a one-hop control with
+TTL exactly 1. A receiver rejects any other combination instead of treating an
+over-depth or zero-TTL frame as route evidence.
+
+The generic extended envelope is not the route-control wire budget. Receivers
+and public builders cap route-request payloads at 139 bytes, route replies at
+164 bytes, gateway-route advertisements at 138 bytes, and route-reply ACKs at
+34 bytes. The request bound reflects the deepest nonzero-TTL packet in the
+six-hop discovery wave, the advertisement bound reflects the deepest
+nonzero-TTL packet in the eight-hop gateway flood, and the reply bound includes
+the maximum nine-node ancestry. A longer padded frame is malformed even when
+it still fits the generic packet buffer.
 
 After each route request attempt, the next allowed request time uses jittered
 exponential backoff:
@@ -721,6 +913,13 @@ has received them:
     path, and the gateway resumes or remains in channel 9 receive while waiting
     for those responses.
 
+Any non-route-solicitation wake train that announces a following channel 5
+control frame sets `FLAG_CONTROL_FOLLOWUP`. Connected anchors use that bit to
+hand the complete follow-up exchange to the control listener instead of
+continuing a short gap scan. Route-solicitation wakes deliberately omit it so a
+maintenance request cannot steal an imminent channel 9 slot; event-timing
+proposals include it so the receiver can return the matching ACCEPT.
+
 Survey reachability uses the same control-followup receive eligibility as
 anchor enumeration. After the `SURVEY_DISCOVERY_START` flood, each participating
 anchor has four probe opportunities. Opportunity timing is derived independently
@@ -747,6 +946,17 @@ deterministic degree-six-or-less spanning graph from every reported directed
 reachability edge, then fills remaining degree with mutual, higher-quality
 pairs. If the reported graph cannot be connected within that degree bound, pair
 planning fails explicitly instead of silently returning isolated anchors.
+
+The pair-round planner is currently a classification primitive, not permission
+to launch concurrent ranging. A pair's neighborhood is the union of both
+endpoints and every peer either endpoint reports; two pairs may share a
+candidate round only when those unions are disjoint, including no shared third
+peer. A saturated peer report may use gateway hop depth only as a conservative
+shortcut: a difference of at least two hops proves separation, while unknown or
+adjacent depths serialize. The production gateway still executes one pair at a
+time. Concurrent execution remains disabled until an explicit arm/GO protocol
+can defer START, identify the round, provide a common future launch time, and
+retain independent result, cleanup, retry, and deadline custody for every pair.
 
 Each anchor owns its encoded `SURVEY_DISCOVERY_REPORT` until the gateway has
 explicitly acknowledged that exact packet identity. Before the first transport
@@ -876,6 +1086,11 @@ is route refreshment and reachability repair:
    being handled, the anchor returns to the connected rhythm afterward and then
    services the pending gateway-originated control work.
 
+The gateway tracks a response-priority refresh deadline with a separate armed
+flag. A wrapped `uint32_t` deadline of zero remains a valid future deadline;
+clearing response priority drops the armed flag instead of assigning a special
+deadline value.
+
 ## Packet Delivery And ACKs
 
 Packet delivery should preserve connection state.
@@ -987,6 +1202,13 @@ confirmed:
 8. If no valid alternate candidate exists, route discovery is needed and a new
    route request may be sent according to the route-request backoff rules above.
 
+Only a completed RF send followed by a terminal gateway-ACK wait may increment
+the selected parent's delivery-failure count. A pre-RF admission, route,
+policy, or local-send failure defers or restarts discovery without consuming
+that count. Every parent failure is recorded with the actual wrap-safe uptime,
+so the 30-second hold-down begins at the fourth real failure even after the
+system has been running for more than 30 seconds.
+
 When any node along a connected route proves through repeated failures that the
 gateway cannot be reached through the active path, it invalidates that active
 route path, not only the single queued packet. The invalidation clears the
@@ -1019,7 +1241,10 @@ reply, direct gateway probe, or another route-discovery result. Rediscovering a
 candidate means the failed downstream route is assumed to have healed or been
 replaced, so the candidate's failure count and hold-down are cleared before
 route selection runs. A successful delivery through a selected parent also
-resets its failure count and records recent success.
+resets its failure count and records recent success. The next route-maintenance
+or delivery pass after the deadline must run selection again, even when no
+candidate aged out, so a sole held-down parent becomes usable without needing
+new route evidence.
 
 The direct gateway probe has one special recovery mode. If the held-down parent
 is the gateway itself because repeated direct-to-gateway payload batches missed
@@ -1060,9 +1285,13 @@ click-handling time plus normal retune and scheduling jitter.
 
 These optimizations are allowed when they preserve the invariants above:
 
-- A route request may be embedded in the route-request wake train when the
-  complete route-request payload fits. This avoids a separate post-wake control
-  packet while keeping the wake train clearly typed as route setup.
+- A future compact route-request schema may be embedded in the route-request
+  wake train only when its complete equivalent payload fits. The current
+  mandatory ancestry makes the smallest request 72 bytes while the standard
+  wake suffix can carry only 55 request-payload bytes, so current requests use
+  the standalone post-wake control frame. A malformed suffix or a full receive
+  queue is not a successful embedding and must leave the standalone listener
+  open.
 - A rebroadcasting anchor does not need to burn the full downstream route-reply
   listening window after it has received, selected, and ACKed a usable
   downstream route reply.
@@ -1086,6 +1315,12 @@ Useful tests or guards include:
   route acquisition.
 - Route-request attempts use TTL 1, then TTL 2, then TTL 4, then TTL 6 for
   attempt 4 and later.
+- Route-control receivers reject TTL zero before mutation, reject request and
+  advertisement hop/TTL combinations that cannot reconstruct their defined
+  origin TTL, and still allow a TTL=1 request to be answered without further
+  rebroadcast.
+- Every route-control full builder fits its message-specific payload cap, and
+  exact cap-plus-one input is rejected before route or ancestry state changes.
 - Route-request attempt backoff starts at a 1000 ms base, doubles
   exponentially, caps the base at 60000 ms, and applies percentage-based
   jitter with fresh randomness per attempt.
@@ -1100,6 +1335,28 @@ Useful tests or guards include:
 - Idle anchors without a usable route may rebroadcast accepted route requests
   when TTL allows, then open a channel 5 route-reply listening window for any
   downstream reply. If TTL does not allow another hop, they do not rebroadcast.
+- A route-reply listener that receives another origin's valid route request for
+  its own node or the gateway queues that request and releases channel 5
+  immediately. This applies both while the relay is acquiring its own gateway
+  route and while it is answering a child's route-solicit wake. The request is
+  protocol work, not the awaited route reply, so it does not complete the
+  listener's original discovery attempt.
+- A relay may answer a gateway route request only from the upstream candidate
+  snapshot selected before it installs the requester's reverse route, and that
+  candidate's next hop must not be the requester. This split-horizon rule keeps
+  simultaneous origins and shared relays from creating a two-node parent loop.
+- Route requests, replies, and gateway advertisements reject duplicate IDs,
+  local-ID cycles, roots or tails inconsistent with their direction, and any
+  node-count mismatch with hop count. A relay does not answer a request when
+  its selected gateway ancestry intersects the request ancestry, including a
+  three-node loop that immediate split horizon alone cannot see. A fresh
+  disjoint advertisement may replace that candidate and make the reply usable.
+- A nine-node ancestry encodes in one 74-byte TLV and still fits the maximum
+  route control payload. A tenth append fails explicitly instead of truncating
+  or emitting a wire path whose hop count no longer matches.
+- Current route requests take the standalone post-wake path because mandatory
+  ancestry exceeds the standard wake suffix. Any invalid or unqueued suffix
+  keeps the post-wake fallback listener active.
 - Every original route request, rebroadcast, and retry first attempts the short
   direct channel 9 gateway probe. Direct-or-relayed mode may accept the direct
   gateway route; forced-relay mode and direct-bulk-failure recovery must
@@ -1116,6 +1373,8 @@ Useful tests or guards include:
 - Route-reply slots fit the immediate upstream node's channel 5 listening
   window while the full reply chain remains inside the origin's advertised
   reply budget.
+- A route reply returns over the deepest supported route-request path with a
+  nonzero TTL at the origin; each reverse relay decrements the same packet TTL.
 - Connected anchors schedule recurring channel 5 windows.
 - Channel 9 is deferred or clipped when it would starve channel 5.
 - Each connected channel 5 window remains continuously armed until its deadline;
@@ -1157,6 +1416,15 @@ Useful tests or guards include:
   by an absent TLV, never a zero-valued placeholder.
 - Gateway "Here I Am" route refresh can be triggered by BLE and propagates
   outward without creating extra anchor route slots.
+- Immediately after gateway reset, assignment and survey BLE commands produce
+  a retryable busy terminal with zero assignment or survey flood attempts. A
+  failed startup or correlated forced refresh leaves that gate closed, while a
+  successful startup or correlated forced-refresh terminal opens it before the
+  next command can dispatch. Forced rediscovery itself remains allowed while
+  the gate is closed, and uncorrelated periodic maintenance cannot open it.
+- One anchor relay can learn 50 distinct descendant reverse routes and forward
+  a targeted gateway control to every destination, including entries beyond
+  the sixteen-route inline table, without increasing gateway role storage.
 - Hop ACK extends or resets the gateway ACK timeout.
 - Anchor-to-anchor channel 9 TX can send multiple packets per slot, and a
   hop-level ACK can acknowledge multiple listed packets from that receive window.

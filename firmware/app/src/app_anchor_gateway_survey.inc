@@ -314,7 +314,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     uint32_t discovery_duration_ms = 0u;
     uint32_t report_mesh_duration_ms = 0u;
     uint32_t collection_delay_ms = 0u;
-    uint32_t command_budget_ms = GATEWAY_COMMAND_BUDGET_MAX_MS;
+    uint32_t command_budget_ms = SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS;
     uint32_t command_origin_ms;
     uint64_t command_origin_uptime_ms;
     uint32_t flood_delivery_handle = 0u;
@@ -358,7 +358,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     ret = gateway_command_extract_budget_ms(host_payload,
                                             host_payload_len,
-                                            GATEWAY_COMMAND_BUDGET_MAX_MS,
+                                            SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
                                             &command_budget_ms,
                                             &budget_explicit);
     if (ret != PROTO_OK) {
@@ -827,6 +827,7 @@ static int gateway_handle_survey_discovery_report(const struct proto_packet *pac
         .target_id = anchor_id,
         .next_hop_id = previous_hop_id,
         .quality = link_quality,
+        .hop_count = survey_gateway_hop_count_from_report_ttl(packet->ttl),
         .valid = true,
     };
     ret = survey_gateway_note_reach_report_with_reverse_hint(
@@ -1180,12 +1181,26 @@ static uint32_t gateway_survey_next_transaction_token(void)
     return gateway_survey_transaction_client_token;
 }
 
-static uint32_t gateway_survey_control_timeout_ms(void)
+static uint32_t gateway_survey_natural_control_timeout_ms(uint64_t target_id)
 {
+    struct survey_gateway_reverse_hint reverse_hint;
+
+    if (survey_gateway_reverse_hint_for_target(&gateway_survey_context,
+                                               target_id,
+                                               &reverse_hint) != PROTO_OK) {
+        return SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+    }
+    return survey_pair_control_timeout_ms(reverse_hint.hop_count);
+}
+
+static uint32_t gateway_survey_control_timeout_ms(uint64_t target_id)
+{
+    uint32_t natural_timeout_ms =
+        gateway_survey_natural_control_timeout_ms(target_id);
     uint32_t remaining_ms;
 
     if (!gateway_survey_budget_explicit) {
-        return SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+        return natural_timeout_ms;
     }
     remaining_ms = uptime_ms_until_deadline(
         k_uptime_get_32(), gateway_survey_operation_deadline_ms);
@@ -1198,7 +1213,7 @@ static uint32_t gateway_survey_control_timeout_ms(void)
         true,
         remaining_ms,
         1u,
-        SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+        natural_timeout_ms);
 }
 
 static int gateway_survey_outbound_fingerprint(
@@ -1251,6 +1266,14 @@ static int gateway_survey_transaction_load_action_pair(
 }
 #endif
 
+#if DEVICE_ROLE != ROLE_GATEWAY
+static uint32_t gateway_survey_natural_control_timeout_ms(uint64_t target_id)
+{
+    (void)target_id;
+    return SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+}
+#endif
+
 static int gateway_survey_auto_send_outbound(struct mesh_outbound *outbound,
                                              enum command_id command_id,
                                              const char *reason)
@@ -1274,7 +1297,8 @@ static int gateway_survey_auto_send_outbound(struct mesh_outbound *outbound,
         return ret;
     }
     now_ms = (uint64_t)k_uptime_get();
-    control_timeout_ms = gateway_survey_control_timeout_ms();
+    control_timeout_ms = gateway_survey_control_timeout_ms(
+        outbound->packet.dst_id);
     if (control_timeout_ms == 0u) {
         return -ETIMEDOUT;
     }
@@ -1528,7 +1552,7 @@ static int gateway_survey_prepare_cleanup_delivery(
     cleanup->target_id = target_id;
     cleanup->sequence = gateway_next_command_seq();
     cleanup->absolute_deadline_ms =
-        now_ms + SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+        now_ms + gateway_survey_natural_control_timeout_ms(target_id);
     cleanup->client_token = gateway_survey_next_transaction_token();
     cleanup->peer_mask = peer_mask;
     cleanup->prepared = true;

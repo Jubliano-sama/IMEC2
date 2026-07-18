@@ -106,6 +106,11 @@ int app_anchor_start_anchor_role(void)
                     DEVICE_ID,
                     GATEWAY_ID,
                     1u);
+    ret = app_mesh_report_attach_anchor_downlink_store();
+    if (ret < 0) {
+        LOG_ERR("anchor downlink store attach failed: %d", ret);
+        return ret;
+    }
     ret = app_mesh_persistence_restore_outbox(&mesh_runtime, k_uptime_get_32());
     if (ret < 0) {
         LOG_WRN("anchor mesh outbox restore unavailable: %d", ret);

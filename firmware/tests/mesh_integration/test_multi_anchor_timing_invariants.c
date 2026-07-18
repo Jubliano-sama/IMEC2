@@ -1095,9 +1095,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                                 true, SURVEY_GATEWAY_BENCH_BUDGET_MS, 1u,
                                 no_anchor_evidence_ms);
                         uint32_t old_three_phase_wake_ms =
-                            gateway_command_budget_window_ms(
-                                true, SURVEY_GATEWAY_BENCH_BUDGET_MS, 3u,
-                                no_anchor_evidence_ms);
+                            SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
                         CHECK(first_report_ms == 9040u,
@@ -1159,11 +1157,23 @@ run_three_pair_control_budget_model(bool divide_by_remaining_phases)
             uint8_t phases_remaining = (uint8_t)(
                 ((3u - pair - 1u) * 4u) + (4u - phase));
             uint32_t result_delay_ms = phase < 2u ? 1500u : 5100u;
-            uint32_t timeout_ms = gateway_command_budget_window_ms(
-                true,
-                result.remaining_ms,
-                divide_by_remaining_phases ? phases_remaining : 1u,
-                SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+            uint32_t timeout_ms;
+
+            if (divide_by_remaining_phases) {
+                timeout_ms = result.remaining_ms / phases_remaining;
+                if (timeout_ms == 0u) {
+                    timeout_ms = 1u;
+                }
+                if (timeout_ms > SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS) {
+                    timeout_ms = SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+                }
+            } else {
+                timeout_ms = gateway_command_budget_window_ms(
+                    true,
+                    result.remaining_ms,
+                    1u,
+                    SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+            }
 
             if (result_delay_ms >= timeout_ms) {
                 result.remaining_ms -= timeout_ms;
@@ -1218,15 +1228,19 @@ static void test_survey_control_global_budget_multi_pair_sweep(void)
                     budgets_ms[budget],
                     1u,
                     SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
-                uint32_t old_timeout_ms = gateway_command_budget_window_ms(
-                    true,
-                    budgets_ms[budget],
-                    old_phase_divisor,
-                    SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+                uint32_t old_timeout_ms =
+                    budgets_ms[budget] / old_phase_divisor;
                 uint32_t expected_timeout_ms =
                     budgets_ms[budget] < SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS ?
                         budgets_ms[budget] :
                         SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+
+                if (old_timeout_ms == 0u) {
+                    old_timeout_ms = 1u;
+                }
+                if (old_timeout_ms > SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS) {
+                    old_timeout_ms = SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+                }
 
                 CHECK(fixed_timeout_ms == expected_timeout_ms,
                       "control timeout was not clipped only by the global deadline");

@@ -1,6 +1,7 @@
 #include "survey.h"
 
 #include "dwm3000_timing.h"
+#include "mesh_relay.h"
 #include "node_comm.h"
 #include "uwb.h"
 
@@ -10,6 +11,9 @@ _Static_assert(sizeof(struct survey_pair) == 24u,
                "survey pair public layout changed");
 _Static_assert(SURVEY_GATEWAY_PAIR_MAX_RERUNS < UINT8_MAX,
                "survey pair rerun count must fit observability attempts");
+_Static_assert(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS >=
+                   MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS,
+               "survey control base must cover gateway-ACK custody retries");
 _Static_assert(PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +
                    PROTO_TLV_U16_ENCODED_LEN +
                    SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *
@@ -26,6 +30,25 @@ bool survey_sample_count_valid(uint16_t sample_count)
 {
     return sample_count >= SURVEY_MIN_SAMPLE_COUNT &&
            sample_count <= SURVEY_MAX_SAMPLE_COUNT;
+}
+
+uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl)
+{
+    if (remaining_ttl == 0u || remaining_ttl > SURVEY_DEFAULT_TTL) {
+        return 0u;
+    }
+    return (uint8_t)(SURVEY_DEFAULT_TTL - remaining_ttl + 1u);
+}
+
+uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count)
+{
+    if (gateway_hop_count == 0u ||
+        gateway_hop_count > SURVEY_DEFAULT_TTL) {
+        return SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+    }
+    return SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+           ((uint32_t)(gateway_hop_count - 1u) *
+            SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS);
 }
 
 static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
@@ -780,6 +803,7 @@ int survey_gateway_note_reach_report_with_reverse_hint(
         (!reverse_hint->valid ||
          reverse_hint->target_id != anchor_id ||
          reverse_hint->next_hop_id == 0u ||
+         reverse_hint->hop_count > SURVEY_DEFAULT_TTL ||
          reverse_hint->quality > 100u)) {
         return PROTO_ERR_MALFORMED;
     }
@@ -815,6 +839,7 @@ int survey_gateway_note_reach_report_with_reverse_hint(
     if (reverse_hint != NULL) {
         slot->reverse_next_hop_id = reverse_hint->next_hop_id;
         slot->reverse_quality = reverse_hint->quality;
+        slot->reverse_hop_count = reverse_hint->hop_count;
         slot->reverse_hint_valid = true;
     }
     if (entry_count > 0u) {
@@ -865,6 +890,7 @@ int survey_gateway_reverse_hint_for_target(
                 .target_id = slot->anchor_id,
                 .next_hop_id = slot->reverse_next_hop_id,
                 .quality = slot->reverse_quality,
+                .hop_count = slot->reverse_hop_count,
                 .valid = true,
             };
             return PROTO_OK;
@@ -910,6 +936,210 @@ int survey_gateway_plan_pairs(struct survey_gateway_context *context)
 
     context->pairs_planned = true;
     context->next_pair_index = 0u;
+    return PROTO_OK;
+}
+
+static const struct survey_gateway_report_slot *
+survey_gateway_round_report_for_anchor(
+    const struct survey_gateway_context *context,
+    uint64_t anchor_id)
+{
+    for (size_t i = 0u; i < context->report_count; i++) {
+        const struct survey_gateway_report_slot *slot = &context->reports[i];
+
+        if (slot->valid && slot->anchor_id == anchor_id) {
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+static bool survey_gateway_round_report_has_peer(
+    const struct survey_gateway_report_slot *slot,
+    uint64_t peer_id)
+{
+    for (size_t i = 0u; i < slot->entry_count; i++) {
+        if (slot->entries[i].peer_id == peer_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool survey_gateway_round_reports_share_peer(
+    const struct survey_gateway_report_slot *first,
+    const struct survey_gateway_report_slot *second)
+{
+    for (size_t i = 0u; i < first->entry_count; i++) {
+        for (size_t j = 0u; j < second->entry_count; j++) {
+            if (first->entries[i].peer_id == second->entries[j].peer_id) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool survey_gateway_round_hops_prove_separation(
+    const struct survey_gateway_report_slot *first,
+    const struct survey_gateway_report_slot *second)
+{
+    uint8_t first_hops;
+    uint8_t second_hops;
+
+    if (!first->reverse_hint_valid || !second->reverse_hint_valid) {
+        return false;
+    }
+    first_hops = first->reverse_hop_count;
+    second_hops = second->reverse_hop_count;
+    if (first_hops == 0u || first_hops > SURVEY_DEFAULT_TTL ||
+        second_hops == 0u || second_hops > SURVEY_DEFAULT_TTL) {
+        return false;
+    }
+    return first_hops > second_hops ?
+        (uint8_t)(first_hops - second_hops) >= 2u :
+        (uint8_t)(second_hops - first_hops) >= 2u;
+}
+
+static bool survey_gateway_round_anchors_conflict(
+    const struct survey_gateway_context *context,
+    uint64_t first_id,
+    uint64_t second_id)
+{
+    const struct survey_gateway_report_slot *first =
+        survey_gateway_round_report_for_anchor(context, first_id);
+    const struct survey_gateway_report_slot *second =
+        survey_gateway_round_report_for_anchor(context, second_id);
+
+    if (first == NULL || second == NULL) {
+        return true;
+    }
+    if (survey_gateway_round_report_has_peer(first, second_id) ||
+        survey_gateway_round_report_has_peer(second, first_id)) {
+        return true;
+    }
+    if (first->entry_count < SURVEY_GATEWAY_MAX_PEERS_PER_REPORT &&
+        second->entry_count < SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
+        return false;
+    }
+    return !survey_gateway_round_hops_prove_separation(first, second);
+}
+
+static bool survey_gateway_round_pairs_conflict(
+    const struct survey_gateway_context *context,
+    const struct survey_gateway_pair_entry *first,
+    const struct survey_gateway_pair_entry *second)
+{
+    const uint64_t first_ids[] = {
+        first->initiator_id,
+        first->responder_id,
+    };
+    const uint64_t second_ids[] = {
+        second->initiator_id,
+        second->responder_id,
+    };
+
+    for (size_t i = 0u; i < 2u; i++) {
+        for (size_t j = 0u; j < 2u; j++) {
+            const struct survey_gateway_report_slot *first_report =
+                survey_gateway_round_report_for_anchor(context, first_ids[i]);
+            const struct survey_gateway_report_slot *second_report =
+                survey_gateway_round_report_for_anchor(context, second_ids[j]);
+
+            if (first_ids[i] == second_ids[j] ||
+                survey_gateway_round_anchors_conflict(
+                    context, first_ids[i], second_ids[j]) ||
+                first_report == NULL || second_report == NULL ||
+                survey_gateway_round_reports_share_peer(
+                    first_report, second_report)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int survey_gateway_plan_pair_rounds(
+    const struct survey_gateway_context *context,
+    struct survey_pair_round_metadata *metadata,
+    size_t metadata_cap,
+    size_t *round_count)
+{
+    uint8_t round_total = 0u;
+
+    if (context == NULL || round_count == NULL ||
+        (metadata == NULL && context->pair_count != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+    *round_count = 0u;
+    if (!context->pairs_planned) {
+        return PROTO_ERR_STALE;
+    }
+    if (context->pair_count > SURVEY_GATEWAY_MAX_PAIRS ||
+        metadata_cap < context->pair_count) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    for (size_t i = 0u; i < context->pair_count; i++) {
+        const struct survey_gateway_pair_entry *pair = &context->pairs[i];
+
+        if (pair->initiator_id == 0u || pair->responder_id == 0u ||
+            pair->initiator_id == pair->responder_id) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (survey_gateway_round_report_for_anchor(
+                context, pair->initiator_id) == NULL ||
+            survey_gateway_round_report_for_anchor(
+                context, pair->responder_id) == NULL) {
+            return PROTO_ERR_NOT_FOUND;
+        }
+    }
+
+    for (size_t i = 0u; i < context->pair_count; i++) {
+        uint8_t conflicting_rounds[(SURVEY_GATEWAY_MAX_PAIRS + 7u) / 8u] = {0};
+        uint8_t selected_round = 0u;
+        uint8_t position = 0u;
+
+        for (size_t j = 0u; j < i; j++) {
+            if (survey_gateway_round_pairs_conflict(
+                    context, &context->pairs[i], &context->pairs[j])) {
+                const uint8_t round = metadata[j].round_index;
+
+                conflicting_rounds[round / 8u] |=
+                    (uint8_t)(1u << (round % 8u));
+            }
+        }
+        while (selected_round < round_total &&
+               (conflicting_rounds[selected_round / 8u] &
+                (uint8_t)(1u << (selected_round % 8u))) != 0u) {
+            selected_round++;
+        }
+        if (selected_round == round_total) {
+            round_total++;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            if (metadata[j].round_index == selected_round) {
+                position++;
+            }
+        }
+        metadata[i] = (struct survey_pair_round_metadata) {
+            .round_index = selected_round,
+            .pair_index_in_round = position,
+        };
+    }
+
+    for (size_t i = 0u; i < context->pair_count; i++) {
+        uint8_t pairs_in_round = 0u;
+
+        for (size_t j = 0u; j < context->pair_count; j++) {
+            if (metadata[j].round_index == metadata[i].round_index) {
+                pairs_in_round++;
+            }
+        }
+        metadata[i].pair_count_in_round = pairs_in_round;
+    }
+
+    *round_count = round_total;
     return PROTO_OK;
 }
 

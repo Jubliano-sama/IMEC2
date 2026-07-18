@@ -445,12 +445,6 @@ void route_refresh_selected_at(struct route_table *table, uint32_t now_ms)
     }
 }
 
-enum route_delivery_action route_record_failure(struct route_table *table,
-                                                          enum route_failure_kind kind)
-{
-    return route_record_failure_at(table, kind, 0u);
-}
-
 enum route_delivery_action route_record_failure_at(struct route_table *table,
                                                    enum route_failure_kind kind,
                                                    uint32_t now_ms)

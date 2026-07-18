@@ -1158,6 +1158,269 @@ static void test_generated_complete_reachability_counts_for_one_to_six_anchors(v
     }
 }
 
+static struct survey_gateway_report_slot *round_test_report(
+    struct survey_gateway_context *context,
+    uint64_t anchor_id)
+{
+    for (size_t i = 0u; i < context->report_count; i++) {
+        if (context->reports[i].valid &&
+            context->reports[i].anchor_id == anchor_id) {
+            return &context->reports[i];
+        }
+    }
+    assert(false);
+    return NULL;
+}
+
+static void round_test_context_init(
+    struct survey_gateway_context *context,
+    const struct survey_gateway_pair_entry *pairs,
+    size_t pair_count)
+{
+    memset(context, 0, sizeof(*context));
+    context->survey_id = 0xAABBCCDDu;
+    context->sample_count = 2u;
+    context->pair_count = pair_count;
+    context->pairs_planned = true;
+    memcpy(context->pairs, pairs, pair_count * sizeof(pairs[0]));
+
+    for (size_t i = 0u; i < pair_count; i++) {
+        const uint64_t endpoint_ids[] = {
+            pairs[i].initiator_id,
+            pairs[i].responder_id,
+        };
+
+        for (size_t endpoint = 0u; endpoint < 2u; endpoint++) {
+            bool found = false;
+
+            for (size_t report = 0u; report < context->report_count; report++) {
+                if (context->reports[report].anchor_id ==
+                    endpoint_ids[endpoint]) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                continue;
+            }
+            assert(context->report_count < SURVEY_GATEWAY_MAX_REPORTS);
+            context->reports[context->report_count] =
+                (struct survey_gateway_report_slot) {
+                    .anchor_id = endpoint_ids[endpoint],
+                    .reverse_hop_count = 1u,
+                    .reverse_hint_valid = true,
+                    .valid = true,
+                };
+            context->report_count++;
+        }
+    }
+}
+
+static void round_test_add_peer(struct survey_gateway_context *context,
+                                uint64_t anchor_id,
+                                uint64_t peer_id)
+{
+    struct survey_gateway_report_slot *slot =
+        round_test_report(context, anchor_id);
+
+    assert(slot->entry_count < SURVEY_GATEWAY_MAX_PEERS_PER_REPORT);
+    slot->entries[slot->entry_count++] = (struct survey_reachability_entry) {
+        .peer_id = peer_id,
+        .rssi_dbm = -60,
+        .quality = 80u,
+    };
+}
+
+static void test_pair_rounds_serialize_shared_endpoints(void)
+{
+    const struct survey_gateway_pair_entry pairs[] = {
+        {.initiator_id = 0xA1u, .responder_id = 0xB1u},
+        {.initiator_id = 0xA1u, .responder_id = 0xC1u},
+    };
+    struct survey_gateway_context context;
+    struct survey_pair_round_metadata metadata[2] = {0};
+    size_t round_count = 0u;
+
+    round_test_context_init(&context, pairs, 2u);
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+    assert(metadata[0].round_index == 0u);
+    assert(metadata[1].round_index == 1u);
+    assert(metadata[0].pair_count_in_round == 1u);
+    assert(metadata[1].pair_count_in_round == 1u);
+}
+
+static void test_pair_rounds_check_asymmetric_cross_neighborhoods_both_ways(void)
+{
+    const struct survey_gateway_pair_entry pairs[] = {
+        {.initiator_id = 0xA2u, .responder_id = 0xB2u},
+        {.initiator_id = 0xC2u, .responder_id = 0xD2u},
+    };
+    struct survey_gateway_context context;
+    struct survey_pair_round_metadata metadata[2] = {0};
+    size_t round_count = 0u;
+
+    round_test_context_init(&context, pairs, 2u);
+    round_test_add_peer(&context, 0xC2u, 0xA2u);
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+
+    round_test_context_init(&context, pairs, 2u);
+    round_test_add_peer(&context, 0xA2u, 0xC2u);
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+}
+
+static void test_pair_rounds_pack_fully_disjoint_pairs_together(void)
+{
+    const struct survey_gateway_pair_entry pairs[] = {
+        {.initiator_id = 0xA3u, .responder_id = 0xB3u},
+        {.initiator_id = 0xC3u, .responder_id = 0xD3u},
+    };
+    struct survey_gateway_context context;
+    struct survey_pair_round_metadata metadata[2] = {0};
+    size_t round_count = 0u;
+
+    round_test_context_init(&context, pairs, 2u);
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 1u);
+    assert(metadata[0].round_index == 0u);
+    assert(metadata[0].pair_index_in_round == 0u);
+    assert(metadata[0].pair_count_in_round == 2u);
+    assert(metadata[1].round_index == 0u);
+    assert(metadata[1].pair_index_in_round == 1u);
+    assert(metadata[1].pair_count_in_round == 2u);
+}
+
+static void test_pair_rounds_serialize_shared_third_neighbor(void)
+{
+    const struct survey_gateway_pair_entry pairs[] = {
+        {.initiator_id = 0xA6u, .responder_id = 0xB6u},
+        {.initiator_id = 0xC6u, .responder_id = 0xD6u},
+    };
+    struct survey_gateway_context context;
+    struct survey_pair_round_metadata metadata[2] = {0};
+    size_t round_count = 0u;
+
+    round_test_context_init(&context, pairs, 2u);
+    round_test_add_peer(&context, 0xA6u, 0xE6u);
+    round_test_add_peer(&context, 0xD6u, 0xE6u);
+
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                           metadata,
+                                           2u,
+                                           &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+    assert(metadata[0].round_index != metadata[1].round_index);
+}
+
+static void test_pair_rounds_pack_deterministically_without_reordering_pairs(void)
+{
+    const struct survey_gateway_pair_entry pairs[] = {
+        {.initiator_id = 0xA4u, .responder_id = 0xB4u},
+        {.initiator_id = 0xC4u, .responder_id = 0xD4u},
+        {.initiator_id = 0xE4u, .responder_id = 0xF4u},
+        {.initiator_id = 0x74u, .responder_id = 0x84u},
+    };
+    struct survey_gateway_context context;
+    struct survey_gateway_pair_entry original_pairs[4];
+    struct survey_pair_round_metadata first[4] = {0};
+    struct survey_pair_round_metadata second[4] = {0};
+    size_t first_round_count = 0u;
+    size_t second_round_count = 0u;
+
+    round_test_context_init(&context, pairs, 4u);
+    memcpy(original_pairs, context.pairs, sizeof(original_pairs));
+    round_test_add_peer(&context, 0xE4u, 0xA4u);
+    round_test_add_peer(&context, 0x74u, 0xC4u);
+
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  first,
+                                                  4u,
+                                                  &first_round_count) == PROTO_OK);
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  second,
+                                                  4u,
+                                                  &second_round_count) == PROTO_OK);
+    assert(first_round_count == 2u);
+    assert(second_round_count == first_round_count);
+    assert(memcmp(first, second, sizeof(first)) == 0);
+    assert(memcmp(context.pairs, original_pairs, sizeof(original_pairs)) == 0);
+    assert(first[0].round_index == 0u);
+    assert(first[1].round_index == 0u);
+    assert(first[2].round_index == 1u);
+    assert(first[3].round_index == 1u);
+    assert(first[0].pair_index_in_round == 0u);
+    assert(first[1].pair_index_in_round == 1u);
+    assert(first[2].pair_index_in_round == 0u);
+    assert(first[3].pair_index_in_round == 1u);
+    for (size_t i = 0u; i < 4u; i++) {
+        assert(first[i].pair_count_in_round == 2u);
+    }
+}
+
+static void test_pair_rounds_use_hop_depth_only_for_incomplete_neighborhoods(void)
+{
+    const struct survey_gateway_pair_entry pairs[] = {
+        {.initiator_id = 0xA5u, .responder_id = 0xB5u},
+        {.initiator_id = 0xC5u, .responder_id = 0xD5u},
+    };
+    struct survey_gateway_context context;
+    struct survey_pair_round_metadata metadata[2] = {0};
+    struct survey_gateway_report_slot *saturated;
+    size_t round_count = 0u;
+
+    round_test_context_init(&context, pairs, 2u);
+    saturated = round_test_report(&context, 0xA5u);
+    for (size_t i = 0u; i < SURVEY_GATEWAY_MAX_PEERS_PER_REPORT; i++) {
+        round_test_add_peer(&context, 0xA5u, 0xF000u + i);
+    }
+    round_test_report(&context, 0xA5u)->reverse_hop_count = 1u;
+    round_test_report(&context, 0xB5u)->reverse_hop_count = 1u;
+    round_test_report(&context, 0xC5u)->reverse_hop_count = 3u;
+    round_test_report(&context, 0xD5u)->reverse_hop_count = 3u;
+
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 1u);
+
+    round_test_report(&context, 0xC5u)->reverse_hop_count = 2u;
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+
+    round_test_report(&context, 0xC5u)->reverse_hop_count = 0u;
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+
+    round_test_report(&context, 0xC5u)->reverse_hop_count = 3u;
+    saturated->entries[0].peer_id = 0xC5u;
+    assert(survey_gateway_plan_pair_rounds(&context,
+                                                  metadata,
+                                                  2u,
+                                                  &round_count) == PROTO_OK);
+    assert(round_count == 2u);
+}
+
 static void test_gateway_context_collects_reports_and_sequences_pairs(void)
 {
     struct survey_gateway_context context;
@@ -1224,12 +1487,14 @@ static void test_gateway_context_preserves_first_duplicate_report_and_hint(void)
         .target_id = 0x1111000000000001ull,
         .next_hop_id = 0x4444000000000004ull,
         .quality = 91u,
+        .hop_count = 3u,
         .valid = true,
     };
     const struct survey_gateway_reverse_hint duplicate_hint = {
         .target_id = 0x1111000000000001ull,
         .next_hop_id = 0x5555000000000005ull,
         .quality = 37u,
+        .hop_count = 2u,
         .valid = true,
     };
     struct survey_gateway_reverse_hint stored_hint = {0};
@@ -1270,6 +1535,7 @@ static void test_gateway_context_preserves_first_duplicate_report_and_hint(void)
                                                   &stored_hint) == PROTO_OK);
     assert(stored_hint.next_hop_id == first_hint.next_hop_id);
     assert(stored_hint.quality == first_hint.quality);
+    assert(stored_hint.hop_count == first_hint.hop_count);
     assert(survey_gateway_plan_pairs(&context) == PROTO_ERR_NOT_FOUND);
     assert(context.pair_count == 0u);
 }
@@ -1320,6 +1586,7 @@ static void test_gateway_context_retains_only_accepted_reverse_hints(void)
         .target_id = 0x1111000000000001ull,
         .next_hop_id = 0x2222000000000002ull,
         .quality = 83u,
+        .hop_count = 2u,
         .valid = true,
     };
     struct survey_gateway_reverse_hint stored = {0};
@@ -1360,6 +1627,17 @@ static void test_gateway_context_retains_only_accepted_reverse_hints(void)
     assert(context.report_count == 0u);
 
     hint.quality = 83u;
+    hint.hop_count = SURVEY_DEFAULT_TTL + 1u;
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &context,
+               0xAABBCCDDu,
+               hint.target_id,
+               NULL,
+               0u,
+               &hint) == PROTO_ERR_MALFORMED);
+    assert(context.report_count == 0u);
+
+    hint.hop_count = 2u;
     assert(survey_gateway_note_reach_report_with_reverse_hint(
                &context,
                0xAABBCCDDu,
@@ -1374,6 +1652,7 @@ static void test_gateway_context_retains_only_accepted_reverse_hints(void)
     assert(stored.target_id == hint.target_id);
     assert(stored.next_hop_id == hint.next_hop_id);
     assert(stored.quality == hint.quality);
+    assert(stored.hop_count == hint.hop_count);
 
     assert(survey_gateway_note_reach_report(&context,
                                             0xAABBCCDDu,
@@ -1385,6 +1664,33 @@ static void test_gateway_context_retains_only_accepted_reverse_hints(void)
                                                   &stored) == PROTO_OK);
     assert(stored.next_hop_id == hint.next_hop_id);
     assert(stored.quality == hint.quality);
+    assert(stored.hop_count == hint.hop_count);
+}
+
+static void test_gateway_control_timeout_tracks_accepted_route_depth(void)
+{
+    assert(survey_gateway_hop_count_from_report_ttl(SURVEY_DEFAULT_TTL) == 1u);
+    assert(survey_gateway_hop_count_from_report_ttl(
+               SURVEY_DEFAULT_TTL - 1u) == 2u);
+    assert(survey_gateway_hop_count_from_report_ttl(1u) ==
+           SURVEY_DEFAULT_TTL);
+    assert(survey_gateway_hop_count_from_report_ttl(0u) == 0u);
+    assert(survey_gateway_hop_count_from_report_ttl(
+               SURVEY_DEFAULT_TTL + 1u) == 0u);
+
+    assert(survey_pair_control_timeout_ms(1u) ==
+           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS);
+    assert(survey_pair_control_timeout_ms(2u) ==
+           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+               SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS);
+    assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL) ==
+           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+               ((SURVEY_DEFAULT_TTL - 1u) *
+                SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS));
+    assert(survey_pair_control_timeout_ms(0u) ==
+           SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+    assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL + 1u) ==
+           SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
 }
 
 static void test_gateway_context_retains_fifty_reverse_hints(void)
@@ -2005,10 +2311,17 @@ int main(void)
     test_pair_prepare_packet_targets_initiator_anchor();
     test_reachability_graph_plans_unique_pairs_with_requested_samples();
     test_generated_complete_reachability_counts_for_one_to_six_anchors();
+    test_pair_rounds_serialize_shared_endpoints();
+    test_pair_rounds_check_asymmetric_cross_neighborhoods_both_ways();
+    test_pair_rounds_pack_fully_disjoint_pairs_together();
+    test_pair_rounds_serialize_shared_third_neighbor();
+    test_pair_rounds_pack_deterministically_without_reordering_pairs();
+    test_pair_rounds_use_hop_depth_only_for_incomplete_neighborhoods();
     test_gateway_context_collects_reports_and_sequences_pairs();
     test_gateway_context_preserves_first_duplicate_report_and_hint();
     test_gateway_context_rejects_stale_or_oversized_reports();
     test_gateway_context_retains_only_accepted_reverse_hints();
+    test_gateway_control_timeout_tracks_accepted_route_depth();
     test_gateway_context_retains_fifty_reverse_hints();
     test_pair_planner_caps_degree_and_is_report_order_independent();
     test_pair_planner_reaches_six_degree_ceiling_for_50_anchors();

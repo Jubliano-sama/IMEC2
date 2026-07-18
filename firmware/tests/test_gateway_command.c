@@ -1,5 +1,6 @@
 #include "gateway_command.h"
 
+#include "discovery_assignment.h"
 #include "gateway_membership.h"
 #include "mesh.h"
 
@@ -3250,6 +3251,14 @@ static void test_command_budget_is_optional_bounded_and_phase_aware(void)
                &explicit_budget) == PROTO_OK);
     assert(budget_ms == 90000u);
     assert(!explicit_budget);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS <=
+           GATEWAY_COMMAND_BUDGET_MAX_MS);
+    assert(gateway_command_extract_budget_ms(
+               payload, payload_len,
+               DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+               &budget_ms, &explicit_budget) == PROTO_OK);
+    assert(budget_ms == DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS);
+    assert(!explicit_budget);
 
     assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
                           TLV_COMMAND_BUDGET_MS, 15000u) == PROTO_OK);
@@ -3267,12 +3276,25 @@ static void test_command_budget_is_optional_bounded_and_phase_aware(void)
                payload, payload_len, 90000u, &budget_ms,
                &explicit_budget) == PROTO_ERR_MALFORMED);
 
+    proto_put_u32_le(&payload[payload_len - sizeof(uint32_t)],
+                     GATEWAY_COMMAND_BUDGET_MAX_MS);
+    assert(gateway_command_extract_budget_ms(
+               payload, payload_len, 90000u, &budget_ms,
+               &explicit_budget) == PROTO_OK);
+    assert(budget_ms == GATEWAY_COMMAND_BUDGET_MAX_MS);
+    assert(explicit_budget);
+    proto_put_u32_le(&payload[payload_len - sizeof(uint32_t)],
+                     GATEWAY_COMMAND_BUDGET_MAX_MS + 1u);
+    assert(gateway_command_extract_budget_ms(
+               payload, payload_len, 90000u, &budget_ms,
+               &explicit_budget) == PROTO_ERR_MALFORMED);
+
     assert(gateway_command_budget_window_ms(false, 15000u, 2u, 10000u) ==
            10000u);
     assert(gateway_command_budget_window_ms(true, 15000u, 2u, 10000u) ==
-           7500u);
+           10000u);
     assert(gateway_command_budget_window_ms(true, 15000u, 3u, 10000u) ==
-           5000u);
+           10000u);
     assert(gateway_command_budget_window_ms(true, 10000u, 1u, 10000u) ==
            10000u);
     assert(gateway_command_budget_window_ms(true, 7500u, 1u, 4750u) ==
@@ -3280,9 +3302,9 @@ static void test_command_budget_is_optional_bounded_and_phase_aware(void)
     assert(gateway_command_budget_window_ms(true, 1u, 2u, 4750u) == 1u);
     assert(gateway_command_budget_window_ms(true, 0u, 1u, 4750u) == 0u);
     assert(gateway_command_budget_weighted_window_ms(
-               true, 20000u, 2u, 5u, 10000u) == 8000u);
+               true, 20000u, 2u, 5u, 10000u) == 10000u);
     assert(gateway_command_budget_weighted_window_ms(
-               true, 12000u, 3u, 5u, 10000u) == 7200u);
+               true, 12000u, 3u, 5u, 10000u) == 10000u);
     assert(gateway_command_budget_weighted_window_ms(
                false, 1u, 2u, 5u, 10000u) == 10000u);
 

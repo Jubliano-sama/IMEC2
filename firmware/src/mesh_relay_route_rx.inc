@@ -15,6 +15,10 @@ static int parse_route_discovery_tlvs(const uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_route_path_from_tlvs(payload, payload_len, &fields->path);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = find_u32_tlv(payload, payload_len, TLV_ROUTE_EPOCH, &fields->route_epoch);
     if (ret != PROTO_OK) {
         return ret;
@@ -230,6 +234,13 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_route_path_append_tlv(payload,
+                                     payload_cap,
+                                     offset,
+                                     &fields->path);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     return append_flood_control_tlvs(payload,
                                      payload_cap,
                                      offset,
@@ -297,6 +308,10 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
         return ret;
     }
     ret = find_u32_tlv(payload, payload_len, TLV_SLOT_SEED, &fields->slot_seed);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_route_path_from_tlvs(payload, payload_len, &fields->path);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -414,11 +429,17 @@ static void add_route_reply_ack_action(struct mesh_relay *relay,
     struct route_discovery_fields fields = {0};
 
     if (packet->msg_type != MSG_ROUTE_REPLY ||
+        !mesh_route_control_payload_len_valid(packet->msg_type, payload_len) ||
         parse_route_discovery_tlvs(payload,
                                    payload_len,
                                    packet->session_id,
                                    0u,
                                    &fields) != PROTO_OK) {
+        return;
+    }
+    if (mesh_route_control_ttl_validate(packet->msg_type,
+                                        packet->ttl,
+                                        fields.hop_count) != PROTO_OK) {
         return;
     }
     if (packet->src_id != fields.target_id ||
@@ -458,6 +479,15 @@ static int handle_route_reply_ack(struct mesh_relay *relay,
         packet->src_id != previous_hop_id) {
         return PROTO_ERR_MALFORMED;
     }
+    if (!mesh_route_control_payload_len_valid(packet->msg_type, payload_len)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = mesh_route_control_ttl_validate(packet->msg_type,
+                                          packet->ttl,
+                                          0u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
 
     ret = parse_route_reply_ack_tlvs(payload, payload_len, &fields);
     if (ret != PROTO_OK) {
@@ -485,6 +515,13 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
         fields->flood_profile_version == 0u ||
         fields->path_quality_min > 100u ||
         fields->gateway_capacity_state > RELAY_CAP_BLACK ||
+        fields->hop_count >= MESH_ROUTE_PATH_MAX_NODES ||
+        fields->path.count == 0u ||
+        fields->path.count != (uint8_t)(fields->hop_count + 1u) ||
+        mesh_route_path_validate(&fields->path,
+                                 fields->gateway_id,
+                                 fields->path.node_ids[fields->path.count - 1u]) !=
+            PROTO_OK ||
         (fields->gateway_capacity_state != RELAY_CAP_UNKNOWN &&
          fields->capacity_validity_interval_ms == 0u) ||
         fields->route_cost != gateway_route_cost(fields->hop_count, fields->path_quality_min)) {
@@ -521,6 +558,10 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     }
 
     fields.path_quality_min = combined_quality(fields.path_quality_min, link_quality);
+    ret = mesh_route_path_append(&fields.path, local_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     fields.hop_count++;
     fields.route_cost = gateway_route_cost(fields.hop_count, fields.path_quality_min);
     fields.flood_packet_age_ms = packet->message_age_ms;
@@ -562,6 +603,9 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                     struct mesh_relay_result *result)
 {
     struct gateway_route_adv_fields fields = {0};
+    struct mesh_route_path candidate_path;
+    struct reactive_route_rollback route_rollback = {0};
+    const struct route_candidate *candidate;
     uint8_t path_quality;
     int ret;
     int route_ret;
@@ -571,18 +615,34 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
         packet->dst_id != MESH_BROADCAST_ID) {
         return PROTO_ERR_MALFORMED;
     }
+    if (!mesh_route_control_payload_len_valid(packet->msg_type, payload_len)) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     ret = parse_gateway_route_adv_tlvs(payload, payload_len, &fields);
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_route_control_ttl_validate(packet->msg_type,
+                                          packet->ttl,
+                                          fields.hop_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     if (!gateway_route_adv_fields_valid(&fields) ||
         packet->src_id != fields.gateway_id ||
-        fields.gateway_id != relay->gateway_id) {
+        fields.gateway_id != relay->gateway_id ||
+        fields.path.node_ids[fields.path.count - 1u] != previous_hop_id ||
+        mesh_route_path_contains(&fields.path, relay->local_id)) {
         return PROTO_ERR_MALFORMED;
     }
 
     path_quality = combined_quality(fields.path_quality_min, link_quality);
+    candidate_path = fields.path;
+    ret = mesh_route_path_append(&candidate_path, relay->local_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     route_ret = upsert_reactive_route(relay,
                                       fields.gateway_id,
                                       previous_hop_id,
@@ -596,10 +656,23 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
                                       now_ms,
                                       NULL,
                                       0u,
-                                      NULL);
+                                      &route_rollback);
     if (route_ret != PROTO_OK &&
         route_ret != PROTO_ERR_NO_SPACE) {
         return route_ret;
+    }
+    if (route_ret == PROTO_OK) {
+        candidate = find_upstream_candidate(relay,
+                                            previous_hop_id,
+                                            fields.gateway_epoch);
+        ret = store_upstream_candidate_ancestry(relay,
+                                                candidate,
+                                                &candidate_path,
+                                                NULL);
+        if (ret != PROTO_OK) {
+            rollback_reactive_route(relay, &route_rollback);
+            return ret;
+        }
     }
     if (route_ret == PROTO_OK && relay->route_discovery.active &&
         relay->route_discovery.target_id == fields.gateway_id) {
@@ -626,13 +699,14 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
 
 static int build_route_reply(struct mesh_relay *relay,
                              const struct route_discovery_fields *request,
+                             const struct route_candidate *gateway_route,
+                             const struct mesh_route_path *gateway_route_path,
                              uint64_t next_hop_id,
                              uint32_t session_id,
                              uint32_t route_epoch,
                              struct mesh_outbound *out)
 {
     struct route_discovery_fields fields;
-    const struct route_candidate *selected = NULL;
     size_t payload_len = 0u;
     int ret;
 
@@ -647,14 +721,20 @@ static int build_route_reply(struct mesh_relay *relay,
 
     fields = *request;
     fields.route_epoch = route_epoch;
-    if (request->target_id == relay->gateway_id &&
-        request->target_id != relay->local_id) {
-        selected = route_selected(&relay->upstream);
-    }
-    if (selected != NULL && selected->hop_count < UINT8_MAX) {
-        fields.hop_count = selected->hop_count + 1u;
-        fields.quality = selected->link_quality;
+    if (gateway_route != NULL && gateway_route->hop_count < UINT8_MAX) {
+        if (gateway_route_path == NULL ||
+            mesh_route_path_validate(gateway_route_path,
+                                     request->target_id,
+                                     relay->local_id) != PROTO_OK) {
+            return PROTO_ERR_NOT_FOUND;
+        }
+        fields.path = *gateway_route_path;
+        fields.hop_count = gateway_route->hop_count + 1u;
+        fields.quality = gateway_route->link_quality;
     } else {
+        memset(&fields.path, 0, sizeof(fields.path));
+        fields.path.node_ids[0] = relay->local_id;
+        fields.path.count = 1u;
         fields.hop_count = 0u;
         fields.quality = 100u;
     }
@@ -686,7 +766,7 @@ static int build_route_reply(struct mesh_relay *relay,
     out->packet.dst_id = request->origin_id;
     out->packet.session_id = session_id;
     out->packet.seq = relay_next_seq(relay);
-    out->packet.ttl = MESH_DEFAULT_TTL;
+    out->packet.ttl = MESH_NETWORK_MAX_HOPS;
     out->packet.payload_len = (uint16_t)payload_len;
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = next_hop_id;
@@ -739,6 +819,13 @@ static int build_route_reply_forward(const struct mesh_relay *relay,
     next_hop_id = reverse_route->next_hop_id;
 
     fields.quality = combined_quality(fields.quality, link_quality);
+    if (mesh_route_path_contains(&fields.path, next_hop_id)) {
+        return PROTO_ERR_STALE;
+    }
+    ret = mesh_route_path_append(&fields.path, relay->local_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     fields.hop_count++;
     fields.proposed_channel9_timing_valid = false;
     fields.timing_reference_ms = 0u;
@@ -784,15 +871,22 @@ static int handle_route_request(struct mesh_relay *relay,
     struct route_discovery_fields fields = {0};
     struct flood_seen_entry *flood_entry = NULL;
     const struct route_candidate *selected = NULL;
+    const struct mesh_route_path *selected_path = NULL;
+    struct mesh_route_path direct_selected_path = {0};
+    struct route_candidate reply_route = {0};
     struct mesh_event_timing downstream_timing = {0};
     struct reactive_route_rollback route_rollback = {0};
     bool first_seen = false;
     bool best_updated = false;
     bool reply_available;
+    bool gateway_reply_available = false;
     bool install_reply_timing = false;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (!mesh_route_control_payload_len_valid(packet->msg_type, payload_len)) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -804,12 +898,25 @@ static int handle_route_request(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_route_control_ttl_validate(packet->msg_type,
+                                          packet->ttl,
+                                          fields.hop_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     if (fields.origin_id != packet->src_id ||
         packet->dst_id != MESH_BROADCAST_ID ||
         !id_is_unicast(fields.target_id) ||
         fields.target_id == fields.origin_id ||
         fields.hop_count == UINT8_MAX ||
         fields.flood_epoch_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (fields.path.count != (uint8_t)(fields.hop_count + 1u) ||
+        mesh_route_path_validate(&fields.path,
+                                 fields.origin_id,
+                                 previous_hop_id) != PROTO_OK ||
+        mesh_route_path_contains(&fields.path, relay->local_id)) {
         return PROTO_ERR_MALFORMED;
     }
     if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
@@ -822,8 +929,28 @@ static int handle_route_request(struct mesh_relay *relay,
 
     fields.quality = combined_quality(fields.quality, link_quality);
     selected = route_selected(&relay->upstream);
+    if (selected != NULL) {
+        selected_path = upstream_candidate_ancestry(relay, selected);
+        if (selected_path == NULL &&
+            selected->next_hop_id == relay->gateway_id &&
+            selected->gateway_id == relay->gateway_id &&
+            selected->hop_count == 0u) {
+            direct_selected_path.node_ids[0] = relay->gateway_id;
+            direct_selected_path.node_ids[1] = relay->local_id;
+            direct_selected_path.count = 2u;
+            selected_path = &direct_selected_path;
+        }
+    }
+    if (fields.target_id == relay->gateway_id &&
+        selected != NULL &&
+        selected->next_hop_id != previous_hop_id &&
+        selected_path != NULL &&
+        !mesh_route_paths_intersect(selected_path, &fields.path)) {
+        reply_route = *selected;
+        gateway_reply_available = true;
+    }
     reply_available = fields.target_id == relay->local_id ||
-        (fields.target_id == relay->gateway_id && selected != NULL);
+        gateway_reply_available;
     install_reply_timing = reply_available &&
         fields.proposed_channel9_timing_valid;
     if (install_reply_timing) {
@@ -865,19 +992,22 @@ static int handle_route_request(struct mesh_relay *relay,
                                            &first_seen,
                                            &best_updated);
 
-    selected = route_selected(&relay->upstream);
-
     if (fields.target_id == relay->local_id ||
-        (fields.target_id == relay->gateway_id && selected != NULL)) {
+        gateway_reply_available) {
         uint32_t reply_epoch = fields.route_epoch;
+        const struct route_candidate *reply_route_ptr =
+            gateway_reply_available ? &reply_route : NULL;
 
-        if (selected != NULL && selected->route_epoch > reply_epoch) {
-            reply_epoch = selected->route_epoch;
+        if (reply_route_ptr != NULL &&
+            reply_route_ptr->route_epoch > reply_epoch) {
+            reply_epoch = reply_route_ptr->route_epoch;
         } else if (relay->upstream.current_epoch > reply_epoch) {
             reply_epoch = relay->upstream.current_epoch;
         }
         ret = build_route_reply(relay,
                                 &fields,
+                                reply_route_ptr,
+                                gateway_reply_available ? selected_path : NULL,
                                 previous_hop_id,
                                 packet->session_id,
                                 reply_epoch,
@@ -978,12 +1108,18 @@ static int handle_route_reply(struct mesh_relay *relay,
                               struct mesh_relay_result *result)
 {
     struct route_discovery_fields fields = {0};
+    struct mesh_route_path candidate_path;
+    struct mesh_upstream_ancestry_entry ancestry_before = {0};
     struct mesh_event_timing upstream_timing = {0};
     struct reactive_route_rollback route_rollback = {0};
+    const struct route_candidate *candidate;
     bool install_timing;
     int ret;
 
     if (!id_is_unicast(previous_hop_id) || previous_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (!mesh_route_control_payload_len_valid(packet->msg_type, payload_len)) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -995,6 +1131,12 @@ static int handle_route_reply(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_route_control_ttl_validate(packet->msg_type,
+                                          packet->ttl,
+                                          fields.hop_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     if (packet->src_id != fields.target_id ||
         packet->dst_id != fields.origin_id ||
         !id_is_unicast(fields.origin_id) ||
@@ -1002,6 +1144,13 @@ static int handle_route_reply(struct mesh_relay *relay,
         fields.origin_id == fields.target_id ||
         fields.hop_count == UINT8_MAX ||
         fields.flood_epoch_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (fields.path.count != (uint8_t)(fields.hop_count + 1u) ||
+        mesh_route_path_validate(&fields.path,
+                                 fields.target_id,
+                                 previous_hop_id) != PROTO_OK ||
+        mesh_route_path_contains(&fields.path, relay->local_id)) {
         return PROTO_ERR_MALFORMED;
     }
     ret = complete_route_reply_identity(packet, &fields);
@@ -1025,6 +1174,11 @@ static int handle_route_reply(struct mesh_relay *relay,
             return ret;
         }
     }
+    candidate_path = fields.path;
+    ret = mesh_route_path_append(&candidate_path, relay->local_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = upsert_reactive_route(relay,
                                 fields.target_id,
                                 previous_hop_id,
@@ -1038,8 +1192,19 @@ static int handle_route_reply(struct mesh_relay *relay,
                                 now_ms,
                                 NULL,
                                 0u,
-                                install_timing ? &route_rollback : NULL);
+                                &route_rollback);
     if (ret != PROTO_OK) {
+        return ret;
+    }
+    candidate = find_upstream_candidate(relay,
+                                        previous_hop_id,
+                                        fields.route_epoch);
+    ret = store_upstream_candidate_ancestry(relay,
+                                            candidate,
+                                            &candidate_path,
+                                            &ancestry_before);
+    if (ret != PROTO_OK) {
+        rollback_reactive_route(relay, &route_rollback);
         return ret;
     }
     if (install_timing) {
@@ -1052,6 +1217,9 @@ static int handle_route_reply(struct mesh_relay *relay,
             NULL);
         if (ret != PROTO_OK) {
             rollback_reactive_route(relay, &route_rollback);
+            restore_upstream_candidate_ancestry(relay,
+                                                candidate,
+                                                &ancestry_before);
             return ret;
         }
     }

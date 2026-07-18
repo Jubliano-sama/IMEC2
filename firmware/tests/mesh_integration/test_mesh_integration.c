@@ -183,12 +183,12 @@ static void test_single_relay_delivery(void)
     assert(mesh_sim_install_route(&world,
                                   transmitter,
                                   anchor,
-                                  2u,
+                                  1u,
                                   ROUTE_EPOCH) == PROTO_OK);
     assert(mesh_sim_install_route(&world,
                                   anchor,
                                   gateway,
-                                  1u,
+                                  0u,
                                   ROUTE_EPOCH) == PROTO_OK);
     assert(mesh_sim_install_downlink(&world,
                                      anchor,
@@ -282,11 +282,11 @@ static void test_two_relay_delivery(void)
     assert(mesh_sim_set_link(&world, transmitter, anchor_1, 95u, 0u) == MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, anchor_1, anchor_2, 94u, 0u) == MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, anchor_2, gateway, 97u, 0u) == MESH_SIM_OK);
-    assert(mesh_sim_install_route(&world, transmitter, anchor_1, 3u,
+    assert(mesh_sim_install_route(&world, transmitter, anchor_1, 2u,
                                   ROUTE_EPOCH) == PROTO_OK);
-    assert(mesh_sim_install_route(&world, anchor_1, anchor_2, 2u,
+    assert(mesh_sim_install_route(&world, anchor_1, anchor_2, 1u,
                                   ROUTE_EPOCH) == PROTO_OK);
-    assert(mesh_sim_install_route(&world, anchor_2, gateway, 1u,
+    assert(mesh_sim_install_route(&world, anchor_2, gateway, 0u,
                                   ROUTE_EPOCH) == PROTO_OK);
     assert(mesh_sim_install_downlink(&world, anchor_1, TRANSMITTER_ID,
                                      transmitter, 1u,
@@ -559,9 +559,9 @@ static void test_click_preempts_transit_and_origin_retries(void)
            MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, anchors[0], gateway, 98u, 0u) ==
            MESH_SIM_OK);
-    assert(mesh_sim_install_route(&world, transmitter, anchors[0], 2u,
+    assert(mesh_sim_install_route(&world, transmitter, anchors[0], 1u,
                                   ROUTE_EPOCH) == PROTO_OK);
-    assert(mesh_sim_install_route(&world, anchors[0], gateway, 1u,
+    assert(mesh_sim_install_route(&world, anchors[0], gateway, 0u,
                                   ROUTE_EPOCH) == PROTO_OK);
     assert(mesh_sim_install_downlink(&world, anchors[0], TRANSMITTER_ID,
                                      transmitter, 1u,

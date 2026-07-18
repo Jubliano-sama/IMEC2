@@ -206,7 +206,7 @@ static int init_fixture(struct test_context *context,
                               current->gateway, 98u, 0u) == MESH_SIM_OK);
     REQUIRE(context,
             mesh_sim_install_route(&current->world, current->anchor,
-                                   current->gateway, 1u,
+                                   current->gateway, 0u,
                                    ROUTE_EPOCH) == PROTO_OK);
     REQUIRE(context,
             mesh_sim_install_downlink(&current->world, current->anchor,

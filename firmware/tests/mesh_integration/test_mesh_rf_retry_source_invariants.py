@@ -9,6 +9,15 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = read_composed_source(ROOT / "app" / "src" / "app_mesh_report.c")
+REPORT_UNIT = (ROOT / "app" / "src" / "app_mesh_report.c").read_text(
+    encoding="utf-8"
+)
+REPORT_ROUTE_CONTROL = (
+    ROOT / "app" / "src" / "app_mesh_report_route_control.inc"
+).read_text(encoding="utf-8")
+REPORT_DELIVERY = (
+    ROOT / "app" / "src" / "app_mesh_report_delivery.inc"
+).read_text(encoding="utf-8")
 
 
 def function_body(source: str, name: str) -> str:
@@ -147,6 +156,155 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn(
             "report_tx_consume_retry_delay_override",
             waiting_body[attempt_branch:policy_decision],
+        )
+
+    def test_pre_rf_send_failure_does_not_count_parent_ack_failure(self):
+        body = function_body(REPORT, "mesh_start_tracked_tx_with_retry")
+
+        self.assertIn("mesh_relay_note_tx_sent", body)
+        self.assertIn("No RF send completed", body)
+        self.assertNotIn("mesh_relay_note_delivery_failure", body)
+
+    def test_initial_missing_timing_repairs_selected_relay_before_discovery(self):
+        body = function_body(REPORT, "mesh_start_tracked_tx_with_retry")
+        unavailable = body.index(
+            '"mesh channel-9 timing unavailable for %s; '
+            'refreshing channel-5 contact: ret=%d"'
+        )
+        repair = body.index(
+            "mesh_try_repair_selected_parent_event(", unavailable
+        )
+        repair_return = body.index("return -EHOSTUNREACH;", repair)
+        fallback = body.index(
+            "mesh_defer_route_for_outbound(&aged_out", repair_return
+        )
+
+        self.assertLess(unavailable, repair)
+        self.assertLess(repair, repair_return)
+        self.assertLess(repair_return, fallback)
+        self.assertIn("debug_select_ret", body[repair:repair_return])
+        self.assertIn("debug_next_hop", body[repair:repair_return])
+        self.assertNotIn(
+            "mesh_request_route", body[unavailable:fallback]
+        )
+
+        helper = function_body(
+            REPORT, "mesh_try_repair_selected_parent_event"
+        )
+        store = helper.index("mesh_store_route_waiting_tx(out)")
+        propose = helper.index(
+            "mesh_propose_event_after_channel5_contact("
+        )
+        hard_branch = helper.index("if (hard_failure)", propose)
+
+        self.assertLess(store, propose)
+        self.assertLess(propose, hard_branch)
+        self.assertIn('"initial-tx-event-repair"', helper[propose:hard_branch])
+        self.assertIn(
+            "repair_active = mesh_event_propose_retry.active",
+            helper[propose:hard_branch],
+        )
+        self.assertNotIn("mesh_schedule_route_request", helper[:hard_branch])
+
+    def test_initial_timing_repair_keeps_no_route_and_gateway_fallbacks(self):
+        helper = function_body(
+            REPORT, "mesh_try_repair_selected_parent_event"
+        )
+        guard_end = helper.index("if (store_route_wait)")
+        guard = helper[:guard_end]
+
+        self.assertIn("select_ret != PROTO_OK", guard)
+        self.assertIn("!mesh_id_is_unicast(selected_next_hop)", guard)
+        self.assertIn("selected_next_hop == DEVICE_ID", guard)
+        self.assertIn("selected_next_hop == GATEWAY_ID", guard)
+        self.assertIn("return false", guard)
+
+        body = function_body(REPORT, "mesh_start_tracked_tx_with_retry")
+        unavailable = body.index(
+            '"mesh channel-9 timing unavailable for %s; '
+            'refreshing channel-5 contact: ret=%d"'
+        )
+        repair = body.index(
+            "mesh_try_repair_selected_parent_event(", unavailable
+        )
+        fallback = body.index(
+            "mesh_defer_route_for_outbound(&aged_out", repair
+        )
+        fallback_exit = body.index("return -EHOSTUNREACH;", fallback)
+        self.assertLess(repair, fallback)
+        self.assertLess(fallback, fallback_exit)
+
+        route_wait = function_body(REPORT, "mesh_try_route_waiting_tx")
+        request_action = route_wait.index(
+            "case APP_MESH_ROUTE_WAIT_TX_ACTION_REQUEST_ROUTE:"
+        )
+        request = route_wait.index("mesh_request_route(", request_action)
+        self.assertLess(request_action, request)
+
+    def test_initial_timing_repair_hard_terminal_falls_back_to_discovery(self):
+        hard = function_body(REPORT, "mesh_parent_contact_failure_is_hard")
+        helper = function_body(
+            REPORT, "mesh_try_repair_selected_parent_event"
+        )
+        propose = helper.index(
+            "mesh_propose_event_after_channel5_contact("
+        )
+        classify = helper.index("hard_failure =", propose)
+        hard_branch = helper.index("if (hard_failure)", classify)
+        invalidate = helper.index(
+            "mesh_relay_invalidate_upstream_route", hard_branch
+        )
+        request = helper.index("mesh_schedule_route_request", invalidate)
+
+        for terminal in (
+            "-ETIMEDOUT",
+            "-EHOSTUNREACH",
+            "-ENOTCONN",
+            "-ECONNRESET",
+        ):
+            self.assertIn(terminal, hard)
+        self.assertIn("!repair_active", helper[classify:hard_branch])
+        self.assertIn("repair_ret < 0", helper[classify:hard_branch])
+        self.assertLess(propose, classify)
+        self.assertLess(classify, hard_branch)
+        self.assertLess(hard_branch, invalidate)
+        self.assertLess(invalidate, request)
+        self.assertEqual(helper.count("mesh_schedule_route_request"), 1)
+        self.assertEqual(helper.count("mesh_relay_invalidate_upstream_route"), 1)
+
+    def test_route_ready_classifies_direct_gateway_as_unscheduled(self):
+        delivery = function_body(REPORT_DELIVERY, "mesh_handle_result_actions")
+        ready = delivery.index(
+            "if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY)"
+        )
+        handoff = delivery.index(
+            "app_mesh_route_ready_handoff_on_ready", ready
+        )
+        route_ready = delivery[ready:handoff]
+
+        self.assertIn(".selected_is_unscheduled_gateway =", route_ready)
+        self.assertRegex(
+            route_ready,
+            r"\.selected_is_unscheduled_gateway\s*=\s*"
+            r"route_ready_next_hop_id\s*==\s*GATEWAY_ID",
+        )
+
+    def test_non_route_solicit_wake_followups_are_marked_control(self):
+        wake = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_send_route_wake_train"
+        )
+        base_flags = wake.index(
+            "config->flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | "
+            "FLAG_RANGE_ONLY"
+        )
+        session_start = wake.index("uwb_clicker_session_start", base_flags)
+        classification = wake[base_flags:session_start]
+
+        self.assertRegex(
+            classification,
+            r"if\s*\(\s*purpose\s*!=\s*"
+            r"C5_CONTACT_PURPOSE_ROUTE_SOLICIT\s*\)\s*\{\s*"
+            r"config->flags\s*\|=\s*FLAG_CONTROL_FOLLOWUP\s*;",
         )
 
     def test_route_wait_retry_has_a_separate_work_owner_from_tx_timeout(self):
@@ -313,6 +471,82 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(radio_stop, submit)
         self.assertIn("DBG_EVENT_CTRL_POST_RX_QUEUED", body)
         self.assertNotIn("mesh_process_queued_rx_now", body)
+
+    def test_route_reply_listener_observes_async_route_ready_and_releases_radio(self):
+        listener = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply"
+        )
+        snapshot = listener.index(
+            "route_ready_generation = "
+            "atomic_get(&mesh_route_ready_generation)"
+        )
+        radio_start = listener.index(
+            'mesh_transport_radio_start("mesh route reply RX")', snapshot
+        )
+        ready_check = listener.index(
+            "if (atomic_get(&mesh_route_ready_generation) !=", radio_start
+        )
+        receive = listener.index(
+            "ret = dwm3000_driver_receive_frame_continuous(", ready_check
+        )
+        ready_branch = listener[ready_check:receive]
+        timeout = listener.index("if (ret == -ETIMEDOUT)", receive)
+        timeout_continue = listener.index("continue;", timeout)
+        standby = listener.index(
+            "(void)dwm3000_driver_standby()", timeout_continue
+        )
+        radio_stop = listener.index("radio_guard_uwb_stop()", standby)
+
+        self.assertLess(snapshot, radio_start)
+        self.assertLess(radio_start, ready_check)
+        self.assertLess(ready_check, receive)
+        self.assertIn("captured_route_reply = true", ready_branch)
+        self.assertIn("last_ret = 0", ready_branch)
+        self.assertIn("*route_reply_captured = true", ready_branch)
+        self.assertIn("DBG_ROUTE_REPLY_LISTEN_ROUTE_READY", ready_branch)
+        self.assertIn("break;", ready_branch)
+        self.assertRegex(
+            listener[receive:timeout],
+            r"MIN\(remaining_ms,\s*MESH_ROUTE_REPLY_READY_POLL_MS\)",
+        )
+        self.assertLess(timeout, timeout_continue)
+        self.assertLess(timeout_continue, standby)
+        self.assertLess(standby, radio_stop)
+
+        delivery = function_body(REPORT_DELIVERY, "mesh_handle_result_actions")
+        ready_action = delivery.index(
+            "if (result->actions & MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY)"
+        )
+        generation_publish = delivery.index(
+            "atomic_inc(&mesh_route_ready_generation)", ready_action
+        )
+        handoff = delivery.index(
+            "app_mesh_route_ready_handoff_on_ready", generation_publish
+        )
+        self.assertLess(ready_action, generation_publish)
+        self.assertLess(generation_publish, handoff)
+
+    def test_route_ready_poll_slice_precedes_channel9_retry_boundary(self):
+        poll_match = re.search(
+            r"#define\s+MESH_ROUTE_REPLY_READY_POLL_MS\s+(\d+)u",
+            REPORT_UNIT,
+        )
+        retry_match = re.search(
+            r"#define\s+MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS\s+(\d+)u",
+            REPORT_UNIT,
+        )
+
+        self.assertIsNotNone(poll_match)
+        self.assertIsNotNone(retry_match)
+        poll_ms = int(poll_match.group(1))
+        retry_ms = int(retry_match.group(1))
+        self.assertGreater(poll_ms, 0)
+        self.assertLess(poll_ms, retry_ms)
+        self.assertRegex(
+            REPORT_UNIT,
+            r"BUILD_ASSERT\(MESH_ROUTE_REPLY_READY_POLL_MS\s*<\s*"
+            r"MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,",
+        )
 
     def test_queued_event_propose_holds_only_its_accepted_exchange(self):
         listener = function_body(REPORT, "mesh_listen_for_route_reply")

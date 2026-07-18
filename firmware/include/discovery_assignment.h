@@ -4,6 +4,7 @@
 #include "protocol.h"
 #include "uwb.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -16,12 +17,51 @@ extern "C" {
     (UINT8_MAX / DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS 100u
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS 20u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS \
+    (DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS - 1u)
 #define DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS 100u
 #define DISCOVERY_ASSIGNMENT_MAX_HOPS 8u
 #define DISCOVERY_ASSIGNMENT_RETRY_BASE_MS 100u
 #define DISCOVERY_ASSIGNMENT_RETRY_MAX_MS 4000u
-#define DISCOVERY_ASSIGNMENT_COLLECTION_BASE_MS 3000u
-#define DISCOVERY_ASSIGNMENT_COLLECTION_PER_HOP_MS 750u
+#define DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS 1u
+#define DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS 1u
+#define DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS 10000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 3000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS 30000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS 10000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS \
+    (DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS + \
+     ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
+#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
+    (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
+     ((UWB_DISCOVERY_SLOT_COUNT - 1u) * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) + \
+     ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+      DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS) + \
+     DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS)
+#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_HOP_INITIAL_DELAY_MS \
+    (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
+     ((UWB_DISCOVERY_SLOT_COUNT - 1u) * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) + \
+     DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS)
+#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS \
+    (DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS + \
+     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_HOP_INITIAL_DELAY_MS)
+#define DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS 1u
+/*
+ * CLAIM/ACK responses can become ready while the gateway is still completing
+ * its four-copy control flood.  Keep custody through the full reliable
+ * protocol-response retry horizon so the later collection RX window remains
+ * reachable even after a multi-hop flood.
+ */
+#define DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS \
+    (2u * (DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS + \
+           DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS) + \
+     DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS + \
+     DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS)
+#define DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS \
+    DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS
 
 enum discovery_assignment_phase {
     DISCOVERY_ASSIGNMENT_PHASE_CLAIM = 1,
@@ -99,8 +139,32 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint32_t *delay_ms);
 uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
                                                uint32_t random_value);
+uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count);
+uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
+                                                   uint32_t response_delay_ms,
+                                                   uint8_t hop_count);
+uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch);
 uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
                                                    uint8_t max_hop_count);
+uint64_t discovery_assignment_control_flood_deadline_ms(
+    uint64_t now_ms,
+    uint64_t operation_deadline_ms);
+uint64_t discovery_assignment_response_ack_settle_deadline_ms(uint64_t now_ms);
+bool discovery_assignment_response_ack_settle_pending(
+    uint64_t now_ms,
+    uint64_t settle_deadline_ms);
+int discovery_assignment_extract_expected_count(const uint8_t *payload,
+                                                 size_t payload_len,
+                                                 uint16_t *expected_count,
+                                                 bool *present);
+bool discovery_assignment_response_custody_matches(
+    bool active,
+    uint32_t pending_epoch,
+    enum discovery_assignment_phase pending_phase,
+    uint32_t pending_session_id,
+    uint32_t incoming_epoch,
+    enum discovery_assignment_phase incoming_phase,
+    uint32_t incoming_session_id);
 
 #ifdef __cplusplus
 }

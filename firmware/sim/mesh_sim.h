@@ -249,6 +249,7 @@ struct mesh_sim_role_instance {
     uint64_t id;
     uint64_t gateway_id;
     struct mesh_relay relay;
+    struct mesh_anchor_downlink_store anchor_route_store;
     struct mesh_runtime runtime;
     struct dwm3000_runtime dwm3000;
     struct mesh_sim_world *world;

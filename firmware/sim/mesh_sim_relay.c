@@ -919,6 +919,31 @@ int mesh_sim_relay_start_connection_tx(
     if (ret != MESH_SIM_OK) {
         return ret;
     }
+    if (sender->relay.pending.state ==
+            MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
+        outbound.packet.msg_type == MSG_GATEWAY_ACK) {
+        uint32_t actions = MESH_RELAY_ACTION_NONE;
+
+        ret = mesh_relay_commit_transit_gateway_ack_forward(
+            &sender->relay,
+            &outbound,
+            mesh_sim_time_ms(tx_start_us),
+            &actions);
+        if (ret != PROTO_OK ||
+            actions != MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
+            return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+        }
+        ret = mesh_sim_trace_add(world,
+                                 tx_start_us,
+                                 sender->id,
+                                 sender->gateway_id,
+                                 MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                 MSG_GATEWAY_ACK,
+                                 0u);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
     mesh_sim_relay_remove_queue_entry(sender, (size_t)queue_index);
     result->had_packet = true;
     result->msg_type = outbound.packet.msg_type;

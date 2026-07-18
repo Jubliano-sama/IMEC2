@@ -51,6 +51,13 @@ class MeshDeploymentPolicyTests(unittest.TestCase):
         self._write("Documentation/legacy.md", "pyocd flash build/firmware-anchor/zephyr/zephyr.hex\n")
         self.assertEqual([], policy.check_repository(self.root))
 
+    def test_allows_forcedhop_anchor_bench_flash(self) -> None:
+        self._write(
+            "Documentation/bench.md",
+            ".venv/bin/west flash --build-dir build/mesh-anchor-forcedhop -- --frequency 4000000\n",
+        )
+        self.assertEqual([], policy.check_repository(self.root))
+
     def test_rejects_generic_direct_flash_bypass(self) -> None:
         self._write("firmware/README.md", ".venv/bin/west flash --build-dir build/<preset>\n")
         issues = policy.check_repository(self.root)

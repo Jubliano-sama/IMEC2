@@ -29,6 +29,8 @@ extern "C" {
       1088u, 6000u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
+    X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 6144u, 9216u, 8192u, \
+      320u, 2048u, 0u, 0u, 10240u, true, true, true, true, false)             \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 9216u, 8192u, 320u, 0u, 0u, \
       0u, 18432u, true, true, true, true, false)                              \
     X(TRANSMITTER_FORCEDHOP, "mesh_transmitter_forcedhop", 4096u, 8192u, \
@@ -177,6 +179,7 @@ enum stack_budget_role {
     STACK_BUDGET_ROLE_CLICKER = 0,
     STACK_BUDGET_ROLE_ANCHOR,
     STACK_BUDGET_ROLE_GATEWAY,
+    STACK_BUDGET_ROLE_ANCHOR_FORCEDHOP,
     STACK_BUDGET_ROLE_TRANSMITTER,
     STACK_BUDGET_ROLE_TRANSMITTER_FORCEDHOP,
     STACK_BUDGET_ROLE_COUNT,

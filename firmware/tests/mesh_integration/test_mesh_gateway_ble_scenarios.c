@@ -493,7 +493,7 @@ static void setup_shared_scenario(void)
     ret = mesh_sim_install_route(&test_world,
                                  anchor_index,
                                  gateway_index,
-                                 1u,
+                                 0u,
                                  TEST_ROUTE_EPOCH);
     CHECK(ret == PROTO_OK, "anchor route install failed: ret=%d", ret);
     ret = mesh_sim_add_connection(&test_world,

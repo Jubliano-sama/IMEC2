@@ -122,14 +122,23 @@ config MESH_SMOKE_FAST_TX
       persistent delivery state.
 
 config IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ
-    bool "Force mesh route requests through a relay"
-    depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER
+    bool "Force gateway route requests through a relay"
+    depends on IMEC_MESH_ROUTE_TEST
     help
-      Marks gateway route requests so the gateway ignores direct copies from
-      the origin and only replies after the request has been forwarded by a
-      relay. This is a debug mode for validating relay route handling even when
-      the transmitter is close enough to reach the gateway directly. The normal
-      mesh transmitter preset leaves this disabled.
+      Prevents a direct gateway probe from satisfying route acquisition and
+      marks gateway route requests so direct copies from the origin cannot
+      complete the route. This is a bench-only mode for validating relay route
+      handling while every board remains close enough to probe. Normal mesh
+      role presets leave this disabled.
+
+config IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL
+    bool "Require relayed gateway control on the forced-hop anchor"
+    depends on IMEC_MESH_ROUTE_TEST
+    help
+      Rejects gateway-originated control received directly from the gateway so
+      the same command must arrive through another anchor. This is a bench-only
+      companion to relay-required route acquisition and leaves normal mesh
+      role presets unchanged.
 
 config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     int "Synthetic mesh-test packet interval in milliseconds"

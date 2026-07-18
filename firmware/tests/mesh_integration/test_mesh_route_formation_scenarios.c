@@ -23,7 +23,7 @@
 #define ORIGIN_REPLY_BUDGET_MS UINT32_C(1000)
 #define RESPONDER_GROUP_MAX 8u
 #define TTL_LADDER_ATTEMPT_COUNT 4u
-#define TTL_LADDER_RELAY_COUNT 5u
+#define TTL_LADDER_RELAY_COUNT 6u
 #define TTL_LADDER_HOP_COUNT (TTL_LADDER_RELAY_COUNT + 1u)
 #define TTL_LADDER_DATA_PHASE_STEP_MS 100u
 #define TTL_LADDER_ACK_BASE_DELAY_MS 2000u
@@ -514,7 +514,7 @@ static int run_responder_slot_case(uint8_t responder_count)
         CHECK(mesh_sim_install_route(&world,
                                      responders[i],
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
     }
 
@@ -716,7 +716,7 @@ static int run_ttl_ladder_data_case(void)
               &world,
               relays[TTL_LADDER_RELAY_COUNT - 1u],
               gateway,
-              1u,
+              0u,
               ROUTE_EPOCH) == PROTO_OK);
     CHECK(assert_selected_hop(&world.roles[origin].relay,
                               GATEWAY_ID,
@@ -814,6 +814,8 @@ static int run_ttl_ladder_data_case(void)
                 CHECK(world.transmissions[route_reply_tx].has_outbound);
                 CHECK(world.transmissions[route_reply_tx].outbound.packet
                           .msg_type == MSG_ROUTE_REPLY);
+                CHECK(world.transmissions[route_reply_tx].outbound.packet.ttl ==
+                      MESH_NETWORK_MAX_HOPS);
                 CHECK(world.transmissions[route_reply_tx].outbound.next_hop_id ==
                       world.roles[relays[TTL_LADDER_RELAY_COUNT - 2u]].id);
                 route_identity = attempt_identity;
@@ -872,6 +874,8 @@ static int run_ttl_ladder_data_case(void)
             CHECK(reception.radio.source_id == world.roles[sender].id);
             CHECK(reception.radio.receiver_id == world.roles[receiver].id);
             CHECK(reception.radio.packet.msg_type == MSG_ROUTE_REPLY);
+            CHECK(reception.radio.packet.ttl ==
+                  (uint8_t)(MESH_NETWORK_MAX_HOPS - reverse_step));
             CHECK(capture_discovery_identity(&reception.radio,
                                              true,
                                              &reply_identity) == PROTO_OK);
@@ -919,7 +923,7 @@ static int run_ttl_ladder_data_case(void)
 
         CHECK(selected != NULL);
         CHECK(selected->next_hop_id == world.roles[path[i + 1u]].id);
-        CHECK(selected->hop_count == TTL_LADDER_HOP_COUNT - i);
+        CHECK(selected->hop_count == TTL_LADDER_HOP_COUNT - i - 1u);
         CHECK(selected->route_epoch == ROUTE_EPOCH);
     }
 
@@ -1095,7 +1099,7 @@ static int run_blank_anchor_retains_local_click_until_route_case(void)
     CHECK(world.roles[anchor].route_discovery_requests >= 3u);
     CHECK(world.roles[anchor].relay.route_discovery.attempts >= 3u);
 
-    CHECK(mesh_sim_install_route(&world, anchor, gateway, 1u, ROUTE_EPOCH) ==
+    CHECK(mesh_sim_install_route(&world, anchor, gateway, 0u, ROUTE_EPOCH) ==
           MESH_SIM_OK);
     world.now_us =
         (uint64_t)world.roles[anchor].relay.route_discovery.next_request_ms *
@@ -1258,9 +1262,14 @@ int main(void)
     CHECK(mesh_sim_set_link(&world, relay_1, relay_2, 93u, 11u) == MESH_SIM_OK);
     CHECK(mesh_sim_set_link(&world, relay_2, gateway, 98u, 5u) == MESH_SIM_OK);
     CHECK(mesh_sim_install_route(&world, relay_2, gateway, 1u,
+                                 ROUTE_EPOCH) == MESH_SIM_ERR_ARG);
+    CHECK(mesh_sim_install_route(&world, relay_1, relay_2, 0u,
+                                 ROUTE_EPOCH) == MESH_SIM_ERR_ARG);
+    CHECK(mesh_sim_install_route(&world, relay_2, gateway, 0u,
                                  ROUTE_EPOCH) == PROTO_OK);
     CHECK(assert_selected_hop(&world.roles[relay_2].relay,
                               GATEWAY_ID, GATEWAY_ID) == 0);
+    CHECK(route_selected(&world.roles[relay_2].relay.upstream)->hop_count == 0u);
     CHECK(mesh_relay_select_next_hop(&world.roles[origin].relay,
                                      GATEWAY_ID,
                                      &next_start_us) == PROTO_ERR_NOT_FOUND);
@@ -1425,6 +1434,9 @@ int main(void)
                               ORIGIN_ID, ORIGIN_ID) == 0);
     CHECK(assert_selected_hop(&world.roles[relay_2].relay,
                               ORIGIN_ID, RELAY_1_ID) == 0);
+    CHECK(route_selected(&world.roles[origin].relay.upstream)->hop_count == 2u);
+    CHECK(route_selected(&world.roles[relay_1].relay.upstream)->hop_count == 1u);
+    CHECK(route_selected(&world.roles[relay_2].relay.upstream)->hop_count == 0u);
 
     test_phase = "bounded_timing";
     completed_ms = (uint32_t)(reply_at_origin.radio.end_us / 1000u);

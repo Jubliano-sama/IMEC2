@@ -41,6 +41,7 @@ set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
     mesh_transmitter
     mesh_transmitter_forcedhop
     mesh_anchor
+    mesh_anchor_forcedhop
 )
 if(FIRMWARE_PRESET)
     if(IMEC_BUILD_PRESET AND NOT IMEC_BUILD_PRESET STREQUAL FIRMWARE_PRESET)
@@ -77,6 +78,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     mesh_transmitter
     mesh_transmitter_forcedhop
     mesh_anchor
+    mesh_anchor_forcedhop
 )
 set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile")
 set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test")
@@ -195,7 +197,8 @@ if(IMEC_BUILD_PRESET)
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_DEVICE_ID "0x3333333333333301ull" CACHE STRING
             "Override DEVICE_ID, for example 0x1111222233334444ull" FORCE)
-    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_anchor")
+    elseif(IMEC_BUILD_PRESET STREQUAL "mesh_anchor" OR
+           IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_PRESET_EXTRA_CONF "mesh-anchor.conf")
@@ -330,6 +333,11 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
                 "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n")
         endif()
+    endif()
+    if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
+        file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL=y\n")
     endif()
     list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
 endif()
@@ -466,6 +474,7 @@ else()
         ../src/mesh_preemption.c
         ../src/mesh_relay.c
         ../src/mesh_relay_channel9.c
+        ../src/mesh_route_path.c
         ../src/report.c
         ../src/serial_frame.c
         ../src/status.c

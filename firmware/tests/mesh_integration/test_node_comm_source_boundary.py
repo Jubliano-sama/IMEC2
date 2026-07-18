@@ -494,21 +494,42 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             self.assertNotIn(forbidden, header)
             self.assertNotIn(forbidden, source)
 
-    def test_gateway_single_ack_uses_bounded_communication_response(self):
+    def test_gateway_single_ack_sends_current_channel9_before_bounded_fallback(self):
         report = read_composed_source(APP_SRC / "app_mesh_report.c")
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
 
-        queue_start = report.index(
+        ack_path_start = report.index(
             "if (DEVICE_ROLE == ROLE_GATEWAY &&\n"
             "            received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD)"
         )
-        queue_end = report.index("app_mesh_gateway_ack_decide", queue_start)
-        queue_path = report[queue_start:queue_end]
+        ack_path_end = report.index(
+            "\n        app_mesh_gateway_ack_decide(&ack_state, &ack_decision);",
+            ack_path_start,
+        )
+        ack_path = report[ack_path_start:ack_path_end]
 
-        self.assertIn("app_node_comm_submit_control_response(", queue_path)
-        self.assertIn("goto after_gateway_ack", queue_path)
-        self.assertNotIn("mesh_store_route_waiting_tx(", queue_path)
-        self.assertNotIn("mesh_propose_event_after_channel5_contact(", queue_path)
+        immediate_action = ack_path.index(
+            "APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9"
+        )
+        guard = ack_path.index(
+            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", immediate_action
+        )
+        immediate_send = ack_path.index(
+            "mesh_send_outbound_keep_channel9_awake(", guard
+        )
+        send_success = ack_path.index("if (ret == 0)", immediate_send)
+        success_exit = ack_path.index("goto after_gateway_ack", send_success)
+        fallback_admission = ack_path.index(
+            "app_node_comm_submit_control_response(", success_exit
+        )
+
+        self.assertLess(immediate_action, guard)
+        self.assertLess(guard, immediate_send)
+        self.assertLess(immediate_send, send_success)
+        self.assertLess(send_success, success_exit)
+        self.assertLess(success_exit, fallback_admission)
+        self.assertNotIn("mesh_store_route_waiting_tx(", ack_path)
+        self.assertNotIn("mesh_propose_event_after_channel5_contact(", ack_path)
         self.assertIn("NODE_COMM_PROFILE_CONTROL_RESPONSE", facade)
         self.assertIn("mesh_try_send_control_response_view(", facade)
         self.assertIn("app_node_comm_reap_auto_terminal_events_locked()", facade)

@@ -108,6 +108,25 @@ uint64_t discovery_assignment_hash(uint64_t anchor_id)
     return value == 0u ? 1u : value;
 }
 
+bool discovery_assignment_response_custody_matches(
+    bool active,
+    uint32_t pending_epoch,
+    enum discovery_assignment_phase pending_phase,
+    uint32_t pending_session_id,
+    uint32_t incoming_epoch,
+    enum discovery_assignment_phase incoming_phase,
+    uint32_t incoming_session_id)
+{
+    return active &&
+           pending_epoch != 0u &&
+           pending_epoch == incoming_epoch &&
+           phase_valid(pending_phase) &&
+           pending_phase == incoming_phase &&
+           (pending_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
+            (pending_session_id != 0u &&
+             pending_session_id == incoming_session_id));
+}
+
 static bool claim_before(const struct discovery_assignment_claim *left,
                          const struct discovery_assignment_claim *right)
 {
@@ -571,6 +590,38 @@ uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
     return base_ms + (random_value % base_ms);
 }
 
+uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count)
+{
+    uint8_t effective_hop_count =
+        hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
+        hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+            DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
+
+    return DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS +
+           ((uint32_t)(effective_hop_count - 1u) *
+            DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS);
+}
+
+uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
+                                                   uint32_t response_delay_ms,
+                                                   uint8_t hop_count)
+{
+    uint64_t response_window_ms =
+        (uint64_t)response_delay_ms +
+        discovery_assignment_response_custody_ms(hop_count);
+
+    return UINT64_MAX - now_ms < response_window_ms ?
+           UINT64_MAX : now_ms + response_window_ms;
+}
+
+uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch)
+{
+    uint16_t membership_epoch =
+        (uint16_t)(assignment_epoch ^ (assignment_epoch >> 16u));
+
+    return membership_epoch == 0u ? 1u : membership_epoch;
+}
+
 uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
                                                    uint8_t max_hop_count)
 {
@@ -582,7 +633,72 @@ uint32_t discovery_assignment_collection_window_ms(uint8_t slot_count,
     effective_hop_count = max_hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
                           max_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
                           DISCOVERY_ASSIGNMENT_MAX_HOPS : max_hop_count;
-    return DISCOVERY_ASSIGNMENT_COLLECTION_BASE_MS +
-           ((uint32_t)slot_count * DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) +
-           (effective_hop_count * DISCOVERY_ASSIGNMENT_COLLECTION_PER_HOP_MS);
+    return discovery_assignment_response_custody_ms(
+               (uint8_t)effective_hop_count) +
+           DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+           ((uint32_t)(slot_count - 1u) *
+            DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_MS) +
+           ((DISCOVERY_ASSIGNMENT_MAX_HOPS - effective_hop_count) *
+            DISCOVERY_ASSIGNMENT_HOP_STAGGER_MS) +
+           DISCOVERY_ASSIGNMENT_RESPONSE_INITIAL_JITTER_MAX_MS;
+}
+
+uint64_t discovery_assignment_control_flood_deadline_ms(
+    uint64_t now_ms,
+    uint64_t operation_deadline_ms)
+{
+    uint64_t flood_deadline_ms;
+
+    if (operation_deadline_ms <= now_ms) {
+        return operation_deadline_ms;
+    }
+    flood_deadline_ms = UINT64_MAX - now_ms <
+                            DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS ?
+                        UINT64_MAX :
+                        now_ms + DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS;
+    return flood_deadline_ms < operation_deadline_ms ? flood_deadline_ms :
+                                                       operation_deadline_ms;
+}
+
+uint64_t discovery_assignment_response_ack_settle_deadline_ms(uint64_t now_ms)
+{
+    return UINT64_MAX - now_ms < DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS ?
+           UINT64_MAX : now_ms + DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS;
+}
+
+bool discovery_assignment_response_ack_settle_pending(
+    uint64_t now_ms,
+    uint64_t settle_deadline_ms)
+{
+    return settle_deadline_ms != 0u && now_ms < settle_deadline_ms;
+}
+
+int discovery_assignment_extract_expected_count(const uint8_t *payload,
+                                                 size_t payload_len,
+                                                 uint16_t *expected_count,
+                                                 bool *present)
+{
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (payload == NULL || expected_count == NULL || present == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
+                   &raw, &raw_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *expected_count = 0u;
+        *present = false;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK || raw_len != sizeof(uint16_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *expected_count = proto_get_u16_le(raw);
+    if (*expected_count == 0u || *expected_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *present = true;
+    return PROTO_OK;
 }

@@ -92,9 +92,18 @@ bool app_mesh_c5_route_capture_relevant(
     }
 
     if (state->msg_type == MSG_ROUTE_REQ) {
-        return state->src_id == state->target_id &&
+        return state->src_id != 0u &&
+               state->src_id != MESH_BROADCAST_ID &&
+               state->src_id != state->local_id &&
                state->dst_id == MESH_BROADCAST_ID &&
-               state->previous_hop_id == state->target_id;
+               state->previous_hop_id != 0u &&
+               state->previous_hop_id != MESH_BROADCAST_ID &&
+               state->previous_hop_id != state->local_id &&
+               state->route_request_target_id != 0u &&
+               state->route_request_target_id != MESH_BROADCAST_ID &&
+               (state->route_request_target_id == state->target_id ||
+                state->route_request_target_id == control_origin_id ||
+                state->route_request_target_id == state->local_id);
     }
 
     if (event_control_type(state->msg_type)) {
@@ -104,9 +113,25 @@ bool app_mesh_c5_route_capture_relevant(
     if ((state->control_followup || state->gateway_control_priority) &&
         control_origin_id != MESH_BROADCAST_ID &&
         state->src_id == control_origin_id) {
+        if (!app_mesh_c5_gateway_control_copy_allowed(
+                state->src_id,
+                state->previous_hop_id,
+                control_origin_id,
+                state->require_relayed_gateway_control)) {
+            return false;
+        }
+
         if (targeted_control_followup_type(state->msg_type) &&
-            state->dst_id == state->local_id) {
-            return targeted_control_previous_hop_valid(state);
+            state->dst_id != MESH_BROADCAST_ID) {
+            if (state->dst_id == state->local_id) {
+                return targeted_control_previous_hop_valid(state);
+            }
+            if (state->targeted_control_relay &&
+                state->dst_id != MESH_BROADCAST_ID &&
+                state->dst_id != state->local_id) {
+                return targeted_control_previous_hop_valid(state);
+            }
+            return false;
         }
 
         if (state->msg_type == MSG_COMMAND ||
@@ -122,8 +147,12 @@ bool app_mesh_c5_route_capture_relevant(
 bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type)
 {
     return msg_type == MSG_ROUTE_REPLY ||
-           msg_type == MSG_GATEWAY_ROUTE_ADV ||
-           msg_type == MSG_ROUTE_REQ;
+           msg_type == MSG_GATEWAY_ROUTE_ADV;
+}
+
+bool app_mesh_c5_route_capture_yields_to_competing_request(uint8_t msg_type)
+{
+    return msg_type == MSG_ROUTE_REQ;
 }
 
 bool app_mesh_c5_route_capture_requires_ack_hold(uint8_t msg_type)
@@ -250,6 +279,64 @@ bool app_mesh_c5_wake_claim_requires_anchor_handoff(uint8_t claim_flags,
            app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
 }
 
+bool app_mesh_c5_route_wake_claim_allowed(
+    uint64_t source_id,
+    uint64_t gateway_id,
+    uint8_t claim_flags,
+    bool require_relayed_route_req,
+    bool require_relayed_gateway_control)
+{
+    if (app_mesh_c5_wake_claim_preempts_mesh(claim_flags)) {
+        return true;
+    }
+
+    return source_id != gateway_id ||
+           (!require_relayed_route_req &&
+            !require_relayed_gateway_control);
+}
+
+bool app_mesh_c5_gateway_control_copy_allowed(
+    uint64_t source_id,
+    uint64_t previous_hop_id,
+    uint64_t gateway_id,
+    bool require_relayed_gateway_control)
+{
+    return !require_relayed_gateway_control ||
+           source_id != gateway_id ||
+           previous_hop_id != gateway_id;
+}
+
+bool app_mesh_c5_control_route_hint_is_first(
+    struct app_mesh_c5_control_route_history *history,
+    const struct app_mesh_c5_control_route_identity *identity)
+{
+    uint8_t index;
+
+    if (history == NULL || identity == NULL) {
+        return false;
+    }
+
+    for (index = 0u; index < APP_MESH_C5_CONTROL_ROUTE_HISTORY_SIZE; index++) {
+        const struct app_mesh_c5_control_route_identity *entry =
+            &history->entries[index];
+
+        if ((history->valid_mask & (1u << index)) != 0u &&
+            entry->route_epoch == identity->route_epoch &&
+            entry->session_id == identity->session_id &&
+            entry->seq == identity->seq &&
+            entry->msg_type == identity->msg_type) {
+            return false;
+        }
+    }
+
+    index = history->next_index;
+    history->entries[index] = *identity;
+    history->valid_mask |= (uint8_t)(1u << index);
+    history->next_index =
+        (uint8_t)((index + 1u) % APP_MESH_C5_CONTROL_ROUTE_HISTORY_SIZE);
+    return true;
+}
+
 bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags)
 {
     return !app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
@@ -352,10 +439,14 @@ uint32_t app_mesh_c5_connected_gap_reschedule_ms(
 
 enum app_mesh_c5_connected_gap_rx_action
 app_mesh_c5_connected_gap_rx_action(bool click_claim,
+                                    bool route_control_claim,
                                     bool deadline_reached)
 {
     if (click_claim) {
         return APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK;
+    }
+    if (route_control_claim) {
+        return APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL;
     }
     if (deadline_reached) {
         return APP_MESH_C5_CONNECTED_GAP_RX_COMPLETE;

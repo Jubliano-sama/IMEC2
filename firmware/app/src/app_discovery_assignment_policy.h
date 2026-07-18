@@ -18,6 +18,7 @@ enum app_discovery_assignment_claim_decision {
 
 enum app_discovery_assignment_table_decision {
     APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY = 0,
+    APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY,
     APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM,
     APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE,
     APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID,
@@ -28,6 +29,11 @@ enum app_discovery_assignment_work_request {
     APP_DISCOVERY_ASSIGNMENT_WORK_ALREADY_PENDING,
     APP_DISCOVERY_ASSIGNMENT_WORK_WAIT_STALE,
     APP_DISCOVERY_ASSIGNMENT_WORK_INVALID,
+};
+
+enum app_discovery_assignment_terminal_phase {
+    APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM = 0,
+    APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
 };
 
 struct app_discovery_assignment_work_guard {
@@ -145,21 +151,40 @@ app_discovery_assignment_policy_note_table(
         if (epoch != policy->joining_epoch) {
             return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
         }
-        if (policy->joining_table_seq != 0u &&
-            (table_seq == policy->joining_table_seq ?
-                 table_fingerprint != policy->joining_table_fingerprint :
-                 !app_discovery_assignment_table_seq_newer(
-                     table_seq, policy->joining_table_seq))) {
-            return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+        if (policy->joining_table_seq != 0u) {
+            if (table_seq == policy->joining_table_seq) {
+                if (table_fingerprint !=
+                    policy->joining_table_fingerprint) {
+                    return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+                }
+                if (!policy->claim_observed) {
+                    return APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM;
+                }
+                return epoch == policy->committed_epoch &&
+                               table_seq == policy->committed_table_seq &&
+                               table_fingerprint ==
+                                   policy->committed_table_fingerprint ?
+                       APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY :
+                       APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY;
+            }
+            if (!app_discovery_assignment_table_seq_newer(
+                    table_seq, policy->joining_table_seq)) {
+                return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+            }
         }
         if (policy->joining_table_seq == 0u &&
             epoch == policy->committed_epoch &&
-            policy->committed_table_seq != 0u &&
-            (table_seq == policy->committed_table_seq ?
-                 table_fingerprint != policy->committed_table_fingerprint :
-                 !app_discovery_assignment_table_seq_newer(
-                     table_seq, policy->committed_table_seq))) {
-            return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+            policy->committed_table_seq != 0u) {
+            if (table_seq == policy->committed_table_seq) {
+                return table_fingerprint ==
+                               policy->committed_table_fingerprint ?
+                       APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY :
+                       APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+            }
+            if (!app_discovery_assignment_table_seq_newer(
+                    table_seq, policy->committed_table_seq)) {
+                return APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
+            }
         }
         policy->joining_table_seq = table_seq;
         policy->joining_table_fingerprint = table_fingerprint;
@@ -171,7 +196,7 @@ app_discovery_assignment_policy_note_table(
         policy->committed_table_seq != 0u) {
         if (table_seq == policy->committed_table_seq) {
             return table_fingerprint == policy->committed_table_fingerprint ?
-                   APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY :
+                   APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY :
                    APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE;
         }
         if (!app_discovery_assignment_table_seq_newer(
@@ -202,15 +227,16 @@ static inline bool app_discovery_assignment_policy_commit(
     uint32_t table_fingerprint)
 {
     if (policy == NULL || epoch == 0u || table_seq == 0u ||
-        table_fingerprint == 0u ||
-        (policy->joining_epoch != 0u &&
-         (policy->joining_epoch != epoch || !policy->claim_observed ||
-          policy->joining_table_seq != table_seq ||
-          policy->joining_table_fingerprint != table_fingerprint)) ||
-        (policy->joining_epoch == 0u &&
-         (policy->committed_epoch != epoch ||
-          policy->committed_table_seq != table_seq ||
-          policy->committed_table_fingerprint != table_fingerprint))) {
+        table_fingerprint == 0u) {
+        return false;
+    }
+    if (!((policy->joining_epoch == epoch && policy->claim_observed &&
+           policy->joining_table_seq == table_seq &&
+           policy->joining_table_fingerprint == table_fingerprint) ||
+          ((policy->joining_epoch == 0u || policy->joining_epoch == epoch) &&
+           policy->committed_epoch == epoch &&
+           policy->committed_table_seq == table_seq &&
+           policy->committed_table_fingerprint == table_fingerprint))) {
         return false;
     }
 
@@ -238,15 +264,17 @@ static inline bool app_discovery_assignment_policy_note_unassigned(
     uint32_t table_fingerprint)
 {
     if (policy == NULL || epoch == 0u || table_seq == 0u ||
-        table_fingerprint == 0u ||
-        (policy->joining_epoch != 0u &&
-         (policy->joining_epoch != epoch || !policy->claim_observed ||
-          policy->joining_table_seq != table_seq ||
-          policy->joining_table_fingerprint != table_fingerprint)) ||
-        (policy->joining_epoch == 0u &&
-         (policy->provisioned || policy->committed_epoch != epoch ||
-          policy->committed_table_seq != table_seq ||
-          policy->committed_table_fingerprint != table_fingerprint))) {
+        table_fingerprint == 0u) {
+        return false;
+    }
+    if (!((policy->joining_epoch == epoch && policy->claim_observed &&
+           policy->joining_table_seq == table_seq &&
+           policy->joining_table_fingerprint == table_fingerprint) ||
+          (!policy->provisioned &&
+           (policy->joining_epoch == 0u || policy->joining_epoch == epoch) &&
+           policy->committed_epoch == epoch &&
+           policy->committed_table_seq == table_seq &&
+           policy->committed_table_fingerprint == table_fingerprint))) {
         return false;
     }
 
@@ -265,10 +293,32 @@ static inline bool app_discovery_assignment_policy_note_unassigned(
 }
 
 static inline bool app_discovery_assignment_operation_expired(
-    uint32_t now_ms,
-    uint32_t deadline_ms)
+    uint64_t now_ms,
+    uint64_t deadline_ms)
 {
-    return (int32_t)(now_ms - deadline_ms) >= 0;
+    return now_ms >= deadline_ms;
+}
+
+static inline bool app_discovery_assignment_semantic_terminal_success(
+    enum app_discovery_assignment_terminal_phase phase,
+    uint16_t expected_claim_count,
+    size_t accepted_claim_count,
+    uint8_t missing_ack_count,
+    uint8_t attempts_started,
+    bool operation_expired,
+    bool cancelled)
+{
+    if (attempts_started == 0u || operation_expired || cancelled) {
+        return false;
+    }
+    if (phase == APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM) {
+        return expected_claim_count != 0u &&
+               accepted_claim_count >= expected_claim_count;
+    }
+    if (phase == APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE) {
+        return accepted_claim_count > 0u && missing_ack_count == 0u;
+    }
+    return false;
 }
 
 static inline uint8_t app_discovery_assignment_claim_round_limit(

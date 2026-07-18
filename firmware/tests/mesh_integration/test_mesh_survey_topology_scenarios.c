@@ -317,7 +317,7 @@ static int run_report_batch(size_t anchor_count,
                                             &connections[connection_count]) ==
                     MESH_SIM_OK);
             REQUIRE(mesh_sim_install_route(&world, nodes[index], parent,
-                                           (uint8_t)(depth + 1u), ROUTE_EPOCH) ==
+                                           (uint8_t)depth, ROUTE_EPOCH) ==
                     PROTO_OK);
             connection_count++;
         }
@@ -1142,9 +1142,9 @@ static int test_multihop_route_loss_recovers_exactly_once(void)
                                     &connections[0]) == MESH_SIM_OK);
     REQUIRE(mesh_sim_add_connection(&world, relay, gateway, &upstream_params,
                                     true, &connections[1]) == MESH_SIM_OK);
-    REQUIRE(mesh_sim_install_route(&world, child, relay, 2u, ROUTE_EPOCH) ==
+    REQUIRE(mesh_sim_install_route(&world, child, relay, 1u, ROUTE_EPOCH) ==
             PROTO_OK);
-    REQUIRE(mesh_sim_install_route(&world, relay, gateway, 1u, ROUTE_EPOCH) ==
+    REQUIRE(mesh_sim_install_route(&world, relay, gateway, 0u, ROUTE_EPOCH) ==
             PROTO_OK);
     REQUIRE(mesh_sim_install_downlink(&world, relay, ANCHOR_ID_BASE + 1u,
                                       child, 1u, ROUTE_EPOCH) == MESH_SIM_OK);
@@ -1316,7 +1316,7 @@ static int test_survey_ttl_exhaustion_fails_explicitly(void)
         REQUIRE(mesh_sim_add_connection(&world, nodes[child], parent, &params,
                                         true, &connections[child]) == MESH_SIM_OK);
         REQUIRE(mesh_sim_install_route(&world, nodes[child], parent,
-                                       (uint8_t)(child + 1u), ROUTE_EPOCH) ==
+                                       child, ROUTE_EPOCH) ==
                 PROTO_OK);
     }
     REQUIRE(build_report(5u, 4u, 88u, &packet, payload, &payload_len) ==

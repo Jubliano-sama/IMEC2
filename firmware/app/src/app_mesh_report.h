@@ -101,6 +101,7 @@ enum mesh_c5_control_send_mode {
 
 int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks);
 int app_mesh_report_attach_gateway_ack_store(void);
+int app_mesh_report_attach_anchor_downlink_store(void);
 int anchor_append_sequence_time_tlvs(uint8_t *payload,
                                      size_t payload_cap,
                                      size_t *payload_len,

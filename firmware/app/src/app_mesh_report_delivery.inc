@@ -1617,12 +1617,6 @@ static bool mesh_forward_uses_child_gateway_ack_queue(
            mesh_id_is_unicast(out->next_hop_id);
 }
 
-static bool mesh_parent_contact_failure_is_hard(int ret)
-{
-    return ret == -ETIMEDOUT || ret == -EHOSTUNREACH ||
-           ret == -ENOTCONN || ret == -ECONNRESET;
-}
-
 static void mesh_handle_result_actions(const struct mesh_relay_result *result,
                                        uint8_t received_radio_channel,
                                        const struct mesh_rx_pending *rx,
@@ -1709,6 +1703,45 @@ static void mesh_handle_result_actions(const struct mesh_relay_result *result,
             received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
             const uint64_t ack_deadline_ms = (uint64_t)k_uptime_get() +
                 MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS;
+
+            app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
+            if (ack_decision.action ==
+                APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9) {
+                const struct app_mesh_rf_retry_key retry_key =
+                    mesh_rf_retry_packet_key(
+                        &gateway_ack->packet,
+                        APP_MESH_RF_RETRY_OPERATION_DEFERRED_GATEWAY_ACK);
+
+                gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
+                status_debug_printf("DBG_GATEWAY_ACK_GUARD ms=%u seq=%u\n",
+                                    MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
+                                    gateway_ack->packet.seq);
+                k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
+                ret = mesh_send_outbound_keep_channel9_awake(
+                    gateway_ack, ack_decision.reason, NULL);
+                status_debug_printf("DBG_GATEWAY_ACK_SEND ret=%d seq=%u dst=0x%llx next=0x%llx\n",
+                                    ret,
+                                    gateway_ack->packet.seq,
+                                    (unsigned long long)gateway_ack->packet.dst_id,
+                                    (unsigned long long)gateway_ack->next_hop_id);
+                if (ret == 0) {
+                    app_mesh_rf_retry_note_success(
+                        &mesh_deferred_gateway_ack_rf_retry,
+                        &retry_key);
+                    mesh_relay_note_tx_sent(&mesh_runtime,
+                                            gateway_ack,
+                                            k_uptime_get_32());
+                    mesh_note_channel9_local_tx(gateway_ack->next_hop_id,
+                                                k_uptime_get_32());
+                    high_debug_log_event(
+                        "GATEWAY_ACK_TX",
+                        "mode=current-channel9 dst=0x%016llx next=0x%016llx seq=%u",
+                        (unsigned long long)gateway_ack->packet.dst_id,
+                        (unsigned long long)gateway_ack->next_hop_id,
+                        gateway_ack->packet.seq);
+                    goto after_gateway_ack;
+                }
+            }
 
             gateway_ack->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
             gateway_ack->earliest_tx_ms = 0u;
@@ -1919,6 +1952,18 @@ after_gateway_ack:
                 &result->forward,
                 mesh_c5_purpose_for_packet(&result->forward.packet),
                 "broadcast-forward");
+        } else if (result->forward.packet.src_id == GATEWAY_ID &&
+                   mesh_id_is_unicast(result->forward.packet.dst_id) &&
+                   (result->forward.packet.msg_type == MSG_COMMAND ||
+                    result->forward.packet.msg_type ==
+                        MSG_SURVEY_PAIR_PREPARE)) {
+            struct mesh_outbound control_forward = result->forward;
+
+            control_forward.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+            ret = mesh_send_c5_flood_response(
+                &control_forward,
+                C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
+                "targeted-gateway-control-forward");
         } else if (mesh_forward_uses_child_gateway_ack_queue(
                        &result->forward,
                        received_radio_channel)) {
@@ -2372,12 +2417,18 @@ after_gateway_ack:
         uint64_t route_ready_next_hop_id = selected != NULL ? selected->next_hop_id : 0u;
         const struct app_mesh_route_ready_handoff_state route_ready_state = {
             .selected_route_valid = selected != NULL,
+            .selected_timing_valid =
+                selected != NULL && selected->channel9_timing_valid,
+            .selected_is_unscheduled_gateway =
+                route_ready_next_hop_id == GATEWAY_ID,
             .rx_queue_pending = k_msgq_num_used_get(&mesh_rx_msgq) > 0u,
             .deferred_peer_valid = mesh_id_is_unicast(mesh_route_ready_event_peer_id),
             .selected_peer_id = route_ready_next_hop_id,
             .deferred_peer_id = mesh_route_ready_event_peer_id,
         };
         struct app_mesh_route_ready_handoff_result route_ready_result;
+
+        atomic_inc(&mesh_route_ready_generation);
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_ROUTE_READY\n");
@@ -2388,8 +2439,9 @@ after_gateway_ack:
         app_mesh_route_ready_handoff_on_ready(&route_ready_state,
                                               &route_ready_result);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ROUTE_READY_DECISION sel=%u next=0x%llx rxq=%u def=0x%llx now=%u drain=%u waittx=%u prop=%u clear=%u\n",
+            status_debug_printf("DBG_ROUTE_READY_DECISION sel=%u timing=%u next=0x%llx rxq=%u def=0x%llx now=%u drain=%u waittx=%u prop=%u clear=%u\n",
                                 route_ready_state.selected_route_valid ? 1u : 0u,
+                                route_ready_state.selected_timing_valid ? 1u : 0u,
                                 (unsigned long long)route_ready_state.selected_peer_id,
                                 k_msgq_num_used_get(&mesh_rx_msgq),
                                 (unsigned long long)mesh_route_ready_event_peer_id,
@@ -2441,7 +2493,10 @@ after_gateway_ack:
         }
     }
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
-        int comm_ret = app_node_comm_note_gateway_confirmed(confirmed_packet);
+        const bool locally_originated =
+            confirmed_packet != NULL && confirmed_packet->src_id == DEVICE_ID;
+        int comm_ret = locally_originated ?
+            app_node_comm_note_gateway_confirmed(confirmed_packet) : -ENOENT;
 
         HIGH_DEBUG_COUNTER_INC(mesh_ack);
         LOG_INF("mesh pending TX gateway acknowledged");
@@ -2449,7 +2504,7 @@ after_gateway_ack:
             LOG_WRN("node communication gateway confirmation rejected: ret=%d",
                     comm_ret);
         }
-        if (mesh_report_callbacks != NULL &&
+        if (locally_originated && mesh_report_callbacks != NULL &&
             mesh_report_callbacks->anchor_survey_delivery_gateway_confirmed != NULL) {
             mesh_report_callbacks->anchor_survey_delivery_gateway_confirmed(
                 confirmed_packet);
@@ -2613,6 +2668,8 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             mesh_gateway_delivery_requires_semantic_acceptance(
                 &pending->packet)) {
+            bool internal_control =
+                mesh_gateway_delivery_is_internal_control(pending);
             int reservation_ret;
             int semantic_ret;
 
@@ -2624,11 +2681,18 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
              */
             mesh_rx_pending_refresh_age(pending, k_uptime_get_32());
             gateway_semantic_delivery_processed = true;
-            reservation_ret = gateway_ble_reserve_stream_packet(
-                &pending->packet,
-                pending->payload,
-                pending->payload_len,
-                pending->received_at_ms);
+            reservation_ret = internal_control ? 1 :
+                gateway_ble_reserve_stream_packet(
+                    &pending->packet,
+                    pending->payload,
+                    pending->payload_len,
+                    pending->received_at_ms);
+            if (internal_control &&
+                IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_GATEWAY_INTERNAL_CONTROL_ACCEPT src=0x%llx seq=%u\n",
+                                    (unsigned long long)pending->packet.src_id,
+                                    pending->packet.seq);
+            }
             if (reservation_ret != 1) {
                 LOG_WRN("gateway semantic delivery deferred for BLE custody: msg=0x%02x src=0x%016llx ret=%d",
                         pending->packet.msg_type,
@@ -2637,13 +2701,16 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
             } else {
                 semantic_ret = mesh_gateway_accept_semantic_delivery(pending);
                 if (semantic_ret < 0) {
-                    gateway_ble_cancel_stream_reservation();
+                    if (!internal_control) {
+                        gateway_ble_cancel_stream_reservation();
+                    }
                     LOG_WRN("gateway semantic delivery rejected without ACK: msg=0x%02x src=0x%016llx ret=%d",
                             pending->packet.msg_type,
                             (unsigned long long)pending->packet.src_id,
                             semantic_ret);
                 } else if (semantic_ret ==
-                           APP_GATEWAY_SEMANTIC_ACCEPT_NEW) {
+                               APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+                           !internal_control) {
                     ret = gateway_ble_commit_stream_reservation(
                         &pending->packet,
                         pending->payload,
@@ -2662,7 +2729,7 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                         pending->payload_len,
                         pending->received_at_ms,
                         k_msgq_num_used_get(&mesh_rx_msgq));
-                } else {
+                } else if (!internal_control) {
                     gateway_ble_cancel_stream_reservation();
                 }
 

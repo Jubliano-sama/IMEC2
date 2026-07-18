@@ -298,14 +298,14 @@ static void run_production_case(uint32_t index, struct delivery_metrics *metrics
     CHECK(mesh_sim_install_route(&world,
                                  source,
                                  next_hop,
-                                 relayed ? 2u : 1u,
+                                 relayed ? 1u : 0u,
                                  DELIVERY_ROUTE_EPOCH) == PROTO_OK,
           "source route seed=0x%08" PRIx32, seed);
     if (relayed) {
         CHECK(mesh_sim_install_route(&world,
                                      relay,
                                      gateway,
-                                     1u,
+                                     0u,
                                      DELIVERY_ROUTE_EPOCH) == PROTO_OK &&
                   mesh_sim_install_downlink(&world,
                                             relay,

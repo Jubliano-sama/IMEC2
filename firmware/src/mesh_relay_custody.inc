@@ -772,14 +772,21 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
                                 int *status)
 {
     const struct mesh_pending_tx *pending = &relay->pending;
+    bool ack_targets_local;
+    bool ack_targets_transit_origin;
     bool contains = false;
     int ret;
 
     if (status != NULL) {
         *status = PROTO_OK;
     }
+    ack_targets_local = packet->dst_id == relay->local_id;
+    ack_targets_transit_origin =
+        packet->msg_type == MSG_GATEWAY_ACK &&
+        pending->packet.src_id != relay->local_id &&
+        packet->dst_id == pending->packet.src_id;
     if (pending->state == MESH_RELAY_TX_IDLE ||
-        packet->dst_id != relay->local_id ||
+        (!ack_targets_local && !ack_targets_transit_origin) ||
         packet->session_id != pending->packet.session_id ||
         previous_hop_id != pending->next_hop_id) {
         return false;
@@ -795,13 +802,24 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
     return contains;
 }
 
+static bool gateway_ack_targets_pending_transit_origin(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet)
+{
+    return relay != NULL && packet != NULL &&
+           packet->msg_type == MSG_GATEWAY_ACK &&
+           relay->pending.state != MESH_RELAY_TX_IDLE &&
+           relay->pending.packet.src_id != relay->local_id &&
+           packet->dst_id == relay->pending.packet.src_id;
+}
+
 static void refresh_downlink(struct mesh_relay *relay,
                              uint64_t target_id,
                              uint64_t next_hop_id,
                              uint32_t now_ms)
 {
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        struct mesh_downlink_entry *entry = downlink_at_mutable(relay, i);
 
         if (entry->valid &&
             entry->target_id == target_id &&
@@ -1436,6 +1454,12 @@ static int handle_local_busy(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+static int build_forward(const struct mesh_relay *relay,
+                         const struct proto_packet *packet,
+                         const uint8_t *payload,
+                         size_t payload_len,
+                         struct mesh_outbound *out);
+
 static int handle_local_ack(struct mesh_relay *relay,
                             const struct proto_packet *packet,
                             const uint8_t *payload,
@@ -1444,10 +1468,14 @@ static int handle_local_ack(struct mesh_relay *relay,
                             uint32_t now_ms,
                             struct mesh_relay_result *result)
 {
+    bool transit_gateway_ack;
     int ret;
 
-    if (packet->dst_id != relay->local_id ||
-        (packet->msg_type != MSG_GATEWAY_ACK && packet->msg_type != MSG_MESH_HOP_ACK)) {
+    transit_gateway_ack = gateway_ack_targets_pending_transit_origin(relay,
+                                                                     packet);
+    if ((packet->dst_id != relay->local_id && !transit_gateway_ack) ||
+        (packet->msg_type != MSG_GATEWAY_ACK &&
+         packet->msg_type != MSG_MESH_HOP_ACK)) {
         return PROTO_OK;
     }
 
@@ -1470,10 +1498,39 @@ static int handle_local_ack(struct mesh_relay *relay,
 
     if (packet->msg_type == MSG_GATEWAY_ACK &&
         (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
-         relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
+         relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
+         relay->pending.state ==
+             MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD) &&
         packet->src_id == relay->gateway_id) {
         if (relay->outbox_record.delivery_state ==
             MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK) {
+            return PROTO_OK;
+        }
+        if (transit_gateway_ack) {
+            ret = build_forward(relay,
+                                packet,
+                                payload,
+                                payload_len,
+                                &result->forward);
+            if (ret != PROTO_OK) {
+                result->status = ret;
+                result->actions |= MESH_RELAY_ACTION_DROP;
+                return ret;
+            }
+            /*
+             * This is only phase one.  Keep the original transit packet and
+             * persistent outbox live until the app proves that this exact ACK
+             * physically reached its child-directed transmit path.
+             */
+            pending_refresh_age(&relay->pending, now_ms);
+            outbox_record_sync_age_from_pending(relay, now_ms);
+            relay->pending.state =
+                MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD;
+            relay->pending.gateway_ack_forward_pending = true;
+            relay->pending.gateway_ack_deadline_ms =
+                now_ms + MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS;
+            result->actions |= MESH_RELAY_ACTION_FORWARD |
+                MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING;
             return PROTO_OK;
         }
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
@@ -1490,6 +1547,58 @@ static int handle_local_ack(struct mesh_relay *relay,
         result->actions |= MESH_RELAY_ACTION_TX_HOP_PROGRESS;
     }
 
+    return PROTO_OK;
+}
+
+int mesh_relay_commit_transit_gateway_ack_forward(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *forwarded_ack,
+    uint32_t now_ms,
+    uint32_t *actions)
+{
+    bool contains = false;
+    int ret;
+
+    if (relay == NULL || forwarded_ack == NULL || actions == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    *actions = MESH_RELAY_ACTION_NONE;
+    if (relay->pending.state == MESH_RELAY_TX_IDLE ||
+        !relay->pending.gateway_ack_forward_pending ||
+        relay->pending.packet.src_id == relay->local_id ||
+        relay->outbox_record.delivery_state ==
+            MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK ||
+        forwarded_ack->packet.msg_type != MSG_GATEWAY_ACK ||
+        forwarded_ack->packet.src_id != relay->gateway_id ||
+        forwarded_ack->packet.dst_id != relay->pending.packet.src_id ||
+        forwarded_ack->packet.session_id !=
+            relay->pending.packet.session_id ||
+        forwarded_ack->packet.payload_len != forwarded_ack->payload_len ||
+        forwarded_ack->payload_len == 0u ||
+        forwarded_ack->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        !id_is_unicast(forwarded_ack->next_hop_id) ||
+        forwarded_ack->next_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = ack_payload_contains_seq(forwarded_ack->payload,
+                                   forwarded_ack->payload_len,
+                                   relay->pending.packet.seq,
+                                   &contains);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!contains) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    mesh_relay_note_route_discovery_ready(relay,
+                                          relay->pending.packet.dst_id);
+    outbox_record_mark_gateway_acked(relay, now_ms);
+    relay->pending.gateway_ack_forward_pending = false;
+    relay->pending.state = MESH_RELAY_TX_IDLE;
+    route_record_success_at(&relay->upstream, now_ms);
+    *actions = MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
     return PROTO_OK;
 }
 
@@ -1523,6 +1632,34 @@ static int build_forward(const struct mesh_relay *relay,
 static bool packet_needs_forward(const struct mesh_relay *relay, const struct proto_packet *packet)
 {
     return packet->dst_id != relay->local_id && packet->dst_id != MESH_BROADCAST_ID;
+}
+
+static bool gateway_targeted_control_can_forward_independently(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    uint64_t previous_hop_id)
+{
+    const struct mesh_downlink_entry *downlink;
+
+    if (relay == NULL || packet == NULL ||
+        packet->src_id != relay->gateway_id ||
+        (packet->msg_type != MSG_COMMAND &&
+         packet->msg_type != MSG_SURVEY_PAIR_PREPARE) ||
+        !id_is_unicast(packet->dst_id) ||
+        packet->dst_id == relay->local_id ||
+        packet->ttl <= 1u ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id) {
+        return false;
+    }
+
+    downlink = mesh_relay_find_downlink(relay, packet->dst_id);
+    return downlink != NULL && downlink->valid &&
+           downlink->route_epoch == relay->upstream.current_epoch &&
+           downlink->gateway_id == relay->gateway_id &&
+           id_is_unicast(downlink->next_hop_id) &&
+           downlink->next_hop_id != relay->local_id &&
+           downlink->next_hop_id != previous_hop_id;
 }
 
 bool mesh_relay_packet_requires_channel9_payload_event(
@@ -2129,9 +2266,10 @@ static void rollback_reactive_route(struct mesh_relay *relay,
         relay->upstream = rollback->state.upstream;
     } else if (rollback->kind == REACTIVE_ROUTE_ROLLBACK_DOWNLINK &&
                rollback->state.downlink.valid &&
-               rollback->state.downlink.index < MESH_RELAY_DOWNLINK_ROUTES) {
-        relay->downlinks[rollback->state.downlink.index] =
-            rollback->state.downlink.previous;
+               rollback->state.downlink.index <
+                   mesh_relay_downlink_capacity(relay)) {
+        *downlink_at_mutable(relay, rollback->state.downlink.index) =
+             rollback->state.downlink.previous;
     }
     rollback->kind = REACTIVE_ROUTE_ROLLBACK_NONE;
 }

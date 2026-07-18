@@ -1371,8 +1371,9 @@ static bool mesh_outbound_is_local_origin_priority(const struct mesh_outbound *o
 #if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_runtime_has_transit_reservation(void)
 {
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *downlink = &mesh_runtime.downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(&mesh_runtime); i++) {
+        const struct mesh_downlink_entry *downlink =
+            mesh_relay_downlink_at(&mesh_runtime, i);
 
         if (!downlink->valid) {
             continue;
@@ -1398,8 +1399,9 @@ static uint8_t mesh_collect_active_transit_peers(uint64_t *peers, uint8_t peer_c
         return 0u;
     }
 
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *downlink = &mesh_runtime.downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(&mesh_runtime); i++) {
+        const struct mesh_downlink_entry *downlink =
+            mesh_relay_downlink_at(&mesh_runtime, i);
         uint64_t peer_id = downlink->next_hop_id;
         bool duplicate = false;
         bool timing_valid = false;
@@ -1774,6 +1776,76 @@ static void mesh_defer_route_for_outbound(const struct mesh_outbound *out,
     } else {
         (void)mesh_schedule_route_request(out->packet.dst_id, reason);
     }
+}
+
+static bool mesh_parent_contact_failure_is_hard(int ret)
+{
+    return ret == -ETIMEDOUT || ret == -EHOSTUNREACH ||
+           ret == -ENOTCONN || ret == -ECONNRESET;
+}
+
+static bool mesh_try_repair_selected_parent_event(
+    const struct mesh_outbound *out,
+    const char *reason,
+    int select_ret,
+    uint64_t selected_next_hop,
+    bool store_route_wait,
+    uint32_t *wait_retry_delay_ms)
+{
+    uint32_t retry_delay_ms = RELAY_BUSY_RETRY_MIN_MS;
+    bool repair_active;
+    bool hard_failure;
+    int repair_ret;
+
+    if (out == NULL || select_ret != PROTO_OK ||
+        !mesh_id_is_unicast(selected_next_hop) ||
+        selected_next_hop == DEVICE_ID || selected_next_hop == GATEWAY_ID) {
+        return false;
+    }
+
+    if (store_route_wait) {
+        mesh_store_route_waiting_tx(out);
+    }
+    repair_ret = mesh_propose_event_after_channel5_contact(
+        selected_next_hop, "initial-tx-event-repair");
+    repair_active = mesh_event_propose_retry.active;
+    hard_failure = !repair_active && repair_ret < 0 &&
+        mesh_parent_contact_failure_is_hard(repair_ret);
+
+    if (repair_active && mesh_event_propose_retry.retry_due_ms != 0u) {
+        retry_delay_ms = uptime_ms_until_deadline(
+            k_uptime_get_32(), mesh_event_propose_retry.retry_due_ms);
+        if (retry_delay_ms == 0u) {
+            retry_delay_ms = 1u;
+        }
+    } else if (repair_ret == 0) {
+        retry_delay_ms = 1u;
+    }
+    if (wait_retry_delay_ms != NULL) {
+        *wait_retry_delay_ms = retry_delay_ms;
+    }
+
+    if (hard_failure) {
+        mesh_relay_invalidate_upstream_route(&mesh_runtime);
+        if (store_route_wait) {
+            (void)mesh_schedule_route_request(out->packet.dst_id,
+                                              "initial-tx-event-repair-failed");
+        } else {
+            mesh_defer_route_for_outbound(out,
+                                           "initial-tx-event-repair-failed",
+                                           false);
+        }
+    }
+    status_debug_printf(
+        "DBG_INITIAL_TX_EVENT_REPAIR peer=0x%llx repair=%d active=%u hard=%u delay=%u seq=%u reason=%s\n",
+        (unsigned long long)selected_next_hop,
+        repair_ret,
+        repair_active ? 1u : 0u,
+        hard_failure ? 1u : 0u,
+        retry_delay_ms,
+        out->packet.seq,
+        reason == NULL ? "mesh-tx" : reason);
+    return true;
 }
 
 static void mesh_drop_route_waiting_tx(const char *reason)
@@ -2576,6 +2648,15 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
             LOG_WRN("mesh channel-9 timing unavailable for %s; refreshing channel-5 contact: ret=%d",
                     reason,
                     ret);
+            if (mesh_try_repair_selected_parent_event(
+                    &aged_out,
+                    reason,
+                    debug_select_ret,
+                    debug_next_hop,
+                    store_route_wait,
+                    wait_retry_delay_ms)) {
+                return -EHOSTUNREACH;
+            }
             mesh_defer_route_for_outbound(&aged_out, reason,
                                            store_route_wait);
             return -EHOSTUNREACH;
@@ -2667,8 +2748,6 @@ send_prepared:
         }
         if (mesh_defer_active_collection_result("send-failure")) {
             if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
-                mesh_relay_note_delivery_failure(&mesh_runtime,
-                                                 mesh_runtime.pending.packet.dst_id);
                 (void)mesh_schedule_route_request(
                     mesh_runtime.pending.packet.dst_id, reason);
             }
@@ -2677,7 +2756,7 @@ send_prepared:
         mesh_relay_cancel_tx(&mesh_runtime);
         app_mesh_persistence_clear_outbox();
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
-            mesh_relay_note_delivery_failure(&mesh_runtime, tx.packet.dst_id);
+            /* No RF send completed, so no gateway-ACK cycle failed here. */
             mesh_defer_route_for_outbound(&tx, reason, store_route_wait);
         }
         return ret;

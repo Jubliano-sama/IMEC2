@@ -23,6 +23,7 @@ add_library(core
     src/uwb_ble_courtesy.c
     src/uwb_session.c
     src/mesh.c
+    src/mesh_route_path.c
     src/node_comm.c
     src/node_transaction.c
     src/watchdog_adoption.c
@@ -318,6 +319,11 @@ add_test(NAME route_refresh_source_boundary
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_route_refresh_source_boundary.py)
 set_tests_properties(route_refresh_source_boundary
     PROPERTIES LABELS "mesh_integration;hardware_models;communication;gateway_command;route;static_analysis")
+add_test(NAME route_control_wire_source_boundary
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_route_control_wire_source_boundary.py)
+set_tests_properties(route_control_wire_source_boundary
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;route;static_analysis")
 add_test(NAME node_comm_protocol_callers
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_protocol_callers.py)
@@ -541,6 +547,12 @@ add_executable(test_mesh tests/test_mesh.c)
 target_link_libraries(test_mesh PRIVATE core)
 add_test(NAME mesh COMMAND test_mesh)
 
+add_executable(test_mesh_route_path tests/test_mesh_route_path.c)
+target_link_libraries(test_mesh_route_path PRIVATE core)
+add_test(NAME mesh_route_path COMMAND test_mesh_route_path)
+set_tests_properties(mesh_route_path
+    PROPERTIES LABELS "mesh_integration;hardware_models;routing")
+
 add_executable(test_mesh_preemption tests/test_mesh_preemption.c)
 target_link_libraries(test_mesh_preemption PRIVATE core)
 add_test(NAME mesh_preemption COMMAND test_mesh_preemption)
@@ -659,6 +671,12 @@ set_tests_properties(dwm3000_receive_source_invariants
 add_executable(test_mesh_relay tests/test_mesh_relay.c)
 target_link_libraries(test_mesh_relay PRIVATE core)
 add_test(NAME mesh_relay COMMAND test_mesh_relay)
+
+add_executable(test_mesh_downlink_capacity tests/test_mesh_downlink_capacity.c)
+target_link_libraries(test_mesh_downlink_capacity PRIVATE core)
+add_test(NAME mesh_downlink_capacity COMMAND test_mesh_downlink_capacity)
+set_tests_properties(mesh_downlink_capacity PROPERTIES
+    LABELS "mesh_integration;hardware_models;routing;network_stress")
 
 add_executable(test_mesh_result_grant_retry_scenarios
     tests/mesh_integration/test_mesh_result_grant_retry_scenarios.c)

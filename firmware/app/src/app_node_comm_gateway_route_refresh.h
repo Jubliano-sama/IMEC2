@@ -51,6 +51,7 @@ struct app_node_comm_gateway_route_refresh_config {
 void app_node_comm_gateway_route_refresh_init(
     const struct app_node_comm_gateway_route_refresh_config *config,
     uint32_t sequence_seed);
+bool app_node_comm_gateway_route_refresh_ready(void);
 void app_node_comm_gateway_route_refresh_start(void);
 int app_node_comm_gateway_route_refresh_request(
     uint32_t delay_ms,

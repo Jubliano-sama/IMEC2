@@ -17,6 +17,7 @@ from .protocol import (
     CMD_FORCE_REDISCOVERY,
     COMMAND_NAMES,
     DEFAULT_HOST_ID,
+    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     GATEWAY_COMMAND_BUDGET_MAX_MS,
     GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_STREAM_FLAG_TRUNCATED,
@@ -95,6 +96,7 @@ ERROR_BG = "#fbe9e8"
 HEADER = "#252b30"
 SELECTION = "#d8ebe6"
 DEFAULT_COMMAND_BUDGET_TEXT = ""
+DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT = ""
 
 
 class Tooltip:
@@ -168,6 +170,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.error_text = tk.StringVar()
         self.host_id_text = tk.StringVar(value=f"0x{DEFAULT_HOST_ID:016x}")
         self.command_budget_text = tk.StringVar(value=DEFAULT_COMMAND_BUDGET_TEXT)
+        self.assignment_expected_anchors_text = tk.StringVar(
+            value=DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
+        )
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
         survey_id_seed = (time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1
@@ -337,6 +342,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         refresh = ttk.LabelFrame(parent, text="Gateway-Local Commands", padding=10)
         refresh.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         refresh.grid_columnconfigure(0, weight=1)
+        refresh.grid_columnconfigure(1, weight=1)
         ttk.Label(refresh, text="Connected gateway DEVICE_ID").grid(row=0, column=0, sticky="w")
         gateway_identity = ttk.Label(refresh, textvariable=self.gateway_id_text)
         gateway_identity.grid(row=1, column=0, sticky="w", pady=(3, 4))
@@ -348,13 +354,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             wraplength=295,
             justify="left",
         ).grid(row=2, column=0, sticky="w", pady=(0, 8))
+        self._labeled_spin(
+            refresh,
+            3,
+            "Expected anchors (optional)",
+            self.assignment_expected_anchors_text,
+            1,
+            50,
+        )
         self.refresh_button = ttk.Button(
             refresh,
             text="Refresh mesh routes (Here I Am)",
             style="Primary.TButton",
             command=self._send_here_i_am,
         )
-        self.refresh_button.grid(row=3, column=0, sticky="ew")
+        self.refresh_button.grid(row=4, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.refresh_button,
             "Send local CMD_FORCE_REDISCOVERY (0x000c). The gateway responds and schedules a priority GATEWAY_ROUTE_ADV flood.",
@@ -365,13 +379,15 @@ class GatewayGui(GatewayDiagnosticsMixin):
             style="Primary.TButton",
             command=self._send_assign_discovery_slots,
         )
-        self.assignment_button.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        self.assignment_button.grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
         Tooltip(
             self.assignment_button,
             "Send gateway-local CMD_ASSIGN_DISCOVERY_SLOTS (0x0104). Firmware collects anchor claims, floods the assignment table, and returns the assigned-anchor count.",
         )
         self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
-        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         contract = ttk.LabelFrame(parent, text="Command Surface", padding=10)
         contract.grid(row=3, column=0, sticky="ew")
@@ -682,9 +698,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
         return budget_ms
 
     @staticmethod
-    def _command_timeout_s(command_budget_ms: int | None) -> float:
+    def _command_timeout_s(
+        command_budget_ms: int | None,
+        default_budget_ms: int = GATEWAY_COMMAND_BUDGET_MAX_MS,
+    ) -> float:
         effective_budget_ms = (
-            GATEWAY_COMMAND_BUDGET_MAX_MS
+            default_budget_ms
             if command_budget_ms is None
             else command_budget_ms
         )
@@ -775,19 +794,31 @@ class GatewayGui(GatewayDiagnosticsMixin):
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
             command_budget_ms = self._command_budget_ms()
+            expected_anchor_count_raw = (
+                self.assignment_expected_anchors_text.get().strip()
+            )
+            expected_anchor_count = (
+                self._parse_int("Expected anchors", expected_anchor_count_raw)
+                if expected_anchor_count_raw
+                else None
+            )
             command = build_assign_discovery_slots_command(
                 host_id=host_id,
                 gateway_id=gateway_id,
                 session_id=session_id,
                 seq=seq,
                 command_budget_ms=command_budget_ms,
+                expected_anchor_count=expected_anchor_count,
             )
         except ValueError as exc:
             self._show_error(str(exc))
             return
         if not self._begin_gateway_command(
                 1, session_id, seq,
-                timeout_s=self._command_timeout_s(command_budget_ms)):
+                timeout_s=self._command_timeout_s(
+                    command_budget_ms,
+                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+                )):
             return
         self.status_text.set("Writing anchor enumeration and discovery-slot assignment request over BLE...")
         self.transport.send_frame(command.frame, command.label)

@@ -71,7 +71,7 @@ static void init_fixture(struct watchdog_fixture *fixture)
     CHECK(mesh_sim_install_route(&fixture->world,
                                  fixture->anchor,
                                  fixture->gateway,
-                                 1u,
+                                 0u,
                                  TEST_ROUTE_EPOCH) == PROTO_OK,
           "route setup failed");
     CHECK(mesh_sim_add_connection(&fixture->world,

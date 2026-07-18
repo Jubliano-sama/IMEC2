@@ -99,6 +99,36 @@ static bool ack_batch_is_forwarded_gateway_ack(
            batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK;
 }
 
+static bool forwarded_ack_matches_exact(
+    const struct app_mesh_ch9_ack_batch *batch,
+    const struct mesh_outbound *ack)
+{
+    const struct proto_packet *queued;
+    const struct proto_packet *candidate;
+
+    if (!ack_batch_is_forwarded_gateway_ack(batch) || ack == NULL ||
+        batch->template_ack.next_hop_id != ack->next_hop_id ||
+        batch->template_ack.payload_len != ack->payload_len ||
+        ack->payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
+        memcmp(batch->template_ack.payload,
+               ack->payload,
+               ack->payload_len) != 0) {
+        return false;
+    }
+
+    queued = &batch->template_ack.packet;
+    candidate = &ack->packet;
+    return queued->msg_type == candidate->msg_type &&
+           queued->flags == candidate->flags &&
+           queued->src_id == candidate->src_id &&
+           queued->dst_id == candidate->dst_id &&
+           queued->session_id == candidate->session_id &&
+           queued->seq == candidate->seq &&
+           queued->ttl == candidate->ttl &&
+           queued->payload_len == candidate->payload_len &&
+           queued->message_age_ms == candidate->message_age_ms;
+}
+
 void app_mesh_ch9_ack_table_init(struct app_mesh_ch9_ack_table *table)
 {
     if (table != NULL) {
@@ -166,13 +196,15 @@ int app_mesh_ch9_ack_table_queue(
             return PROTO_ERR_NO_SPACE;
         }
         ack_batch_reset_generated(batch, ack);
-    } else if (ack_batch_is_forwarded_gateway_ack(batch) &&
-               ack->packet.msg_type == MSG_MESH_HOP_ACK &&
-               batch->template_ack.packet.dst_id == ack->packet.dst_id) {
-        ack_queue_result_set(
-            result,
-            APP_MESH_CH9_ACK_QUEUE_SUPPRESSED_BY_FORWARDED_ACK);
-        return PROTO_OK;
+    } else if (ack_batch_is_forwarded_gateway_ack(batch)) {
+        if (ack->packet.msg_type == MSG_MESH_HOP_ACK) {
+            ack_queue_result_set(
+                result,
+                APP_MESH_CH9_ACK_QUEUE_SUPPRESSED_BY_FORWARDED_ACK);
+            return PROTO_OK;
+        }
+        ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_FORWARDED_BUSY);
+        return PROTO_ERR_NO_SPACE;
     } else if (!ack_batch_matches_generated(batch, ack)) {
         ack_batch_reset_generated(batch, ack);
         replaced = true;
@@ -223,6 +255,13 @@ int app_mesh_ch9_ack_table_queue_forwarded(
             ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_TABLE_FULL);
             return PROTO_ERR_NO_SPACE;
         }
+    } else if (ack_batch_is_forwarded_gateway_ack(batch)) {
+        if (forwarded_ack_matches_exact(batch, ack)) {
+            ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+            return PROTO_OK;
+        }
+        ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_FORWARDED_BUSY);
+        return PROTO_ERR_NO_SPACE;
     }
 
     memset(batch, 0, sizeof(*batch));
@@ -638,7 +677,8 @@ bool app_mesh_ch9_core_ack_wait_active(const struct mesh_pending_tx *pending,
                                        bool relay_tx_active)
 {
     return relay_tx_active && pending != NULL &&
-           pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
+           (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+            pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD) &&
            pending->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
            pending->next_hop_id != 0u;
 }
@@ -648,7 +688,8 @@ bool app_mesh_ch9_core_pending_allows_rx(const struct mesh_pending_tx *pending,
 {
     return relay_tx_active && pending != NULL &&
            (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
-            pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
+            pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
+            pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD) &&
            pending->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
            pending->next_hop_id != 0u;
 }

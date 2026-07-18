@@ -17,6 +17,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools.gateway_gui.protocol import (  # noqa: E402
+    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+    GATEWAY_COMMAND_BUDGET_MAX_MS,
+    GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_IDENTITY_UUID,
     GatewayReceiveBuffer,
     MSG_GATEWAY_COMMAND_EVENT,
@@ -711,6 +714,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "session_id": assignment_identity,
                 "seq": assignment_identity & 0xFFFF,
                 "command_budget_ms": command_budget_ms,
+                "expected_anchor_count": args.expected_anchors,
             }
             qualification_done.clear()
             qualification = AssignmentQualification(
@@ -753,7 +757,10 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 if args.command == "here-i-am":
                     command = build_here_i_am_command(**command_args)
                 elif args.command == "assign-slots":
-                    command = build_assign_discovery_slots_command(**command_args)
+                    command = build_assign_discovery_slots_command(
+                        **command_args,
+                        expected_anchor_count=args.expected_anchors,
+                    )
                     if args.require_assignment_success:
                         qualification = AssignmentQualification(
                             identity,
@@ -854,11 +861,15 @@ def main() -> None:
     parser.add_argument("--expected-direct-anchors", type=int)
     parser.add_argument("--expected-multihop-anchors", type=int)
     parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
-    parser.add_argument("--assignment-timeout", type=float, default=100.0)
+    parser.add_argument("--assignment-timeout", type=float, default=230.0)
     parser.add_argument(
         "--command-budget-ms",
         type=int,
-        help="firmware command deadline in 1000..600000 ms; omitted keeps the robust default",
+        help=(
+            "firmware command deadline in "
+            f"{GATEWAY_COMMAND_BUDGET_MIN_MS}..{GATEWAY_COMMAND_BUDGET_MAX_MS} ms; "
+            "omitted keeps the protocol-specific robust default"
+        ),
     )
     args = parser.parse_args()
     if args.notification_hold_s < 0.0:
@@ -883,8 +894,25 @@ def main() -> None:
         parser.error("assignment qualification requires 1..50 expected anchors")
     if args.route_refresh_timeout <= 0.0 or args.assignment_timeout <= 0.0:
         parser.error("qualification timeouts must be positive")
-    if args.command_budget_ms is not None and not 1000 <= args.command_budget_ms <= 600000:
-        parser.error("--command-budget-ms must be in 1000..600000")
+    if args.command_budget_ms is not None and not (
+        GATEWAY_COMMAND_BUDGET_MIN_MS
+        <= args.command_budget_ms
+        <= GATEWAY_COMMAND_BUDGET_MAX_MS
+    ):
+        parser.error(
+            "--command-budget-ms must be in "
+            f"{GATEWAY_COMMAND_BUDGET_MIN_MS}..{GATEWAY_COMMAND_BUDGET_MAX_MS}"
+        )
+    if (
+        args.command in ("assign-slots", "qualify-reachability")
+        and args.command_budget_ms is not None
+        and args.command_budget_ms <
+            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS
+    ):
+        parser.error(
+            "assignment --command-budget-ms must be at least "
+            f"{DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS}"
+        )
     for value, name in (
         (args.expected_direct_anchors, "--expected-direct-anchors"),
         (args.expected_multihop_anchors, "--expected-multihop-anchors"),

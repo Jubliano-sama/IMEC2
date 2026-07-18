@@ -690,7 +690,7 @@ static void test_click_claim_requeues_one_local_report_without_corruption(void)
     assert(app_mesh_c5_wake_claim_preempts_mesh(FLAG_COUNT_AS_CLICK));
     assert(app_mesh_c5_wake_claim_requires_anchor_handoff(
         FLAG_COUNT_AS_CLICK, true));
-    assert(app_mesh_c5_connected_gap_rx_action(true, false) ==
+    assert(app_mesh_c5_connected_gap_rx_action(true, false, false) ==
            APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK);
 
     capture.click_active = true;

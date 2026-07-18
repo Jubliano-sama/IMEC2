@@ -36,6 +36,7 @@ MESH_BROADCAST_ID = 0
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
 GATEWAY_COMMAND_BUDGET_MAX_MS = 600000
+DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 225199
 
 MSG_CLICK_REPORT = 0x20
 MSG_MESH_DATA = 0x30
@@ -57,6 +58,7 @@ TLV_SAMPLE_INDEX = 0x0E
 TLV_SAMPLE_COUNT = 0x0F
 TLV_COMMAND_ID = 0x10
 TLV_COMMAND_STATUS = 0x11
+TLV_EXPECTED_NODE_COUNT = 0x78
 TLV_SURVEY_ID = 0x15
 TLV_DURATION_MS = 0x1A
 TLV_REASON = 0x1E
@@ -432,6 +434,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_DISCOVERY_ASSIGNMENT_PHASE: TlvSpec("DISCOVERY_ASSIGNMENT_PHASE", _scalar(1)),
     TLV_DISCOVERY_ASSIGNMENT_EPOCH: TlvSpec("DISCOVERY_ASSIGNMENT_EPOCH", _scalar(4)),
     TLV_DISCOVERY_ASSIGNMENT_HASH: TlvSpec("DISCOVERY_ASSIGNMENT_HASH", _scalar(8)),
+    TLV_EXPECTED_NODE_COUNT: TlvSpec("EXPECTED_NODE_COUNT", _scalar(2)),
     TLV_DISCOVERY_ASSIGNMENT_TABLE: TlvSpec(
         "DISCOVERY_ASSIGNMENT_TABLE", _discovery_assignment_table
     ),
@@ -1163,6 +1166,7 @@ def build_assign_discovery_slots_command(
     session_id: int,
     seq: int,
     command_budget_ms: int | None = None,
+    expected_anchor_count: int | None = None,
 ) -> CommandFrame:
     if host_id == 0:
         raise ValueError("host ID must be non-zero")
@@ -1171,16 +1175,25 @@ def build_assign_discovery_slots_command(
     if gateway_id == host_id:
         raise ValueError("gateway ID must differ from host ID")
     if command_budget_ms is not None and not (
-        GATEWAY_COMMAND_BUDGET_MIN_MS
+        DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS
         <= command_budget_ms
         <= GATEWAY_COMMAND_BUDGET_MAX_MS
     ):
         raise ValueError(
-            f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
+            "assignment command budget must be in "
+            f"{DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS}.."
             f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
         )
+    if expected_anchor_count is not None and not 1 <= expected_anchor_count <= 50:
+        raise ValueError("expected anchor count must be in 1..50")
     payload = bytearray()
     append_tlv(payload, TLV_COMMAND_ID, CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little"))
+    if expected_anchor_count is not None:
+        append_tlv(
+            payload,
+            TLV_EXPECTED_NODE_COUNT,
+            expected_anchor_count.to_bytes(2, "little"),
+        )
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     return _build_command_frame(

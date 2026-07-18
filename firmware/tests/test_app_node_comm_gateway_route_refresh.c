@@ -30,10 +30,13 @@ struct refresh_fixture {
     uint8_t quiet_failures_remaining;
     uint8_t flood_retry_count;
     int schedule_result;
+    int send_result;
     bool allowed;
     bool policy_running;
     bool pause_after_first_send;
     bool run_schedule_synchronously;
+    bool response_active;
+    bool ready_at_success_terminal;
     uint8_t synchronous_schedule_calls;
 };
 
@@ -83,8 +86,7 @@ static bool fixture_policy_running(void *ctx)
 static bool fixture_response_active(uint32_t now_ms, void *ctx)
 {
     (void)now_ms;
-    (void)ctx;
-    return false;
+    return ((struct refresh_fixture *)ctx)->response_active;
 }
 
 static void fixture_sleep(uint32_t due_ms, void *ctx)
@@ -132,7 +134,7 @@ static int fixture_send(const struct mesh_outbound *out, void *ctx)
     if (fixture->pause_after_first_send && fixture->send_calls == 1u) {
         app_node_comm_gateway_route_refresh_pause(fixture->now_ms);
     }
-    return 0;
+    return fixture->send_result;
 }
 
 static int fixture_build(void *ctx,
@@ -235,6 +237,11 @@ static void fixture_observe(
     assert(fixture->event_count <
            sizeof(fixture->events) / sizeof(fixture->events[0]));
     fixture->events[fixture->event_count++] = *event;
+    if (event->kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE &&
+        event->result == 0) {
+        fixture->ready_at_success_terminal =
+            app_node_comm_gateway_route_refresh_ready();
+    }
 }
 
 static void fixture_init(struct refresh_fixture *fixture)
@@ -369,9 +376,12 @@ static void test_startup_and_two_periodic_cycles_do_not_preexpire(void)
 
     fixture_init(&fixture);
     fixture.allowed = true;
+    assert(!app_node_comm_gateway_route_refresh_ready());
     app_node_comm_gateway_route_refresh_start();
+    assert(!app_node_comm_gateway_route_refresh_ready());
     assert(fixture.scheduled_delay_ms == 500u);
     fixture_run(&fixture);
+    assert(app_node_comm_gateway_route_refresh_ready());
     assert(fixture.send_calls == 4u);
     assert(fixture.scheduled_delay_ms == 600000u);
     fixture_run(&fixture);
@@ -380,6 +390,61 @@ static void test_startup_and_two_periodic_cycles_do_not_preexpire(void)
     fixture_run(&fixture);
     assert(fixture.send_calls == 12u);
     assert(fixture.note_sent_calls == 3u);
+}
+
+static void test_readiness_resets_and_failed_startup_does_not_set_it(void)
+{
+    struct refresh_fixture fixture;
+
+    fixture_init(&fixture);
+    fixture.allowed = true;
+    fixture.schedule_result = -EIO;
+    app_node_comm_gateway_route_refresh_start();
+    assert(!app_node_comm_gateway_route_refresh_ready());
+    assert(fixture.send_calls == 0u);
+
+    fixture.schedule_result = 0;
+    app_node_comm_gateway_route_refresh_start();
+    fixture_run(&fixture);
+    assert(app_node_comm_gateway_route_refresh_ready());
+
+    app_node_comm_gateway_route_refresh_init(&fixture.config, GATEWAY_ID);
+    assert(!app_node_comm_gateway_route_refresh_ready());
+}
+
+static void test_correlated_forced_retry_sets_readiness_only_after_success(void)
+{
+    struct refresh_fixture fixture;
+    struct proto_packet command = correlated_command();
+
+    fixture_init(&fixture);
+    fixture.send_result = -EIO;
+    assert(app_node_comm_gateway_route_refresh_request(
+               0u, "failed-here-i-am", true, &command) == 0);
+    fixture_run(&fixture);
+    assert(!app_node_comm_gateway_route_refresh_ready());
+    assert(fixture.event_count > 0u);
+    assert(fixture.events[fixture.event_count - 1u].kind ==
+           APP_NODE_COMM_ROUTE_REFRESH_BACKOFF);
+
+    fixture.send_result = 0;
+    fixture_run(&fixture);
+    assert(app_node_comm_gateway_route_refresh_ready());
+    assert(fixture.events[fixture.event_count - 1u].kind ==
+           APP_NODE_COMM_ROUTE_REFRESH_COMPLETE);
+    assert(fixture.events[fixture.event_count - 1u].result == 0);
+    assert(fixture.ready_at_success_terminal);
+}
+
+static void test_uncorrelated_forced_success_does_not_create_readiness(void)
+{
+    struct refresh_fixture fixture;
+
+    fixture_init(&fixture);
+    assert(app_node_comm_gateway_route_refresh_request(
+               0u, "uncorrelated-maintenance", true, NULL) == 0);
+    fixture_run(&fixture);
+    assert(!app_node_comm_gateway_route_refresh_ready());
 }
 
 static void test_packet_retry_bursts_each_keep_four_opportunities(void)
@@ -569,15 +634,48 @@ static void test_explicit_budget_bounds_forced_refresh(void)
     assert(fixture.now_ms >= 75u && fixture.now_ms <= 85u);
 }
 
+static void test_response_priority_deadline_zero_at_wrap_remains_armed(void)
+{
+    struct refresh_fixture fixture;
+
+    fixture_init(&fixture);
+    fixture.response_active = true;
+    fixture.now_ms = UINT32_MAX - 19u;
+    assert(app_node_comm_gateway_route_refresh_request_bounded(
+               20u, "response-wrap", true, NULL, 1000u) == 0);
+    assert(app_node_comm_gateway_route_refresh_response_priority_wait_ms(
+               fixture.now_ms) == 20u);
+    assert(!app_node_comm_gateway_route_refresh_response_priority_due(
+        fixture.now_ms));
+
+    fixture.now_ms = 0u;
+    assert(app_node_comm_gateway_route_refresh_response_priority_wait_ms(
+               fixture.now_ms) == 0u);
+    assert(app_node_comm_gateway_route_refresh_response_priority_due(
+        fixture.now_ms));
+
+    app_node_comm_gateway_route_refresh_response_priority_clear();
+    fixture.now_ms = UINT32_MAX - 19u;
+    assert(app_node_comm_gateway_route_refresh_response_priority_wait_ms(
+               fixture.now_ms) == 0u);
+    fixture.response_active = false;
+    assert(!app_node_comm_gateway_route_refresh_response_priority_due(
+        fixture.now_ms));
+}
+
 int main(void)
 {
     test_pause_between_opportunities_preserves_four_real_sends();
     test_pause_rebases_outer_backoff_but_deadline_stays_absolute();
     test_schedule_failure_is_terminal();
     test_startup_and_two_periodic_cycles_do_not_preexpire();
+    test_readiness_resets_and_failed_startup_does_not_set_it();
+    test_correlated_forced_retry_sets_readiness_only_after_success();
+    test_uncorrelated_forced_success_does_not_create_readiness();
     test_packet_retry_bursts_each_keep_four_opportunities();
     test_concurrent_pause_stops_callbacks_and_preserves_correlation();
     test_synchronous_resume_schedule_cannot_strand_refresh();
     test_explicit_budget_bounds_forced_refresh();
+    test_response_priority_deadline_zero_at_wrap_remains_armed();
     return 0;
 }

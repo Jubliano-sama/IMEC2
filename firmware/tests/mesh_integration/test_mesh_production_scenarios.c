@@ -318,7 +318,7 @@ static int test_line_depth(uint8_t relay_count)
                                         &connections[i]) == MESH_SIM_OK);
         REQUIRE("line_topology", seed,
                 mesh_sim_install_route(&world, nodes[i], nodes[i + 1u],
-                                       relay_count + 1u - i,
+                                       relay_count - i,
                                        ROUTE_EPOCH) == PROTO_OK);
         if (i > 0u) {
             REQUIRE("line_topology", seed,
@@ -432,9 +432,9 @@ static int test_click_preemption_and_retry(void)
             mesh_sim_set_link(&world, transmitter, anchor, 98u, 0u) == MESH_SIM_OK &&
             mesh_sim_set_link(&world, anchor, gateway, 98u, 0u) == MESH_SIM_OK);
     REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
-            mesh_sim_install_route(&world, transmitter, anchor, 2u,
+            mesh_sim_install_route(&world, transmitter, anchor, 1u,
                                    ROUTE_EPOCH) == PROTO_OK &&
-            mesh_sim_install_route(&world, anchor, gateway, 1u,
+            mesh_sim_install_route(&world, anchor, gateway, 0u,
                                    ROUTE_EPOCH) == PROTO_OK &&
             mesh_sim_install_downlink(&world, anchor, TRANSMITTER_ID,
                                       transmitter, 1u,
@@ -622,9 +622,9 @@ static int test_empty_receive_slots_expire_timing(void)
     REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
             mesh_sim_set_link(&world, transmitter, anchor, 98u, 0u) == MESH_SIM_OK &&
             mesh_sim_set_link(&world, anchor, gateway, 98u, 0u) == MESH_SIM_OK &&
-            mesh_sim_install_route(&world, transmitter, anchor, 2u,
+            mesh_sim_install_route(&world, transmitter, anchor, 1u,
                                    ROUTE_EPOCH) == PROTO_OK &&
-            mesh_sim_install_route(&world, anchor, gateway, 1u,
+            mesh_sim_install_route(&world, anchor, gateway, 0u,
                                    ROUTE_EPOCH) == PROTO_OK &&
             mesh_sim_install_downlink(&world, anchor, TRANSMITTER_ID,
                                       transmitter, 1u,

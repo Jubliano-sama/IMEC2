@@ -1820,7 +1820,9 @@ static void gateway_command_result_timeout_handler(struct k_work *work)
             (unsigned long long)command.dst_id,
             command.session_id,
             command.seq);
-    mesh_relay_note_delivery_failure(&mesh_runtime, command.dst_id);
+    mesh_relay_note_delivery_failure_at(&mesh_runtime,
+                                        command.dst_id,
+                                        k_uptime_get_32());
     gateway_command_timeout_side_effects(&command, command_id);
     gateway_emit_host_command_result(&command, command_id, COMMAND_TIMEOUT, 0u);
 }

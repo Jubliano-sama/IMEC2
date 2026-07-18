@@ -28,6 +28,8 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
         snapshot->gateway_id != relay->gateway_id ||
         record->gateway_id != relay->gateway_id ||
         pending->state == MESH_RELAY_TX_IDLE ||
+        (pending->gateway_ack_forward_pending &&
+         pending->packet.src_id == relay->local_id) ||
         pending->payload_len > UWB_MESH_MAX_PAYLOAD_LEN ||
         pending->packet.payload_len != pending->payload_len ||
         pending->packet.dst_id != relay->gateway_id ||
@@ -686,8 +688,9 @@ void mesh_relay_note_tx_sent(struct mesh_relay *relay,
     }
 }
 
-void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
-                                      uint64_t dst_id)
+void mesh_relay_note_delivery_failure_at(struct mesh_relay *relay,
+                                         uint64_t dst_id,
+                                         uint32_t now_ms)
 {
     int index;
 
@@ -697,14 +700,16 @@ void mesh_relay_note_delivery_failure(struct mesh_relay *relay,
 
     if (dst_id == relay->gateway_id) {
         if (relay->role != MESH_RELAY_ROLE_GATEWAY) {
-            (void)route_record_failure(&relay->upstream, ROUTE_FAILURE_GATEWAY_ACK);
+            (void)route_record_failure_at(&relay->upstream,
+                                          ROUTE_FAILURE_GATEWAY_ACK,
+                                          now_ms);
         }
         return;
     }
 
     index = downlink_index(relay, dst_id);
     if (index >= 0) {
-        relay->downlinks[index].valid = false;
+        downlink_at_mutable(relay, (size_t)index)->valid = false;
     }
 }
 
@@ -946,6 +951,24 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
+    if (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
+        deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
+        /*
+         * The gateway already accepted this transit packet, so an expired
+         * child-ACK handoff must retry the immutable original without
+         * penalizing or invalidating the successful upstream parent.
+         */
+        pending_refresh_age(&relay->pending, now_ms);
+        outbox_record_sync_age_from_pending(relay, now_ms);
+        relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+        relay->pending.retry_after_ms = now_ms +
+            pending_busy_retry_delay_ms(relay,
+                                        RELAY_BUSY_RETRY_MIN_MS,
+                                        random_value);
+        relay->pending.gateway_ack_deadline_ms = 0u;
+        return PROTO_OK;
+    }
+
     if (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
         deadline_reached(now_ms, relay->pending.gateway_ack_deadline_ms)) {
         if (pending_is_local_collection_result(relay, &relay->pending)) {
@@ -1026,8 +1049,10 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
     (void)mesh_relay_expire_routes(relay, now_ms);
     (void)mesh_relay_expire_channel9_timings(relay, now_ms);
 
-    if ((packet->msg_type == MSG_GATEWAY_ACK || packet->msg_type == MSG_MESH_HOP_ACK) &&
-        packet->dst_id == relay->local_id) {
+    if ((packet->msg_type == MSG_GATEWAY_ACK ||
+         packet->msg_type == MSG_MESH_HOP_ACK) &&
+        (packet->dst_id == relay->local_id ||
+         gateway_ack_targets_pending_transit_origin(relay, packet))) {
         (void)handle_local_ack(relay,
                                packet,
                                payload,
@@ -1149,7 +1174,9 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
             return PROTO_OK;
         }
 
-        if (mesh_relay_tx_active(relay)) {
+        if (mesh_relay_tx_active(relay) &&
+            !gateway_targeted_control_can_forward_independently(
+                relay, packet, previous_hop_id)) {
             add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_BUSY;
@@ -1173,6 +1200,8 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
         packet->msg_type != MSG_ROUTE_REPLY &&
         (packet_needs_forward(relay, packet) || local_delivery_needs_response(relay, packet)) &&
         !gateway_delivery_requires_commit(relay, packet) &&
+        !gateway_targeted_control_can_forward_independently(
+            relay, packet, previous_hop_id) &&
         mesh_relay_tx_active(relay)) {
         add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
         result->status = PROTO_ERR_BUSY;

@@ -595,7 +595,7 @@ static void run_pair_prepare_hardware_case(bool relayed,
         CHECK(mesh_sim_set_link(&world, relay, target, 100u, 0u) ==
                   MESH_SIM_OK,
               "pair-control relay-target link setup failed");
-        CHECK(mesh_sim_install_route(&world, relay, gateway, 1u,
+        CHECK(mesh_sim_install_route(&world, relay, gateway, 0u,
                                      ROUTE_EPOCH) == MESH_SIM_OK,
               "pair-control relay upstream route setup failed");
         CHECK(mesh_sim_install_downlink(&world, relay, target_id, target, 1u,

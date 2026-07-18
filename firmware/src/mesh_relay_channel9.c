@@ -47,8 +47,9 @@ static enum mesh_relay_channel9_direction channel9_peer_direction(
 
     upstream = route_selected(&relay->upstream);
     matches_upstream = upstream != NULL && upstream->next_hop_id == next_hop_id;
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
 
         if (entry->valid && entry->next_hop_id == next_hop_id) {
             matches_downstream = true;
@@ -380,8 +381,9 @@ void mesh_relay_abandon_transit_reservations(struct mesh_relay *relay)
         if (!timing->valid || timing->next_hop_id == upstream_peer_id) {
             continue;
         }
-        for (uint8_t j = 0u; j < MESH_RELAY_DOWNLINK_ROUTES; j++) {
-            const struct mesh_downlink_entry *downlink = &relay->downlinks[j];
+        for (size_t j = 0u; j < mesh_relay_downlink_capacity(relay); j++) {
+            const struct mesh_downlink_entry *downlink =
+                mesh_relay_downlink_at(relay, j);
 
             if (downlink->valid &&
                 downlink->next_hop_id == timing->next_hop_id) {

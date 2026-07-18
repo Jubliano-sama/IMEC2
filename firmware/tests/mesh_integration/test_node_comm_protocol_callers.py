@@ -109,6 +109,53 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertIn(".gateway_control_priority = gateway_priority_control", body)
         self.assertIn("if (gateway_priority_control)", body)
 
+    def test_gateway_control_reverse_route_uses_only_first_transport_copy(self):
+        body = function_body(
+            self.report_route_control, "mesh_listen_for_route_reply"
+        )
+        identity_match = re.search(
+            r"route_identity\s*=\s*\{(?P<body>.*?)\};",
+            body,
+            re.DOTALL,
+        )
+
+        self.assertIsNotNone(identity_match)
+        identity = identity_match.group("body")
+        for field in ("route_epoch", "session_id", "seq", "msg_type"):
+            with self.subTest(field=field):
+                self.assertIn(f".{field} =", identity)
+        self.assertNotIn("previous_hop", identity)
+
+        first_copy_gate = body.index(
+            "app_mesh_c5_control_route_hint_is_first("
+        )
+        direct_route_removal = body.index(
+            "mesh_relay_remove_direct_gateway_route("
+        )
+        reverse_route_install = body.index(
+            "mesh_relay_note_gateway_control_reverse_route("
+        )
+        semantic_queue = body.index("mesh_queue_from_frame_at_internal(")
+
+        self.assertLess(first_copy_gate, direct_route_removal)
+        self.assertLess(first_copy_gate, reverse_route_install)
+        self.assertLess(reverse_route_install, semantic_queue)
+        self.assertIn(
+            "if (reverse_route_hint_first &&",
+            body[first_copy_gate:direct_route_removal],
+        )
+        self.assertIn(
+            "reverse_route_ret = reverse_route_hint_first ?",
+            body[direct_route_removal:reverse_route_install],
+        )
+
+        retain_start = body.index("DBG_C5_CONTROL_ROUTE_HINT_RETAIN")
+        retain_block_end = body.index(
+            "DBG_C5_CONTROL_ROUTE_READY", retain_start
+        )
+        self.assertNotIn("continue;", body[retain_start:retain_block_end])
+        self.assertLess(retain_block_end, semantic_queue)
+
     def test_anchor_click_callback_only_freezes_and_queues_scan_handoff(self):
         callback = function_body(
             self.anchor, "anchor_handle_mesh_click_wake_claim"

@@ -38,6 +38,28 @@ int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+void mesh_anchor_downlink_store_init(struct mesh_anchor_downlink_store *store)
+{
+    if (store != NULL) {
+        memset(store, 0, sizeof(*store));
+    }
+}
+
+int mesh_relay_attach_anchor_downlink_store(
+    struct mesh_relay *relay,
+    struct mesh_anchor_downlink_store *store)
+{
+    if (relay == NULL || store == NULL ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        relay->local_id == relay->gateway_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    mesh_anchor_downlink_store_init(store);
+    relay->anchor_downlink_store = store;
+    return PROTO_OK;
+}
+
 const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_relay *relay,
                                                            uint64_t target_id)
 {
@@ -48,7 +70,7 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
     }
 
     index = downlink_index(relay, target_id);
-    return index >= 0 ? &relay->downlinks[index] : NULL;
+    return index >= 0 ? mesh_relay_downlink_at(relay, (size_t)index) : NULL;
 }
 
 int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
@@ -155,19 +177,83 @@ int mesh_relay_note_gateway_control_reverse_route(
     };
     ret = route_upsert_candidate(&relay->upstream, &candidate);
     if (ret == PROTO_OK) {
+        if (previous_hop_id == relay->gateway_id) {
+            const struct route_candidate *stored = find_upstream_candidate(
+                relay, previous_hop_id, relay->upstream.current_epoch);
+            const struct mesh_route_path direct_path = {
+                .node_ids = {relay->gateway_id, relay->local_id},
+                .count = 2u,
+            };
+
+            ret = store_upstream_candidate_ancestry(relay,
+                                                    stored,
+                                                    &direct_path,
+                                                    NULL);
+            if (ret != PROTO_OK) {
+                return ret;
+            }
+        }
         mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
     }
     return ret;
 }
 
+void mesh_relay_remove_direct_gateway_route(struct mesh_relay *relay)
+{
+    bool removed = false;
+
+    if (relay == NULL || relay->role == MESH_RELAY_ROLE_GATEWAY ||
+        !id_is_unicast(relay->gateway_id)) {
+        return;
+    }
+
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct route_candidate *candidate = &relay->upstream.candidates[i];
+
+        if (candidate->valid &&
+            candidate->route_epoch == relay->upstream.current_epoch &&
+            candidate->gateway_id == relay->gateway_id &&
+            candidate->next_hop_id == relay->gateway_id &&
+            candidate->hop_count == 0u) {
+            clear_upstream_candidate_ancestry_at(relay, i);
+            memset(candidate, 0, sizeof(*candidate));
+            removed = true;
+        }
+    }
+    if (!removed) {
+        return;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        struct mesh_relay_event_timing_entry *entry = &relay->event_timings[i];
+
+        if (entry->valid && entry->next_hop_id == relay->gateway_id) {
+            memset(entry, 0, sizeof(*entry));
+        }
+    }
+    relay->upstream.selected_index = ROUTE_NO_SELECTION;
+    (void)route_select_best(&relay->upstream);
+}
+
 uint8_t mesh_relay_expire_routes(struct mesh_relay *relay, uint32_t now_ms)
 {
+    uint8_t expired;
+
     if (relay == NULL) {
         return 0u;
     }
 
-    (void)now_ms;
-    return 0u;
+    expired = route_expire_stale(&relay->upstream,
+                                 now_ms,
+                                 ROUTE_CANDIDATE_MAX_AGE_MS);
+    if (expired > 0u) {
+        for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+            if (!relay->upstream.candidates[i].valid) {
+                clear_upstream_candidate_ancestry_at(relay, i);
+            }
+        }
+    }
+    return expired;
 }
 
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
@@ -216,8 +302,9 @@ static bool downlink_depends_on_epoch(const struct mesh_relay *relay,
                                       uint64_t next_hop_id,
                                       uint32_t route_epoch)
 {
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
 
         if (entry->valid &&
             entry->route_epoch == route_epoch &&
@@ -253,10 +340,11 @@ static void invalidate_failed_upstream_dependents(struct mesh_relay *relay,
             memset(entry, 0, sizeof(*entry));
         }
     }
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        if (relay->downlinks[i].valid &&
-            relay->downlinks[i].route_epoch == route_epoch) {
-            memset(&relay->downlinks[i], 0, sizeof(relay->downlinks[i]));
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        struct mesh_downlink_entry *entry = downlink_at_mutable(relay, i);
+
+        if (entry->valid && entry->route_epoch == route_epoch) {
+            memset(entry, 0, sizeof(*entry));
         }
     }
     for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
@@ -325,7 +413,7 @@ void mesh_relay_invalidate_active_route_path(struct mesh_relay *relay)
         }
     }
     relay->upstream.selected_index = ROUTE_NO_SELECTION;
-    memset(relay->downlinks, 0, sizeof(relay->downlinks));
+    clear_all_downlinks(relay);
     memset(relay->event_timings, 0, sizeof(relay->event_timings));
     mesh_relay_reset_route_discovery(relay);
 }
@@ -346,7 +434,8 @@ static void mesh_relay_clear_routes_at_epoch(struct mesh_relay *relay,
                                              uint32_t epoch)
 {
     route_table_init(&relay->upstream, epoch);
-    memset(relay->downlinks, 0, sizeof(relay->downlinks));
+    clear_all_upstream_candidate_ancestry(relay);
+    clear_all_downlinks(relay);
     memset(relay->event_timings, 0, sizeof(relay->event_timings));
     mesh_relay_reset_route_discovery(relay);
 }
@@ -509,6 +598,8 @@ static int build_route_request_with_timing_flags_id(
 
     fields.origin_id = relay->local_id;
     fields.target_id = target_id;
+    fields.path.node_ids[0] = relay->local_id;
+    fields.path.count = 1u;
     fields.route_epoch = route_epoch;
     fields.flood_epoch_id = session_id;
     fields.slot_seed = route_discovery_slot_seed(relay->local_id,
@@ -660,6 +751,8 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     memset(out, 0, sizeof(*out));
     memset(&fields, 0, sizeof(fields));
     fields.gateway_id = relay->gateway_id;
+    fields.path.node_ids[0] = relay->gateway_id;
+    fields.path.count = 1u;
     fields.gateway_epoch = snapshot->gateway_epoch;
     fields.gateway_route_seq = snapshot->gateway_route_seq;
     fields.hop_count = 0u;
@@ -824,6 +917,12 @@ int mesh_relay_prepare_route_request(struct mesh_relay *relay,
 int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                          uint32_t now_ms)
 {
+    const struct mesh_route_path direct_path = {
+        .node_ids = {relay != NULL ? relay->gateway_id : 0u,
+                     relay != NULL ? relay->local_id : 0u},
+        .count = 2u,
+    };
+    const struct route_candidate *candidate;
     int ret;
 
     if (relay == NULL ||
@@ -855,6 +954,15 @@ int mesh_relay_note_direct_gateway_route(struct mesh_relay *relay,
                                                 now_ms);
     }
     if (ret == PROTO_OK) {
+        candidate = find_upstream_candidate(relay,
+                                            relay->gateway_id,
+                                            relay->upstream.current_epoch);
+        ret = store_upstream_candidate_ancestry(relay,
+                                                candidate,
+                                                &direct_path,
+                                                NULL);
+    }
+    if (ret == PROTO_OK) {
         mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
     }
     return ret;
@@ -871,6 +979,8 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
 {
     struct route_discovery_fields fields = {0};
     const struct route_candidate *selected = NULL;
+    const struct mesh_route_path *selected_path = NULL;
+    struct mesh_route_path direct_selected_path = {0};
     uint32_t reply_epoch;
     int ret;
 
@@ -879,6 +989,7 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
         packet->msg_type != MSG_ROUTE_REQ ||
         packet->dst_id != MESH_BROADCAST_ID ||
         packet->payload_len != payload_len ||
+        !mesh_route_control_payload_len_valid(packet->msg_type, payload_len) ||
         !id_is_unicast(previous_hop_id) ||
         previous_hop_id == relay->local_id) {
         return PROTO_ERR_ARG;
@@ -892,16 +1003,47 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_route_control_ttl_validate(packet->msg_type,
+                                          packet->ttl,
+                                          fields.hop_count);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     if (fields.origin_id != packet->src_id ||
         !id_is_unicast(fields.target_id) ||
         fields.target_id == fields.origin_id ||
         fields.flood_epoch_id == 0u) {
         return PROTO_ERR_MALFORMED;
     }
+    if (fields.path.count != (uint8_t)(fields.hop_count + 1u) ||
+        mesh_route_path_validate(&fields.path,
+                                 fields.origin_id,
+                                 previous_hop_id) != PROTO_OK ||
+        mesh_route_path_contains(&fields.path, relay->local_id)) {
+        return PROTO_ERR_MALFORMED;
+    }
 
     selected = route_selected(&relay->upstream);
+    if (selected != NULL) {
+        selected_path = upstream_candidate_ancestry(relay, selected);
+        if (selected_path == NULL &&
+            selected->next_hop_id == relay->gateway_id &&
+            selected->gateway_id == relay->gateway_id &&
+            selected->hop_count == 0u) {
+            direct_selected_path.node_ids[0] = relay->gateway_id;
+            direct_selected_path.node_ids[1] = relay->local_id;
+            direct_selected_path.count = 2u;
+            selected_path = &direct_selected_path;
+        }
+    }
     if (fields.target_id != relay->local_id &&
         !(fields.target_id == relay->gateway_id && selected != NULL)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (fields.target_id == relay->gateway_id && selected != NULL &&
+        (selected->next_hop_id == previous_hop_id ||
+         selected_path == NULL ||
+         mesh_route_paths_intersect(selected_path, &fields.path))) {
         return PROTO_ERR_NOT_FOUND;
     }
 
@@ -914,6 +1056,8 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
 
     ret = build_route_reply(relay,
                             &fields,
+                            fields.target_id == relay->gateway_id ? selected : NULL,
+                            fields.target_id == relay->gateway_id ? selected_path : NULL,
                             previous_hop_id,
                             packet->session_id,
                             reply_epoch,

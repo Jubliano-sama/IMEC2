@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import importlib.util
+import re
 import sys
 import types
 import unittest
@@ -372,6 +373,33 @@ class IdentityAllocationTests(unittest.TestCase):
             identity = provision._next_identity(previous=0x12345)
 
         self.assertEqual(0x12346, identity)
+
+
+class CommandBudgetContractTests(unittest.TestCase):
+    def test_cli_max_matches_firmware_and_covers_assignment_default(self) -> None:
+        gateway_header = (
+            REPO_ROOT / "firmware" / "include" / "gateway_command.h"
+        ).read_text(encoding="utf-8")
+        anchor_source = (
+            REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
+        ).read_text(encoding="utf-8")
+        maximum = re.search(
+            r"#define\s+GATEWAY_COMMAND_BUDGET_MAX_MS\s+(\d+)u\b",
+            gateway_header,
+        )
+
+        self.assertIsNotNone(maximum)
+        assert maximum is not None
+        self.assertEqual(
+            int(maximum.group(1)), provision.GATEWAY_COMMAND_BUDGET_MAX_MS
+        )
+        self.assertEqual(600000, provision.GATEWAY_COMMAND_BUDGET_MAX_MS)
+        self.assertRegex(
+            anchor_source,
+            r"BUILD_ASSERT\s*\(\s*"
+            r"DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS\s*<=\s*"
+            r"GATEWAY_COMMAND_BUDGET_MAX_MS",
+        )
 
 
 class RouteRefreshQualificationTests(unittest.TestCase):

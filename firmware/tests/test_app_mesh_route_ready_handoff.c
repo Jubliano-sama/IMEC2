@@ -38,6 +38,86 @@ static void test_route_ready_without_rx_pending_proposes_and_allows_tx(void)
     assert(result.peer_id == 0x2003u);
 }
 
+static void test_route_ready_with_valid_timing_skips_proposal_and_allows_tx(void)
+{
+    struct app_mesh_route_ready_handoff_state state = {
+        .selected_route_valid = true,
+        .selected_timing_valid = true,
+        .rx_queue_pending = true,
+        .deferred_peer_valid = true,
+        .selected_peer_id = 0x2103u,
+        .deferred_peer_id = 0x2103u,
+    };
+    struct app_mesh_route_ready_handoff_result result;
+
+    app_mesh_route_ready_handoff_on_ready(&state, &result);
+
+    assert(result.clear_route_reply_handoff);
+    assert(result.clear_deferred_peer);
+    assert(!result.remember_deferred_peer);
+    assert(!result.propose_now);
+    assert(!result.propose_deferred);
+    assert(!result.schedule_rx_drain);
+    assert(!result.schedule_propose_wait_rx);
+    assert(!result.schedule_event_accept_wait);
+    assert(result.try_waiting_tx);
+    assert(result.peer_id == 0x2103u);
+
+    state.deferred_peer_valid = false;
+    app_mesh_route_ready_handoff_on_waiting_tx(&state, &result);
+
+    assert(result.allow_waiting_tx);
+    assert(!result.propose_deferred);
+    assert(!result.schedule_propose_wait_rx);
+}
+
+static void test_route_ready_with_valid_timing_preserves_other_deferred_peer(void)
+{
+    const struct app_mesh_route_ready_handoff_state state = {
+        .selected_route_valid = true,
+        .selected_timing_valid = true,
+        .deferred_peer_valid = true,
+        .selected_peer_id = 0x2203u,
+        .deferred_peer_id = 0x2204u,
+    };
+    struct app_mesh_route_ready_handoff_result result;
+
+    app_mesh_route_ready_handoff_on_ready(&state, &result);
+
+    assert(result.try_waiting_tx);
+    assert(!result.propose_now);
+    assert(!result.clear_deferred_peer);
+    assert(!result.remember_deferred_peer);
+    assert(result.peer_id == 0x2203u);
+}
+
+static void test_direct_gateway_route_skips_timing_proposal_with_rx_pending(void)
+{
+    const struct app_mesh_route_ready_handoff_state state = {
+        .selected_route_valid = true,
+        .selected_timing_valid = false,
+        .selected_is_unscheduled_gateway = true,
+        .rx_queue_pending = true,
+        .deferred_peer_valid = true,
+        .selected_peer_id = 0x9999888877776666ull,
+        .deferred_peer_id = 0x9999888877776666ull,
+    };
+    struct app_mesh_route_ready_handoff_result result;
+
+    app_mesh_route_ready_handoff_on_ready(&state, &result);
+
+    assert(result.clear_route_reply_handoff);
+    assert(result.clear_deferred_peer);
+    assert(!result.remember_deferred_peer);
+    assert(!result.propose_now);
+    assert(!result.propose_deferred);
+    assert(!result.schedule_rx_drain);
+    assert(!result.schedule_propose_wait_rx);
+    assert(!result.schedule_event_accept_wait);
+    assert(result.try_waiting_tx);
+    assert(result.peer_id == state.selected_peer_id);
+}
+
 static void test_route_ready_success_clears_matching_deferred_peer(void)
 {
     const struct app_mesh_route_ready_handoff_state state = {
@@ -162,6 +242,9 @@ int main(void)
 {
     test_rx_pending_with_selected_route_defers_proposal();
     test_route_ready_without_rx_pending_proposes_and_allows_tx();
+    test_route_ready_with_valid_timing_skips_proposal_and_allows_tx();
+    test_route_ready_with_valid_timing_preserves_other_deferred_peer();
+    test_direct_gateway_route_skips_timing_proposal_with_rx_pending();
     test_route_ready_success_clears_matching_deferred_peer();
     test_proposal_failure_requests_event_accept_wait();
     test_waiting_tx_waits_for_rx_to_drain_before_deferred_proposal();

@@ -238,7 +238,7 @@ static void test_committed_generation_rejects_same_seq_conflicts(void)
         &policy, true, true, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2);
     assert(app_discovery_assignment_policy_note_table(
                &policy, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
     assert(app_discovery_assignment_policy_commit(
         &policy, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2));
     assert(app_discovery_assignment_policy_note_table(
@@ -252,7 +252,7 @@ static void test_committed_generation_rejects_same_seq_conflicts(void)
            APP_DISCOVERY_ASSIGNMENT_TABLE_IGNORE_STALE);
     assert(app_discovery_assignment_policy_note_table(
                &policy, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
     assert(app_discovery_assignment_policy_commit(
         &policy, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2));
 }
@@ -293,7 +293,7 @@ static void test_unassigned_generation_survives_reboot_and_blocks_replay(void)
     /* An exact retransmission preserves the tombstone idempotently. */
     assert(app_discovery_assignment_policy_note_table(
                &restored, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2) ==
-           APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+           APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY);
     assert(app_discovery_assignment_policy_note_unassigned(
         &restored, EPOCH_1, TABLE_SEQ_2, TABLE_FINGERPRINT_2));
 
@@ -342,13 +342,15 @@ static void test_connected_anchor_low_power_policy_uses_idle(void)
            APP_RADIO_LOW_POWER_STANDBY);
 }
 
-static void test_gateway_operation_deadline_is_wrap_safe_and_terminal(void)
+static void test_gateway_operation_deadline_is_64_bit_and_terminal(void)
 {
     assert(!app_discovery_assignment_operation_expired(999u, 1000u));
     assert(app_discovery_assignment_operation_expired(1000u, 1000u));
     assert(app_discovery_assignment_operation_expired(1001u, 1000u));
-    assert(!app_discovery_assignment_operation_expired(UINT32_MAX - 2u, 3u));
-    assert(app_discovery_assignment_operation_expired(3u, 3u));
+    assert(!app_discovery_assignment_operation_expired(
+        UINT64_C(0x100000002), UINT64_C(0x100000003)));
+    assert(app_discovery_assignment_operation_expired(
+        UINT64_C(0x100000003), UINT64_C(0x100000003)));
 }
 
 static void test_explicit_budget_scales_complete_claim_rounds(void)
@@ -417,6 +419,41 @@ static void test_failed_publish_submission_releases_generation(void)
     assert(app_discovery_assignment_work_guard_begin(&guard, 8u));
 }
 
+static void test_semantic_quorum_overrides_only_redundant_tail_failure(void)
+{
+    assert(app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+        2u, 2u, 2u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+        2u, 1u, 2u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+        0u, 2u, 2u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+        2u, 2u, 2u, 0u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+        2u, 2u, 2u, 1u, true, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+        2u, 2u, 2u, 1u, false, true));
+
+    assert(app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+        2u, 2u, 0u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+        2u, 2u, 1u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+        0u, 0u, 0u, 1u, false, false));
+    assert(!app_discovery_assignment_semantic_terminal_success(
+        APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+        2u, 2u, 0u, 1u, false, true));
+}
+
 static void test_low_power_failure_recovers_and_retries_once(void)
 {
     struct app_radio_low_power_policy policy;
@@ -472,11 +509,12 @@ int main(void)
     test_unassigned_generation_survives_reboot_and_blocks_replay();
     test_table_generation_order_is_wrap_safe();
     test_connected_anchor_low_power_policy_uses_idle();
-    test_gateway_operation_deadline_is_wrap_safe_and_terminal();
+    test_gateway_operation_deadline_is_64_bit_and_terminal();
     test_explicit_budget_scales_complete_claim_rounds();
     test_table_retry_budget_preserves_every_ack_window();
     test_stale_publish_work_cannot_run_in_next_assignment();
     test_failed_publish_submission_releases_generation();
+    test_semantic_quorum_overrides_only_redundant_tail_failure();
     test_low_power_failure_recovers_and_retries_once();
     test_low_power_recovery_retry_can_complete();
     test_low_power_recovery_failure_does_not_retry();

@@ -21,13 +21,17 @@
 #define TABLE_GENERATION_1 UINT32_C(0x42000001)
 #define TABLE_GENERATION_2 UINT32_C(0x42000002)
 #define TABLE_GENERATION_3 UINT32_C(0x42000003)
-#define OPERATION_DEADLINE_MS 90000u
-#define MAX_ROUNDS 4u
+#define OPERATION_DEADLINE_MS \
+    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS
+#define MAX_ROUNDS DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS
 
 _Static_assert(CMD_ASSIGN_DISCOVERY_SLOTS == 0x0104,
                "assignment model must follow the production host command");
 _Static_assert(MAX_ANCHORS == 50u,
                "assignment model must cover the production anchor capacity");
+_Static_assert(DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS == 1u &&
+                   DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS == 1u,
+               "transport custody must not be wrapped in redundant logical rounds");
 
 struct anchor_model {
     struct app_discovery_assignment_policy policy;
@@ -241,7 +245,8 @@ static bool anchor_apply_table(struct anchor_model *anchor,
     }
     decision = app_discovery_assignment_policy_note_table(
         &anchor->policy, epoch, table_seq, table_fingerprint);
-    if (decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
+    if (decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY &&
+        decision != APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY) {
         return false;
     }
     for (size_t i = 0u; i < count; i++) {
@@ -271,6 +276,9 @@ static bool anchor_apply_table(struct anchor_model *anchor,
         anchor->persisted_slot = UINT8_MAX;
         anchor->assigned_slot = UINT8_MAX;
         return false;
+    }
+    if (decision == APP_DISCOVERY_ASSIGNMENT_TABLE_REPLAY) {
+        return true;
     }
     if (!persist_ok) {
         anchor->persistence_retried = true;
@@ -343,7 +351,8 @@ static bool run_workflow(size_t anchor_count)
     CHECK(collection_ms != 0u, "zero collection count=%zu", anchor_count);
     for (uint8_t round = 0u;
          round < MAX_ROUNDS && gateway.claim_count < anchor_count; round++) {
-        elapsed_ms += collection_ms;
+        elapsed_ms += DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS +
+                      collection_ms;
         for (size_t i = 0u; i < anchor_count; i++) {
             struct proto_packet packet;
             uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
@@ -351,7 +360,8 @@ static bool run_workflow(size_t anchor_count)
 
             if (!anchors[i].claimed) {
                 if (round == 0u && i % 7u == 0u) {
-                    continue; /* Lost claim command. */
+                    /* The first control copy is lost; a later copy is heard. */
+                    anchors[i].radio_deferred = true;
                 }
                 CHECK(app_discovery_assignment_policy_note_claim(
                           &anchors[i].policy, ASSIGNMENT_EPOCH) ==
@@ -360,7 +370,8 @@ static bool run_workflow(size_t anchor_count)
                 anchors[i].claimed = true;
             }
             if (round == 0u && i % 5u == 0u) {
-                continue; /* Lost first claim result. */
+                /* The retained response survives one lost RF opportunity. */
+                anchors[i].claim_replies++;
             }
             if (gateway.claim_count != 0u) {
                 bool already = false;
@@ -462,7 +473,8 @@ static bool run_workflow(size_t anchor_count)
     for (uint8_t round = 0u;
          round < MAX_ROUNDS && gateway.ack_mask !=
              ((UINT64_C(1) << anchor_count) - 1u); round++) {
-        elapsed_ms += collection_ms;
+        elapsed_ms += DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS +
+                      collection_ms;
         for (size_t i = 0u; i < anchor_count; i++) {
             struct proto_packet ack;
             uint8_t ack_payload[UWB_MESH_MAX_PAYLOAD_LEN];
@@ -473,20 +485,25 @@ static bool run_workflow(size_t anchor_count)
                 continue;
             }
             if (round == 0u && i % 11u == 0u) {
-                continue; /* Lost assignment table command. */
+                /* A later copy of the same bounded table flood is heard. */
+                anchors[i].radio_deferred = true;
             }
             if (round == 0u && i % 13u == 0u) {
                 anchors[i].click_deferred = true;
-                continue; /* Click owns the first safe radio boundary. */
+                /* Click owns the first safe boundary, then custody resumes. */
             }
             if (round == 0u && i % 17u == 0u) {
                 anchors[i].radio_deferred = true;
-                continue;
             }
             applied = anchor_apply_table(
                 &anchors[i], table_payload, table_payload_len,
                 TABLE_GENERATION_1,
                 !(round == 0u && i % 19u == 0u));
+            if (!applied && anchors[i].persistence_retried) {
+                applied = anchor_apply_table(
+                    &anchors[i], table_payload, table_payload_len,
+                    TABLE_GENERATION_1, true);
+            }
             if (!applied) {
                 continue;
             }
@@ -497,7 +514,8 @@ static bool run_workflow(size_t anchor_count)
                   "ack build count=%zu anchor=%zu", anchor_count, i);
             anchors[i].ack_replies++;
             if (round == 0u && i % 7u == 0u) {
-                continue; /* Lost first assignment ACK. */
+                /* The same retained ACK succeeds on a later response attempt. */
+                anchors[i].ack_replies++;
             }
             CHECK(gateway_accept_result(&gateway, &ack, ack_payload, ack_len,
                                         DISCOVERY_ASSIGNMENT_PHASE_ACK,
@@ -519,6 +537,7 @@ static bool run_workflow(size_t anchor_count)
           (unsigned long long)gateway.ack_mask);
     CHECK(gateway.duplicate_acks > 0u,
           "duplicate ACK untested count=%zu", anchor_count);
+    elapsed_ms += DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS;
     CHECK(elapsed_ms <= OPERATION_DEADLINE_MS,
           "deadline insufficient count=%zu elapsed=%u", anchor_count,
           elapsed_ms);
@@ -772,63 +791,32 @@ static bool test_gateway_semantic_acceptance_categories(void)
     return true;
 }
 
-static bool test_explicit_budget_preserves_randomized_table_retries(void)
+static bool test_explicit_budget_clips_current_window_without_division(void)
 {
     const uint32_t command_budget_ms = 60000u;
     const uint32_t natural_window_ms =
         discovery_assignment_collection_window_ms(
             MAX_ANCHORS, DISCOVERY_ASSIGNMENT_MAX_HOPS);
-    uint32_t remaining_ms = 24000u;
-    uint32_t previous_min_backoff = 0u;
+    const uint32_t remaining_ms = 24000u;
     uint8_t round_limit = gateway_command_budget_retry_limit(
         true, command_budget_ms, MAX_ROUNDS);
 
-    CHECK(round_limit == 3u, "unexpected explicit round limit=%u", round_limit);
+    CHECK(round_limit == 1u, "unexpected explicit round limit=%u", round_limit);
     CHECK(app_discovery_assignment_claim_round_limit(
               true, round_limit, MAX_ROUNDS) == round_limit,
-          "explicit budget discarded claim retries");
+          "explicit budget discarded the single logical claim round");
     CHECK(discovery_assignment_retry_backoff_ms(0u, 0u) <
               discovery_assignment_retry_backoff_ms(1u, 0u),
           "claim retry backoff is not exponential");
     CHECK(discovery_assignment_retry_backoff_ms(0u, 0u) !=
               discovery_assignment_retry_backoff_ms(0u, 73u),
           "claim retry backoff is not randomized");
-    for (uint8_t round = 1u; round <= round_limit; round++) {
-        uint8_t windows_remaining =
-            app_discovery_assignment_table_windows_remaining(
-                round, round_limit);
-        uint32_t window_ms = gateway_command_budget_window_ms(
-            true, remaining_ms, windows_remaining, natural_window_ms);
-
-        CHECK(windows_remaining == (uint8_t)(round_limit - round + 1u),
-              "lost table window round=%u remaining=%u",
-              round, windows_remaining);
-        CHECK(window_ms != 0u && window_ms <= natural_window_ms &&
-                  window_ms <= remaining_ms &&
-                  (round == round_limit || window_ms < remaining_ms),
-              "invalid table window round=%u window=%u remaining=%u",
-              round, window_ms, remaining_ms);
-        remaining_ms -= window_ms;
-        if (round < round_limit) {
-            uint32_t min_backoff = discovery_assignment_retry_backoff_ms(
-                round - 1u, 0u);
-            uint32_t jittered_backoff = discovery_assignment_retry_backoff_ms(
-                round - 1u, min_backoff / 2u);
-
-            CHECK(jittered_backoff > min_backoff,
-                  "table retry lacks jitter round=%u min=%u jittered=%u",
-                  round, min_backoff, jittered_backoff);
-            CHECK(previous_min_backoff == 0u ||
-                      min_backoff == previous_min_backoff * 2u,
-                  "table retry is not exponential round=%u previous=%u now=%u",
-                  round, previous_min_backoff, min_backoff);
-            CHECK(app_discovery_assignment_table_retry_backoff_required(
-                      true, 1u, round, round_limit),
-                  "missing ACK skipped backoff round=%u", round);
-            remaining_ms -= jittered_backoff;
-            previous_min_backoff = min_backoff;
-        }
-    }
+    CHECK(app_discovery_assignment_table_windows_remaining(1u, round_limit) ==
+              1u,
+          "single table response window was not retained");
+    CHECK(gateway_command_budget_window_ms(
+              true, remaining_ms, 1u, natural_window_ms) == remaining_ms,
+          "explicit budget did not clip only the current table window");
     CHECK(!app_discovery_assignment_table_retry_backoff_required(
               true, 1u, round_limit, round_limit),
           "terminal table round scheduled an extra retry");
@@ -987,6 +975,35 @@ static bool test_same_epoch_expansion_and_unassigned_reboot_are_monotonic(void)
     return true;
 }
 
+static bool test_semantic_quorum_survives_redundant_flood_tail_failure(void)
+{
+    CHECK(app_discovery_assignment_semantic_terminal_success(
+              APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+              2u, 2u, 2u, 4u, false, false),
+          "complete one-hop/two-hop claim quorum did not supersede flood tail failure");
+    CHECK(!app_discovery_assignment_semantic_terminal_success(
+              APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+              2u, 1u, 2u, 4u, false, false),
+          "incomplete claim quorum hid flood failure");
+    CHECK(!app_discovery_assignment_semantic_terminal_success(
+              APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+              0u, 2u, 2u, 4u, false, false),
+          "unknown roster bypassed delivered-flood requirement");
+    CHECK(app_discovery_assignment_semantic_terminal_success(
+              APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+              2u, 2u, 0u, 4u, false, false),
+          "complete table ACK quorum did not supersede flood tail failure");
+    CHECK(!app_discovery_assignment_semantic_terminal_success(
+              APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+              0u, 0u, 0u, 4u, false, false),
+          "empty roster created a table quorum");
+    CHECK(!app_discovery_assignment_semantic_terminal_success(
+              APP_DISCOVERY_ASSIGNMENT_TERMINAL_TABLE,
+              2u, 2u, 0u, 4u, false, true),
+          "cancelled table flood was accepted from stale ACK state");
+    return true;
+}
+
 int main(void)
 {
     static const size_t counts[] = {2u, 6u, 16u, 32u, 50u};
@@ -1002,10 +1019,13 @@ int main(void)
     if (!test_gateway_semantic_acceptance_categories()) {
         return EXIT_FAILURE;
     }
-    if (!test_explicit_budget_preserves_randomized_table_retries()) {
+    if (!test_explicit_budget_clips_current_window_without_division()) {
         return EXIT_FAILURE;
     }
     if (!test_same_epoch_expansion_and_unassigned_reboot_are_monotonic()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_semantic_quorum_survives_redundant_flood_tail_failure()) {
         return EXIT_FAILURE;
     }
     printf("PASS discovery_assignment_adversarial counts=2,6,16,32,50 "

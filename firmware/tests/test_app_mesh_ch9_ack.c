@@ -929,6 +929,8 @@ static void test_forwarded_gateway_ack_does_not_replace_other_peer(void)
     forwarded.payload[1] = UINT8_C(0xa5);
     forwarded.payload_len = 2u;
     forwarded.packet.payload_len = 2u;
+    /* The ACK is routed through RELAY_ID to a deeper logical descendant. */
+    forwarded.packet.dst_id = TRANSMITTER_ID;
 
     assert(app_mesh_ch9_ack_table_queue(&table,
                                         &other_ack,
@@ -949,9 +951,91 @@ static void test_forwarded_gateway_ack_does_not_replace_other_peer(void)
                                              RELAY_ID,
                                              &built) == PROTO_OK);
     assert(built.packet.msg_type == MSG_GATEWAY_ACK);
+    assert(built.packet.dst_id == TRANSMITTER_ID);
     assert(built.payload_len == 2u);
     assert(memcmp(built.payload, forwarded.payload, 2u) == 0);
     assert(app_mesh_ch9_ack_table_pending_for_peer(&table, TRANSMITTER_ID));
+}
+
+static void test_overlapping_forwarded_gateway_acks_preserve_first_peer_custody(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound first = ack_outbound(RELAY_ID, MSG_GATEWAY_ACK);
+    struct mesh_outbound duplicate;
+    struct mesh_outbound overlapping;
+    struct mesh_outbound built;
+    enum app_mesh_ch9_ack_queue_result result;
+    uint32_t retry_delay_ms = 0u;
+
+    first.packet.session_id = UINT32_C(0x12345678);
+    first.packet.seq = UINT16_C(0x1111);
+    first.payload[0] = UINT8_C(0x5a);
+    first.payload[1] = UINT8_C(0xa5);
+    first.payload_len = 2u;
+    first.packet.payload_len = 2u;
+    duplicate = first;
+    overlapping = first;
+    overlapping.packet.seq++;
+    overlapping.payload[0] ^= UINT8_C(0xff);
+
+    assert(app_mesh_ch9_ack_table_queue_forwarded(&table,
+                                                  &first,
+                                                  &result) == PROTO_OK);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_ADDED);
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table, RELAY_ID, 1000u, 7u, &retry_delay_ms) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_queue_forwarded(&table,
+                                                  &duplicate,
+                                                  &result) == PROTO_OK);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+    assert(app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID)->retry_round ==
+           1u);
+
+    assert(app_mesh_ch9_ack_table_queue_forwarded(&table,
+                                                  &overlapping,
+                                                  &result) ==
+           PROTO_ERR_NO_SPACE);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_FORWARDED_BUSY);
+    assert(app_mesh_ch9_ack_table_build_peer(&table,
+                                             RELAY_ID,
+                                             &built) == PROTO_OK);
+    assert(built.packet.session_id == first.packet.session_id);
+    assert(built.packet.seq == first.packet.seq);
+    assert(built.payload_len == first.payload_len);
+    assert(memcmp(built.payload, first.payload, first.payload_len) == 0);
+}
+
+static void test_forwarded_gateway_ack_table_full_preserves_existing_peers(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound first = ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    struct mesh_outbound second =
+        ack_outbound(TRANSMITTER_ID, MSG_MESH_HOP_ACK);
+    struct mesh_outbound forwarded =
+        ack_outbound(SECOND_RELAY_ID, MSG_GATEWAY_ACK);
+    struct app_mesh_ch9_ack_batch_entry first_entry =
+        ack_batch_entry(1u, 1u, 1u);
+    struct app_mesh_ch9_ack_batch_entry second_entry =
+        ack_batch_entry(2u, 2u, 2u);
+    enum app_mesh_ch9_ack_queue_result result;
+
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &first,
+                                        &first_entry,
+                                        NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &second,
+                                        &second_entry,
+                                        NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_queue_forwarded(&table,
+                                                  &forwarded,
+                                                  &result) ==
+           PROTO_ERR_NO_SPACE);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_TABLE_FULL);
+    assert(app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
+    assert(app_mesh_ch9_ack_table_pending_for_peer(&table, TRANSMITTER_ID));
+    assert(!app_mesh_ch9_ack_table_pending_for_peer(&table,
+                                                     SECOND_RELAY_ID));
 }
 
 static void test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff(void)
@@ -1063,6 +1147,8 @@ int main(void)
     test_ack_table_pressure_rejects_without_eviction_and_reuses_slot();
     test_ack_table_flush_retains_failure_and_clears_only_sent_peer();
     test_forwarded_gateway_ack_does_not_replace_other_peer();
+    test_overlapping_forwarded_gateway_acks_preserve_first_peer_custody();
+    test_forwarded_gateway_ack_table_full_preserves_existing_peers();
     test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff();
     test_duplicate_sender_retry_does_not_reset_ack_retry_round();
     test_ack_complete_keeps_idle_route_test_timing_open();

@@ -1,10 +1,12 @@
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_ch9_ack.h"
 #include "app_mesh_route_request_policy.h"
+#include "gateway_command.h"
 #include "mesh_sim.h"
 
 #include "mesh_relay.h"
 #include "protocol.h"
+#include "survey.h"
 #include "uwb.h"
 
 #include <errno.h>
@@ -25,6 +27,7 @@
 #define FORCEDHOP_BURST_COUNT 4u
 #define FORCEDHOP_PAYLOAD_LEN 900u
 #define FORCEDHOP_BATCH_ID UINT32_C(0x54f09ced)
+#define TARGETED_SURVEY_ID UINT32_C(0x07130071)
 #define FORCEDHOP_BATCH_FLAG_FINAL 0x01u
 #define DIRECT_TX_PREPARE_US UINT64_C(20000)
 #define DIRECT_PAYLOAD_SERVICE_US UINT64_C(50000)
@@ -43,6 +46,12 @@ _Static_assert(FORCEDHOP_PAYLOAD_LEN <= UWB_MESH_MAX_PAYLOAD_LEN,
 } while (0)
 
 static const char *phase = "setup";
+
+static bool has_action(const struct mesh_relay_result *result,
+                       enum mesh_relay_action action)
+{
+    return result != NULL && (result->actions & action) != 0u;
+}
 
 static uint64_t max_u64(uint64_t first, uint64_t second)
 {
@@ -720,9 +729,9 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
     CHECK(mesh_sim_set_link(&world, anchor, gateway, 98u, 2u) == MESH_SIM_OK);
     CHECK(!world.reachable[transmitter][gateway]);
     CHECK(!world.reachable[gateway][transmitter]);
-    CHECK(mesh_sim_install_route(&world, transmitter, anchor, 2u,
+    CHECK(mesh_sim_install_route(&world, transmitter, anchor, 1u,
                                  ROUTE_EPOCH) == PROTO_OK);
-    CHECK(mesh_sim_install_route(&world, anchor, gateway, 1u,
+    CHECK(mesh_sim_install_route(&world, anchor, gateway, 0u,
                                  ROUTE_EPOCH) == PROTO_OK);
     CHECK(mesh_sim_install_downlink(&world, anchor, TRANSMITTER_ID,
                                     transmitter, 1u, ROUTE_EPOCH) ==
@@ -858,6 +867,440 @@ static int run_forcedhop_delivery_loss_sweep(void)
                 return 1;
             }
         }
+    }
+    return 0;
+}
+
+static int install_control_downlink(struct mesh_relay *relay,
+                                    uint8_t index,
+                                    uint64_t target_id,
+                                    uint64_t next_hop_id,
+                                    uint8_t hop_count)
+{
+    struct mesh_downlink_entry *entry;
+
+    CHECK(relay != NULL);
+    CHECK(index < MESH_RELAY_DOWNLINK_ROUTES);
+    entry = &relay->downlinks[index];
+    CHECK(!entry->valid);
+    *entry = (struct mesh_downlink_entry) {
+        .target_id = target_id,
+        .next_hop_id = next_hop_id,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = ROUTE_EPOCH,
+        .last_seen_ms = 1000u,
+        .hop_count = hop_count,
+        .quality = 95u,
+        .valid = true,
+    };
+    return 0;
+}
+
+static int build_targeted_survey_control(struct mesh_outbound *out,
+                                         uint8_t msg_type,
+                                         uint64_t target_id,
+                                         uint16_t seq)
+{
+    const struct survey_pair pair = {
+        .survey_id = TARGETED_SURVEY_ID,
+        .initiator_id = target_id,
+        .responder_id = target_id + UINT64_C(0x1000),
+        .sample_count = 3u,
+    };
+    size_t payload_len = 0u;
+    int ret;
+
+    memset(out, 0, sizeof(*out));
+    if (msg_type == MSG_COMMAND) {
+        ret = mesh_append_command_id(out->payload,
+                                     sizeof(out->payload),
+                                     &payload_len,
+                                     CMD_SURVEY_START_PAIR);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    ret = survey_append_pair_tlvs(out->payload,
+                                  sizeof(out->payload),
+                                  &payload_len,
+                                  &pair);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    if (msg_type == MSG_COMMAND) {
+        ret = mesh_init_command(&out->packet,
+                                GATEWAY_ID,
+                                target_id,
+                                pair.survey_id,
+                                seq,
+                                (uint8_t)payload_len);
+    } else if (msg_type == MSG_SURVEY_PAIR_PREPARE) {
+        ret = survey_init_pair_prepare_packet(&out->packet,
+                                              &pair,
+                                              GATEWAY_ID,
+                                              seq,
+                                              (uint8_t)payload_len);
+    } else {
+        return PROTO_ERR_ARG;
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    out->payload_len = (uint16_t)payload_len;
+    out->next_hop_id = ANCHOR_ID;
+    out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    return PROTO_OK;
+}
+
+static bool control_capture_relevant(const struct proto_packet *packet,
+                                     uint64_t previous_hop_id,
+                                     const struct mesh_relay *relay)
+{
+    const struct mesh_downlink_entry *downlink = NULL;
+    bool targeted_control_relay = false;
+
+    if ((packet->msg_type == MSG_COMMAND ||
+         packet->msg_type == MSG_SURVEY_PAIR_PREPARE) &&
+        packet->dst_id != 0u &&
+        packet->dst_id != MESH_BROADCAST_ID &&
+        packet->dst_id != relay->local_id &&
+        packet->ttl > 1u) {
+        downlink = mesh_relay_find_downlink(relay, packet->dst_id);
+        targeted_control_relay =
+            downlink != NULL && downlink->valid &&
+            downlink->route_epoch == relay->upstream.current_epoch &&
+            downlink->gateway_id == GATEWAY_ID &&
+            downlink->next_hop_id != 0u &&
+            downlink->next_hop_id != MESH_BROADCAST_ID &&
+            downlink->next_hop_id != relay->local_id &&
+            downlink->next_hop_id != previous_hop_id;
+    }
+    const struct app_mesh_c5_route_capture_state state = {
+        .msg_type = packet->msg_type,
+        .session_id = packet->session_id,
+        .src_id = packet->src_id,
+        .dst_id = packet->dst_id,
+        .previous_hop_id = previous_hop_id,
+        .target_id = relay->local_id,
+        .local_id = relay->local_id,
+        .control_origin_id = GATEWAY_ID,
+        .control_followup = true,
+        .gateway_control_priority = true,
+        .targeted_control_relay = targeted_control_relay,
+    };
+
+    return app_mesh_c5_route_capture_relevant(&state);
+}
+
+static int run_targeted_gateway_control_multirelay_scenario(void)
+{
+    const uint64_t first_relay_id = ANCHOR_ID + UINT64_C(0x100);
+    const uint64_t second_relay_id = ANCHOR_ID + UINT64_C(0x200);
+    const uint64_t target_ids[2] = {
+        TRANSMITTER_ID + UINT64_C(0x1000),
+        TRANSMITTER_ID + UINT64_C(0x2000),
+    };
+    const uint8_t control_types[2] = {
+        MSG_COMMAND,
+        MSG_SURVEY_PAIR_PREPARE,
+    };
+    struct mesh_relay first_relay;
+    struct mesh_relay second_relay;
+    struct mesh_relay targets[2];
+    uint16_t seq = UINT16_C(0x6200);
+
+    phase = "targeted_gateway_control_multirelay";
+    mesh_relay_init(&first_relay, MESH_RELAY_ROLE_ANCHOR,
+                    first_relay_id, GATEWAY_ID, ROUTE_EPOCH);
+    mesh_relay_init(&second_relay, MESH_RELAY_ROLE_ANCHOR,
+                    second_relay_id, GATEWAY_ID, ROUTE_EPOCH);
+    for (size_t target = 0u; target < 2u; target++) {
+        mesh_relay_init(&targets[target], MESH_RELAY_ROLE_ANCHOR,
+                        target_ids[target], GATEWAY_ID, ROUTE_EPOCH);
+        CHECK(install_control_downlink(&first_relay, (uint8_t)target,
+                                       target_ids[target], second_relay_id,
+                                       2u) == 0);
+        CHECK(install_control_downlink(&second_relay, (uint8_t)target,
+                                       target_ids[target], target_ids[target],
+                                       1u) == 0);
+    }
+
+    {
+        struct mesh_outbound control;
+        struct mesh_downlink_entry saved = first_relay.downlinks[0];
+
+        CHECK(build_targeted_survey_control(&control, MSG_COMMAND,
+                                             target_ids[0],
+                                             UINT16_C(0x61ff)) == PROTO_OK);
+        first_relay.downlinks[0].route_epoch = ROUTE_EPOCH - 1u;
+        CHECK(!control_capture_relevant(&control.packet, GATEWAY_ID,
+                                        &first_relay));
+        first_relay.downlinks[0] = saved;
+        first_relay.downlinks[0].next_hop_id = first_relay_id;
+        CHECK(!control_capture_relevant(&control.packet, GATEWAY_ID,
+                                        &first_relay));
+        first_relay.downlinks[0] = saved;
+    }
+
+    for (size_t type = 0u; type < 2u; type++) {
+        for (size_t target = 0u; target < 2u; target++) {
+            struct mesh_outbound control;
+            struct mesh_relay_result first_result;
+            struct mesh_relay_result second_result;
+            struct mesh_relay_result target_result;
+            struct survey_pair decoded_pair;
+            const struct route_candidate *route;
+            uint8_t origin_ttl = 0u;
+            enum command_id command_id =
+                control_types[type] == MSG_COMMAND ?
+                    CMD_SURVEY_START_PAIR : CMD_SURVEY_PREPARE_PAIR;
+
+            seq++;
+            CHECK(build_targeted_survey_control(&control,
+                                                 control_types[type],
+                                                 target_ids[target],
+                                                 seq) == PROTO_OK);
+            CHECK(app_mesh_c5_gateway_control_origin_ttl(
+                      control.packet.msg_type,
+                      (uint16_t)command_id,
+                      &origin_ttl));
+            CHECK(control.packet.ttl == origin_ttl);
+
+            CHECK(control_capture_relevant(&control.packet,
+                                           GATEWAY_ID,
+                                           &first_relay));
+            CHECK(mesh_relay_handle_rx(&first_relay,
+                                       &control.packet,
+                                       control.payload,
+                                       control.payload_len,
+                                       GATEWAY_ID,
+                                       96u,
+                                       2000u + seq,
+                                       &first_result) == PROTO_OK);
+            CHECK(first_result.status == PROTO_OK);
+            CHECK(has_action(&first_result, MESH_RELAY_ACTION_FORWARD));
+            CHECK(!has_action(&first_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+            CHECK(!has_action(&first_result, MESH_RELAY_ACTION_DROP));
+            CHECK(first_result.forward.next_hop_id == second_relay_id);
+            CHECK(first_result.forward.packet.src_id == GATEWAY_ID);
+            CHECK(first_result.forward.packet.dst_id == target_ids[target]);
+            CHECK(first_result.forward.packet.seq == seq);
+            CHECK(first_result.forward.packet.ttl == origin_ttl - 1u);
+            CHECK(first_result.forward.payload_len == control.payload_len);
+            CHECK(memcmp(first_result.forward.payload, control.payload,
+                         control.payload_len) == 0);
+
+            CHECK(control_capture_relevant(&first_result.forward.packet,
+                                           first_relay_id,
+                                           &second_relay));
+            CHECK(mesh_relay_handle_rx(&second_relay,
+                                       &first_result.forward.packet,
+                                       first_result.forward.payload,
+                                       first_result.forward.payload_len,
+                                       first_relay_id,
+                                       94u,
+                                       3000u + seq,
+                                       &second_result) == PROTO_OK);
+            CHECK(second_result.status == PROTO_OK);
+            CHECK(has_action(&second_result, MESH_RELAY_ACTION_FORWARD));
+            CHECK(!has_action(&second_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+            CHECK(!has_action(&second_result, MESH_RELAY_ACTION_DROP));
+            CHECK(second_result.forward.next_hop_id == target_ids[target]);
+            CHECK(second_result.forward.packet.src_id == GATEWAY_ID);
+            CHECK(second_result.forward.packet.dst_id == target_ids[target]);
+            CHECK(second_result.forward.packet.seq == seq);
+            CHECK(second_result.forward.packet.ttl == origin_ttl - 2u);
+            CHECK(second_result.forward.payload_len == control.payload_len);
+            CHECK(memcmp(second_result.forward.payload, control.payload,
+                         control.payload_len) == 0);
+
+            CHECK(control_capture_relevant(&second_result.forward.packet,
+                                           second_relay_id,
+                                           &targets[target]));
+            CHECK(mesh_relay_note_gateway_control_reverse_route(
+                      &targets[target], &second_result.forward.packet,
+                      second_relay_id, 92u, origin_ttl,
+                      4000u + seq) == PROTO_OK);
+            CHECK(mesh_relay_handle_rx(&targets[target],
+                                       &second_result.forward.packet,
+                                       second_result.forward.payload,
+                                       second_result.forward.payload_len,
+                                       second_relay_id,
+                                       92u,
+                                       4000u + seq,
+                                       &target_result) == PROTO_OK);
+            CHECK(target_result.status == PROTO_OK);
+            CHECK(has_action(&target_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+            CHECK(!has_action(&target_result, MESH_RELAY_ACTION_FORWARD));
+            CHECK(!has_action(&target_result, MESH_RELAY_ACTION_DROP));
+            CHECK(survey_extract_pair_tlvs(second_result.forward.payload,
+                                           second_result.forward.payload_len,
+                                           &decoded_pair) == PROTO_OK);
+            CHECK(decoded_pair.survey_id == TARGETED_SURVEY_ID);
+            CHECK(decoded_pair.initiator_id == target_ids[target]);
+            CHECK(decoded_pair.responder_id ==
+                  target_ids[target] + UINT64_C(0x1000));
+
+            route = route_selected(&first_relay.upstream);
+            CHECK(route == NULL);
+            route = route_selected(&second_relay.upstream);
+            CHECK(route == NULL);
+            route = route_selected(&targets[target].upstream);
+            CHECK(route != NULL && route->next_hop_id == second_relay_id);
+            CHECK(route->hop_count == 2u);
+
+            for (size_t destination = 0u; destination < 2u; destination++) {
+                const struct mesh_downlink_entry *first_downlink =
+                    mesh_relay_find_downlink(&first_relay,
+                                             target_ids[destination]);
+                const struct mesh_downlink_entry *second_downlink =
+                    mesh_relay_find_downlink(&second_relay,
+                                             target_ids[destination]);
+
+                CHECK(first_downlink != NULL);
+                CHECK(first_downlink->next_hop_id == second_relay_id);
+                CHECK(second_downlink != NULL);
+                CHECK(second_downlink->next_hop_id ==
+                      target_ids[destination]);
+            }
+        }
+    }
+    return 0;
+}
+
+static int run_targeted_gateway_control_bypasses_unrelated_custody_scenario(void)
+{
+    const uint64_t relay_id = ANCHOR_ID + UINT64_C(0x300);
+    const uint64_t target_id = TRANSMITTER_ID + UINT64_C(0x3000);
+    const uint64_t custody_origin_id = TRANSMITTER_ID + UINT64_C(0x4000);
+    const struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = ROUTE_EPOCH,
+        .command_seq = UINT32_C(0x71107110),
+        .node_id = custody_origin_id,
+        .node_boot_counter = 3u,
+        .result_seq = 4u,
+    };
+    const uint8_t control_types[2] = {
+        MSG_COMMAND,
+        MSG_SURVEY_PAIR_PREPARE,
+    };
+    struct mesh_relay relay;
+    struct proto_packet custody_packet = {0};
+    struct mesh_outbound custody_tx;
+    struct mesh_pending_tx pending_before;
+    struct persistent_outbox_record outbox_before;
+    uint8_t custody_payload[96];
+    size_t custody_payload_len = 0u;
+
+    phase = "targeted_gateway_control_busy_relay";
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR,
+                    relay_id, GATEWAY_ID, ROUTE_EPOCH);
+    CHECK(mesh_relay_note_direct_gateway_route(&relay, 5000u) == PROTO_OK);
+    CHECK(install_control_downlink(&relay, 0u, target_id, target_id, 1u) == 0);
+
+    CHECK(command_result_id_append_tlvs(custody_payload,
+                                         sizeof(custody_payload),
+                                         &custody_payload_len,
+                                         &result_id) == PROTO_OK);
+    CHECK(mesh_append_command_result(custody_payload,
+                                     sizeof(custody_payload),
+                                     &custody_payload_len,
+                                     CMD_GET_STATUS,
+                                     COMMAND_OK,
+                                     0u) == PROTO_OK);
+    CHECK(mesh_init_command_result(&custody_packet,
+                                   custody_origin_id,
+                                   GATEWAY_ID,
+                                   UINT32_C(0x71107110),
+                                   UINT16_C(0x7110),
+                                   (uint8_t)custody_payload_len,
+                                   false) == PROTO_OK);
+    CHECK(mesh_relay_start_tx(&relay,
+                              &custody_packet,
+                              custody_payload,
+                              custody_payload_len,
+                              5010u,
+                              &custody_tx) == PROTO_OK);
+    CHECK(custody_tx.next_hop_id == GATEWAY_ID);
+    CHECK(mesh_relay_tx_active(&relay));
+    CHECK(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    CHECK(relay.pending.packet.src_id == custody_origin_id);
+    mesh_relay_note_tx_sent(&relay, &custody_tx, 5010u);
+    pending_before = relay.pending;
+    outbox_before = relay.outbox_record;
+
+    for (size_t type = 0u; type < 2u; type++) {
+        struct mesh_outbound control;
+        struct mesh_relay_result result;
+        const uint16_t control_seq = (uint16_t)(UINT16_C(0x7200) + type);
+
+        CHECK(build_targeted_survey_control(&control,
+                                             control_types[type],
+                                             target_id,
+                                             control_seq) == PROTO_OK);
+        CHECK(control_capture_relevant(&control.packet, GATEWAY_ID, &relay));
+        CHECK(mesh_relay_handle_rx(&relay,
+                                   &control.packet,
+                                   control.payload,
+                                   control.payload_len,
+                                   GATEWAY_ID,
+                                   96u,
+                                   5020u + (uint32_t)type,
+                                   &result) == PROTO_OK);
+        CHECK(result.status == PROTO_OK);
+        CHECK(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        CHECK(!has_action(&result, MESH_RELAY_ACTION_DROP));
+        CHECK(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
+        CHECK(!has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_BUSY));
+        CHECK(result.forward.next_hop_id == target_id);
+        CHECK(result.forward.packet.msg_type == control.packet.msg_type);
+        CHECK(result.forward.packet.src_id == GATEWAY_ID);
+        CHECK(result.forward.packet.dst_id == target_id);
+        CHECK(result.forward.packet.session_id == control.packet.session_id);
+        CHECK(result.forward.packet.seq == control_seq);
+        CHECK(result.forward.packet.ttl == control.packet.ttl - 1u);
+        CHECK(result.forward.payload_len == control.payload_len);
+        CHECK(memcmp(result.forward.payload, control.payload,
+                     control.payload_len) == 0);
+        CHECK(memcmp(&relay.pending, &pending_before,
+                     sizeof(pending_before)) == 0);
+        CHECK(memcmp(&relay.outbox_record, &outbox_before,
+                     sizeof(outbox_before)) == 0);
+        CHECK(mesh_relay_tx_active(&relay));
+    }
+
+    {
+        struct proto_packet ordinary = {
+            .msg_type = MSG_MESH_DATA,
+            .src_id = GATEWAY_ID,
+            .dst_id = target_id,
+            .session_id = UINT32_C(0x73007300),
+            .seq = UINT16_C(0x7300),
+            .ttl = MESH_DEFAULT_TTL,
+            .payload_len = 1u,
+        };
+        struct mesh_relay_result result;
+        const uint8_t payload[1] = {0x73u};
+
+        CHECK(mesh_relay_handle_rx(&relay,
+                                   &ordinary,
+                                   payload,
+                                   sizeof(payload),
+                                   GATEWAY_ID,
+                                   96u,
+                                   5030u,
+                                   &result) == PROTO_OK);
+        CHECK(result.status == PROTO_ERR_BUSY);
+        CHECK(has_action(&result, MESH_RELAY_ACTION_DROP));
+        CHECK(has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
+        CHECK(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        CHECK(memcmp(&relay.pending, &pending_before,
+                     sizeof(pending_before)) == 0);
+        CHECK(memcmp(&relay.outbox_record, &outbox_before,
+                     sizeof(outbox_before)) == 0);
+        CHECK(mesh_relay_tx_active(&relay));
     }
     return 0;
 }
@@ -1083,6 +1526,13 @@ int main(void)
         return 1;
     }
     if (run_forcedhop_delivery_loss_sweep() != 0) {
+        return 1;
+    }
+    if (run_targeted_gateway_control_multirelay_scenario() != 0) {
+        return 1;
+    }
+    if (run_targeted_gateway_control_bypasses_unrelated_custody_scenario() !=
+        0) {
         return 1;
     }
     printf("forced-hop over-air route and stable connection scenario passed\n");

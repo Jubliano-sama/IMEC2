@@ -45,6 +45,9 @@ struct route_refresh_state {
     uint8_t in_flight : 1;
     uint8_t resume_pending : 1;
     uint8_t absolute_deadline_valid : 1;
+    uint8_t response_due_valid : 1;
+    uint8_t readiness_candidate : 1;
+    uint8_t ready : 1;
 };
 
 struct route_refresh_operation {
@@ -61,6 +64,7 @@ struct route_refresh_operation {
     bool wake_sent;
     bool outer_sent;
     bool absolute_deadline_valid;
+    bool response_due_valid;
 };
 
 static struct route_refresh_state route_refresh;
@@ -135,6 +139,7 @@ uint32_t app_node_comm_gateway_route_refresh_response_priority_wait_ms(
 {
     const struct app_node_comm_gateway_route_refresh_config *config;
     uint32_t response_due_ms;
+    bool response_due_valid;
     uint32_t wait_ms = 0u;
 
     if (app_node_comm_sync_lock() < 0) {
@@ -142,9 +147,10 @@ uint32_t app_node_comm_gateway_route_refresh_response_priority_wait_ms(
     }
     config = route_refresh.config;
     response_due_ms = route_refresh.response_due_ms;
+    response_due_valid = route_refresh.response_due_valid;
     app_node_comm_sync_unlock();
     if (config != NULL && config->response_priority_active != NULL &&
-        response_due_ms != 0u &&
+        response_due_valid &&
         config->response_priority_active(now_ms, config->ctx)) {
         wait_ms = refresh_wait_ms(now_ms, response_due_ms);
     }
@@ -155,16 +161,18 @@ bool app_node_comm_gateway_route_refresh_response_priority_due(uint32_t now_ms)
 {
     const struct app_node_comm_gateway_route_refresh_config *config;
     uint32_t response_due_ms;
+    bool response_due_valid;
 
     if (app_node_comm_sync_lock() < 0) {
         return false;
     }
     config = route_refresh.config;
     response_due_ms = route_refresh.response_due_ms;
+    response_due_valid = route_refresh.response_due_valid;
     app_node_comm_sync_unlock();
     return config != NULL && config->response_priority_active != NULL &&
            config->response_priority_active(now_ms, config->ctx) &&
-           (response_due_ms == 0u ||
+           (!response_due_valid ||
             refresh_wait_ms(now_ms, response_due_ms) == 0u);
 }
 
@@ -245,6 +253,10 @@ static void refresh_complete(int result)
     bool observe = route_refresh.forced && route_refresh.correlated &&
                    config != NULL && config->observe != NULL;
 
+    if (result == 0 && route_refresh.readiness_candidate) {
+        route_refresh.ready = true;
+    }
+
     route_refresh.active = false;
     route_refresh.forced = false;
     route_refresh.correlated = false;
@@ -252,6 +264,7 @@ static void refresh_complete(int result)
     route_refresh.absolute_deadline_valid = false;
     route_refresh.due_ms = 0u;
     route_refresh.scheduled = false;
+    route_refresh.readiness_candidate = false;
     refresh_reset_outer_attempt();
 
     app_node_comm_sync_unlock();
@@ -458,6 +471,7 @@ static void refresh_operation_copy_locked(
     operation->generation = route_refresh.operation_generation;
     operation->sequence = route_refresh.sequence;
     operation->response_due_ms = route_refresh.response_due_ms;
+    operation->response_due_valid = route_refresh.response_due_valid;
     operation->absolute_deadline_ms = route_refresh.absolute_deadline_ms;
     operation->outer_sent_count = route_refresh.outer_sent_count;
     operation->burst_index = route_refresh.burst_index;
@@ -538,6 +552,8 @@ static void refresh_work_handler(struct k_work *work)
     if (!route_refresh.forced && !allowed) {
         route_refresh.active = false;
         route_refresh.response_due_ms = 0u;
+        route_refresh.response_due_valid = false;
+        route_refresh.readiness_candidate = false;
         app_node_comm_sync_unlock();
         return;
     }
@@ -579,7 +595,7 @@ static void refresh_work_handler(struct k_work *work)
             bool response_priority =
                 config->response_priority_active != NULL &&
                 config->response_priority_active(current_ms, config->ctx) &&
-                (operation.response_due_ms == 0u ||
+                (!operation.response_due_valid ||
                  refresh_wait_ms(current_ms,
                                  operation.response_due_ms) == 0u);
 
@@ -753,32 +769,26 @@ void app_node_comm_gateway_route_refresh_init(
     }
 }
 
-void app_node_comm_gateway_route_refresh_start(void)
+bool app_node_comm_gateway_route_refresh_ready(void)
 {
-    (void)app_node_comm_gateway_route_refresh_request(
-        ROUTE_REFRESH_STARTUP_DELAY_MS, "startup", false, NULL);
+    bool ready = false;
+
+    if (app_node_comm_sync_lock() == 0) {
+        ready = route_refresh.config != NULL &&
+                route_refresh.config->gateway_role &&
+                route_refresh.ready;
+        app_node_comm_sync_unlock();
+    }
+    return ready;
 }
 
-int app_node_comm_gateway_route_refresh_request(
-    uint32_t delay_ms,
-    const char *reason,
-    bool forced,
-    const struct proto_packet *correlation)
-{
-    return app_node_comm_gateway_route_refresh_request_bounded(
-        delay_ms,
-        reason,
-        forced,
-        correlation,
-        ROUTE_REFRESH_PROTOCOL_DEADLINE_MS);
-}
-
-int app_node_comm_gateway_route_refresh_request_bounded(
+static int route_refresh_request_bounded(
     uint32_t delay_ms,
     const char *reason,
     bool forced,
     const struct proto_packet *correlation,
-    uint32_t timeout_ms)
+    uint32_t timeout_ms,
+    bool startup)
 {
     const struct app_node_comm_gateway_route_refresh_config *config;
     uint32_t now_ms;
@@ -787,7 +797,8 @@ int app_node_comm_gateway_route_refresh_request_bounded(
     bool stop_role_scan = false;
     int ret;
 
-    if (timeout_ms == 0u || UINT32_MAX - delay_ms < timeout_ms) {
+    if (timeout_ms == 0u || UINT32_MAX - delay_ms < timeout_ms ||
+        (startup && (forced || correlation != NULL))) {
         return -EINVAL;
     }
     ret = app_node_comm_sync_lock();
@@ -837,6 +848,7 @@ int app_node_comm_gateway_route_refresh_request_bounded(
         route_refresh.retry_round = 0u;
         route_refresh.forced = true;
         route_refresh.correlated = correlation != NULL;
+        route_refresh.readiness_candidate = correlation != NULL;
         if (correlation != NULL) {
             route_refresh.correlation.flags = correlation->flags;
             route_refresh.correlation.session_id = correlation->session_id;
@@ -853,6 +865,7 @@ int app_node_comm_gateway_route_refresh_request_bounded(
         route_refresh.absolute_deadline_ms = refresh_deadline_add(
             now_ms, delay_ms + timeout_ms);
         route_refresh.absolute_deadline_valid = true;
+        route_refresh.readiness_candidate = startup;
     }
     (void)reason;
     route_refresh.active = true;
@@ -860,12 +873,13 @@ int app_node_comm_gateway_route_refresh_request_bounded(
     if (response_priority) {
         uint32_t candidate_due_ms = refresh_deadline_add(now_ms, delay_ms);
 
-        if (route_refresh.response_due_ms != 0u &&
+        if (route_refresh.response_due_valid &&
             (int32_t)(candidate_due_ms - route_refresh.response_due_ms) >= 0) {
             delay_ms = refresh_wait_ms(now_ms,
                                        route_refresh.response_due_ms);
         } else {
             route_refresh.response_due_ms = candidate_due_ms;
+            route_refresh.response_due_valid = true;
         }
         if (delay_ms <= ROUTE_REFRESH_PRE_RF_RETRY_MS) {
             delay_ms = 0u;
@@ -877,6 +891,7 @@ int app_node_comm_gateway_route_refresh_request_bounded(
         route_refresh.active = false;
         route_refresh.due_ms = 0u;
         route_refresh.scheduled = false;
+        route_refresh.readiness_candidate = false;
         if (forced) {
             route_refresh.forced = false;
             route_refresh.correlated = false;
@@ -888,6 +903,46 @@ out:
         config->stop_role_scan(config->ctx);
     }
     return ret;
+}
+
+void app_node_comm_gateway_route_refresh_start(void)
+{
+    (void)route_refresh_request_bounded(
+        ROUTE_REFRESH_STARTUP_DELAY_MS,
+        "startup",
+        false,
+        NULL,
+        ROUTE_REFRESH_PROTOCOL_DEADLINE_MS,
+        true);
+}
+
+int app_node_comm_gateway_route_refresh_request(
+    uint32_t delay_ms,
+    const char *reason,
+    bool forced,
+    const struct proto_packet *correlation)
+{
+    return app_node_comm_gateway_route_refresh_request_bounded(
+        delay_ms,
+        reason,
+        forced,
+        correlation,
+        ROUTE_REFRESH_PROTOCOL_DEADLINE_MS);
+}
+
+int app_node_comm_gateway_route_refresh_request_bounded(
+    uint32_t delay_ms,
+    const char *reason,
+    bool forced,
+    const struct proto_packet *correlation,
+    uint32_t timeout_ms)
+{
+    return route_refresh_request_bounded(delay_ms,
+                                         reason,
+                                         forced,
+                                         correlation,
+                                         timeout_ms,
+                                         false);
 }
 
 bool app_node_comm_gateway_route_refresh_pending_wait_ms(
@@ -957,6 +1012,7 @@ void app_node_comm_gateway_route_refresh_response_priority_clear(void)
 {
     if (app_node_comm_sync_lock() == 0) {
         route_refresh.response_due_ms = 0u;
+        route_refresh.response_due_valid = false;
         app_node_comm_sync_unlock();
     }
 }

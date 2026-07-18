@@ -1952,6 +1952,18 @@ focused_scan_attempt:
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                 !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
                                                                  true)) {
+                if (!app_mesh_c5_route_wake_claim_allowed(
+                        claim.clicker_id,
+                        GATEWAY_ID,
+                        claim.flags,
+                        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ),
+                        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL))) {
+                    status_debug_printf("DBG_ANCHOR_DIRECT_GATEWAY_WAKE_IGNORED src=0x%llx evt=%u flags=0x%02x\n",
+                                        (unsigned long long)claim.clicker_id,
+                                        claim.click_event_id,
+                                        claim.flags);
+                    goto scan_complete;
+                }
                 route_wake_handoff = true;
                 route_wake_frame_len = frame_len;
                 route_wake_quality = quality;

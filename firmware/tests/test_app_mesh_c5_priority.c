@@ -125,6 +125,7 @@ static void test_route_reply_and_event_control_capture_rules(void)
         .dst_id = MESH_BROADCAST_ID,
         .previous_hop_id = 0x3333333333333301ull,
         .target_id = 0x3333333333333301ull,
+        .route_request_target_id = 0x3333333333333301ull,
         .local_id = 0x2222222222222301ull,
     };
 
@@ -151,10 +152,76 @@ static void test_route_reply_and_event_control_capture_rules(void)
         MSG_MESH_EVENT_ACCEPT,
         false));
     assert(app_mesh_c5_route_capture_relevant(&route_request));
-    assert(app_mesh_c5_route_capture_completes_discovery(
+    assert(!app_mesh_c5_route_capture_completes_discovery(
         route_request.msg_type));
     assert(!app_mesh_c5_route_capture_requires_ack_hold(
         route_request.msg_type));
+}
+
+static void test_competing_route_request_yields_without_false_route_success(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t local_anchor_id = 0x2222222222222301ull;
+    const uint64_t direct_origin_id = 0x3333333333333301ull;
+    const uint64_t forwarded_origin_id = 0x4444444444444401ull;
+    const uint64_t forwarding_anchor_id = 0x5555555555555501ull;
+    const uint64_t wrong_target_id = 0x8888888877776666ull;
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_ROUTE_REQ,
+        .src_id = direct_origin_id,
+        .dst_id = MESH_BROADCAST_ID,
+        .previous_hop_id = direct_origin_id,
+        .target_id = gateway_id,
+        .route_request_target_id = gateway_id,
+        .local_id = local_anchor_id,
+    };
+
+    /* A neighbor competing for the same gateway must release RX ownership. */
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    assert(!app_mesh_c5_route_capture_completes_discovery(state.msg_type));
+    assert(app_mesh_c5_route_capture_yields_to_competing_request(
+        state.msg_type));
+    assert(!app_mesh_c5_route_capture_yields_to_competing_request(
+        MSG_ROUTE_REPLY));
+
+    /* Several-hop requests retain the origin while the previous hop changes. */
+    state.src_id = forwarded_origin_id;
+    state.previous_hop_id = forwarding_anchor_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+
+    /*
+     * A child's route-solicit wake makes the listener target the child, while
+     * the decoded request still asks for the gateway or this local responder.
+     */
+    state.src_id = direct_origin_id;
+    state.previous_hop_id = direct_origin_id;
+    state.target_id = direct_origin_id;
+    state.control_origin_id = gateway_id;
+    state.route_request_target_id = gateway_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.route_request_target_id = local_anchor_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+
+    state.route_request_target_id = wrong_target_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.route_request_target_id = gateway_id;
+    state.target_id = gateway_id;
+    state.control_origin_id = 0u;
+
+    state.src_id = local_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.src_id = forwarded_origin_id;
+
+    state.previous_hop_id = local_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = 0u;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = MESH_BROADCAST_ID;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = forwarding_anchor_id;
+
+    state.dst_id = local_anchor_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
 static void test_control_wake_captures_gateway_broadcast_command(void)
@@ -197,6 +264,33 @@ static void test_control_wake_captures_survey_discovery_like_enumeration(void)
     assert(!app_mesh_c5_route_capture_relevant(&state));
     state.control_followup = true;
     state.dst_id = state.local_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+}
+
+static void test_forced_hop_anchor_requires_relayed_gateway_control(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t local_anchor_id = 0x3333333333333301ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_SURVEY_DISCOVERY_START,
+        .src_id = gateway_id,
+        .dst_id = MESH_BROADCAST_ID,
+        .previous_hop_id = gateway_id,
+        .target_id = gateway_id,
+        .local_id = local_anchor_id,
+        .control_followup = true,
+        .require_relayed_gateway_control = true,
+    };
+
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = relay_anchor_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+
+    state.msg_type = MSG_SURVEY_PAIR_PREPARE;
+    state.dst_id = local_anchor_id;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = gateway_id;
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
@@ -252,6 +346,33 @@ static void test_control_wake_captures_targeted_survey_pair_prepare(void)
     state.previous_hop_id = gateway_id;
 
     state.msg_type = MSG_SURVEY_PAIR_RESULT;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+}
+
+static void test_targeted_gateway_control_requires_validated_downlink_to_relay(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t local_relay_id = 0x2222222222222301ull;
+    const uint64_t downstream_target_id = 0x3333333333333301ull;
+    struct app_mesh_c5_route_capture_state state = {
+        .msg_type = MSG_SURVEY_PAIR_PREPARE,
+        .src_id = gateway_id,
+        .dst_id = downstream_target_id,
+        .previous_hop_id = gateway_id,
+        .target_id = gateway_id,
+        .local_id = local_relay_id,
+        .gateway_control_priority = true,
+    };
+
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.targeted_control_relay = true;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+
+    state.msg_type = MSG_COMMAND;
+    assert(app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = local_relay_id;
+    assert(!app_mesh_c5_route_capture_relevant(&state));
+    state.previous_hop_id = MESH_BROADCAST_ID;
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
@@ -445,16 +566,139 @@ static void test_wake_claim_click_priority_policy(void)
         FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY));
 }
 
+static void test_forced_hop_anchor_ignores_direct_gateway_route_wake(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    const uint8_t control_wake_flags =
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+
+    assert(app_mesh_c5_route_wake_claim_allowed(gateway_id,
+                                                 gateway_id,
+                                                 control_wake_flags,
+                                                 false,
+                                                 false));
+    assert(!app_mesh_c5_route_wake_claim_allowed(gateway_id,
+                                                  gateway_id,
+                                                  control_wake_flags,
+                                                  true,
+                                                  false));
+    assert(!app_mesh_c5_route_wake_claim_allowed(gateway_id,
+                                                  gateway_id,
+                                                  control_wake_flags,
+                                                  false,
+                                                  true));
+
+    assert(app_mesh_c5_route_wake_claim_allowed(relay_anchor_id,
+                                                 gateway_id,
+                                                 control_wake_flags,
+                                                 true,
+                                                 true));
+    assert(app_mesh_c5_route_wake_claim_allowed(gateway_id,
+                                                 gateway_id,
+                                                 FLAG_COUNT_AS_CLICK,
+                                                 true,
+                                                 true));
+}
+
+static void test_gateway_control_route_hint_uses_first_transport_copy(void)
+{
+    struct app_mesh_c5_control_route_history history = {0};
+    const struct app_mesh_c5_control_route_identity direct_first = {
+        .route_epoch = 0x10203040u,
+        .msg_type = MSG_SURVEY_DISCOVERY_START,
+        .session_id = 0x50607080u,
+        .seq = 0x1122u,
+    };
+    /*
+     * The physical previous hop is deliberately absent from the identity.
+     * A relayed echo of the same gateway packet must retain the route learned
+     * from the direct first copy instead of creating an alternate parent.
+     */
+    const struct app_mesh_c5_control_route_identity relayed_echo = direct_first;
+    struct app_mesh_c5_control_route_identity new_sequence = direct_first;
+    struct app_mesh_c5_control_route_identity new_epoch = direct_first;
+    const struct app_mesh_c5_control_route_identity relayed_first = {
+        .route_epoch = 0x10203041u,
+        .msg_type = MSG_COMMAND,
+        .session_id = 0x90a0b0c0u,
+        .seq = 0x3344u,
+    };
+
+    assert(app_mesh_c5_control_route_hint_is_first(&history, &direct_first));
+    assert(!app_mesh_c5_control_route_hint_is_first(&history, &relayed_echo));
+
+    new_sequence.seq++;
+    assert(app_mesh_c5_control_route_hint_is_first(&history, &new_sequence));
+
+    new_epoch.route_epoch++;
+    assert(app_mesh_c5_control_route_hint_is_first(&history, &new_epoch));
+
+    assert(app_mesh_c5_control_route_hint_is_first(&history, &relayed_first));
+    assert(!app_mesh_c5_control_route_hint_is_first(&history, &relayed_first));
+}
+
 static void test_connected_gap_stays_armed_until_deadline_or_click(void)
 {
-    assert(app_mesh_c5_connected_gap_rx_action(false, false) ==
+    assert(app_mesh_c5_connected_gap_rx_action(false, false, false) ==
            APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE);
-    assert(app_mesh_c5_connected_gap_rx_action(false, true) ==
+    assert(app_mesh_c5_connected_gap_rx_action(false, false, true) ==
            APP_MESH_C5_CONNECTED_GAP_RX_COMPLETE);
-    assert(app_mesh_c5_connected_gap_rx_action(true, false) ==
+    assert(app_mesh_c5_connected_gap_rx_action(true, false, false) ==
            APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK);
-    assert(app_mesh_c5_connected_gap_rx_action(true, true) ==
+    assert(app_mesh_c5_connected_gap_rx_action(true, false, true) ==
            APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK);
+}
+
+static void test_connected_gap_hands_allowed_control_to_extended_follower(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    const uint8_t control_followup_flags =
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    bool route_control_claim;
+
+    assert(app_mesh_c5_wake_followup_is_control(control_followup_flags));
+
+    route_control_claim = app_mesh_c5_route_wake_claim_allowed(
+        gateway_id,
+        gateway_id,
+        control_followup_flags,
+        false,
+        false);
+    assert(route_control_claim);
+    assert(app_mesh_c5_connected_gap_rx_action(false,
+                                                route_control_claim,
+                                                false) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL);
+
+    /* The forced-hop bench ignores direct gateway control and keeps RX armed. */
+    route_control_claim = app_mesh_c5_route_wake_claim_allowed(
+        gateway_id,
+        gateway_id,
+        control_followup_flags,
+        false,
+        true);
+    assert(!route_control_claim);
+    assert(app_mesh_c5_connected_gap_rx_action(false,
+                                                route_control_claim,
+                                                false) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE);
+
+    /* The same control arriving through a relay owns the extended follower. */
+    route_control_claim = app_mesh_c5_route_wake_claim_allowed(
+        relay_anchor_id,
+        gateway_id,
+        control_followup_flags,
+        false,
+        true);
+    assert(route_control_claim);
+    assert(app_mesh_c5_connected_gap_rx_action(false,
+                                                route_control_claim,
+                                                false) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL);
 }
 
 static void test_route_adv_delay_targets_requester_reply_window(void)
@@ -549,16 +793,22 @@ int main(void)
     test_gateway_route_adv_counts_as_route_capture();
     test_unrelated_gateway_route_adv_is_ignored();
     test_route_reply_and_event_control_capture_rules();
+    test_competing_route_request_yields_without_false_route_success();
     test_control_wake_captures_gateway_broadcast_command();
     test_control_wake_captures_survey_discovery_like_enumeration();
+    test_forced_hop_anchor_requires_relayed_gateway_control();
     test_control_wake_captures_targeted_survey_pair_prepare();
+    test_targeted_gateway_control_requires_validated_downlink_to_relay();
     test_route_reply_capture_requires_exact_discovery_identity();
     test_event_accept_reservation_covers_bounded_realign();
     test_channel5_control_phr_policy();
     test_gateway_control_origin_ttl_matches_command_profile();
     test_gateway_control_followup_tx_rx_phr_symmetry();
     test_wake_claim_click_priority_policy();
+    test_forced_hop_anchor_ignores_direct_gateway_route_wake();
+    test_gateway_control_route_hint_uses_first_transport_copy();
     test_connected_gap_stays_armed_until_deadline_or_click();
+    test_connected_gap_hands_allowed_control_to_extended_follower();
     test_route_adv_delay_targets_requester_reply_window();
     test_route_reply_window_covers_direct_probe_and_reply_exchange();
     test_connected_gap_window_uses_channel5_until_retune_guard();

@@ -31,6 +31,7 @@ static bool gateway_delivery_requires_commit(
 struct route_discovery_fields {
     uint64_t origin_id;
     uint64_t target_id;
+    struct mesh_route_path path;
     struct mesh_event_timing proposed_channel9_timing;
     uint32_t route_epoch;
     uint32_t flood_epoch_id;
@@ -70,6 +71,7 @@ struct relay_busy_fields {
 
 struct gateway_route_adv_fields {
     uint64_t gateway_id;
+    struct mesh_route_path path;
     uint32_t gateway_route_seq;
     uint32_t flood_epoch_id;
     uint32_t slot_seed;
@@ -109,6 +111,9 @@ struct reactive_route_rollback {
 _Static_assert(MESH_GATEWAY_ROUTE_ADV_PAYLOAD_LEN <=
                    UWB_MESH_MAX_PAYLOAD_LEN,
                "gateway route advertisement exceeds mesh payload capacity");
+_Static_assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN <=
+                   PACKET_MAX_PAYLOAD_LEN,
+               "maximum-depth gateway route path exceeds mesh payload capacity");
 
 struct flood_control_fields {
     uint32_t random_backoff_max_ms;
@@ -119,6 +124,147 @@ struct flood_control_fields {
 static bool id_is_unicast(uint64_t id)
 {
     return id != MESH_BROADCAST_ID;
+}
+
+static int upstream_candidate_index(const struct mesh_relay *relay,
+                                    const struct route_candidate *candidate)
+{
+    if (relay == NULL || candidate == NULL) {
+        return -1;
+    }
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        if (&relay->upstream.candidates[i] == candidate) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static const struct route_candidate *find_upstream_candidate(
+    const struct mesh_relay *relay,
+    uint64_t next_hop_id,
+    uint32_t route_epoch)
+{
+    if (relay == NULL) {
+        return NULL;
+    }
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &relay->upstream.candidates[i];
+
+        if (candidate->valid && candidate->gateway_id == relay->gateway_id &&
+            candidate->next_hop_id == next_hop_id &&
+            candidate->route_epoch == route_epoch) {
+            return candidate;
+        }
+    }
+    return NULL;
+}
+
+static const struct mesh_route_path *upstream_candidate_ancestry(
+    const struct mesh_relay *relay,
+    const struct route_candidate *candidate)
+{
+    const struct mesh_upstream_ancestry_entry *entry;
+    int index = upstream_candidate_index(relay, candidate);
+
+    if (index < 0 || relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        relay->anchor_downlink_store == NULL || !candidate->valid ||
+        candidate->gateway_id != relay->gateway_id ||
+        candidate->hop_count > MESH_ROUTE_PATH_MAX_NODES - 2u) {
+        return NULL;
+    }
+    entry = &relay->anchor_downlink_store->upstream_ancestry[index];
+    if (!entry->valid || entry->next_hop_id != candidate->next_hop_id ||
+        entry->route_epoch != candidate->route_epoch ||
+        entry->path.count != (uint8_t)(candidate->hop_count + 2u) ||
+        mesh_route_path_validate(&entry->path,
+                                 relay->gateway_id,
+                                 relay->local_id) != PROTO_OK) {
+        return NULL;
+    }
+    return &entry->path;
+}
+
+static int store_upstream_candidate_ancestry(
+    struct mesh_relay *relay,
+    const struct route_candidate *candidate,
+    const struct mesh_route_path *path,
+    struct mesh_upstream_ancestry_entry *previous)
+{
+    struct mesh_upstream_ancestry_entry *entry;
+    int index = upstream_candidate_index(relay, candidate);
+
+    if (index < 0 || path == NULL || !candidate->valid ||
+        candidate->gateway_id != relay->gateway_id ||
+        candidate->hop_count > MESH_ROUTE_PATH_MAX_NODES - 2u ||
+        path->count != (uint8_t)(candidate->hop_count + 2u) ||
+        mesh_route_path_validate(path,
+                                 relay->gateway_id,
+                                 relay->local_id) != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    /*
+     * Only production anchors relay for other nodes and therefore retain the
+     * ancestry sidecar. Clickers still install routes for their own traffic;
+     * a test or compatibility caller without the anchor sidecar remains safe
+     * because it cannot later advertise that candidate as an upstream path.
+     */
+    if (relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        relay->anchor_downlink_store == NULL) {
+        if (previous != NULL) {
+            memset(previous, 0, sizeof(*previous));
+        }
+        return PROTO_OK;
+    }
+
+    entry = &relay->anchor_downlink_store->upstream_ancestry[index];
+    if (previous != NULL) {
+        *previous = *entry;
+    }
+    memset(entry, 0, sizeof(*entry));
+    entry->path = *path;
+    entry->next_hop_id = candidate->next_hop_id;
+    entry->route_epoch = candidate->route_epoch;
+    entry->valid = true;
+    return PROTO_OK;
+}
+
+static void restore_upstream_candidate_ancestry(
+    struct mesh_relay *relay,
+    const struct route_candidate *candidate,
+    const struct mesh_upstream_ancestry_entry *previous)
+{
+    int index = upstream_candidate_index(relay, candidate);
+
+    if (index >= 0 && previous != NULL &&
+        relay->role == MESH_RELAY_ROLE_ANCHOR &&
+        relay->anchor_downlink_store != NULL) {
+        relay->anchor_downlink_store->upstream_ancestry[index] = *previous;
+    }
+}
+
+static void clear_upstream_candidate_ancestry_at(struct mesh_relay *relay,
+                                                 uint8_t index)
+{
+    if (relay != NULL && relay->role == MESH_RELAY_ROLE_ANCHOR &&
+        relay->anchor_downlink_store != NULL &&
+        index < ROUTE_MAX_CANDIDATES) {
+        memset(&relay->anchor_downlink_store->upstream_ancestry[index],
+               0,
+               sizeof(relay->anchor_downlink_store->upstream_ancestry[index]));
+    }
+}
+
+static void clear_all_upstream_candidate_ancestry(struct mesh_relay *relay)
+{
+    if (relay != NULL && relay->role == MESH_RELAY_ROLE_ANCHOR &&
+        relay->anchor_downlink_store != NULL) {
+        memset(relay->anchor_downlink_store->upstream_ancestry,
+               0,
+               sizeof(relay->anchor_downlink_store->upstream_ancestry));
+    }
 }
 
 static uint16_t relay_next_seq(struct mesh_relay *relay)
@@ -520,9 +666,14 @@ uint16_t mesh_route_reply_nonce(uint64_t origin_id,
 
 static uint16_t route_reply_metric_crc(const struct route_discovery_fields *fields)
 {
-    uint8_t metric[42];
+    uint8_t metric[43u + MESH_ROUTE_PATH_MAX_VALUE_BYTES];
     size_t offset = 0u;
     uint16_t crc;
+
+    if (fields == NULL || fields->path.count == 0u ||
+        fields->path.count > MESH_ROUTE_PATH_MAX_NODES) {
+        return 1u;
+    }
 
     proto_put_u64_le(&metric[offset], fields->origin_id);
     offset += sizeof(uint64_t);
@@ -544,6 +695,11 @@ static uint16_t route_reply_metric_crc(const struct route_discovery_fields *fiel
     offset += sizeof(uint16_t);
     proto_put_u32_le(&metric[offset], fields->slot_seed);
     offset += sizeof(uint32_t);
+    metric[offset++] = fields->path.count;
+    for (uint8_t i = 0u; i < fields->path.count; i++) {
+        proto_put_u64_le(&metric[offset], fields->path.node_ids[i]);
+        offset += sizeof(uint64_t);
+    }
 
     crc = proto_crc16_ccitt_false(metric, offset);
     return crc == 0u ? 1u : crc;
@@ -670,6 +826,13 @@ static int append_route_discovery_tlvs(uint8_t *payload,
         return ret;
     }
     ret = tlv_append_u32(payload, payload_cap, offset, TLV_SLOT_SEED, fields->slot_seed);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_route_path_append_tlv(payload,
+                                     payload_cap,
+                                     offset,
+                                     &fields->path);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -1067,6 +1230,44 @@ static uint16_t downlink_effective_cost(const struct mesh_downlink_entry *entry)
     return (uint16_t)((uint16_t)entry->hop_count * 100u + (uint16_t)(100u - entry->quality));
 }
 
+size_t mesh_relay_downlink_capacity(const struct mesh_relay *relay)
+{
+    if (relay != NULL && relay->role == MESH_RELAY_ROLE_ANCHOR &&
+        relay->anchor_downlink_store != NULL) {
+        return MESH_RELAY_ANCHOR_DOWNLINK_ROUTES;
+    }
+    return MESH_RELAY_DOWNLINK_ROUTES;
+}
+
+const struct mesh_downlink_entry *mesh_relay_downlink_at(
+    const struct mesh_relay *relay,
+    size_t index)
+{
+    if (relay == NULL || index >= mesh_relay_downlink_capacity(relay)) {
+        return NULL;
+    }
+    if (index < MESH_RELAY_DOWNLINK_ROUTES) {
+        return &relay->downlinks[index];
+    }
+    return &relay->anchor_downlink_store->entries[
+        index - MESH_RELAY_DOWNLINK_ROUTES];
+}
+
+static struct mesh_downlink_entry *downlink_at_mutable(
+    struct mesh_relay *relay,
+    size_t index)
+{
+    return (struct mesh_downlink_entry *)mesh_relay_downlink_at(relay, index);
+}
+
+static void clear_all_downlinks(struct mesh_relay *relay)
+{
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        memset(downlink_at_mutable(relay, i), 0,
+               sizeof(struct mesh_downlink_entry));
+    }
+}
+
 static bool downlink_is_better(const struct mesh_downlink_entry *candidate,
                                const struct mesh_downlink_entry *selected);
 
@@ -1075,8 +1276,9 @@ static int downlink_index(const struct mesh_relay *relay, uint64_t target_id)
     int selected_index = -1;
     const struct mesh_downlink_entry *selected = NULL;
 
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
 
         if (!entry->valid || entry->target_id != target_id) {
             continue;
@@ -1117,8 +1319,9 @@ static const struct mesh_downlink_entry *downlink_for_discovery(
 {
     const struct mesh_downlink_entry *selected = NULL;
 
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
 
         if (!downlink_matches_discovery(entry,
                                         origin_id,
@@ -1146,8 +1349,9 @@ static const struct mesh_downlink_entry *downlink_backup_for_discovery(
 {
     const struct mesh_downlink_entry *selected = NULL;
 
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
 
         if (!downlink_matches_discovery(entry,
                                         origin_id,
@@ -1179,8 +1383,9 @@ static bool downlink_same_key(const struct mesh_downlink_entry *a,
 static int downlink_exact_index(const struct mesh_relay *relay,
                                 const struct mesh_downlink_entry *candidate)
 {
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        const struct mesh_downlink_entry *entry = &relay->downlinks[i];
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
 
         if (entry->valid && downlink_same_key(entry, candidate)) {
             return (int)i;
@@ -1245,23 +1450,29 @@ static int upsert_downlink(struct mesh_relay *relay,
 
     index = downlink_exact_index(relay, entry);
     if (index >= 0) {
+        struct mesh_downlink_entry *slot = downlink_at_mutable(
+            relay, (size_t)index);
+
         if (rollback != NULL) {
-            rollback->previous = relay->downlinks[index];
+            rollback->previous = *slot;
             rollback->index = (uint8_t)index;
             rollback->valid = true;
         }
-        relay->downlinks[index] = *entry;
-        relay->downlinks[index].valid = true;
+        *slot = *entry;
+        slot->valid = true;
         return PROTO_OK;
     }
 
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        if (!relay->downlinks[i].valid) {
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *candidate =
+            mesh_relay_downlink_at(relay, i);
+
+        if (!candidate->valid) {
             free_index = (int)i;
             break;
         }
-        if (replace == NULL || downlink_is_better(replace, &relay->downlinks[i])) {
-            replace = &relay->downlinks[i];
+        if (replace == NULL || downlink_is_better(replace, candidate)) {
+            replace = candidate;
             replace_index = (int)i;
         }
     }
@@ -1271,12 +1482,12 @@ static int upsert_downlink(struct mesh_relay *relay,
     }
     index = free_index >= 0 ? free_index : replace_index;
     if (rollback != NULL) {
-        rollback->previous = relay->downlinks[index];
+        rollback->previous = *downlink_at_mutable(relay, (size_t)index);
         rollback->index = (uint8_t)index;
         rollback->valid = true;
     }
-    relay->downlinks[index] = *entry;
-    relay->downlinks[index].valid = true;
+    *downlink_at_mutable(relay, (size_t)index) = *entry;
+    downlink_at_mutable(relay, (size_t)index)->valid = true;
     return PROTO_OK;
 }
 
@@ -1291,14 +1502,18 @@ static int upsert_required_gateway_downlink(
         return ret;
     }
 
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        if (!relay->downlinks[i].valid) {
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *candidate =
+            mesh_relay_downlink_at(relay, i);
+
+        if (!candidate->valid) {
             replace_index = (int)i;
             break;
         }
         if (replace_index < 0 ||
-            downlink_is_better(&relay->downlinks[replace_index],
-                               &relay->downlinks[i])) {
+            downlink_is_better(mesh_relay_downlink_at(
+                                   relay, (size_t)replace_index),
+                               candidate)) {
             replace_index = (int)i;
         }
     }
@@ -1306,8 +1521,8 @@ static int upsert_required_gateway_downlink(
         return PROTO_ERR_NO_SPACE;
     }
 
-    relay->downlinks[replace_index] = *entry;
-    relay->downlinks[replace_index].valid = true;
+    *downlink_at_mutable(relay, (size_t)replace_index) = *entry;
+    downlink_at_mutable(relay, (size_t)replace_index)->valid = true;
     return PROTO_OK;
 }
 
@@ -1408,8 +1623,12 @@ static bool gateway_ack_packet_batch_id(const uint8_t *payload,
 static void gateway_ack_history_expire_stale(struct mesh_relay *relay,
                                              uint32_t now_ms)
 {
-    struct mesh_gateway_ack_store *store = relay->gateway_ack_store;
+    struct mesh_gateway_ack_store *store;
 
+    if (relay == NULL || relay->role != MESH_RELAY_ROLE_GATEWAY) {
+        return;
+    }
+    store = relay->gateway_ack_store;
     if (store == NULL) {
         return;
     }
@@ -1420,7 +1639,7 @@ static void gateway_ack_history_expire_stale(struct mesh_relay *relay,
 
         if (!gateway_ack_identity_valid(identity) ||
             (uint32_t)(now_ms - identity->last_seen_ms) <=
-                ROUTE_DEDUP_WINDOW_MS) {
+                MESH_RELAY_GATEWAY_ACK_RETENTION_MS) {
             continue;
         }
         owner_index = gateway_ack_identity_owner_index(identity);
@@ -2020,6 +2239,10 @@ static int build_route_request_forward(uint64_t local_id,
         return PROTO_ERR_STALE;
     }
 
+    ret = mesh_route_path_append(&forwarded.path, local_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     forwarded.hop_count++;
     ret = append_route_discovery_tlvs(out->payload,
                                       sizeof(out->payload),

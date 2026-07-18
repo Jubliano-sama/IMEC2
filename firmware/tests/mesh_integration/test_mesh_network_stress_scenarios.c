@@ -842,7 +842,7 @@ static int test_whole_world_capacity_model(void)
         CHECK(mesh_sim_install_route(&world,
                                      anchors[anchor_count - 1u],
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
         for (uint16_t seq = 1u;
              seq <= MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH;
@@ -990,7 +990,7 @@ static int test_multi_origin_bursts(void)
             CHECK(mesh_sim_install_route(&world,
                                          nodes[i],
                                          nodes[i + 1u],
-                                         (uint8_t)(MULTI_ORIGIN_COUNT - i),
+                                         (uint8_t)(MULTI_ORIGIN_COUNT - i - 1u),
                                          ROUTE_EPOCH) == PROTO_OK);
         }
         set_phase("install-downlinks");
@@ -1114,7 +1114,7 @@ static int test_queue_pressure_preserves_local_clicks(void)
         CHECK(mesh_sim_install_route(&world,
                                      anchor,
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(arm_all_watchdogs(&world) == MESH_SIM_OK);
 
@@ -1280,12 +1280,12 @@ static int test_partition_route_and_event_recovery(void)
         CHECK(mesh_sim_install_route(&world,
                                      source,
                                      relay,
-                                     2u,
+                                     1u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(mesh_sim_install_route(&world,
                                      relay,
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(mesh_sim_install_downlink(&world,
                                         relay,
@@ -1334,12 +1334,12 @@ static int test_partition_route_and_event_recovery(void)
         CHECK(mesh_sim_install_route(&world,
                                      relay,
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(mesh_sim_install_route(&world,
                                      source,
                                      relay,
-                                     2u,
+                                     1u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(mesh_sim_install_downlink(&world,
                                         relay,
@@ -1429,7 +1429,7 @@ static int test_repeated_timing_expiry_and_repair(void)
         CHECK(mesh_sim_install_route(&world,
                                      source,
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(arm_all_watchdogs(&world) == MESH_SIM_OK);
         CHECK(build_data_packet(world.roles[source].id,
@@ -1551,7 +1551,7 @@ static int test_six_hop_fixture_routed_forwarding_capacity(void)
             CHECK(mesh_sim_install_route(&world,
                                          nodes[hop],
                                          nodes[hop + 1u],
-                                         (uint8_t)(SIX_HOP_COUNT - hop),
+                                         (uint8_t)(SIX_HOP_COUNT - hop - 1u),
                                          ROUTE_EPOCH) == PROTO_OK);
             if (hop > 0u) {
                 CHECK(mesh_sim_install_downlink(&world,
@@ -1862,7 +1862,7 @@ static int test_four_origins_share_one_relay(void)
         CHECK(mesh_sim_install_route(&world,
                                      relay,
                                      gateway,
-                                     1u,
+                                     0u,
                                      ROUTE_EPOCH) == PROTO_OK);
         CHECK(add_line_connection(&world,
                                   relay,
@@ -1886,7 +1886,7 @@ static int test_four_origins_share_one_relay(void)
             CHECK(mesh_sim_install_route(&world,
                                          origins[i],
                                          relay,
-                                         2u,
+                                         1u,
                                          ROUTE_EPOCH) == PROTO_OK);
             CHECK(mesh_sim_install_downlink(&world,
                                             relay,
@@ -2190,12 +2190,12 @@ static int test_airtime_ack_loss_and_custody(void)
     CHECK(mesh_sim_install_route(&world,
                                  origin,
                                  relay,
-                                 2u,
+                                 1u,
                                  ROUTE_EPOCH) == PROTO_OK);
     CHECK(mesh_sim_install_route(&world,
                                  relay,
                                  gateway,
-                                 1u,
+                                 0u,
                                  ROUTE_EPOCH) == PROTO_OK);
     CHECK(mesh_sim_install_downlink(&world,
                                     relay,
