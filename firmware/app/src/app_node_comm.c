@@ -55,6 +55,9 @@ static uint32_t node_comm_large_control_payload_handle;
 static struct k_work_delayable node_comm_lifecycle_watchdog_work;
 static struct k_work_delayable node_comm_delivery_work;
 static struct k_work_delayable node_comm_delivery_due_kick_work;
+#if APP_NODE_COMM_GATEWAY_ROLE
+static struct k_work_delayable node_comm_gateway_scan_restart_work;
+#endif
 static uint64_t node_comm_lifecycle_recovery_deadline_ms;
 static bool node_comm_backend_ready;
 static bool node_comm_delivery_backend_active;
@@ -533,6 +536,23 @@ static void app_node_comm_delivery_work_handler(struct k_work *work)
     }
 }
 
+#if APP_NODE_COMM_GATEWAY_ROLE
+static void app_node_comm_gateway_scan_restart_work_handler(struct k_work *work)
+{
+    bool running = false;
+
+    (void)work;
+    if (app_node_comm_sync_lock() == 0) {
+        running = node_comm_backend_ready &&
+                  node_comm_state(&node_comm_policy) == NODE_COMM_RUNNING;
+        app_node_comm_sync_unlock();
+    }
+    if (running) {
+        mesh_restart_role_scan();
+    }
+}
+#endif
+
 static void app_node_comm_schedule_delivery_locked(uint64_t now_ms)
 {
     uint64_t delay_ms;
@@ -841,6 +861,10 @@ int app_node_comm_init(const app_node_comm_callbacks *callbacks)
     if (DEVICE_ROLE == ROLE_GATEWAY) {
         k_work_init_delayable(&node_comm_delivery_due_kick_work,
                               app_node_comm_delivery_due_kick_handler);
+#if APP_NODE_COMM_GATEWAY_ROLE
+        k_work_init_delayable(&node_comm_gateway_scan_restart_work,
+                              app_node_comm_gateway_scan_restart_work_handler);
+#endif
     }
     ret = node_comm_start(&node_comm_policy, app_node_comm_now_ms());
     if (ret < 0) {
@@ -1666,7 +1690,10 @@ int app_node_comm_cancel_delivery(uint32_t handle)
     app_node_comm_schedule_delivery_locked(now_ms);
     app_node_comm_sync_unlock();
     if (restart_scan) {
-        mesh_restart_role_scan();
+#if APP_NODE_COMM_GATEWAY_ROLE
+        (void)k_work_reschedule(
+            &node_comm_gateway_scan_restart_work, K_NO_WAIT);
+#endif
     }
     return ret;
 }

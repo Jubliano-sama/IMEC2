@@ -25,7 +25,7 @@ extern "C" {
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 6144u, 9216u, 8192u, 320u, 2048u, 0u,        \
       0u, 10240u, true, true, true, true, false)                              \
-    X(GATEWAY, "mesh_gateway", 4096u, 4096u, 8192u, 8192u, 320u, 2048u, 1536u,  \
+    X(GATEWAY, "mesh_gateway", 4096u, 4256u, 8192u, 8192u, 320u, 2048u, 1536u,  \
       1088u, 6000u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \

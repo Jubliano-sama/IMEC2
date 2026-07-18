@@ -322,6 +322,28 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         init = source[init_start:init_end]
         self.assertIn("node_comm_large_control_payload_handle = 0u", init)
 
+    def test_gateway_cancel_defers_scan_restart_to_fresh_work(self):
+        source = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+        cancel_start = source.index("int app_node_comm_cancel_delivery(")
+        cancel_end = source.index(
+            "int app_node_comm_abandon_delivery(", cancel_start
+        )
+        cancel = source[cancel_start:cancel_end]
+
+        self.assertNotIn("mesh_restart_role_scan()", cancel)
+        self.assertIn("&node_comm_gateway_scan_restart_work", cancel)
+        self.assertIn("K_NO_WAIT", cancel)
+
+        handler_start = source.index(
+            "static void app_node_comm_gateway_scan_restart_work_handler("
+        )
+        handler_end = source.index(
+            "static void app_node_comm_schedule_delivery_locked", handler_start
+        )
+        handler = source[handler_start:handler_end]
+        self.assertIn("node_comm_state(&node_comm_policy) == NODE_COMM_RUNNING", handler)
+        self.assertIn("mesh_restart_role_scan()", handler)
+
     def test_synthetic_transmitter_uses_terminal_communication_custody(self):
         source = (APP_SRC / "app_mesh_test.c").read_text(encoding="utf-8")
         header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")

@@ -1549,6 +1549,7 @@ static void test_gateway_due_gate_cancellation_releases_scan_without_rf(void)
 {
     struct mesh_outbound envelope = delivery_envelope(13u);
     struct k_work_delayable *due_kick;
+    struct k_work_delayable *restart_work;
     uint32_t handle;
 
     reset_fixture();
@@ -1566,8 +1567,13 @@ static void test_gateway_due_gate_cancellation_releases_scan_without_rf(void)
     assert(!gateway_delivery_due_pending);
     assert(mesh_route_reschedule_calls == 0u);
     assert(try_flood_calls == 0u);
-    assert(restart_scan_calls == 1u);
+    assert(restart_scan_calls == 0u);
     assert(due_kick->cancel_calls >= 1u);
+    restart_work = last_rescheduled_work;
+    assert(restart_work != NULL);
+    assert(restart_work != due_kick);
+    restart_work->work.handler(&restart_work->work);
+    assert(restart_scan_calls == 1u);
 }
 
 static void test_gateway_due_gate_pause_and_stop_clear_without_rf(void)

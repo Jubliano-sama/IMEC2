@@ -415,6 +415,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(1, evidence.attributed_usage_count)
 
     def test_synchronous_linear_chain_overflow_fails_owner_capacity(self) -> None:
+        configured = self.policies["mesh_gateway"].system_workqueue_bytes
         evidence = self._synchronous_evidence(
             {"root": 3200, "leaf": 3200},
             {"root": {"leaf"}, "leaf": set()},
@@ -425,7 +426,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         ])
         self.assertTrue(any(
             "compiler synchronous stack chain 6400 plus required free 1024 "
-            "exceeds configured 4096"
+            f"exceeds configured {configured}"
             in issue
             for issue in evidence.issues
         ), evidence.issues)
@@ -445,16 +446,21 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         ), evidence.issues)
 
     def test_synchronous_owner_margin_boundary_is_inclusive(self) -> None:
+        configured = self.policies["mesh_gateway"].system_workqueue_bytes
+        required_free = verifier._required_free(configured)
+        accepted_usage = configured - required_free
         accepted = self._synchronous_evidence(
-            {"root": 3072}, {"root": set()}
+            {"root": accepted_usage}, {"root": set()}
         )
         rejected = self._synchronous_evidence(
-            {"root": 3073}, {"root": set()}
+            {"root": accepted_usage + 1}, {"root": set()}
         )
 
         self.assertEqual([], accepted.issues)
         self.assertTrue(any(
-            "3073 plus required free 1024 exceeds configured 4096" in issue
+            f"{accepted_usage + 1} plus required free "
+            f"{required_free} exceeds configured "
+            f"{configured}" in issue
             for issue in rejected.issues
         ), rejected.issues)
 

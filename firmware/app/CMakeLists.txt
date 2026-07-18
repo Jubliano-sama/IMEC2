@@ -317,7 +317,14 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_BT_CTLR_DATA_LENGTH_MAX=251\n"
             "CONFIG_BT_LOG_LEVEL_WRN=y\n"
             "CONFIG_IMEC_GATEWAY_BLE=y\n"
-            "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4096\n")
+            # Typed qualification records use their dedicated RTT channel;
+            # keep the lossy deferred application log ring compact enough to
+            # preserve the gateway's required static RAM reserve.
+            "CONFIG_LOG_BUFFER_SIZE=3072\n"
+            # The exact compiler chain for gateway assignment-result encoding
+            # is 3152 bytes; retain the required 1024-byte runtime margin plus
+            # one alignment step without weakening the global RAM-headroom gate.
+            "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4256\n")
     endif()
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
