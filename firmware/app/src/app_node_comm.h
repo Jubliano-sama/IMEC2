@@ -154,6 +154,8 @@ int app_node_comm_complete_backend_attempt(const struct proto_packet *packet,
                                            bool rf_started);
 int app_node_comm_note_backend_rf_started(const struct proto_packet *packet);
 size_t app_node_comm_pending_delivery_count(void);
+size_t app_node_comm_reliable_delivery_targets(uint64_t *target_ids,
+                                               size_t target_cap);
 bool app_node_comm_delivery_backlog_active(void);
 bool app_node_comm_ack_wait_active(void);
 void app_node_comm_control_response_health_get(

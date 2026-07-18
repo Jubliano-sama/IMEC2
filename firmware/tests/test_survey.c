@@ -1471,6 +1471,71 @@ static void test_gateway_context_collects_reports_and_sequences_pairs(void)
     assert(survey_gateway_next_pair(&context, &pair) == PROTO_ERR_NOT_FOUND);
 }
 
+static void test_gateway_pair_orientation_uses_reverse_depth(void)
+{
+    const uint32_t survey_id = 0xAABBCCDDu;
+    const uint64_t lower_id = 0x1111000000000001ull;
+    const uint64_t higher_id = 0x2222000000000002ull;
+    const struct survey_reachability_entry lower_entries[] = {
+        {.peer_id = higher_id, .rssi_dbm = -61, .quality = 82u},
+    };
+    const struct survey_reachability_entry higher_entries[] = {
+        {.peer_id = lower_id, .rssi_dbm = -62, .quality = 81u},
+    };
+    struct survey_gateway_reverse_hint lower_hint = {
+        .target_id = lower_id,
+        .next_hop_id = higher_id,
+        .quality = 80u,
+        .hop_count = 2u,
+        .valid = true,
+    };
+    struct survey_gateway_reverse_hint higher_hint = {
+        .target_id = higher_id,
+        .next_hop_id = higher_id,
+        .quality = 90u,
+        .hop_count = 1u,
+        .valid = true,
+    };
+    struct survey_gateway_context context;
+    struct survey_pair pair = {0};
+
+    assert(survey_gateway_begin(&context, survey_id, 1u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &context, survey_id, lower_id, lower_entries, 1u,
+               &lower_hint) == PROTO_OK);
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &context, survey_id, higher_id, higher_entries, 1u,
+               &higher_hint) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(pair.initiator_id == higher_id);
+    assert(pair.responder_id == lower_id);
+
+    lower_hint.hop_count = 1u;
+    assert(survey_gateway_begin(&context, survey_id, 1u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &context, survey_id, lower_id, lower_entries, 1u,
+               &lower_hint) == PROTO_OK);
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &context, survey_id, higher_id, higher_entries, 1u,
+               &higher_hint) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(pair.initiator_id == lower_id);
+    assert(pair.responder_id == higher_id);
+
+    assert(survey_gateway_begin(&context, survey_id, 1u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(
+               &context, survey_id, lower_id, lower_entries, 1u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &context, survey_id, higher_id, higher_entries, 1u,
+               &higher_hint) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(pair.initiator_id == lower_id);
+    assert(pair.responder_id == higher_id);
+}
+
 static void test_gateway_context_preserves_first_duplicate_report_and_hint(void)
 {
     struct survey_gateway_context context;
@@ -2318,6 +2383,7 @@ int main(void)
     test_pair_rounds_pack_deterministically_without_reordering_pairs();
     test_pair_rounds_use_hop_depth_only_for_incomplete_neighborhoods();
     test_gateway_context_collects_reports_and_sequences_pairs();
+    test_gateway_pair_orientation_uses_reverse_depth();
     test_gateway_context_preserves_first_duplicate_report_and_hint();
     test_gateway_context_rejects_stale_or_oversized_reports();
     test_gateway_context_retains_only_accepted_reverse_hints();

@@ -949,6 +949,13 @@ reachability edge, then fills remaining degree with mutual, higher-quality
 pairs. If the reported graph cannot be connected within that degree bound, pair
 planning fails explicitly instead of silently returning isolated anchors.
 
+For each planned pair, the gateway uses accepted reverse-route hop counts to
+orient control: the deeper endpoint is the responder and the shallower endpoint
+is the initiator. The gateway starts the responder first, so this ordering arms
+the downstream endpoint while every shallower shared relay is still servicing
+mesh control; only then may the shallower endpoint leave relay duty to initiate
+ranging. Equal or unavailable depths retain deterministic ID ordering.
+
 The pair-round planner is currently a classification primitive, not permission
 to launch concurrent ranging. A pair's neighborhood is the union of both
 endpoints and every peer either endpoint reports; two pairs may share a
@@ -1154,6 +1161,11 @@ re-arms that same delivery at the prepare boundary and consumes no RF attempt;
 randomized exponential backoff applies to contention and failed attempts, not
 to polling for a deterministic connection slot. Dropping this boundary can make
 every service poll arrive too late for an otherwise healthy connection.
+While any reliable local delivery is pending, its next local transmit event is
+a required channel 9 activity on the selected next-hop connection even before
+RF or ACK custody begins. Unrelated peer timings remain available. Connected
+channel 5 gap scans and the low-duty scanner must stop at the selected event's
+prepare boundary; they may use only the earlier bounded gap.
 
 Likewise, an anchor's low-duty channel 5 scanner may defer for an approaching
 channel 9 event only after re-arming the channel 9 worker at that event's exact

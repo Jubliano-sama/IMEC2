@@ -25,9 +25,65 @@ static uint32_t mesh_uwb_rx_idle_delay_ms(void)
            UWB_MESH_ANCHOR_RX_INTERVAL_MS;
 }
 
+static size_t mesh_node_comm_reliable_tx_peers(uint64_t *peer_ids,
+                                               size_t peer_cap)
+{
+    uint64_t target_ids[APP_NODE_COMM_MAX_DELIVERIES];
+    size_t peer_count = 0u;
+    const size_t target_count = app_node_comm_reliable_delivery_targets(
+        target_ids,
+        sizeof(target_ids) / sizeof(target_ids[0]));
+
+    if (peer_ids == NULL || peer_cap == 0u) {
+        return 0u;
+    }
+    for (size_t i = 0u; i < target_count; i++) {
+        uint64_t next_hop_id = 0u;
+        bool duplicate = false;
+
+        if (mesh_relay_select_next_hop(
+                &mesh_runtime, target_ids[i], &next_hop_id) != PROTO_OK ||
+            !mesh_id_is_unicast(next_hop_id)) {
+            continue;
+        }
+        for (size_t j = 0u; j < peer_count; j++) {
+            if (peer_ids[j] == next_hop_id) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            peer_ids[peer_count++] = next_hop_id;
+            if (peer_count == peer_cap) {
+                break;
+            }
+        }
+    }
+    return peer_count;
+}
+
+static bool mesh_node_comm_reliable_tx_pending_for_peer(
+    uint64_t peer_id,
+    const uint64_t *peer_ids,
+    size_t peer_count)
+{
+    for (size_t i = 0u; i < peer_count; i++) {
+        if (peer_ids[i] == peer_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool mesh_next_channel9_activity_delay_ms(uint32_t now_ms,
                                                  uint32_t *delay_ms)
 {
+    uint64_t local_reliable_tx_peers[APP_NODE_COMM_MAX_DELIVERIES];
+    const size_t local_reliable_tx_peer_count =
+        mesh_node_comm_reliable_tx_peers(
+            local_reliable_tx_peers,
+            sizeof(local_reliable_tx_peers) /
+                sizeof(local_reliable_tx_peers[0]));
     bool found = false;
     uint32_t selected_delay_ms = 0u;
 
@@ -38,7 +94,11 @@ static bool mesh_next_channel9_activity_delay_ms(uint32_t now_ms,
         struct mesh_event_timing timing = {0};
         uint32_t candidate_delay_ms;
 
-        if (!mesh_channel9_next_required_activity(entry, &timing) ||
+        if (!mesh_channel9_next_required_activity(
+                entry,
+                local_reliable_tx_peers,
+                local_reliable_tx_peer_count,
+                &timing) ||
             !mesh_event_timing_usable(&timing, now_ms)) {
             continue;
         }
@@ -246,8 +306,11 @@ static bool mesh_channel9_ack_pending_for_peer(uint64_t peer_id)
                                                     peer_id);
 }
 
-static bool mesh_channel9_next_required_activity(const struct mesh_relay_event_timing_entry *entry,
-                                                 struct mesh_event_timing *timing)
+static bool mesh_channel9_next_required_activity(
+    const struct mesh_relay_event_timing_entry *entry,
+    const uint64_t *local_reliable_tx_peers,
+    size_t local_reliable_tx_peer_count,
+    struct mesh_event_timing *timing)
 {
     if (entry == NULL || !entry->valid || timing == NULL) {
         return false;
@@ -256,7 +319,11 @@ static bool mesh_channel9_next_required_activity(const struct mesh_relay_event_t
     *timing = entry->timing;
     if (mesh_event_timing_local_rx_slot(timing) ||
         (mesh_event_timing_local_tx_slot(timing) &&
-         mesh_channel9_ack_pending_for_peer(entry->next_hop_id))) {
+         (mesh_node_comm_reliable_tx_pending_for_peer(
+              entry->next_hop_id,
+              local_reliable_tx_peers,
+              local_reliable_tx_peer_count) ||
+          mesh_channel9_ack_pending_for_peer(entry->next_hop_id)))) {
         return true;
     }
 

@@ -1795,6 +1795,45 @@ size_t app_node_comm_pending_delivery_count(void)
     return count;
 }
 
+size_t app_node_comm_reliable_delivery_targets(uint64_t *target_ids,
+                                               size_t target_cap)
+{
+    size_t target_count = 0u;
+
+    if (target_ids == NULL || target_cap == 0u ||
+        app_node_comm_sync_lock() < 0) {
+        return 0u;
+    }
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        const struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+        bool duplicate = false;
+
+        if (!record->occupied || record->backend_released ||
+            record->gateway_confirmed ||
+            record->waiting_for_reliable_owner ||
+            record->handle == node_comm_reliable_uplink_inflight_handle ||
+            !app_node_comm_reliable_backend_profile(record->profile) ||
+            !mesh_id_is_unicast(record->packet.dst_id)) {
+            continue;
+        }
+        for (size_t j = 0u; j < target_count; j++) {
+            if (target_ids[j] == record->packet.dst_id) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            target_ids[target_count++] = record->packet.dst_id;
+            if (target_count == target_cap) {
+                break;
+            }
+        }
+    }
+    app_node_comm_sync_unlock();
+    return target_count;
+}
+
 bool app_node_comm_delivery_backlog_active(void)
 {
     bool active;

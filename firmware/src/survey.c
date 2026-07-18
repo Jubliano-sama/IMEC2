@@ -899,6 +899,41 @@ int survey_gateway_reverse_hint_for_target(
     return PROTO_ERR_NOT_FOUND;
 }
 
+static const struct survey_gateway_report_slot *
+survey_gateway_round_report_for_anchor(
+    const struct survey_gateway_context *context,
+    uint64_t anchor_id);
+
+static void survey_gateway_orient_pair_for_control(
+    const struct survey_gateway_context *context,
+    struct survey_gateway_pair_entry *pair)
+{
+    const struct survey_gateway_report_slot *initiator;
+    const struct survey_gateway_report_slot *responder;
+    uint64_t swap_id;
+
+    if (context == NULL || pair == NULL) {
+        return;
+    }
+    initiator = survey_gateway_round_report_for_anchor(
+        context, pair->initiator_id);
+    responder = survey_gateway_round_report_for_anchor(
+        context, pair->responder_id);
+    if (initiator == NULL || responder == NULL ||
+        !initiator->reverse_hint_valid || !responder->reverse_hint_valid ||
+        initiator->reverse_hop_count == 0u ||
+        initiator->reverse_hop_count > SURVEY_DEFAULT_TTL ||
+        responder->reverse_hop_count == 0u ||
+        responder->reverse_hop_count > SURVEY_DEFAULT_TTL ||
+        initiator->reverse_hop_count <= responder->reverse_hop_count) {
+        return;
+    }
+
+    swap_id = pair->initiator_id;
+    pair->initiator_id = pair->responder_id;
+    pair->responder_id = swap_id;
+}
+
 int survey_gateway_plan_pairs(struct survey_gateway_context *context)
 {
     struct survey_reachability_report reports[SURVEY_GATEWAY_MAX_REPORTS];
@@ -932,6 +967,9 @@ int survey_gateway_plan_pairs(struct survey_gateway_context *context)
         context->pair_count = 0u;
         context->next_pair_index = 0u;
         return ret;
+    }
+    for (size_t i = 0u; i < context->pair_count; i++) {
+        survey_gateway_orient_pair_for_control(context, &context->pairs[i]);
     }
 
     context->pairs_planned = true;

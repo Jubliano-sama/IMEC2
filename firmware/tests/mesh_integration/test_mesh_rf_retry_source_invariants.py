@@ -18,6 +18,9 @@ REPORT_ROUTE_CONTROL = (
 REPORT_DELIVERY = (
     ROOT / "app" / "src" / "app_mesh_report_delivery.inc"
 ).read_text(encoding="utf-8")
+REPORT_TRANSPORT = (
+    ROOT / "app" / "src" / "app_mesh_report_transport.inc"
+).read_text(encoding="utf-8")
 
 
 def function_body(source: str, name: str) -> str:
@@ -462,6 +465,49 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(rearm, retry)
         self.assertLess(retry, success)
         self.assertIn("DBG_ANCHOR_CH9_REARM", body)
+
+    def test_pending_reliable_response_protects_next_local_tx_slot(self):
+        required_source = REPORT_TRANSPORT[
+            REPORT_TRANSPORT.index(
+                "static bool mesh_channel9_next_required_activity("
+            ) :
+        ]
+        required = function_body(
+            required_source, "mesh_channel9_next_required_activity"
+        )
+        peers = function_body(
+            REPORT_TRANSPORT, "mesh_node_comm_reliable_tx_peers"
+        )
+        delay = function_body(
+            REPORT_TRANSPORT, "mesh_next_channel9_activity_delay_ms"
+        )
+        gap = function_body(
+            REPORT_TRANSPORT, "mesh_active_channel9_ch5_gap_window_ms"
+        )
+
+        local_tx = required.index("mesh_event_timing_local_tx_slot(timing)")
+        pending = required.index(
+            "mesh_node_comm_reliable_tx_pending_for_peer", local_tx
+        )
+        ack = required.index("mesh_channel9_ack_pending_for_peer", local_tx)
+        skip_to_rx = required.index("timing->next_event_time_ms +=")
+        self.assertLess(local_tx, pending)
+        self.assertLess(pending, skip_to_rx)
+        self.assertLess(ack, skip_to_rx)
+        self.assertIn("return true", required[local_tx:skip_to_rx])
+        self.assertIn("return mesh_event_timing_local_rx_slot(timing)",
+                      required[skip_to_rx:])
+
+        self.assertIn("app_node_comm_reliable_delivery_targets", peers)
+        self.assertIn("mesh_relay_select_next_hop", peers)
+        self.assertIn("peer_ids[peer_count++] = next_hop_id", peers)
+        select = delay.index("mesh_channel9_next_required_activity")
+        self.assertIn("local_reliable_tx_peers", delay[select:select + 240])
+        self.assertIn("entry->next_hop_id", required[pending:pending + 240])
+        next_activity = gap.index("mesh_next_channel9_rx_delay_ms(now_ms)")
+        scan_window = gap.index("app_mesh_c5_connected_gap_window_ms",
+                                next_activity)
+        self.assertLess(next_activity, scan_window)
 
     def test_route_reply_listener_hands_event_control_to_the_worker(self):
         body = function_body(REPORT, "mesh_listen_for_route_reply")

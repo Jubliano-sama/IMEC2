@@ -621,6 +621,8 @@ int mesh_schedule_route_request(uint64_t target_id, const char *reason);
 static bool mesh_defer_active_collection_result(const char *reason);
 static bool mesh_channel9_next_required_activity(
     const struct mesh_relay_event_timing_entry *entry,
+    const uint64_t *local_reliable_tx_peers,
+    size_t local_reliable_tx_peer_count,
     struct mesh_event_timing *timing);
 static uint32_t mesh_channel9_prepare_start_ms(const struct mesh_event_timing *timing);
 static int mesh_schedule_uwb_rx(uint32_t delay_ms);

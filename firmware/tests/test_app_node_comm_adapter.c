@@ -2000,6 +2000,79 @@ static void test_reliable_uplink_waits_for_exact_gateway_confirmation(void)
     assert(event.client_token == 600u);
 }
 
+static void test_reliable_targets_track_only_backend_profiles(void)
+{
+    static const enum node_comm_delivery_profile profiles[] = {
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+        NODE_COMM_PROFILE_CONTROL_RESPONSE,
+    };
+
+    for (size_t i = 0u; i < sizeof(profiles) / sizeof(profiles[0]); i++) {
+        struct mesh_outbound envelope = profiles[i] == NODE_COMM_PROFILE_CONTROL_RESPONSE ?
+            control_response_envelope((uint16_t)(70u + i)) :
+            reliable_uplink_envelope((uint16_t)(70u + i));
+        uint64_t target_ids[2u] = {0};
+        uint32_t handle;
+        bool reliable = profiles[i] == NODE_COMM_PROFILE_RELIABLE_UPLINK ||
+                        profiles[i] == NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+                        profiles[i] == NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE;
+
+        reset_fixture();
+        assert(app_node_comm_submit_delivery(&envelope, profiles[i],
+                                             1000u, 700u + i, &handle) == 0);
+        assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) ==
+               (reliable ? 1u : 0u));
+        assert(!reliable || target_ids[0] == envelope.packet.dst_id);
+    }
+
+    struct mesh_outbound response = reliable_uplink_envelope(80u);
+    uint64_t target_ids[2u] = {0};
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+               &response, NODE_COMM_PROFILE_BEST_EFFORT,
+               1000u, 799u, &handle) == -ENOTSUP);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 0u);
+
+    reset_fixture();
+    try_uplink_results[0] = -EAGAIN;
+    try_uplink_sent[0] = false;
+    assert(app_node_comm_submit_protocol_response(
+               &response, 1000u, 800u, &handle) == 0);
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 1u);
+    assert(target_ids[0] == response.packet.dst_id);
+    atomic_store(&fake_now_ms, 1000);
+    (void)app_node_comm_pending_delivery_count();
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 0u);
+
+    reset_fixture();
+    assert(app_node_comm_submit_protocol_response(
+               &response, 1000u, 801u, &handle) == 0);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 1u);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 0u);
+    assert(app_node_comm_note_gateway_confirmed(&response.packet) == 0);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 0u);
+
+    struct mesh_outbound waiting = response;
+
+    waiting.packet.seq++;
+    reset_fixture();
+    assert(app_node_comm_submit_protocol_response(
+               &response, 1000u, 802u, &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(app_node_comm_submit_protocol_response(
+               &waiting, 1000u, 803u, &handle) == 0);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 1u);
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 2u) == 0u);
+}
+
 static void test_durable_survey_submit_is_async_and_exact_under_pressure_pause(void)
 {
     struct mesh_outbound survey = survey_report_envelope(169u);
@@ -2932,6 +3005,7 @@ int main(void)
     test_gateway_batch_ack_retry_keeps_exact_identity_and_one_terminal();
     test_control_response_terminal_records_do_not_leak_capacity();
     test_reliable_uplink_waits_for_exact_gateway_confirmation();
+    test_reliable_targets_track_only_backend_profiles();
     test_durable_survey_submit_is_async_and_exact_under_pressure_pause();
     test_reliable_uplink_waits_for_scheduled_channel9_boundary();
     test_reliable_backend_retries_are_observed_without_being_capped();

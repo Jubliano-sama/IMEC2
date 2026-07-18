@@ -747,6 +747,12 @@ bool mesh_rx_response_active(void)
 
 bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
 {
+    uint64_t local_reliable_tx_peers[APP_NODE_COMM_MAX_DELIVERIES];
+    const size_t local_reliable_tx_peer_count =
+        mesh_node_comm_reliable_tx_peers(
+            local_reliable_tx_peers,
+            sizeof(local_reliable_tx_peers) /
+                sizeof(local_reliable_tx_peers[0]));
     uint32_t now_ms = k_uptime_get_32();
     uint32_t selected_delay_ms = 0u;
     uint32_t min_gap_ms;
@@ -764,7 +770,11 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
         struct mesh_event_timing timing = {0};
         uint32_t delay_ms;
 
-        if (!mesh_channel9_next_required_activity(entry, &timing) ||
+        if (!mesh_channel9_next_required_activity(
+                entry,
+                local_reliable_tx_peers,
+                local_reliable_tx_peer_count,
+                &timing) ||
             !mesh_event_timing_usable(&timing, now_ms)) {
             continue;
         }

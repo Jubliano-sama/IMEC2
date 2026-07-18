@@ -1307,6 +1307,178 @@ static void test_bounded_control_retry_rewakes_missed_relay(void)
                  original.payload_len) == 0);
 }
 
+static void test_deep_responder_start_precedes_shared_relay_start(void)
+{
+    static struct mesh_sim_world world;
+    const uint64_t deep_id = ANCHOR_BASE + 320u;
+    const uint64_t relay_id = ANCHOR_BASE + 321u;
+    const struct survey_reachability_entry deep_entries[] = {
+        {.peer_id = relay_id, .rssi_dbm = -62, .quality = 81u},
+    };
+    const struct survey_reachability_entry relay_entries[] = {
+        {.peer_id = deep_id, .rssi_dbm = -61, .quality = 82u},
+    };
+    const struct survey_gateway_reverse_hint deep_hint = {
+        .target_id = deep_id,
+        .next_hop_id = relay_id,
+        .quality = 80u,
+        .hop_count = 2u,
+        .valid = true,
+    };
+    const struct survey_gateway_reverse_hint relay_hint = {
+        .target_id = relay_id,
+        .next_hop_id = relay_id,
+        .quality = 90u,
+        .hop_count = 1u,
+        .valid = true,
+    };
+    struct survey_gateway_context survey_context;
+    struct survey_gateway_auto_context auto_context;
+    struct survey_gateway_auto_action action = {0};
+    struct gateway_command_pending pending = {0};
+    struct mesh_outbound control = {0};
+    struct flood_ctx relay_flood = {
+        .now_ms = 1000u,
+        .command_id = CMD_SURVEY_START_PAIR,
+        .previous_hop_id = GATEWAY_ID,
+        .awake_from_send = 1u,
+    };
+    struct flood_ctx child_flood = {
+        .now_ms = 1040u,
+        .command_id = CMD_SURVEY_START_PAIR,
+        .previous_hop_id = relay_id,
+        .awake_from_send = 1u,
+    };
+    struct app_mesh_flood_ops relay_ops = {
+        .now_ms = flood_now,
+        .sleep_until_ms = flood_sleep,
+        .defer_active = flood_defer,
+        .c5_quiet = flood_quiet,
+        .random_u32 = flood_random,
+        .send = flood_send,
+        .ctx = &relay_flood,
+    };
+    struct app_mesh_flood_ops child_ops = relay_ops;
+    struct app_mesh_flood_result flood_result;
+    struct survey_pair forwarded_pair = {0};
+    bool launched = false;
+    bool skipped = false;
+    uint8_t gateway_index;
+    uint8_t relay_index;
+    uint8_t deep_index;
+    size_t payload_len = 0u;
+
+    mesh_sim_init(&world, UINT32_C(0x52c5a003));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+              GATEWAY_ID, ROUTE_EPOCH, &gateway_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, relay_id,
+              GATEWAY_ID, ROUTE_EPOCH, &relay_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, deep_id,
+              GATEWAY_ID, ROUTE_EPOCH, &deep_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, relay_index, deep_index, 90u, 0u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_install_downlink(&world, relay_index, deep_id, deep_index,
+                                     1u, ROUTE_EPOCH) == MESH_SIM_OK);
+
+    CHECK(survey_gateway_begin(&survey_context, PAIR_SURVEY_ID, 1u) ==
+          PROTO_OK);
+    CHECK(survey_gateway_note_reach_report_with_reverse_hint(
+              &survey_context, PAIR_SURVEY_ID, deep_id, deep_entries, 1u,
+              &deep_hint) == PROTO_OK);
+    CHECK(survey_gateway_note_reach_report_with_reverse_hint(
+              &survey_context, PAIR_SURVEY_ID, relay_id, relay_entries, 1u,
+              &relay_hint) == PROTO_OK);
+    CHECK(survey_gateway_plan_pairs(&survey_context) == PROTO_OK);
+    CHECK(survey_context.pair_count == 1u);
+    CHECK(survey_context.pairs[0].initiator_id == relay_id);
+    CHECK(survey_context.pairs[0].responder_id == deep_id);
+    CHECK(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
+
+    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
+                                           &action) == PROTO_OK);
+    CHECK(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
+    CHECK(action.target_id == relay_id);
+    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    CHECK(survey_gateway_auto_note_result(
+              &auto_context, action.command_id, action.target_id,
+              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
+          PROTO_OK);
+    CHECK(!launched && !skipped);
+
+    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
+                                           &action) == PROTO_OK);
+    CHECK(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER);
+    CHECK(action.target_id == deep_id);
+    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    CHECK(survey_gateway_auto_note_result(
+              &auto_context, action.command_id, action.target_id,
+              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
+          PROTO_OK);
+    CHECK(!launched && !skipped);
+
+    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
+                                           &action) == PROTO_OK);
+    CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_RESPONDER);
+    CHECK(action.target_id == deep_id);
+    CHECK(action.pair.initiator_id == relay_id);
+    CHECK(action.pair.responder_id == deep_id);
+    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+
+    CHECK(mesh_append_command_id(control.payload, sizeof(control.payload),
+                                  &payload_len,
+                                  CMD_SURVEY_START_PAIR) == PROTO_OK);
+    CHECK(survey_append_pair_tlvs(control.payload, sizeof(control.payload),
+                                  &payload_len, &action.pair) == PROTO_OK);
+    control.packet.msg_type = MSG_COMMAND;
+    control.packet.src_id = GATEWAY_ID;
+    control.packet.dst_id = action.target_id;
+    control.packet.session_id = action.pair.survey_id;
+    control.packet.seq = 74u;
+    control.packet.ttl = MESH_DEFAULT_TTL;
+    control.packet.payload_len = (uint16_t)payload_len;
+    control.payload_len = (uint16_t)payload_len;
+    control.next_hop_id = relay_id;
+    control.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    CHECK(gateway_command_pending_start(
+              &pending, &control.packet, CMD_SURVEY_START_PAIR, 1000u,
+              GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
+
+    relay_flood.receiver = &world.roles[relay_index].relay;
+    CHECK(app_mesh_flood_send_opportunity(&control, &relay_ops,
+                                           &flood_result) == 0);
+    CHECK(flood_result.sent_count == 1u);
+    CHECK(relay_flood.forwards == 1u);
+    CHECK(relay_flood.forward_valid);
+    CHECK(relay_flood.forward.next_hop_id == deep_id);
+    CHECK(survey_extract_pair_tlvs(relay_flood.forward.payload,
+                                   relay_flood.forward.payload_len,
+                                   &forwarded_pair) == PROTO_OK);
+    CHECK(forwarded_pair.initiator_id == relay_id);
+    CHECK(forwarded_pair.responder_id == deep_id);
+
+    relay_flood.forward.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    child_flood.receiver = &world.roles[deep_index].relay;
+    child_flood.pending = &pending;
+    child_ops.ctx = &child_flood;
+    CHECK(app_mesh_flood_send_opportunity(&relay_flood.forward, &child_ops,
+                                           &flood_result) == 0);
+    CHECK(flood_result.sent_count == 1u);
+    CHECK(child_flood.deliveries == 1u);
+    CHECK(child_flood.command_results == 1u);
+    CHECK(!pending.active);
+
+    CHECK(survey_gateway_auto_note_result(
+              &auto_context, action.command_id, action.target_id,
+              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
+          PROTO_OK);
+    CHECK(!launched && !skipped);
+    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
+                                           &action) == PROTO_OK);
+    CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR);
+    CHECK(action.target_id == relay_id);
+    CHECK(relay_flood.forwards == 1u && child_flood.deliveries == 1u);
+}
+
 static void test_here_i_am_radio_collision_containment_and_retry(void)
 {
     static struct mesh_sim_world world;
@@ -1481,6 +1653,7 @@ int main(void)
     test_gateway_scheduled_delivery_due_handoff_sweep();
     test_survey_pair_control_bounded_flood_lane();
     test_bounded_control_retry_rewakes_missed_relay();
+    test_deep_responder_start_precedes_shared_relay_start();
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {
