@@ -7,6 +7,7 @@
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "status.h"
+#include "survey.h"
 #include "uwb.h"
 
 #include <zephyr/devicetree.h>
@@ -317,6 +318,9 @@ BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >=
 BUILD_ASSERT(SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS >
              MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS,
              "survey delivery tail must include direct-probe and ACK retry horizons");
+BUILD_ASSERT(SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS <=
+             SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS,
+             "survey delivery tail must cover maximum hop-aware report custody");
 #if IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)
 #define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 12288u
 #else

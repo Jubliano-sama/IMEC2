@@ -430,18 +430,27 @@ unknown-depth anchor is not silently excluded. Supplying a count that is too
 small intentionally excludes later claims, so hosts must omit it when the
 roster is unknown.
 
+After the final expected CLAIM arrives, the gateway delays the table flood for
+a route-depth-aware quiet interval: 3000 ms for a direct anchor plus 1000 ms
+for each additional RF hop, capped at 10000 ms at the eight-hop assignment
+limit. A duplicate valid CLAIM restarts that interval because it proves the
+sender's transport ACK or timing repair is still active. This prevents a table
+flood from overtaking the final child's CLAIM cleanup through a shared relay,
+while a healthy direct roster retains the shorter three-second handoff.
+
 After every table ACK has arrived, the gateway keeps the assignment transaction
 alive for a continuous 3000 ms settle interval. A duplicate valid ACK restarts
 that interval, allowing its transport ACK to finish across a shared relay; only
 the expiry of the quiet interval makes the assignment terminal. The minimum and
-default assignment budget are therefore 225199 ms: two phases of 10000 +
-101099 ms, a 3000 ms final ACK settle, and a one-millisecond exclusive-deadline
-guard. These values are ceilings rather than fixed waits, so complete healthy
-responses schedule the next state immediately while a broken route remains
-bounded.
+default assignment budget are therefore 235209 ms: two phases of 10000 +
+101099 ms, a maximum 10000 ms CLAIM handoff, a 3000 ms final ACK settle, and a
+ten-millisecond two-phase terminal-poll allowance plus a one-millisecond
+exclusive-deadline guard. These values are ceilings rather than fixed waits, so
+complete healthy responses use the observed route depth while a broken or
+unknown route remains bounded.
 
 The shared explicit host-budget range is 1000-600000 ms. Assignment-specific
-explicit budgets must be at least 225199 ms. An automatic survey still receives
+explicit budgets must be at least 235209 ms. An automatic survey still receives
 its dedicated 600000 ms operation default; reducing the shared cap from the
 obsolete 900000 ms assignment accommodation does not shorten that survey
 default.
@@ -976,6 +985,13 @@ record; admission to an in-memory report queue is not delivery. The durable
 record is cleared in two phases only after the gateway ACK is committed. While
 one report is pending, a later survey start is explicitly rejected and cannot
 overwrite the report whose custody is already owned.
+
+Reachability-report custody follows the selected upstream route depth: direct,
+two-hop, three-hop, and four-hop reports retain 5000, 9000, 13000, and 17000 ms
+respectively after their eligible transmit time. Missing or invalid route depth
+uses the conservative four-hop value. The gateway collection tail must cover
+that maximum at build time, so a report cannot expire locally after a late
+multihop RF opportunity while the gateway has already stopped accepting it.
 
 If the first journal write is temporarily unavailable, the exact encoded report
 and peer list remain the active generation's staging candidate in RAM. The

@@ -399,6 +399,42 @@ static bool gateway_discovery_assignment_expected_claims_complete_locked(void)
                gateway_discovery_assignment_state.expected_claim_count;
 }
 
+static uint32_t gateway_discovery_assignment_arm_claim_ack_settle_locked(void)
+{
+    uint64_t now_ms = (uint64_t)k_uptime_get();
+    uint64_t remaining_64;
+
+    if (gateway_discovery_assignment_state.stage !=
+            GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS ||
+        !gateway_discovery_assignment_expected_claims_complete_locked()) {
+        return 0u;
+    }
+    gateway_discovery_assignment_state.claim_ack_settle_deadline_ms =
+        discovery_assignment_claim_ack_settle_deadline_ms(
+            now_ms,
+            gateway_discovery_assignment_state.max_hop_count);
+    gateway_discovery_assignment_state.claim_ack_settle_armed = true;
+    remaining_64 =
+        gateway_discovery_assignment_state.claim_ack_settle_deadline_ms - now_ms;
+    return remaining_64 > UINT32_MAX ? UINT32_MAX : (uint32_t)remaining_64;
+}
+
+static uint32_t gateway_discovery_assignment_claim_ack_settle_remaining_locked(
+    uint64_t now_ms)
+{
+    uint64_t remaining_64;
+
+    if (!gateway_discovery_assignment_state.claim_ack_settle_armed ||
+        !discovery_assignment_response_ack_settle_pending(
+            now_ms,
+            gateway_discovery_assignment_state.claim_ack_settle_deadline_ms)) {
+        return 0u;
+    }
+    remaining_64 =
+        gateway_discovery_assignment_state.claim_ack_settle_deadline_ms - now_ms;
+    return remaining_64 > UINT32_MAX ? UINT32_MAX : (uint32_t)remaining_64;
+}
+
 static int gateway_discovery_assignment_open_claim_round_locked(void)
 {
     uint32_t wait_ms;
@@ -761,8 +797,20 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     }
 
     if (anchor_index != SIZE_MAX) {
+        uint32_t settle_ms =
+            gateway_discovery_assignment_arm_claim_ack_settle_locked();
+
         if (gateway_discovery_assignment_state.duplicate_count < UINT16_MAX) {
             gateway_discovery_assignment_state.duplicate_count++;
+        }
+        if (settle_ms != 0u && gateway_discovery_assignment_state.round_open) {
+            status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_SETTLE epoch=%u hop=%u delay=%u duplicate=1\n",
+                                gateway_discovery_assignment_state.epoch,
+                                gateway_discovery_assignment_state.max_hop_count,
+                                settle_ms);
+            (void)k_work_reschedule(
+                &gateway_discovery_assignment_finalize_work,
+                K_MSEC(settle_ms));
         }
         GATEWAY_ASSIGNMENT_RETURN(APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE);
     }
@@ -792,11 +840,6 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         event.duplicate_count = gateway_discovery_assignment_state.duplicate_count;
         (void)gateway_observe_command_event(&event, false);
     }
-    if (gateway_discovery_assignment_state.round_open &&
-        gateway_discovery_assignment_expected_claims_complete_locked()) {
-        (void)k_work_reschedule(&gateway_discovery_assignment_finalize_work,
-                                K_NO_WAIT);
-    }
     if (gateway_discovery_assignment_state.stage ==
         GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS) {
         gateway_discovery_assignment_abandon_active_delivery_locked();
@@ -808,12 +851,28 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         gateway_discovery_assignment_state.ack_mask = 0u;
         gateway_discovery_assignment_state.table_round = 0u;
         gateway_discovery_assignment_state.table_delivery_succeeded = false;
+        gateway_discovery_assignment_state.claim_ack_settle_armed = false;
+        gateway_discovery_assignment_state.claim_ack_settle_deadline_ms = 0u;
         gateway_discovery_assignment_state.response_ack_settle_armed = false;
         gateway_discovery_assignment_state.response_ack_settle_deadline_ms = 0u;
         gateway_discovery_assignment_state.claim_round = 0u;
         gateway_discovery_assignment_state.round_open = false;
         (void)k_work_reschedule(&gateway_discovery_assignment_finalize_work,
                                 K_NO_WAIT);
+    }
+    if (gateway_discovery_assignment_expected_claims_complete_locked()) {
+        uint32_t settle_ms =
+            gateway_discovery_assignment_arm_claim_ack_settle_locked();
+
+        if (settle_ms != 0u && gateway_discovery_assignment_state.round_open) {
+            status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_SETTLE epoch=%u hop=%u delay=%u duplicate=0\n",
+                                gateway_discovery_assignment_state.epoch,
+                                gateway_discovery_assignment_state.max_hop_count,
+                                settle_ms);
+            (void)k_work_reschedule(
+                &gateway_discovery_assignment_finalize_work,
+                K_MSEC(settle_ms));
+        }
     }
     status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_RX epoch=%u anchor=0x%016llx hash=0x%016llx hop=%u count=%u\n",
                         epoch,
@@ -997,11 +1056,20 @@ static bool gateway_discovery_assignment_service_delivery(void)
         uint32_t wait_ms;
 
         gateway_discovery_assignment_state.round_open = true;
-        wait_ms = ((kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM &&
-                    gateway_discovery_assignment_expected_claims_complete_locked()) ||
-                   (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE &&
-                    gateway_discovery_assignment_missing_ack_count_locked() == 0u)) ?
-                  0u : gateway_discovery_assignment_window_ms_locked();
+        if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM &&
+            gateway_discovery_assignment_expected_claims_complete_locked()) {
+            if (!gateway_discovery_assignment_state.claim_ack_settle_armed) {
+                (void)gateway_discovery_assignment_arm_claim_ack_settle_locked();
+            }
+            wait_ms =
+                gateway_discovery_assignment_claim_ack_settle_remaining_locked(
+                    (uint64_t)k_uptime_get());
+        } else if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE &&
+                   gateway_discovery_assignment_missing_ack_count_locked() == 0u) {
+            wait_ms = 0u;
+        } else {
+            wait_ms = gateway_discovery_assignment_window_ms_locked();
+        }
         (void)k_work_reschedule(
             &gateway_discovery_assignment_finalize_work,
             K_MSEC(wait_ms));
@@ -1107,6 +1175,20 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
                           gateway_discovery_assignment_state.claim_count));
             GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
         }
+        {
+            uint32_t settle_ms =
+                gateway_discovery_assignment_claim_ack_settle_remaining_locked(
+                    (uint64_t)k_uptime_get());
+
+            if (settle_ms != 0u) {
+                (void)k_work_reschedule(
+                    &gateway_discovery_assignment_finalize_work,
+                    K_MSEC(settle_ms));
+                GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+            }
+        }
+        gateway_discovery_assignment_state.claim_ack_settle_armed = false;
+        gateway_discovery_assignment_state.claim_ack_settle_deadline_ms = 0u;
 
         gateway_discovery_assignment_state.table_round = 0u;
         ret = gateway_discovery_assignment_publish_table();

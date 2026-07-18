@@ -99,6 +99,11 @@ extern "C" {
 #define SURVEY_DISCOVERY_OPPORTUNITY_COUNT 4u
 #define SURVEY_DISCOVERY_RETRY_BASE_MS 40u
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS 5000u
+#define SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS 4000u
+#define SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS \
+    (SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS + \
+     ((SURVEY_DEFAULT_TTL - 1u) * \
+      SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS))
 #define SURVEY_DISCOVERY_REPORT_RETRY_INITIAL_MS 50u
 #define SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS 500u
 
@@ -358,6 +363,7 @@ int survey_gateway_reverse_hint_for_target(
     struct survey_gateway_reverse_hint *reverse_hint);
 uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl);
 uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count);
+uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count);
 int survey_gateway_plan_pairs(struct survey_gateway_context *context);
 /*
  * Packs the existing pair plan into deterministic concurrent rounds without

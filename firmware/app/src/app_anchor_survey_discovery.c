@@ -12,6 +12,7 @@
 #include "dwm3000_driver.h"
 #include "mesh.h"
 #include "mesh_relay.h"
+#include "route.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -521,8 +522,17 @@ static bool survey_delivery_matches_locked(
 static uint64_t survey_delivery_deadline_ms(
     const struct mesh_outbound *outbound)
 {
+    const struct route_candidate *selected =
+        route_selected(&mesh_runtime.upstream);
     uint64_t now_ms = (uint64_t)k_uptime_get();
     uint64_t delay_ms = 0u;
+    uint8_t gateway_hop_count = SURVEY_DEFAULT_TTL;
+    uint32_t custody_ms;
+
+    if (selected != NULL && selected->hop_count < SURVEY_DEFAULT_TTL) {
+        gateway_hop_count = selected->hop_count + 1u;
+    }
+    custody_ms = survey_discovery_report_custody_ms(gateway_hop_count);
 
     if (outbound != NULL && outbound->earliest_tx_ms != 0u &&
         !uptime_deadline_reached((uint32_t)now_ms,
@@ -531,11 +541,10 @@ static uint64_t survey_delivery_deadline_ms(
                                             outbound->earliest_tx_ms);
     }
     if (UINT64_MAX - now_ms < delay_ms ||
-        UINT64_MAX - now_ms - delay_ms <
-            SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS) {
+        UINT64_MAX - now_ms - delay_ms < custody_ms) {
         return UINT64_MAX;
     }
-    return now_ms + delay_ms + SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS;
+    return now_ms + delay_ms + custody_ms;
 }
 
 static int survey_delivery_poll_comm_result(void)

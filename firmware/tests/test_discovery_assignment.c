@@ -282,7 +282,16 @@ static void test_collection_window_covers_slots_and_hops(void)
     assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 101099u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS == 10000u);
     assert(DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS == 3000u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 225199u);
+    assert(DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS == 5u);
+    assert(DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT == 2u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS ==
+           DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT *
+               DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS ==
+           10u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 235209u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS ==
+           DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS);
     assert(DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS == 1u);
     assert(DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS == 1u);
     assert(discovery_assignment_control_flood_deadline_ms(1000u, 50000u) ==
@@ -310,6 +319,51 @@ static void test_collection_window_covers_slots_and_hops(void)
         assert(!discovery_assignment_response_ack_settle_pending(
                    6000u, duplicate_deadline));
     }
+}
+
+static void test_claim_ack_settle_scales_and_duplicate_restarts_deadline(void)
+{
+    uint32_t direct_ms =
+        discovery_assignment_claim_ack_settle_duration_ms(1u);
+    uint32_t two_hop_ms =
+        discovery_assignment_claim_ack_settle_duration_ms(2u);
+    uint32_t max_hop_ms =
+        discovery_assignment_claim_ack_settle_duration_ms(
+            DISCOVERY_ASSIGNMENT_MAX_HOPS);
+    uint64_t first_deadline;
+    uint64_t duplicate_deadline;
+
+    assert(direct_ms == DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS);
+    assert(two_hop_ms ==
+           direct_ms +
+               DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS);
+    assert(max_hop_ms == direct_ms +
+           ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) *
+            DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS));
+    assert(max_hop_ms == DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS);
+    assert(discovery_assignment_claim_ack_settle_duration_ms(0u) ==
+           max_hop_ms);
+    assert(discovery_assignment_claim_ack_settle_duration_ms(UINT8_MAX) ==
+           max_hop_ms);
+
+    first_deadline = discovery_assignment_claim_ack_settle_deadline_ms(
+        1000u, 2u);
+    duplicate_deadline = discovery_assignment_claim_ack_settle_deadline_ms(
+        2000u, 2u);
+    assert(first_deadline == 1000u + two_hop_ms);
+    assert(duplicate_deadline == 2000u + two_hop_ms);
+    assert(duplicate_deadline > first_deadline);
+    assert(discovery_assignment_response_ack_settle_pending(
+        first_deadline - 1u, first_deadline));
+    assert(!discovery_assignment_response_ack_settle_pending(
+        first_deadline, first_deadline));
+    assert(discovery_assignment_response_ack_settle_pending(
+        first_deadline, duplicate_deadline));
+    assert(!discovery_assignment_response_ack_settle_pending(
+        duplicate_deadline, duplicate_deadline));
+    assert(discovery_assignment_claim_ack_settle_deadline_ms(
+               UINT64_MAX - 100u, DISCOVERY_ASSIGNMENT_MAX_HOPS) ==
+           UINT64_MAX);
 }
 
 static void test_expected_count_is_optional_and_bounded(void)
@@ -432,6 +486,7 @@ int main(void)
     test_response_custody_allows_only_valid_supersession_boundaries();
     test_response_delay_uses_slot_hops_and_bounded_backoff();
     test_collection_window_covers_slots_and_hops();
+    test_claim_ack_settle_scales_and_duplicate_restarts_deadline();
     test_expected_count_is_optional_and_bounded();
     test_full_table_fits_one_extended_packet_and_round_trips();
     test_table_rejects_missing_and_corrupt_entries();

@@ -861,7 +861,7 @@ def main() -> None:
     parser.add_argument("--expected-direct-anchors", type=int)
     parser.add_argument("--expected-multihop-anchors", type=int)
     parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
-    parser.add_argument("--assignment-timeout", type=float, default=230.0)
+    parser.add_argument("--assignment-timeout", type=float, default=240.0)
     parser.add_argument(
         "--command-budget-ms",
         type=int,

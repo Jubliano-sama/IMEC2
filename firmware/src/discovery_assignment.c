@@ -666,6 +666,28 @@ uint64_t discovery_assignment_response_ack_settle_deadline_ms(uint64_t now_ms)
            UINT64_MAX : now_ms + DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS;
 }
 
+uint32_t discovery_assignment_claim_ack_settle_duration_ms(uint8_t hop_count)
+{
+    uint8_t effective_hop_count =
+        hop_count == 0u || hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+            DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
+
+    return DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
+           ((uint32_t)(effective_hop_count - 1u) *
+            DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS);
+}
+
+uint64_t discovery_assignment_claim_ack_settle_deadline_ms(
+    uint64_t now_ms,
+    uint8_t hop_count)
+{
+    uint32_t settle_ms =
+        discovery_assignment_claim_ack_settle_duration_ms(hop_count);
+
+    return UINT64_MAX - now_ms < settle_ms ? UINT64_MAX :
+                                             now_ms + settle_ms;
+}
+
 bool discovery_assignment_response_ack_settle_pending(
     uint64_t now_ms,
     uint64_t settle_deadline_ms)

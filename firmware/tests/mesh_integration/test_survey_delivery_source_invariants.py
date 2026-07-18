@@ -241,6 +241,24 @@ assert ".anchor_survey_delivery_gateway_confirmed =" in ANCHOR
 assert ".anchor_survey_delivery_transport_released =" in ANCHOR
 assert "SURVEY_DELIVERY_LOCK()" in DISCOVERY
 assert "app_mesh_local_delivery_recover" in DISCOVERY
+deadline = function_body(DISCOVERY, "survey_delivery_deadline_ms")
+route_lookup = deadline.index("route_selected(&mesh_runtime.upstream)")
+hop_conversion = deadline.index("selected->hop_count + 1u")
+custody_lookup = deadline.index("survey_discovery_report_custody_ms(")
+assert route_lookup < hop_conversion < custody_lookup, (
+    "survey report custody must derive RF hop count from the selected "
+    "upstream route before selecting its deadline"
+)
+assert "selected != NULL" in deadline
+assert "selected->hop_count" in deadline
+assert "SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS" not in deadline, (
+    "the app deadline must not retain the fixed direct-only five-second custody"
+)
+assert re.search(
+    r"BUILD_ASSERT\s*\(\s*SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS\s*<=\s*"
+    r"SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS",
+    CONFIG,
+), "maximum hop-aware custody must remain inside the gateway delivery tail"
 retry = function_body(DISCOVERY, "app_anchor_survey_discovery_retry_report")
 assert retry.count("app_node_comm_submit_delivery(") == 1
 assert "NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK" in retry

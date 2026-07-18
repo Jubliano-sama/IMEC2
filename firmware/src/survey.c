@@ -51,6 +51,17 @@ uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count)
             SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS);
 }
 
+uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count)
+{
+    uint8_t effective_hop_count =
+        gateway_hop_count == 0u || gateway_hop_count > SURVEY_DEFAULT_TTL ?
+            SURVEY_DEFAULT_TTL : gateway_hop_count;
+
+    return SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS +
+           ((uint32_t)(effective_hop_count - 1u) *
+            SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS);
+}
+
 static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
 {
     return src_id != 0u && dst_id != 0u && src_id != dst_id;

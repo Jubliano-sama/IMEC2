@@ -426,6 +426,28 @@ static void test_pending_discovery_report_survives_queue_and_route_pressure(void
            SURVEY_PENDING_REPORT_IDLE);
 }
 
+static void test_discovery_report_custody_tracks_upstream_hops(void)
+{
+    const uint32_t direct_ms = survey_discovery_report_custody_ms(1u);
+    const uint32_t two_hop_ms = survey_discovery_report_custody_ms(2u);
+    const uint32_t three_hop_ms = survey_discovery_report_custody_ms(3u);
+    const uint32_t maximum_ms =
+        survey_discovery_report_custody_ms(SURVEY_DEFAULT_TTL);
+
+    assert(direct_ms == SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS);
+    assert(direct_ms == 5000u);
+    assert(two_hop_ms == 9000u);
+    assert(two_hop_ms > SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS);
+    assert(three_hop_ms == 13000u);
+    assert(maximum_ms == 17000u);
+    assert(maximum_ms == SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS);
+
+    assert(survey_discovery_report_custody_ms(0u) == maximum_ms);
+    assert(survey_discovery_report_custody_ms(SURVEY_DEFAULT_TTL + 1u) ==
+           maximum_ms);
+    assert(survey_discovery_report_custody_ms(UINT8_MAX) == maximum_ms);
+}
+
 static void test_discovery_slot_count_tlv_defaults_and_overrides(void)
 {
     uint8_t payload[16];
@@ -2358,6 +2380,7 @@ int main(void)
     test_discovery_slot_validation_uses_physical_probe_budget();
     test_discovery_attempt_scheduler_defers_without_consuming_attempt();
     test_pending_discovery_report_survives_queue_and_route_pressure();
+    test_discovery_report_custody_tracks_upstream_hops();
     test_discovery_slot_count_tlv_defaults_and_overrides();
     test_ml_anchor_pair_request_accepts_optional_slots_and_ignores_sample_count();
     test_ml_anchor_pair_request_rejects_invalid_slot_counts();

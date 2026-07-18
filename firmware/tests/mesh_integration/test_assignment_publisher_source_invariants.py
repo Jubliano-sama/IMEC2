@@ -11,6 +11,8 @@ BLE = (ROOT / "app/src/app_gateway_ble.c").read_text()
 STREAM = (ROOT / "app/src/app_gateway_ble_stream.h").read_text()
 PUBLISHER = (ROOT / "app/src/app_gateway_assignment_publisher.c").read_text()
 ASSIGNMENT = (ROOT / "include/discovery_assignment.h").read_text()
+ASSIGNMENT_DEFINES = re.sub(r"\\\s*\n\s*", " ", ASSIGNMENT)
+ANCHOR_DEFINES = re.sub(r"\\\s*\n\s*", " ", ANCHOR)
 
 
 def function_body(source: str, name: str) -> str:
@@ -46,6 +48,42 @@ assert re.search(r"#define GATEWAY_BLE_STREAM_QUEUE_DEPTH\s+3u", STREAM)
 assert "anchor_ids[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES]" in PUBLISHER
 assert "slots[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES]" in PUBLISHER
 assert "APP_GATEWAY_ASSIGNMENT_PUBLISHER_RAM_BUDGET_BYTES" in PUBLISHER
+
+# Both bounded control-flood terminal events are consumed by a polled gateway
+# worker. Reserve one complete poll interval per phase in the shared operation
+# budget, and keep the app poll cadence tied to the shared timing contract.
+assert re.search(
+    r"#define\s+DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS\s+5u",
+    ASSIGNMENT_DEFINES,
+)
+assert re.search(
+    r"#define\s+DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT\s+2u",
+    ASSIGNMENT_DEFINES,
+)
+assert re.search(
+    r"#define\s+DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS\s+"
+    r"\(DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT\s*\*\s*"
+    r"DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS\)",
+    ASSIGNMENT_DEFINES,
+)
+assert re.search(
+    r"DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS\s*\+\s*"
+    r"DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS\s*\+\s*"
+    r"DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS\s*\+\s*"
+    r"DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS",
+    ASSIGNMENT_DEFINES,
+)
+assert re.search(
+    r"#define\s+GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS\s+"
+    r"DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS",
+    ANCHOR_DEFINES,
+)
+assert re.search(
+    r"BUILD_ASSERT\(DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS\s*"
+    r">=\s*DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT\s*\*\s*"
+    r"GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS\s*,",
+    ANCHOR_DEFINES,
+)
 
 hop_report = function_body(ANCHOR, "anchor_discovery_gateway_hop_count")
 assert "route_selected(&mesh_runtime.upstream)" in hop_report
@@ -161,6 +199,52 @@ note_claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
 assert "gateway_discovery_assignment_expected_claims_complete_locked()" in note_claim
 assert "discovery_assignment_response_ack_settle_deadline_ms(" in note_claim
 assert "K_NO_WAIT" in note_claim
+
+# A two-hop child can still be completing the gateway-ACK bubble and its
+# shared-relay timing cleanup when its accepted CLAIM completes the roster.
+# Keep the one logical table flood behind a hop-aware quiet interval. A valid
+# duplicate proves the prior ACK did not finish, so it must restart that same
+# interval while the transaction still collects CLAIMs.
+claim_settle_deadline = "discovery_assignment_claim_ack_settle_deadline_ms("
+arm_claim_settle = function_body(
+    ANCHOR, "gateway_discovery_assignment_arm_claim_ack_settle_locked"
+)
+assert "GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS" in arm_claim_settle
+assert "gateway_discovery_assignment_expected_claims_complete_locked()" in (
+    arm_claim_settle
+)
+assert claim_settle_deadline in arm_claim_settle
+assert "gateway_discovery_assignment_state.max_hop_count" in arm_claim_settle[
+    arm_claim_settle.index(claim_settle_deadline):
+]
+assert re.search(r"claim\w*_settle_armed\s*=\s*true", arm_claim_settle)
+assert re.search(r"claim\w*_settle_deadline_ms\s*=", arm_claim_settle)
+
+claim_settle_remaining = function_body(
+    ANCHOR, "gateway_discovery_assignment_claim_ack_settle_remaining_locked"
+)
+assert "discovery_assignment_response_ack_settle_pending(" in (
+    claim_settle_remaining
+)
+assert re.search(r"claim\w*_settle_deadline_ms", claim_settle_remaining)
+duplicate_claim = note_claim.index("if (anchor_index != SIZE_MAX)")
+new_claim = note_claim.index(
+    "gateway_discovery_assignment_state.anchor_ids[", duplicate_claim
+)
+duplicate_path = note_claim[duplicate_claim:new_claim]
+assert "gateway_discovery_assignment_arm_claim_ack_settle_locked()" in (
+    duplicate_path
+)
+assert "gateway_discovery_assignment_state.round_open" in duplicate_path
+assert "k_work_reschedule(" in duplicate_path
+
+new_claim_path = note_claim[new_claim:]
+quorum = new_claim_path.index(
+    "gateway_discovery_assignment_expected_claims_complete_locked()"
+)
+assert "gateway_discovery_assignment_arm_claim_ack_settle_locked()" in (
+    new_claim_path[quorum:]
+)
 complete_success = function_body(
     ANCHOR, "gateway_discovery_assignment_complete_success_locked"
 )
@@ -202,6 +286,15 @@ assert "expected_claim_count" in publish_work
 assert "gateway_discovery_assignment_fail_locked(" in publish_work
 assert "DBG_DISCOVERY_SLOT_CLAIM_BACKOFF" in publish_work
 assert "discovery_assignment_retry_backoff_ms(" in publish_work
+table_publish = publish_work.index("gateway_discovery_assignment_publish_table()")
+claim_settle_gate = publish_work.index(
+    "gateway_discovery_assignment_claim_ack_settle_remaining_locked("
+)
+assert claim_settle_gate < table_publish
+assert re.search(
+    r"claim\w*_settle_deadline_ms", publish_work[claim_settle_gate:table_publish]
+)
+assert "k_work_reschedule(" in publish_work[claim_settle_gate:table_publish]
 
 admit = function_body(BLE, "gateway_observe_command_event_if_available")
 prepare = admit.index("gateway_command_observability_prepare(")
