@@ -1314,11 +1314,16 @@ int app_node_comm_service_deliveries(void)
     app_node_comm_sync_unlock();
 
     if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) {
+        /*
+         * Each retry attempt must wake low-duty relays independently.  The
+         * flood backend still sends only one wake train for that attempt's
+         * four closely spaced copies.
+         */
         ret = mesh_try_send_c5_flood_view(
             &attempt_view,
             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
             "node-comm-bounded-control-flood",
-            lease.attempt_number == 1u,
+            true,
             &rf_started);
     } else if (attempt_record.profile == NODE_COMM_PROFILE_CONTROL_RESPONSE) {
         ret = mesh_try_send_control_response_view(

@@ -1229,6 +1229,84 @@ static void test_survey_pair_control_bounded_flood_lane(void)
     }
 }
 
+static void test_bounded_control_retry_rewakes_missed_relay(void)
+{
+    static struct mesh_sim_world world;
+    const uint64_t relay_id = ANCHOR_BASE + 310u;
+    const uint64_t target_id = ANCHOR_BASE + 311u;
+    struct mesh_outbound control;
+    struct mesh_outbound original;
+    struct flood_ctx missed_attempt = {
+        .now_ms = 1000u,
+        .command_id = CMD_SURVEY_START_PAIR,
+    };
+    struct flood_ctx retry_attempt = {
+        .now_ms = 1040u,
+        .command_id = CMD_SURVEY_START_PAIR,
+        .previous_hop_id = GATEWAY_ID,
+        .awake_from_send = 1u,
+    };
+    struct app_mesh_flood_ops missed_ops = {
+        .now_ms = flood_now,
+        .sleep_until_ms = flood_sleep,
+        .defer_active = flood_defer,
+        .c5_quiet = flood_quiet,
+        .random_u32 = flood_random,
+        .send = flood_send,
+        .ctx = &missed_attempt,
+    };
+    struct app_mesh_flood_ops retry_ops = missed_ops;
+    struct app_mesh_flood_result result;
+    uint8_t gateway_index;
+    uint8_t relay_index;
+    uint8_t target_index;
+
+    mesh_sim_init(&world, UINT32_C(0x52c5a002));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+              GATEWAY_ID, ROUTE_EPOCH, &gateway_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, relay_id,
+              GATEWAY_ID, ROUTE_EPOCH, &relay_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, target_id,
+              GATEWAY_ID, ROUTE_EPOCH, &target_index) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, relay_index, target_index, 90u, 0u) ==
+              MESH_SIM_OK);
+    CHECK(mesh_sim_install_downlink(&world, relay_index, target_id,
+                                     target_index, 1u,
+                                     ROUTE_EPOCH) == MESH_SIM_OK);
+
+    CHECK(build_survey_pair_control(&control, CMD_SURVEY_START_PAIR,
+                                     target_id, relay_id, 73u) == PROTO_OK);
+    original = control;
+
+    /* The relay sleeps through attempt 1, so neither wake nor control lands. */
+    CHECK(app_mesh_flood_send_opportunity(&control, &missed_ops, &result) == 0);
+    CHECK(result.sent_count == 1u);
+    CHECK(missed_attempt.sends == 1u);
+    CHECK(missed_attempt.forwards == 0u);
+
+    /*
+     * The adapter invariant re-sends the wake train before this retry.  Once
+     * awake, the same immutable control datagram must enter relay forwarding.
+     */
+    retry_attempt.receiver = &world.roles[relay_index].relay;
+    retry_ops.ctx = &retry_attempt;
+    CHECK(app_mesh_flood_send_opportunity(&control, &retry_ops, &result) == 0);
+    CHECK(result.sent_count == 1u);
+    CHECK(retry_attempt.sends == 1u);
+    CHECK(retry_attempt.forwards == 1u);
+    CHECK(retry_attempt.forward_valid);
+    CHECK(memcmp(&control, &original, sizeof(control)) == 0);
+    CHECK(retry_attempt.forward.packet.src_id == original.packet.src_id);
+    CHECK(retry_attempt.forward.packet.dst_id == original.packet.dst_id);
+    CHECK(retry_attempt.forward.packet.session_id == original.packet.session_id);
+    CHECK(retry_attempt.forward.packet.seq == original.packet.seq);
+    CHECK(retry_attempt.forward.packet.ttl == original.packet.ttl - 1u);
+    CHECK(retry_attempt.forward.next_hop_id == target_id);
+    CHECK(retry_attempt.forward.payload_len == original.payload_len);
+    CHECK(memcmp(retry_attempt.forward.payload, original.payload,
+                 original.payload_len) == 0);
+}
+
 static void test_here_i_am_radio_collision_containment_and_retry(void)
 {
     static struct mesh_sim_world world;
@@ -1402,6 +1480,7 @@ int main(void)
     test_gateway_control_rx_handoff_stress_sweep();
     test_gateway_scheduled_delivery_due_handoff_sweep();
     test_survey_pair_control_bounded_flood_lane();
+    test_bounded_control_retry_rewakes_missed_relay();
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {

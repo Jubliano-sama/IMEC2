@@ -899,6 +899,8 @@ has received them:
    the first route it heard.
 6. The gateway command should be resent for a small number of attempts so
    anchors can still receive it after an initial collision or missed wake.
+   Every attempt includes its own gateway-command wake train; a retry must not
+   depend on an anchor or relay having received an earlier attempt's wake.
 7. Each anchor that receives the command validates that it is new and relevant.
 8. The receiving anchor executes the command if it is addressed to that anchor
    or is a broadcast command.
