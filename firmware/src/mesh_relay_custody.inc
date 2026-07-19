@@ -1507,6 +1507,18 @@ static int handle_local_ack(struct mesh_relay *relay,
             return PROTO_OK;
         }
         if (transit_gateway_ack) {
+            /*
+             * The first matching gateway ACK creates exactly one physical
+             * child-directed handoff.  Further copies can arrive while that
+             * handoff is queued or on air; rebuilding it here both refreshes
+             * the deadline and lets an ACK storm keep the relay awake after
+             * the operation has otherwise completed.
+             */
+            if (relay->pending.state ==
+                    MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
+                relay->pending.gateway_ack_forward_pending) {
+                return PROTO_OK;
+            }
             ret = build_forward(relay,
                                 packet,
                                 payload,

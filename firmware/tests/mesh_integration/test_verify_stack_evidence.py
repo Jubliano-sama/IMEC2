@@ -481,6 +481,33 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertEqual([], evidence.issues)
         self.assertEqual(2, evidence.attributed_usage_count)
 
+    def test_empty_cgraph_calls_do_not_consume_gcc_update_diagnostic(self) -> None:
+        graph = self.root / "mesh_event_owner.c.000i.cgraph"
+        graph.write_text(
+            "Optimized Symbol table:\n\n"
+            "mesh_event_owner_commit/7 (mesh_event_owner_commit)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: payload_fingerprint/0\n"
+            "payload_fingerprint/0 (payload_fingerprint)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: \n"
+            "updating call of mesh_event_owner_commit/7 -> "
+            "__builtin_unreachable/13: value = payload_fingerprint ();\n"
+            "Removing variables:\n",
+            encoding="utf-8",
+        )
+
+        ownership = verifier._parse_cgraph(graph, "mesh_event_owner.c")
+        synchronous = verifier._parse_synchronous_cgraph(
+            graph, "mesh_event_owner.c"
+        )
+
+        leaf = ("mesh_event_owner.c", "payload_fingerprint")
+        caller = ("mesh_event_owner.c", "mesh_event_owner_commit")
+        self.assertEqual(set(), ownership[leaf])
+        self.assertEqual(set(), synchronous[leaf])
+        self.assertEqual({"payload_fingerprint"}, synchronous[caller])
+
     def test_recursive_synchronous_graph_fails_closed(self) -> None:
         evidence = self._synchronous_evidence(
             {"root": 64, "helper": 64},
@@ -838,11 +865,22 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         body = source.split("void k_sys_fatal_error_handler", 1)[1].split("#endif", 1)[0]
 
+        self.assertIn("defined(CONFIG_IMEC_MESH_ROUTE_TEST)", source)
+        self.assertIn("defined(CONFIG_IMEC_STACK_STRESS_DIAGNOSTICS)", source)
+        self.assertIn("#if IMEC_RETAIN_FATAL_BREADCRUMB", source)
         self.assertIn("mesh_route_test_fatal_magic", body)
+        self.assertIn("mesh_route_test_fatal_thread", body)
+        self.assertIn("mesh_route_test_fatal_stack_start", body)
+        self.assertIn("mesh_route_test_fatal_stack_size", body)
         self.assertIn("sys_reboot(SYS_REBOOT_COLD)", body)
         self.assertNotIn("app_watchdog_", body)
         self.assertNotIn("status_debug_", body)
         self.assertNotIn("stack_diag", body)
+
+        retained_print = source.split('printk("retained fatal:', 1)[1].split(");", 1)[0]
+        self.assertIn("mesh_route_test_fatal_thread", retained_print)
+        self.assertIn("mesh_route_test_fatal_stack_start", retained_print)
+        self.assertIn("mesh_route_test_fatal_stack_size", retained_print)
 
     def test_linker_local_text_section_counts_as_linked_application_function(self) -> None:
         map_file = self.root / "zephyr.map"

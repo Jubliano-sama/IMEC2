@@ -27,6 +27,7 @@ static uint32_t anchor_uwb_scan_blocked_retry_ms(void)
 
 static int anchor_queue_survey_sample_result(
     const struct survey_pair *pair,
+    uint16_t round_id,
     uint16_t sample_index,
     uint64_t reporter_id,
     const struct dwm3000_range_result *range_result)
@@ -48,6 +49,7 @@ static int anchor_queue_survey_sample_result(
              range_result->status : RANGE_INTERNAL_ERROR;
 
     sample.pair = *pair;
+    sample.round_id = round_id;
     sample.sample_index = sample_index;
     sample.distance_mm = range_result->distance_mm;
     sample.quality = range_result->quality;

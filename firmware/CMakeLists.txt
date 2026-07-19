@@ -23,6 +23,7 @@ add_library(core
     src/uwb_ble_courtesy.c
     src/uwb_session.c
     src/mesh.c
+    src/mesh_event_owner.c
     src/mesh_route_path.c
     src/node_comm.c
     src/node_transaction.c
@@ -58,6 +59,12 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
 add_test(NAME protocol COMMAND test_protocol)
+
+add_executable(test_mesh_event_owner tests/test_mesh_event_owner.c)
+target_link_libraries(test_mesh_event_owner PRIVATE core)
+add_test(NAME mesh_event_owner COMMAND test_mesh_event_owner)
+set_tests_properties(mesh_event_owner PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol;connection")
 
 add_executable(test_operation_policy tests/test_operation_policy.c)
 target_link_libraries(test_operation_policy PRIVATE core)
@@ -738,6 +745,16 @@ add_test(NAME mesh_result_grant_retry_scenarios
 set_tests_properties(mesh_result_grant_retry_scenarios PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;network_stress")
 
+add_executable(test_mesh_result_custody_rf_scenarios
+    tests/mesh_integration/test_mesh_result_custody_rf_scenarios.c)
+target_compile_options(test_mesh_result_custody_rf_scenarios PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+target_link_libraries(test_mesh_result_custody_rf_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_result_custody_rf_scenarios
+    COMMAND test_mesh_result_custody_rf_scenarios)
+set_tests_properties(mesh_result_custody_rf_scenarios PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;communication;network_stress;custody;liveness;protocol")
+
 add_executable(test_serial_frame tests/test_serial_frame.c)
 target_link_libraries(test_serial_frame PRIVATE core)
 add_test(NAME serial_frame COMMAND test_serial_frame)
@@ -862,6 +879,7 @@ add_library(mesh_sim
     sim/mesh_sim.c
     sim/mesh_sim_connection.c
     sim/mesh_sim_events.c
+    sim/mesh_sim_invariants.c
     sim/mesh_sim_interval.c
     sim/mesh_sim_radio.c
     sim/mesh_sim_relay.c
@@ -930,6 +948,43 @@ add_test(NAME mesh_discovery_assignment_adversarial_scenarios
     COMMAND test_mesh_discovery_assignment_adversarial_scenarios)
 set_tests_properties(mesh_discovery_assignment_adversarial_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;assignment;network_stress")
+
+add_executable(test_mesh_protocol_lifecycle_scenarios
+    tests/mesh_integration/test_mesh_protocol_lifecycle_scenarios.c
+)
+target_include_directories(test_mesh_protocol_lifecycle_scenarios
+    PRIVATE app/src)
+target_link_libraries(test_mesh_protocol_lifecycle_scenarios PRIVATE mesh_sim)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_mesh_protocol_lifecycle_scenarios
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME mesh_protocol_lifecycle_scenarios
+    COMMAND test_mesh_protocol_lifecycle_scenarios)
+set_tests_properties(mesh_protocol_lifecycle_scenarios PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;protocol;assignment;survey;forcedhop;state;timing")
+
+add_executable(test_mesh_survey_round_adversarial_lifecycle
+    tests/mesh_integration/test_mesh_survey_round_adversarial_lifecycle.c
+)
+target_link_libraries(test_mesh_survey_round_adversarial_lifecycle
+    PRIVATE mesh_sim)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_mesh_survey_round_adversarial_lifecycle
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME mesh_survey_round_adversarial_lifecycle
+    COMMAND test_mesh_survey_round_adversarial_lifecycle)
+set_tests_properties(mesh_survey_round_adversarial_lifecycle PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;protocol;survey;forcedhop;faults;state;timing;liveness")
+add_test(NAME mesh_survey_round_adversarial_lifecycle_seed_zero
+    COMMAND test_mesh_survey_round_adversarial_lifecycle --seed 0)
+set_tests_properties(mesh_survey_round_adversarial_lifecycle_seed_zero PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;protocol;survey;forcedhop;faults;state;timing;liveness;replay")
+add_test(NAME mesh_survey_round_adversarial_lifecycle_seed_max
+    COMMAND test_mesh_survey_round_adversarial_lifecycle --seed 0xffffffff)
+set_tests_properties(mesh_survey_round_adversarial_lifecycle_seed_max PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;protocol;survey;forcedhop;faults;state;timing;liveness;replay")
 
 add_executable(test_mesh_gateway_control_stress_scenarios
     tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c
@@ -1145,8 +1200,199 @@ add_test(NAME mesh_sim_trace_scheduler
 set_tests_properties(mesh_sim_trace_scheduler
     PROPERTIES LABELS "mesh_integration;simulator;trace;scheduler")
 
+add_executable(test_mesh_sim_fault_scenarios
+    tests/mesh_integration/test_mesh_sim_fault_scenarios.c
+)
+target_link_libraries(test_mesh_sim_fault_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_sim_fault_scenarios
+    COMMAND test_mesh_sim_fault_scenarios)
+set_tests_properties(mesh_sim_fault_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;faults;state")
+
+add_executable(test_mesh_post_operation_liveness_scenarios
+    tests/mesh_integration/test_mesh_post_operation_liveness_scenarios.c
+)
+target_link_libraries(test_mesh_post_operation_liveness_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_post_operation_liveness_scenarios
+    COMMAND test_mesh_post_operation_liveness_scenarios)
+set_tests_properties(mesh_post_operation_liveness_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;faults;state;liveness;custody")
+
+add_executable(test_mesh_event_control_rf_scenarios
+    tests/mesh_integration/test_mesh_event_control_rf_scenarios.c
+)
+target_link_libraries(test_mesh_event_control_rf_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_event_control_rf_scenarios
+    COMMAND test_mesh_event_control_rf_scenarios)
+set_tests_properties(mesh_event_control_rf_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;radio;channel5;protocol;connection;forcedhop;faults;state;liveness")
+
+add_executable(test_mesh_contact_response_scenarios
+    tests/mesh_integration/test_mesh_contact_response_scenarios.c
+)
+target_link_libraries(test_mesh_contact_response_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_contact_response_scenarios
+    COMMAND test_mesh_contact_response_scenarios)
+set_tests_properties(mesh_contact_response_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;radio;channel5;control")
+
+add_executable(mesh_stress
+    tests/mesh_integration/mesh_stress_runner.c)
+target_include_directories(mesh_stress PRIVATE app/src)
+target_link_libraries(mesh_stress PRIVATE mesh_sim)
+add_test(NAME mesh_stress_one_hop
+    COMMAND mesh_stress --scenario one-hop --seed 0x51a7e551
+            --packets 2 --max-steps 200 --quiet)
+set_tests_properties(mesh_stress_one_hop PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;one_hop;protocol")
+add_test(NAME mesh_stress_busy_line
+    COMMAND mesh_stress --scenario busy-line --seed 0x51a7b551
+            --packets 2 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_busy_line PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;protocol")
+add_test(NAME mesh_stress_busy_line_reset
+    COMMAND mesh_stress --scenario busy-line --seed 0x51a7b551
+            --packets 2 --reset-step 2 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_busy_line_reset PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;reset;state")
+add_test(NAME mesh_stress_one_hop_fault_replay
+    COMMAND mesh_stress --scenario one-hop --seed 0x51a7e551
+            --fault-seed 0x12345678 --packets 2 --loss 0
+            --ack-loss 3000 --duplicate 3000 --delay 5000
+            --max-delay-us 4000 --max-steps 300 --quiet)
+set_tests_properties(mesh_stress_one_hop_fault_replay PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;one_hop;faults;replay")
+add_test(NAME mesh_stress_busy_line_ack_loss_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x1000
+            --fault-seed 0xf4174eed --packets 2 --loss 300
+            --ack-loss 1200 --duplicate 800 --delay 2500
+            --max-delay-us 6000 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_busy_line_ack_loss_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;custody")
+add_test(NAME mesh_stress_busy_line_route_repair_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x1076
+            --fault-seed 0xf4174e9b --packets 2 --loss 300
+            --ack-loss 1200 --duplicate 800 --delay 2500
+            --max-delay-us 6000 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_busy_line_route_repair_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;routes;liveness")
+add_test(NAME mesh_stress_busy_line_runtime_cleanup_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x1089
+            --fault-seed 0xf4174e64 --packets 2 --loss 0
+            --ack-loss 0 --duplicate 800 --delay 2500
+            --max-delay-us 6000 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_busy_line_runtime_cleanup_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;radio;timing")
+add_test(NAME mesh_stress_busy_line_ack_downlink_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x119c
+            --fault-seed 0xf4174f71 --packets 2 --loss 50
+            --ack-loss 300 --duplicate 300 --delay 500
+            --max-delay-us 4000 --max-steps 300 --quiet)
+set_tests_properties(mesh_stress_busy_line_ack_downlink_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;custody;routes;liveness")
+add_test(NAME mesh_stress_busy_line_batch_liveness_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x1210
+            --fault-seed 0xf4174cfd --packets 2 --loss 50
+            --ack-loss 300 --duplicate 300 --delay 500
+            --max-delay-us 4000 --max-steps 300 --quiet)
+set_tests_properties(mesh_stress_busy_line_batch_liveness_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;queues;liveness")
+add_test(NAME mesh_stress_busy_line_contact_reservation_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x13ae
+            --fault-seed 0xf4174d43 --packets 2 --loss 50
+            --ack-loss 300 --duplicate 300 --delay 500
+            --max-delay-us 4000 --max-steps 300 --quiet)
+set_tests_properties(mesh_stress_busy_line_contact_reservation_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;radio;timing")
+add_test(NAME mesh_stress_queue_full
+    COMMAND mesh_stress --scenario queue-full --seed 0x51a7f011 --quiet)
+set_tests_properties(mesh_stress_queue_full PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;queue")
+
+add_test(NAME mesh_stress_exact_failure_replay
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_stress_replay.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_mesh_stress.py
+            $<TARGET_FILE:mesh_stress>)
+set_tests_properties(mesh_stress_exact_failure_replay PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;replay")
+
 add_test(NAME mesh_ble_route_monitor
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_ble_route_monitor.py)
 set_tests_properties(mesh_ble_route_monitor
     PROPERTIES LABELS "mesh_integration;host_tools;observability")
+
+# The focused protocol gate spans click wake/ranging/report delivery, direct
+# probing and route advertisement, connection ownership, assignment, survey
+# discovery/pair execution, result custody, persistence, fault/reset
+# boundaries, and terminal cleanup.  It stays smaller than the complete
+# mesh-integration label for rapid iteration.
+set_property(TEST
+    mesh_event_owner
+    discovery_assignment
+    survey_round_control
+    survey_gateway_drive_policy
+    survey_completion_policy
+    survey
+    uwb
+    uwb_session
+    dwm3000_models
+    gateway_collection_journal
+    gateway_eack_policy
+    app_gateway_eack_retry
+    gateway_eack_retry_source_invariants
+    gateway_durable_accept_source_invariants
+    assignment_claim_semantic_acceptance
+    assignment_state_serialization_source_invariants
+    app_gateway_assignment_publisher
+    assignment_publisher_source_invariants
+    app_discovery_assignment_policy
+    app_mesh_event_retry
+    gateway_survey_dynamic_deadline_source_invariants
+    survey_delivery_source_invariants
+    survey_discovery_failure_source_invariants
+    survey_active_generation_source_invariants
+    survey_pair_control_lifecycle_source_invariants
+    anchor_survey_round_barrier_source_invariants
+    gateway_survey_round_glue_source_invariants
+    survey_command_source_invariants
+    app_node_comm_gateway_route_refresh
+    mesh_direct_probe_recovery_scenarios
+    mesh_integration
+    mesh_production_scenarios
+    mesh_wake_scenarios
+    mesh_forcedhop_connection_scenarios
+    mesh_route_formation_scenarios
+    mesh_discovery_scenarios
+    mesh_discovery_assignment_adversarial_scenarios
+    mesh_protocol_lifecycle_scenarios
+    mesh_survey_round_adversarial_lifecycle
+    mesh_survey_round_adversarial_lifecycle_seed_zero
+    mesh_survey_round_adversarial_lifecycle_seed_max
+    mesh_gateway_control_stress_scenarios
+    multi_anchor_timing_invariants
+    mesh_survey_phy_scenarios
+    mesh_survey_topology_scenarios
+    mesh_survey_direct_gateway_retry_scenarios
+    survey_pair_lease
+    survey_gateway_transaction
+    survey_pair_round_runtime
+    app_gateway_survey_round
+    mesh_result_grant_retry_scenarios
+    mesh_result_custody_rf_scenarios
+    gateway_collection_eack
+    mesh_event_control_rf_scenarios
+    mesh_sim_fault_scenarios
+    mesh_contact_response_scenarios
+    mesh_post_operation_liveness_scenarios
+    mesh_click_collision_sweep
+    mesh_click_report_delivery_sweep
+    mesh_app_arbitration_scenarios
+    mesh_stress_busy_line_reset
+    mesh_stress_one_hop_fault_replay
+    mesh_stress_busy_line_ack_loss_regression
+    mesh_stress_busy_line_ack_downlink_regression
+    mesh_stress_busy_line_batch_liveness_regression
+    mesh_stress_busy_line_contact_reservation_regression
+    APPEND PROPERTY LABELS protocol_matrix)

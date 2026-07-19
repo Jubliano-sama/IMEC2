@@ -6,10 +6,15 @@
 #include <limits.h>
 #include <string.h>
 
-int mesh_sim_fail(struct mesh_sim_world *world, int status)
+int mesh_sim_fail_at(struct mesh_sim_world *world,
+                     int status,
+                     const char *file,
+                     uint32_t line)
 {
     if (world != NULL && world->last_error == MESH_SIM_OK) {
         world->last_error = status;
+        world->last_error_file = file;
+        world->last_error_line = line;
     }
     return status;
 }
@@ -77,12 +82,48 @@ void mesh_sim_clear_connection_timing(
 
 void mesh_sim_init(struct mesh_sim_world *world, uint32_t seed)
 {
+    uint32_t normalized_seed;
+
     if (world == NULL) {
         return;
     }
     memset(world, 0, sizeof(*world));
-    world->rng_state = seed == 0u ? 0x6D2B79F5u : seed;
+    normalized_seed = seed == 0u ? 0x6D2B79F5u : seed;
+    world->rng_state = normalized_seed;
+    world->fault_rng_state = normalized_seed ^ UINT32_C(0xA511E9B3);
+    if (world->fault_rng_state == 0u) {
+        world->fault_rng_state = UINT32_C(0x9E3779B9);
+    }
     world->channel9_tx_offset_us = MESH_SIM_SLOT_TX_OFFSET_US;
+}
+
+int mesh_sim_set_fault_config(struct mesh_sim_world *world,
+                              const struct mesh_sim_fault_config *config)
+{
+    if (world == NULL || config == NULL ||
+        config->frame_loss_permyriad > MESH_SIM_FAULT_RATE_SCALE ||
+        config->ack_loss_permyriad > MESH_SIM_FAULT_RATE_SCALE ||
+        config->duplicate_permyriad > MESH_SIM_FAULT_RATE_SCALE ||
+        config->delay_permyriad > MESH_SIM_FAULT_RATE_SCALE ||
+        (config->delay_permyriad != 0u &&
+         config->max_extra_delay_us == 0u)) {
+        return MESH_SIM_ERR_ARG;
+    }
+    world->fault_config = *config;
+    memset(&world->fault_stats, 0, sizeof(world->fault_stats));
+    world->fault_rng_state = config->seed == 0u ?
+                             UINT32_C(0x9E3779B9) : config->seed;
+    return MESH_SIM_OK;
+}
+
+int mesh_sim_get_fault_stats(const struct mesh_sim_world *world,
+                             struct mesh_sim_fault_stats *stats)
+{
+    if (world == NULL || stats == NULL) {
+        return MESH_SIM_ERR_ARG;
+    }
+    *stats = world->fault_stats;
+    return MESH_SIM_OK;
 }
 
 int mesh_sim_set_channel9_tx_offset_us(struct mesh_sim_world *world,
@@ -92,6 +133,19 @@ int mesh_sim_set_channel9_tx_offset_us(struct mesh_sim_world *world,
         return MESH_SIM_ERR_ARG;
     }
     world->channel9_tx_offset_us = offset_us;
+    return MESH_SIM_OK;
+}
+
+int mesh_sim_override_next_contact_response_timing(
+    struct mesh_sim_world *world,
+    const struct mesh_sim_contact_response_timing *timing)
+{
+    if (world == NULL || timing == NULL || timing->rx_window_us == 0u ||
+        timing->tx_delay_us == 0u) {
+        return MESH_SIM_ERR_ARG;
+    }
+    world->next_contact_response_timing = *timing;
+    world->next_contact_response_timing_valid = true;
     return MESH_SIM_OK;
 }
 
@@ -107,6 +161,21 @@ uint32_t mesh_sim_random(struct mesh_sim_world *world)
     value ^= value >> 17;
     value ^= value << 5;
     world->rng_state = value;
+    return value;
+}
+
+uint32_t mesh_sim_fault_random(struct mesh_sim_world *world)
+{
+    uint32_t value;
+
+    if (world == NULL) {
+        return 0u;
+    }
+    value = world->fault_rng_state;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    world->fault_rng_state = value;
     return value;
 }
 

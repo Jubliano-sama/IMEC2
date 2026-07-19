@@ -151,6 +151,7 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
 
     sample = (struct survey_sample) {
         .pair = failed_pair,
+        .round_id = round.runtime.batch_sequence,
         .sample_index = 0u,
         .distance_mm = 900,
         .quality = 80u,

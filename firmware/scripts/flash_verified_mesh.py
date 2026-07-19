@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Flash and qualify production-candidate mesh firmware in place."""
+"""Stage and promote production-candidate mesh firmware transactionally.
+
+``--stage-only`` performs the one permitted target write and leaves a durable
+qualification journal.  A later invocation with ``--hardware-manifest``
+promotes that already-running image without programming it again.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +29,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FLASH_FREQUENCY_HZ = 4_000_000
 WEST_EXECUTABLE = REPO_ROOT / ".venv" / "bin" / "west"
 PYOCD_EXECUTABLE = REPO_ROOT / ".venv" / "bin" / "pyocd"
-CAPTURE_EXECUTABLE = REPO_ROOT / "firmware" / "scripts" / "capture_stack_evidence.py"
 CAPTURE_LEDGER = REPO_ROOT / "logs" / "stack-evidence" / "verified-capture-ledger.jsonl"
 TRANSACTION_DIRECTORY = REPO_ROOT / "logs" / "stack-evidence" / "flash-transactions"
 
@@ -33,14 +37,8 @@ TARGET_FLASH_ADDRESS = 0x00000000
 TARGET_FLASH_SIZE = 512 * 1024
 TARGET_FLASH_SECTOR_SIZE = 4096
 TRANSACTION_SCHEMA = 1
-
-# capture_stack_evidence.py inherits the TTY-backed pyOCD stream.  pyOCD can
-# leave an SGR reset on stdout without a newline, so the capture tool's final
-# manifest path may be immediately prefixed or suffixed by colour decoration.
-# Accept only SGR sequences here; cursor movement, hyperlinks, and other
-# terminal controls remain invalid rather than being silently rewritten.
-_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9:;]*m")
-
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SECTOR_ADDRESS_RE = re.compile(r"^0x[0-9a-f]{8}$")
 
 class TransactionError(RuntimeError):
     """A transaction could not be safely completed or recovered."""
@@ -270,19 +268,29 @@ def _sector_hash_map_sha256(sectors: dict[str, str]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _code_sectors_match(readback: Path, expected: dict[str, str]) -> bool:
-    content = readback.read_bytes()
-    if len(content) != TARGET_FLASH_SIZE or not expected:
+def _valid_code_sector_hashes(expected: object) -> bool:
+    if not isinstance(expected, dict) or not expected:
         return False
     for address_text, expected_sha256 in expected.items():
-        try:
-            address = int(address_text, 0)
-        except (TypeError, ValueError):
+        if (not isinstance(address_text, str) or
+                _SECTOR_ADDRESS_RE.fullmatch(address_text) is None or
+                not isinstance(expected_sha256, str) or
+                _SHA256_RE.fullmatch(expected_sha256) is None):
             return False
-        if (address < 0 or address % TARGET_FLASH_SECTOR_SIZE
-                or address + TARGET_FLASH_SECTOR_SIZE > TARGET_FLASH_SIZE
-                or not isinstance(expected_sha256, str)):
+        address = int(address_text, 16)
+        if (address % TARGET_FLASH_SECTOR_SIZE or
+                address + TARGET_FLASH_SECTOR_SIZE > TARGET_FLASH_SIZE):
             return False
+    return True
+
+
+def _code_sectors_match(readback: Path, expected: object) -> bool:
+    content = readback.read_bytes()
+    if len(content) != TARGET_FLASH_SIZE or not _valid_code_sector_hashes(expected):
+        return False
+    assert isinstance(expected, dict)
+    for address_text, expected_sha256 in expected.items():
+        address = int(address_text, 16)
         actual = hashlib.sha256(content[address:address + TARGET_FLASH_SECTOR_SIZE]).hexdigest()
         if actual != expected_sha256:
             return False
@@ -304,11 +312,14 @@ def _sync_capture_artifacts(manifest: Path) -> None:
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))
         relative = data["transcript"]["path"]
-        transcript = (manifest.parent / relative).resolve()
+        capture_directory = manifest.parent.resolve()
+        transcript = (capture_directory / relative).resolve()
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise TransactionError("qualified capture manifest cannot be synchronized") from exc
+        raise TransactionError("trusted capture manifest cannot be synchronized") from exc
+    if transcript == capture_directory or capture_directory not in transcript.parents:
+        raise TransactionError("trusted capture transcript escapes its capture directory")
     if not transcript.is_file():
-        raise TransactionError("qualified capture transcript is missing before promotion")
+        raise TransactionError("trusted capture transcript is missing before promotion")
     for path in (transcript, manifest):
         with path.open("rb") as source:
             os.fsync(source.fileno())
@@ -325,14 +336,30 @@ def _load_journal(probe_id: str) -> dict[str, object] | None:
         raise TransactionError("active flash transaction journal is unreadable") from exc
     required = {
         "schema", "transaction_id", "state", "probe_id", "preset",
-        "backup_path", "backup_sha256", "build_elf_sha256", "build_hex_sha256",
-        "expected_staged_sha256", "code_sector_sha256",
+        "build_dir", "backup_path", "backup_sha256", "build_elf_sha256",
+        "build_hex_sha256", "expected_staged_sha256", "code_sector_sha256",
     }
-    allowed_states = {"prepared", "staging", "staged", "promotion_intent", "committed"}
+    allowed_states = {
+        "prepared", "staging", "staged", "awaiting_qualification",
+        "promotion_intent", "committed",
+    }
     if (not isinstance(data, dict) or set(data) < required
             or data.get("schema") != TRANSACTION_SCHEMA
             or data.get("probe_id") != probe_id
-            or data.get("state") not in allowed_states):
+            or data.get("state") not in allowed_states
+            or any(not isinstance(data.get(key), str) or not data.get(key) for key in (
+                "transaction_id", "preset", "build_dir", "backup_path",
+            ))
+            or any(not isinstance(data.get(key), str) or
+                   _SHA256_RE.fullmatch(str(data.get(key))) is None for key in (
+                       "backup_sha256", "build_elf_sha256", "build_hex_sha256",
+                       "expected_staged_sha256",
+                   ))
+            or not _valid_code_sector_hashes(data.get("code_sector_sha256"))
+            or (data.get("state") in {
+                    "awaiting_qualification", "promotion_intent", "committed",
+                } and (not isinstance(data.get("staged_flash_sha256"), str) or
+                       _SHA256_RE.fullmatch(str(data.get("staged_flash_sha256"))) is None))):
         raise TransactionError("active flash transaction journal is invalid")
     backup = Path(str(data["backup_path"])).resolve()
     allowed = (TRANSACTION_DIRECTORY / _probe_key(probe_id)).resolve()
@@ -374,40 +401,97 @@ def _cleanup_unjournaled_transaction(transaction_directory: Path) -> None:
         _fsync_directory(probe_directory.parent)
 
 
-def _recover_interrupted_transaction(probe_id: str) -> None:
+def _recover_interrupted_transaction(probe_id: str) -> str:
     data = _load_journal(probe_id)
     if data is None:
-        return
+        return "none"
+    if data["state"] == "awaiting_qualification":
+        return "awaiting_qualification"
     _probe_is_visible(probe_id)
-    # Qualification is observational: an interrupted or rejected candidate is
-    # deliberately left on the target so the same image can be debugged and
-    # iterated.  The journal protects local capture/ledger bookkeeping only;
-    # it is never an instruction to restore the previous firmware.
+    if data["state"] == "promotion_intent":
+        record = data.get("deployment_record")
+        record_sha256 = data.get("deployment_record_sha256")
+        if (isinstance(record, dict) and
+                record_sha256 == _record_sha256(record) and
+                any(item == record for item in _ledger_records())):
+            data["state"] = "committed"
+            _write_journal(data)
+            _cleanup_transaction(data)
+            return "committed"
+        for key in (
+            "capture_id", "manifest_path", "deployment_record",
+            "deployment_record_sha256",
+        ):
+            data.pop(key, None)
+        data["state"] = "awaiting_qualification"
+        _write_journal(data)
+        _commander(probe_id, "reset")
+        return "awaiting_qualification"
+    if data["state"] in {"staging", "staged"}:
+        backup = Path(str(data["backup_path"]))
+        readback = backup.parent / "recovery-readback.bin"
+        try:
+            staged_sha256 = _read_target_flash(probe_id, readback)
+            if _code_sectors_match(
+                readback,
+                data["code_sector_sha256"],  # type: ignore[arg-type]
+            ):
+                data["state"] = "awaiting_qualification"
+                data["staged_flash_sha256"] = staged_sha256
+                _write_journal(data)
+                _commander(probe_id, "reset")
+                return "awaiting_qualification"
+        finally:
+            readback.unlink(missing_ok=True)
+        _commander(probe_id, "reset")
+        _cleanup_transaction(data)
+        return "none"
+    # An interrupted or rejected candidate is deliberately left on the target
+    # so the same image can be debugged and iterated.  The journal protects
+    # local evidence/ledger bookkeeping only; it is never an instruction to
+    # restore the previous firmware.
     _commander(probe_id, "reset")
     _cleanup_transaction(data)
+    return "none"
 
 
-def _verify_candidate(build_dir: Path, probe_id: str) -> tuple[verifier.BuildEvidence | None, list[str]]:
-    issues: list[str] = []
+def _verify_promotion_candidate(
+    build_dir: Path,
+    manifest: Path,
+    probe_id: str,
+) -> tuple[verifier.BuildEvidence | None, str | None, list[str]]:
+    build, capture_id, issues = verify_flash(build_dir, manifest, probe_id)
+    if not PYOCD_EXECUTABLE.is_file():
+        issues.append(f"repository pyOCD is missing: {PYOCD_EXECUTABLE}")
+    if not issues:
+        try:
+            _probe_is_visible(probe_id)
+        except TransactionError as exc:
+            issues.append(str(exc))
+    return build, capture_id, issues
+
+
+def _verify_stage_candidate(
+    build_dir: Path,
+    probe_id: str,
+) -> tuple[verifier.BuildEvidence | None, list[str]]:
     try:
         policies, frame_limit = verifier.load_policy()
         build = verifier.verify_build(build_dir, policies, frame_limit)
-    except (OSError, verifier.EvidenceError) as exc:
+        _consumed_capture_ids()
+    except (OSError, verifier.EvidenceError, TransactionError) as exc:
         return None, [str(exc)]
-    issues.extend(build.issues)
+    issues = list(build.issues)
     policy = policies.get(build.preset)
-    if build.preset not in verifier.DEPLOYABLE_PRESETS or policy is None or not policy.deployable:
-        issues.append(f"{build.preset or '<missing>'} is not an allowed deployment preset")
+    if (build.preset not in verifier.DEPLOYABLE_PRESETS or policy is None or
+            not policy.deployable):
+        issues.append(
+            f"{build.preset or '<missing>'} is not an allowed deployment preset"
+        )
     if not WEST_EXECUTABLE.is_file():
         issues.append(f"repository west is missing: {WEST_EXECUTABLE}")
     if not PYOCD_EXECUTABLE.is_file():
         issues.append(f"repository pyOCD is missing: {PYOCD_EXECUTABLE}")
-    if not CAPTURE_EXECUTABLE.is_file():
-        issues.append(f"repository capture tool is missing: {CAPTURE_EXECUTABLE}")
-    try:
-        _consumed_capture_ids()
-    except TransactionError as exc:
-        issues.append(str(exc))
     if not issues:
         try:
             _probe_is_visible(probe_id)
@@ -451,60 +535,6 @@ def _stage_candidate(build_dir: Path, probe_id: str) -> None:
     result = _run(command)
     if result.returncode:
         raise TransactionError(f"candidate staging failed with exit status {result.returncode}")
-
-
-def _capture_candidate(build_dir: Path, probe_id: str, output_dir: Path,
-                       duration_seconds: int) -> Path:
-    command = [
-        sys.executable, str(CAPTURE_EXECUTABLE),
-        "--build-dir", str(build_dir),
-        "--probe-id", probe_id,
-        "--output-dir", str(output_dir),
-        "--duration-seconds", str(duration_seconds),
-    ]
-    result = _run(command, capture_output=True)
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise TransactionError(f"candidate qualification capture failed: {detail}")
-    return _capture_manifest_path(result.stdout, output_dir)
-
-
-def _capture_manifest_path(stdout: str, output_dir: Path) -> Path:
-    undecorated = _ANSI_SGR_RE.sub("", stdout)
-    candidate = ""
-    for raw_line in reversed(undecorated.split("\n")):
-        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
-        line = line.strip(" ")
-        if line:
-            candidate = line
-            break
-    if not candidate:
-        raise TransactionError("candidate qualification capture returned no manifest")
-    if any(ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f for char in candidate):
-        raise TransactionError("candidate qualification manifest path contains unsupported control data")
-
-    manifest = Path(candidate).resolve()
-    capture_directory = output_dir.resolve()
-    if manifest.suffix != ".json":
-        raise TransactionError("candidate qualification manifest path is not a JSON file")
-    if manifest.parent != capture_directory:
-        raise TransactionError(
-            "candidate qualification manifest is outside the requested output directory"
-        )
-    if not manifest.is_file():
-        raise TransactionError(f"candidate qualification manifest is missing: {manifest}")
-    return manifest
-
-
-def _qualify_staged_candidate(build_dir: Path, probe_id: str, output_dir: Path,
-                              duration_seconds: int) -> Path:
-    """Run the bounded repository-owned qualification phase.
-
-    This single seam intentionally owns qualification orchestration so a
-    preset-specific workload driver can later run alongside RTT without
-    accepting a user-authored command or changing transaction semantics.
-    """
-    return _capture_candidate(build_dir, probe_id, output_dir, duration_seconds)
 
 
 def _start_transaction(build: verifier.BuildEvidence, build_dir: Path,
@@ -551,8 +581,8 @@ def _start_transaction(build: verifier.BuildEvidence, build_dir: Path,
         raise
 
 
-def _deploy(build: verifier.BuildEvidence, build_dir: Path, probe_id: str,
-            output_dir: Path, duration_seconds: int) -> None:
+def _stage_for_qualification(build: verifier.BuildEvidence, build_dir: Path,
+                             probe_id: str) -> None:
     data = _start_transaction(build, build_dir, probe_id)
     backup = Path(str(data["backup_path"]))
     transaction_directory = backup.parent
@@ -562,43 +592,113 @@ def _deploy(build: verifier.BuildEvidence, build_dir: Path, probe_id: str,
         _write_journal(data)
         _checkpoint("staging_durable")
         _stage_candidate(build_dir, probe_id)
-        _checkpoint("candidate_staged")
         _assert_artifacts_unchanged(data, build_dir)
+        data["state"] = "staged"
+        _write_journal(data)
+        _checkpoint("candidate_staged")
 
         staged = transaction_directory / "staged-readback.bin"
         staged_sha256 = _read_target_flash(probe_id, staged)
         staged.unlink(missing_ok=True)
         if staged_sha256 != data["expected_staged_sha256"]:
             raise TransactionError("staged 512 KiB flash does not match the sector-erase HEX overlay")
-        data["state"] = "staged"
+        data["state"] = "awaiting_qualification"
         data["staged_flash_sha256"] = staged_sha256
         _write_journal(data)
-        _checkpoint("staged_hash_durable")
+        _checkpoint("awaiting_qualification_durable")
         _commander(probe_id, "reset")
+    except BaseException as exc:
+        if not isinstance(exc, Exception):
+            raise
+        if data.get("state") == "awaiting_qualification":
+            raise
+        try:
+            _commander(probe_id, "reset")
+            _cleanup_transaction(data)
+        except Exception as cleanup_error:
+            raise TransactionError(
+                f"staging failed and local transaction cleanup remains pending: {cleanup_error}"
+            ) from cleanup_error
+        raise
 
-        manifest = _qualify_staged_candidate(
-            build_dir, probe_id, output_dir, duration_seconds
-        )
-        verified_build, capture_id, issues = verify_flash(build_dir, manifest, probe_id)
-        if issues or verified_build is None or capture_id is None:
-            raise TransactionError("captured candidate was rejected: " + "; ".join(issues))
-        if verified_build.hex_sha256 != data["build_hex_sha256"] or verified_build.preset != data["preset"]:
-            raise TransactionError("candidate build changed during qualification")
-        _assert_artifacts_unchanged(data, build_dir)
-        _sync_capture_artifacts(manifest)
-        deployment_record: dict[str, object] = {
-            "capture_id": capture_id,
-            "preset": build.preset,
-            "probe_id": probe_id,
-            "staged_flash_sha256": staged_sha256,
-            "code_sector_map_sha256": _sector_hash_map_sha256(
-                data["code_sector_sha256"]  # type: ignore[arg-type]
-            ),
-            "transaction_id": str(data["transaction_id"]),
-        }
+
+def _journal_matches_candidate(
+    data: dict[str, object],
+    build: verifier.BuildEvidence,
+    build_dir: Path,
+) -> list[str]:
+    issues: list[str] = []
+    if data.get("state") != "awaiting_qualification":
+        issues.append("target has no candidate awaiting qualification")
+    if data.get("preset") != build.preset:
+        issues.append("staged candidate preset differs from the exact build")
+    if (data.get("build_elf_sha256") != build.elf_sha256 or
+            data.get("build_hex_sha256") != build.hex_sha256):
+        issues.append("staged candidate artifact differs from the exact build")
+    if data.get("build_dir") != str(build_dir.resolve()):
+        issues.append("staged candidate build directory differs from the promotion request")
+    if not isinstance(data.get("staged_flash_sha256"), str):
+        issues.append("staged candidate lacks a verified readback identity")
+    return issues
+
+
+def _promotion_record_is_durable(data: dict[str, object]) -> bool:
+    record = data.get("deployment_record")
+    return (isinstance(record, dict) and
+            data.get("deployment_record_sha256") == _record_sha256(record) and
+            any(item == record for item in _ledger_records()))
+
+
+def _restore_awaiting_qualification(data: dict[str, object]) -> None:
+    for key in (
+        "capture_id", "manifest_path", "deployment_record",
+        "deployment_record_sha256",
+    ):
+        data.pop(key, None)
+    data["state"] = "awaiting_qualification"
+    _write_journal(data)
+
+
+def _promote_staged_candidate(
+    data: dict[str, object],
+    build: verifier.BuildEvidence,
+    build_dir: Path,
+    manifest: Path,
+    capture_id: str,
+    probe_id: str,
+) -> None:
+    backup = Path(str(data["backup_path"]))
+    transaction_directory = backup.parent
+    readback = transaction_directory / "promotion-readback.bin"
+
+    _assert_artifacts_unchanged(data, build_dir)
+    _sync_capture_artifacts(manifest)
+    try:
+        _read_target_flash(probe_id, readback, reset_after=True)
+        if not _code_sectors_match(
+            readback,
+            data["code_sector_sha256"],  # type: ignore[arg-type]
+        ):
+            raise TransactionError(
+                "current target code sectors differ from the staged candidate"
+            )
+    finally:
+        readback.unlink(missing_ok=True)
+
+    deployment_record: dict[str, object] = {
+        "capture_id": capture_id,
+        "preset": build.preset,
+        "probe_id": probe_id,
+        "staged_flash_sha256": str(data["staged_flash_sha256"]),
+        "code_sector_map_sha256": _sector_hash_map_sha256(
+            data["code_sector_sha256"]  # type: ignore[arg-type]
+        ),
+        "transaction_id": str(data["transaction_id"]),
+    }
+    try:
         data["state"] = "promotion_intent"
         data["capture_id"] = capture_id
-        data["manifest_path"] = str(manifest)
+        data["manifest_path"] = str(manifest.resolve())
         data["deployment_record"] = deployment_record
         data["deployment_record_sha256"] = _record_sha256(deployment_record)
         _write_journal(data)
@@ -611,45 +711,81 @@ def _deploy(build: verifier.BuildEvidence, build_dir: Path, probe_id: str,
         _checkpoint("commit_durable")
         _cleanup_transaction(data)
     except BaseException as exc:
-        # BaseException represents abrupt process loss in tests; the durable
-        # journal survives so the next invocation can reset the retained image
-        # and discard incomplete local bookkeeping without restoring firmware.
         if not isinstance(exc, Exception):
             raise
-        try:
-            _commander(probe_id, "reset")
+        if _promotion_record_is_durable(data):
+            data["state"] = "committed"
+            _write_journal(data)
             _cleanup_transaction(data)
-        except Exception as cleanup_error:
-            raise TransactionError(
-                f"deployment failed and local transaction cleanup remains pending: {cleanup_error}"
-            ) from cleanup_error
+        else:
+            _restore_awaiting_qualification(data)
         raise
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", required=True, type=Path)
+    parser.add_argument("--hardware-manifest", type=Path)
     parser.add_argument("--probe-id", required=True)
-    parser.add_argument("--output-dir", type=Path, default=CAPTURE_LEDGER.parent)
-    parser.add_argument("--duration-seconds", type=int, default=300)
-    return parser.parse_args(argv)
+    parser.add_argument("--stage-only", action="store_true")
+    args = parser.parse_args(argv)
+    if args.stage_only and args.hardware_manifest is not None:
+        parser.error("--stage-only cannot be combined with --hardware-manifest")
+    if not args.stage_only and args.hardware_manifest is None:
+        parser.error("promotion requires --hardware-manifest")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    if args.duration_seconds < 1 or args.duration_seconds > int(verifier.MAX_CAPTURE_DURATION.total_seconds()):
-        print("verified deployment blocked: duration must be between 1 and 900 seconds", file=sys.stderr)
-        return 1
     try:
         with _ledger_lock():
-            _recover_interrupted_transaction(args.probe_id)
-            build, issues = _verify_candidate(args.build_dir, args.probe_id)
-            if issues or build is None:
+            data = _load_journal(args.probe_id)
+            recovery = "none"
+            if data is not None and data["state"] != "awaiting_qualification":
+                recovery = _recover_interrupted_transaction(args.probe_id)
+                data = _load_journal(args.probe_id)
+            if args.stage_only:
+                if data is not None and data["state"] == "awaiting_qualification":
+                    if recovery == "awaiting_qualification":
+                        return 0
+                    raise TransactionError(
+                        "selected probe already has a candidate awaiting qualification"
+                    )
+                build, issues = _verify_stage_candidate(
+                    args.build_dir, args.probe_id
+                )
+                if issues or build is None:
+                    print("verified staging blocked:", file=sys.stderr)
+                    for issue in issues:
+                        print(f"  {issue}", file=sys.stderr)
+                    return 1
+                _stage_for_qualification(build, args.build_dir, args.probe_id)
+                return 0
+
+            if recovery == "committed":
+                return 0
+            if data is None or data["state"] != "awaiting_qualification":
+                raise TransactionError(
+                    "selected probe has no staged candidate awaiting qualification"
+                )
+            assert args.hardware_manifest is not None
+            build, capture_id, issues = _verify_promotion_candidate(
+                args.build_dir, args.hardware_manifest, args.probe_id
+            )
+            if build is not None:
+                issues.extend(_journal_matches_candidate(
+                    data, build, args.build_dir
+                ))
+            if issues or build is None or capture_id is None:
                 print("verified deployment blocked:", file=sys.stderr)
                 for issue in issues:
                     print(f"  {issue}", file=sys.stderr)
                 return 1
-            _deploy(build, args.build_dir, args.probe_id, args.output_dir, args.duration_seconds)
+            _promote_staged_candidate(
+                data, build, args.build_dir, args.hardware_manifest,
+                capture_id, args.probe_id,
+            )
     except (OSError, verifier.EvidenceError, TransactionError) as exc:
         print(f"verified deployment failed: {exc}", file=sys.stderr)
         return 1

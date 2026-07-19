@@ -67,6 +67,10 @@ def _verify_flasher_source(repo_root: Path) -> list[str]:
         "FLASH_FREQUENCY_HZ = 4_000_000",
         "WEST_EXECUTABLE = REPO_ROOT / \".venv\" / \"bin\" / \"west\"",
         "--frequency",
+        "--stage-only",
+        "--hardware-manifest",
+        "awaiting_qualification",
+        "_code_sectors_match",
         "_record_consumed_capture",
         "verify_flash(",
     )

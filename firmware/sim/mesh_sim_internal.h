@@ -22,10 +22,16 @@ enum mesh_sim_event_type {
     SIM_EVENT_TRACE_MARKER = 15,
 };
 
-int mesh_sim_fail(struct mesh_sim_world *world, int status);
+int mesh_sim_fail_at(struct mesh_sim_world *world,
+                     int status,
+                     const char *file,
+                     uint32_t line);
+#define mesh_sim_fail(world, status) \
+    mesh_sim_fail_at((world), (status), __FILE__, __LINE__)
 bool mesh_sim_node_index_valid(const struct mesh_sim_world *world,
                                uint8_t node_index);
 uint32_t mesh_sim_time_ms(uint64_t time_us);
+uint32_t mesh_sim_fault_random(struct mesh_sim_world *world);
 bool mesh_sim_has_peer_work(const struct mesh_sim_role_instance *node,
                             uint64_t peer_id);
 bool mesh_sim_has_active_relay_to(const struct mesh_sim_role_instance *node,
@@ -53,6 +59,13 @@ int mesh_sim_trace_add(struct mesh_sim_world *world,
                        enum mesh_sim_transition_kind kind,
                        uint8_t msg_type,
                        uint32_t detail);
+int mesh_sim_trace_add_packet(struct mesh_sim_world *world,
+                              uint64_t time_us,
+                              uint64_t node_id,
+                              uint64_t peer_id,
+                              enum mesh_sim_transition_kind kind,
+                              const struct proto_packet *packet,
+                              uint32_t detail);
 int mesh_sim_telemetry_reserve_connection_event(
     struct mesh_sim_world *world,
     uint16_t *event_index);
@@ -78,8 +91,20 @@ int mesh_sim_scheduler_reschedule_watchdog(struct mesh_sim_world *world,
                                            uint8_t node_index,
                                            uint64_t deadline_us,
                                            uint32_t generation);
+int mesh_sim_scheduler_reschedule_route_discovery(
+    struct mesh_sim_world *world,
+    uint8_t node_index,
+    uint64_t at_us);
 void mesh_sim_scheduler_cancel_role_work(struct mesh_sim_world *world,
                                          uint8_t node_index);
+void mesh_sim_scheduler_cancel_connection_repair(
+    struct mesh_sim_world *world,
+    uint16_t connection_index);
+void mesh_sim_scheduler_cancel_relay_tick(struct mesh_sim_world *world,
+                                          uint8_t node_index);
+void mesh_sim_scheduler_cancel_route_discovery(
+    struct mesh_sim_world *world,
+    uint8_t node_index);
 int mesh_sim_scheduler_next(const struct mesh_sim_world *world,
                             uint64_t end_us);
 void mesh_sim_scheduler_pop(struct mesh_sim_world *world,
@@ -94,6 +119,13 @@ int mesh_sim_connection_process_control_packet(
     const uint8_t *payload,
     size_t payload_len,
     bool *handled);
+int mesh_sim_connection_process_local_control_packet(
+    struct mesh_sim_world *world,
+    uint8_t sender_index,
+    uint32_t control_time_ms,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
 int mesh_sim_relay_dispatch_packet(struct mesh_sim_world *world,
                                    uint8_t receiver_index,
                                    uint8_t sender_index,
@@ -101,7 +133,8 @@ int mesh_sim_relay_dispatch_packet(struct mesh_sim_world *world,
                                    const uint8_t *payload,
                                    size_t payload_len);
 int mesh_sim_relay_process_tick(struct mesh_sim_world *world,
-                                uint8_t node_index);
+                                uint8_t node_index,
+                                uint32_t timer_generation);
 int mesh_sim_relay_process_route_discovery_retry(
     struct mesh_sim_world *world,
     uint8_t node_index);

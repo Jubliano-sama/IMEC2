@@ -285,6 +285,7 @@ enum survey_pair_lease_decision survey_pair_lease_start_round(
         lease->last_accepted_id = *control_id;
         lease->start_released = false;
         lease->go_released = retain_go_release;
+        return SURVEY_PAIR_LEASE_SUPERSEDED;
     }
     return SURVEY_PAIR_LEASE_DUPLICATE;
 }
@@ -363,7 +364,8 @@ bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
 }
 
 bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
-                                    struct survey_pair *pair)
+                                    struct survey_pair *pair,
+                                    uint16_t *round_id)
 {
     if (lease == NULL || lease->phase != SURVEY_PAIR_LEASE_START_PENDING ||
         !lease->start_released ||
@@ -372,6 +374,9 @@ bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
     }
     if (pair != NULL) {
         *pair = lease->pair;
+    }
+    if (round_id != NULL) {
+        *round_id = lease->round_id;
     }
     lease->prepared_deadline_ms = 0u;
     lease->phase = SURVEY_PAIR_LEASE_RUNNING;

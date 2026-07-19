@@ -3,6 +3,7 @@
 #include "dwm3000_timing.h"
 #include "mesh_relay.h"
 #include "operation_policy.h"
+#include "survey_round_control.h"
 #include "uwb.h"
 
 #include <string.h>
@@ -20,6 +21,8 @@ _Static_assert(PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +
                        (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN) <=
                    UWB_MESH_MAX_PAYLOAD_LEN,
                "maximum survey report must fit one mesh payload");
+_Static_assert(SURVEY_SAMPLE_TLV_MAX_LEN <= UWB_MESH_MAX_PAYLOAD_LEN,
+               "round-owned survey sample must fit one mesh payload");
 
 bool survey_sample_count_valid(uint16_t sample_count)
 {
@@ -536,6 +539,29 @@ static int survey_find_u16_tlv(const uint8_t *payload,
     }
 
     *value = proto_get_u16_le(tlv_value);
+    return PROTO_OK;
+}
+
+static int survey_find_u8_tlv(const uint8_t *payload,
+                              size_t payload_len,
+                              uint8_t type,
+                              uint8_t *value)
+{
+    const uint8_t *tlv_value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || value == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (value_len != sizeof(uint8_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *value = tlv_value[0];
     return PROTO_OK;
 }
 
@@ -1491,6 +1517,13 @@ int survey_append_sample_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
+    if (sample->round_id != SURVEY_LEGACY_ROUND_ID) {
+        ret = survey_round_id_append_tlv(payload, payload_cap, offset,
+                                         sample->round_id);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     ret = tlv_append_u16(payload, payload_cap, offset, TLV_SAMPLE_INDEX, sample->sample_index);
     if (ret != PROTO_OK) {
         return ret;
@@ -1504,6 +1537,55 @@ int survey_append_sample_tlvs(uint8_t *payload,
         return ret;
     }
     return tlv_append_u8(payload, payload_cap, offset, TLV_RANGE_STATUS, (uint8_t)sample->range_status);
+}
+
+int survey_extract_sample_tlvs(const uint8_t *payload,
+                               size_t payload_len,
+                               struct survey_sample *sample)
+{
+    struct survey_sample parsed = {0};
+    uint32_t distance_mm;
+    uint8_t range_status;
+    int ret;
+
+    if (payload == NULL || sample == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_extract_pair_tlvs(payload, payload_len, &parsed.pair);
+    if (ret == PROTO_OK) {
+        ret = survey_round_id_extract_tlv(payload, payload_len,
+                                          &parsed.round_id);
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_find_u16_tlv(payload, payload_len, TLV_SAMPLE_INDEX,
+                                  &parsed.sample_index);
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_find_u32_tlv(payload, payload_len, TLV_DISTANCE_MM,
+                                  &distance_mm);
+        if (ret == PROTO_OK) {
+            parsed.distance_mm = (int32_t)distance_mm;
+        }
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_find_u8_tlv(payload, payload_len, TLV_QUALITY,
+                                 &parsed.quality);
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_find_u8_tlv(payload, payload_len, TLV_RANGE_STATUS,
+                                 &range_status);
+        if (ret == PROTO_OK) {
+            parsed.range_status = (enum range_status)range_status;
+        }
+    }
+    if (ret == PROTO_OK) {
+        ret = survey_sample_validate(&parsed);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    *sample = parsed;
+    return PROTO_OK;
 }
 
 int survey_init_result_packet_from_reporter(struct proto_packet *packet,

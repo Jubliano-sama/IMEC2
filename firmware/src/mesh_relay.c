@@ -1717,14 +1717,39 @@ static bool duplicate_tracked(const struct proto_packet *packet)
     return true;
 }
 
+static uint32_t duplicate_session_identity(const struct proto_packet *packet,
+                                           const uint8_t *payload,
+                                           size_t payload_len)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+
+    /* Most gateway floods use TLV_COMMAND_SEQ as the packet session. Survey
+     * GO deliberately retains the survey session so application ownership can
+     * reject an older round. Use the command sequence as the transport dedup
+     * identity in both cases: retries remain idempotent while a later GO in
+     * the same survey session is still a distinct control operation. */
+    if (packet != NULL && packet->msg_type == MSG_COMMAND &&
+        packet->dst_id == MESH_BROADCAST_ID && payload != NULL &&
+        tlv_find(payload, payload_len, TLV_COMMAND_SEQ, &value, &value_len) ==
+            PROTO_OK &&
+        value_len == sizeof(uint32_t) && proto_get_u32_le(value) != 0u) {
+        return proto_get_u32_le(value);
+    }
+    return packet != NULL ? packet->session_id : 0u;
+}
+
 static bool duplicate_matches_packet(const struct mesh_duplicate_entry *entry,
-                                     const struct proto_packet *packet)
+                                     const struct proto_packet *packet,
+                                     const uint8_t *payload,
+                                     size_t payload_len)
 {
     if (!entry->valid ||
         entry->msg_type != packet->msg_type ||
         entry->src_id != packet->src_id ||
         entry->dst_id != packet->dst_id ||
-        entry->session_id != packet->session_id) {
+        entry->session_id !=
+            duplicate_session_identity(packet, payload, payload_len)) {
         return false;
     }
 
@@ -1732,6 +1757,7 @@ static bool duplicate_matches_packet(const struct mesh_duplicate_entry *entry,
         return true;
     }
     if (packet->msg_type == MSG_COMMAND && packet->dst_id == MESH_BROADCAST_ID) {
+        /* duplicate_session_identity() already selected TLV_COMMAND_SEQ. */
         return true;
     }
     return entry->seq == packet->seq;
@@ -2180,7 +2206,10 @@ static bool duplicate_seen(struct mesh_relay *relay,
     }
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
         entry = &relay->duplicates[i];
-        if (duplicate_matches_packet(entry, packet)) {
+        if (duplicate_matches_packet(entry, packet, payload, payload_len)) {
+            if (!entry->delivery_accepted) {
+                continue;
+            }
             if (require_payload_identity &&
                 (!entry->payload_identity_valid ||
                  entry->payload_len != payload_len ||
@@ -2199,6 +2228,8 @@ static bool duplicate_seen(struct mesh_relay *relay,
 
 static void duplicate_store(struct mesh_relay *relay,
                             const struct proto_packet *packet,
+                            const uint8_t *payload,
+                            size_t payload_len,
                             uint32_t now_ms)
 {
     struct mesh_duplicate_entry *entry;
@@ -2208,18 +2239,33 @@ static void duplicate_store(struct mesh_relay *relay,
     }
 
     duplicate_expire_stale(relay, now_ms);
-    entry = &relay->duplicates[relay->duplicate_next];
+    entry = NULL;
+    for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
+        if (duplicate_matches_packet(&relay->duplicates[i], packet,
+                                     payload, payload_len)) {
+            entry = &relay->duplicates[i];
+            break;
+        }
+    }
+    if (entry == NULL) {
+        entry = &relay->duplicates[relay->duplicate_next];
+        relay->duplicate_next = (uint8_t)((relay->duplicate_next + 1u) %
+                                          MESH_RELAY_DUP_CACHE_SIZE);
+    }
     entry->msg_type = packet->msg_type;
     entry->src_id = packet->src_id;
     entry->dst_id = packet->dst_id;
-    entry->session_id = packet->session_id;
+    entry->session_id = duplicate_session_identity(packet, payload,
+                                                   payload_len);
     entry->last_seen_ms = now_ms;
+    entry->busy_response_at_ms = 0u;
     entry->seq = packet->seq;
     entry->payload_len = 0u;
     entry->payload_crc = 0u;
+    entry->busy_response_interval_ms = 0u;
     entry->payload_identity_valid = false;
+    entry->delivery_accepted = true;
     entry->valid = true;
-    relay->duplicate_next = (uint8_t)((relay->duplicate_next + 1u) % MESH_RELAY_DUP_CACHE_SIZE);
 }
 
 static void duplicate_store_payload_identity(struct mesh_relay *relay,
@@ -2236,7 +2282,8 @@ static void duplicate_store_payload_identity(struct mesh_relay *relay,
 
     duplicate_expire_stale(relay, now_ms);
     for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
-        if (duplicate_matches_packet(&relay->duplicates[i], packet)) {
+        if (duplicate_matches_packet(&relay->duplicates[i], packet,
+                                     payload, payload_len)) {
             entry = &relay->duplicates[i];
             break;
         }
@@ -2250,13 +2297,64 @@ static void duplicate_store_payload_identity(struct mesh_relay *relay,
     entry->msg_type = packet->msg_type;
     entry->src_id = packet->src_id;
     entry->dst_id = packet->dst_id;
-    entry->session_id = packet->session_id;
+    entry->session_id = duplicate_session_identity(packet, payload,
+                                                   payload_len);
     entry->last_seen_ms = now_ms;
+    entry->busy_response_at_ms = 0u;
     entry->seq = packet->seq;
     entry->payload_len = (uint16_t)payload_len;
     entry->payload_crc = proto_crc16_ccitt_false(payload, payload_len);
+    entry->busy_response_interval_ms = 0u;
     entry->payload_identity_valid = true;
+    entry->delivery_accepted = true;
     entry->valid = true;
+}
+
+static bool duplicate_busy_response_due(struct mesh_relay *relay,
+                                        const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len,
+                                        uint32_t now_ms)
+{
+    struct mesh_duplicate_entry *entry = NULL;
+
+    if (!duplicate_tracked(packet)) {
+        return true;
+    }
+    duplicate_expire_stale(relay, now_ms);
+    for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
+        if (duplicate_matches_packet(&relay->duplicates[i], packet,
+                                     payload, payload_len)) {
+            entry = &relay->duplicates[i];
+            break;
+        }
+    }
+    if (entry == NULL) {
+        entry = &relay->duplicates[relay->duplicate_next];
+        relay->duplicate_next = (uint8_t)((relay->duplicate_next + 1u) %
+                                          MESH_RELAY_DUP_CACHE_SIZE);
+        entry->msg_type = packet->msg_type;
+        entry->src_id = packet->src_id;
+        entry->dst_id = packet->dst_id;
+        entry->session_id = duplicate_session_identity(packet, payload,
+                                                       payload_len);
+        entry->last_seen_ms = now_ms;
+        entry->seq = packet->seq;
+        entry->payload_len = 0u;
+        entry->payload_crc = 0u;
+        entry->busy_response_interval_ms = 0u;
+        entry->payload_identity_valid = false;
+        entry->delivery_accepted = false;
+        entry->valid = true;
+    }
+    if (entry->busy_response_interval_ms > 0u &&
+        (uint32_t)(now_ms - entry->busy_response_at_ms) <
+            entry->busy_response_interval_ms) {
+        return false;
+    }
+    entry->busy_response_at_ms = now_ms;
+    entry->busy_response_interval_ms = relay_busy_retry_after_ms(relay);
+    return true;
 }
 
 static uint32_t flood_seen_window_ms(uint8_t flood_type)

@@ -143,12 +143,28 @@ assert "SURVEY_NON_RF_SERVICE_POLL_MS" in report_queue_block
 assert "schedule_pair_rf_retry(" not in report_queue_block
 
 pair_guard_index = worker.index(
-    'radio_guard_uwb_start(as_responder ? "survey responder DS-TWR"'
+    'radio_guard_uwb_start("survey pair DS-TWR")'
 )
 pair_defer_index = worker.index("if (ret < 0)", pair_guard_index)
 pair_defer_block = braced_block_at(worker, pair_defer_index)
 assert "schedule_pair_rf_retry(" in pair_defer_block
 assert "REPORT_TX_RETRY_DELAY_MS" not in pair_defer_block
+claim = re.search(
+    r"survey_pair_lease_mark_running\s*\(\s*&pair_lease\s*,\s*"
+    r"&pair\s*,\s*&pair_round_id\s*\)",
+    worker,
+)
+assert claim is not None, (
+    "RUNNING must atomically return the final pair and synchronized round"
+)
+role_index = worker.index("as_responder = pair.responder_id == DEVICE_ID")
+assert pair_guard_index < pair_defer_index < claim.start() < role_index
+assert "as_responder =" not in worker[pair_guard_index : claim.start()], (
+    "the RF role must not be derived from a pre-claim lease snapshot"
+)
+assert "pair_round_id = pair_lease.round_id" not in worker, (
+    "the round generation must come from the atomic RUNNING transition"
+)
 assert worker.count("schedule_pair_rf_retry(") == 2
 assert "REPORT_TX_RETRY_DELAY_MS" not in worker
 assert worker.count("SURVEY_NON_RF_SERVICE_POLL_MS") == 3, (

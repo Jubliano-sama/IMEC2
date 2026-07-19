@@ -74,9 +74,12 @@ enum survey_pair_lease_decision survey_pair_lease_prepare_round(
     uint32_t lease_ms);
 
 /*
- * START must name the prepared pair and have a newer command sequence. The
- * original prepared deadline remains active until execution actually starts,
- * so a permanently blocked local radio cannot leave START_PENDING forever.
+ * START must name the prepared pair and have a newer command sequence. An
+ * exact retry is DUPLICATE; a newer command identity for the same pending pair
+ * is SUPERSEDED because its command-result delivery replaces the prior START
+ * custody. The original prepared deadline remains active until execution
+ * actually starts, so a permanently blocked local radio cannot leave
+ * START_PENDING forever.
  */
 enum survey_pair_lease_decision survey_pair_lease_start(
     struct survey_pair_lease *lease,
@@ -107,8 +110,13 @@ bool survey_pair_lease_release_start(
     const struct survey_pair_control_id *control_id);
 bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
                                       struct survey_pair *pair);
+/*
+ * Atomically claims the ready lease for RF execution and snapshots its exact
+ * pair and synchronized-round generation. Either output may be NULL.
+ */
 bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
-                                    struct survey_pair *pair);
+                                    struct survey_pair *pair,
+                                    uint16_t *round_id);
 bool survey_pair_lease_finish(struct survey_pair_lease *lease);
 bool survey_pair_lease_abort(struct survey_pair_lease *lease);
 bool survey_pair_lease_abort_matching(struct survey_pair_lease *lease,

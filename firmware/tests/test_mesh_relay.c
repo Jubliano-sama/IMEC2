@@ -878,13 +878,17 @@ static void test_broadcast_command_delivers_without_flooding(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
 }
 
-static void test_command_flood_broadcast_delivers_and_forwards_once(void)
+static void test_command_flood_broadcast_deduplicates_logical_sequence(void)
 {
     struct mesh_relay relay;
     struct mesh_relay_result result;
     uint8_t payload[96];
+    uint8_t next_payload[96];
+    const uint8_t *command_seq_value = NULL;
+    uint8_t command_seq_len = 0u;
     size_t payload_len = 0u;
     struct proto_packet duplicate_packet;
+    struct proto_packet next_packet;
     struct proto_packet packet = {
         .msg_type = MSG_COMMAND,
         .src_id = GATEWAY,
@@ -981,15 +985,39 @@ static void test_command_flood_broadcast_delivers_and_forwards_once(void)
                            result.forward.payload_len,
                            TLV_FLOOD_PACKET_AGE_MS) == 0u);
 
-    duplicate_packet = packet;
+    memcpy(next_payload, payload, payload_len);
+    assert(tlv_find(next_payload,
+                    payload_len,
+                    TLV_COMMAND_SEQ,
+                    &command_seq_value,
+                    &command_seq_len) == PROTO_OK);
+    assert(command_seq_len == sizeof(uint32_t));
+    proto_put_u32_le(&next_payload[command_seq_value - next_payload], 1002u);
+    next_packet = packet;
+    next_packet.seq = 14u;
+    assert(mesh_relay_handle_rx_with_random(&relay,
+                                            &next_packet,
+                                            next_payload,
+                                            payload_len,
+                                            GATEWAY,
+                                            80u,
+                                            3030u,
+                                            5u,
+                                            &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DROP));
+
+    duplicate_packet = next_packet;
     duplicate_packet.seq = 99u;
     assert(mesh_relay_handle_rx(&relay,
                                 &duplicate_packet,
-                                payload,
+                                next_payload,
                                 payload_len,
                                 GATEWAY,
                                 80u,
-                                3030u,
+                                3040u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
     assert(has_action(&result, MESH_RELAY_ACTION_DROP));
@@ -2830,6 +2858,7 @@ static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
     uint8_t incoming_payload[1] = {0x44u};
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
+    uint16_t advertised_retry_ms;
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 3u);
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
@@ -2891,7 +2920,8 @@ static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
                     &value,
                     &value_len) == PROTO_OK);
     assert(value_len == sizeof(uint16_t));
-    assert(proto_get_u16_le(value) == RELAY_BUSY_RETRY_MAX_MS);
+    advertised_retry_ms = proto_get_u16_le(value);
+    assert(advertised_retry_ms == RELAY_BUSY_RETRY_MAX_MS);
     assert(require_tlv_u8(result.busy.payload,
                           result.busy.payload_len,
                           TLV_RELAY_CAPACITY_STATE) == RELAY_CAP_RED);
@@ -2900,6 +2930,45 @@ static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
                            TLV_CAPACITY_VALIDITY_INTERVAL_MS) ==
            RELAY_BUSY_RETRY_MAX_MS);
 
+    for (uint32_t now_ms = 4111u;
+         now_ms < 4110u + advertised_retry_ms;
+         now_ms += 337u) {
+        assert(mesh_relay_handle_rx(&relay,
+                                    &incoming_report,
+                                    incoming_payload,
+                                    sizeof(incoming_payload),
+                                    ANCHOR_A,
+                                    80u,
+                                    now_ms,
+                                    &result) == PROTO_OK);
+        assert(result.status == PROTO_ERR_BUSY);
+        assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+        assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
+        assert(relay.diagnostics.busy_response_count == 1u);
+    }
+    assert(mesh_relay_handle_rx(&relay,
+                                &incoming_report,
+                                incoming_payload,
+                                sizeof(incoming_payload),
+                                ANCHOR_A,
+                                80u,
+                                4109u + advertised_retry_ms,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_BUSY);
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
+    assert(relay.diagnostics.busy_response_count == 1u);
+    assert(mesh_relay_handle_rx(&relay,
+                                &incoming_report,
+                                incoming_payload,
+                                sizeof(incoming_payload),
+                                ANCHOR_A,
+                                80u,
+                                4110u + advertised_retry_ms,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_BUSY);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
+    assert(relay.diagnostics.busy_response_count == 2u);
+
     mesh_relay_cancel_tx(&relay);
     assert(mesh_relay_handle_rx(&relay,
                                 &incoming_report,
@@ -2907,10 +2976,12 @@ static void test_busy_relay_does_not_ack_or_cache_new_forward(void)
                                 sizeof(incoming_payload),
                                 ANCHOR_A,
                                 80u,
-                                4120u,
+                                4111u + advertised_retry_ms,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    assert(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
 }
 
 static void test_busy_relay_drops_duplicate_forward(void)
@@ -4968,7 +5039,10 @@ static void test_gateway_ack_timeout_retries_then_requests_route_discovery(void)
     assert(find_route_candidate(&relay, ANCHOR_C)->valid);
     assert(find_route_candidate(&relay, ANCHOR_C)->hold_down_until_ms ==
            UINT32_C(1000000000));
-    assert(mesh_relay_find_downlink(&relay, ANCHOR_B) == NULL);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_B) != NULL);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_B)->next_hop_id ==
+           ANCHOR_B);
+    assert(mesh_relay_find_downlink(&relay, ANCHOR_B)->route_epoch == 9u);
     assert(find_event_timing(&relay, GATEWAY) == NULL);
     assert(find_event_timing(&relay, ANCHOR_B) == NULL);
 }
@@ -11008,7 +11082,7 @@ int main(void)
     test_legacy_route_beacons_are_dropped();
     test_survey_discovery_broadcast_delivers_and_floods();
     test_broadcast_command_delivers_without_flooding();
-    test_command_flood_broadcast_delivers_and_forwards_once();
+    test_command_flood_broadcast_deduplicates_logical_sequence();
     test_collection_eack_broadcast_deduplicates_exact_round_only();
     test_collection_eack_received_list_confirms_pending_result();
     test_four_eack_broadcasts_cover_fifty_anchor_rosters();

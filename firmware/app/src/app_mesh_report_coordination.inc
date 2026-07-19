@@ -894,6 +894,15 @@ static uint8_t mesh_ch9_ack_batch_count_for_peer(uint64_t peer_id)
 
 static uint8_t mesh_expire_channel9_timings(uint32_t now_ms, const char *reason)
 {
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry =
+            &mesh_runtime.event_timings[i];
+
+        if (entry->valid &&
+            !mesh_event_timing_usable(&entry->timing, now_ms)) {
+            mesh_event_owner_abandon_peer(entry->next_hop_id);
+        }
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
             const struct mesh_relay_event_timing_entry *entry = &mesh_runtime.event_timings[i];

@@ -420,7 +420,8 @@ void app_anchor_survey_runtime_handle_pair_prepare(
             reason);
 }
 
-static int run_pair_initiator(const struct survey_pair *pair)
+static int run_pair_initiator(const struct survey_pair *pair,
+                              uint16_t round_id)
 {
     int last_ret = 0;
 
@@ -497,6 +498,7 @@ static int run_pair_initiator(const struct survey_pair *pair)
         }
 
         ret = runtime_ops.queue_sample_result(pair,
+                                              round_id,
                                               sample_index,
                                               DEVICE_ID,
                                               &result);
@@ -515,7 +517,8 @@ static int run_pair_initiator(const struct survey_pair *pair)
     return last_ret;
 }
 
-static int run_pair_responder(const struct survey_pair *pair)
+static int run_pair_responder(const struct survey_pair *pair,
+                              uint16_t round_id)
 {
     int last_ret = 0;
 
@@ -592,6 +595,7 @@ static int run_pair_responder(const struct survey_pair *pair)
         }
 
         ret = runtime_ops.queue_sample_result(pair,
+                                              round_id,
                                               sample_index,
                                               DEVICE_ID,
                                               &result);
@@ -716,6 +720,7 @@ static void survey_work_handler(struct k_work *work)
     struct survey_discovery_config pending_discovery = {0};
     uint32_t pending_discovery_start_ms = 0u;
     uint32_t pair_deadline_ms = 0u;
+    uint16_t pair_round_id = SURVEY_LEGACY_ROUND_ID;
     bool as_responder;
     bool report_durable = false;
     bool run_discovery = false;
@@ -879,7 +884,6 @@ static void survey_work_handler(struct k_work *work)
     }
     pair_control_id = pair_lease.start_id;
     pair_deadline_ms = pair_lease.prepared_deadline_ms;
-    as_responder = pair.responder_id == DEVICE_ID;
     k_spin_unlock(&survey_lock, key);
 
     if (anchor_uwb_window_active() ||
@@ -899,8 +903,7 @@ static void survey_work_handler(struct k_work *work)
     }
 
     app_node_comm_stop_role_scan();
-    ret = radio_guard_uwb_start(as_responder ? "survey responder DS-TWR" :
-                                               "survey initiator DS-TWR");
+    ret = radio_guard_uwb_start("survey pair DS-TWR");
     if (ret < 0) {
         bool reschedule;
 
@@ -925,7 +928,9 @@ static void survey_work_handler(struct k_work *work)
         pair_start_delivery_handle = 0u;
     }
     if (!pair_start_pending ||
-        !survey_pair_lease_mark_running(&pair_lease, &pair)) {
+        !survey_pair_lease_mark_running(&pair_lease,
+                                        &pair,
+                                        &pair_round_id)) {
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
         k_spin_unlock(&survey_lock, key);
@@ -936,15 +941,16 @@ static void survey_work_handler(struct k_work *work)
     pair_start_pending = false;
     pair_start_delivery_handle = 0u;
     survey_running = true;
+    as_responder = pair.responder_id == DEVICE_ID;
     k_spin_unlock(&survey_lock, key);
     (void)k_work_cancel_delayable(&pair_lease_work);
 
     runtime_ops.set_uwb_busy(true);
     uwb_window_start_ms = k_uptime_get();
     if (as_responder) {
-        ret = run_pair_responder(&pair);
+        ret = run_pair_responder(&pair, pair_round_id);
     } else {
-        ret = run_pair_initiator(&pair);
+        ret = run_pair_initiator(&pair, pair_round_id);
     }
     low_power_ret = runtime_ops.enter_low_power(
         app_radio_low_power_mode_for_connection(
@@ -1034,7 +1040,8 @@ int app_anchor_survey_runtime_start_pair_from_command(
         return -EBUSY;
     }
     if (decision != SURVEY_PAIR_LEASE_ACCEPTED &&
-        decision != SURVEY_PAIR_LEASE_DUPLICATE) {
+        decision != SURVEY_PAIR_LEASE_DUPLICATE &&
+        decision != SURVEY_PAIR_LEASE_SUPERSEDED) {
         k_spin_unlock(&survey_lock, key);
         *status = COMMAND_INVALID_STATE;
         *reason = decision == SURVEY_PAIR_LEASE_EXPIRED ? 5u : 4u;
@@ -1042,19 +1049,29 @@ int app_anchor_survey_runtime_start_pair_from_command(
     }
 
     as_responder = pair.responder_id == DEVICE_ID;
-    if (decision == SURVEY_PAIR_LEASE_ACCEPTED) {
+    if (decision == SURVEY_PAIR_LEASE_ACCEPTED ||
+        decision == SURVEY_PAIR_LEASE_SUPERSEDED) {
+        /*
+         * start_round() has already replaced the lease identity while this
+         * lock is held. Detach the old result custody in the same critical
+         * section so its terminal event cannot be mistaken for the new START.
+         */
         superseded_delivery_handle = pair_start_delivery_handle;
         pair_start_pending = true;
         pair_start_delivery_handle = 0u;
         atomic_set(&abort_requested, 0);
     }
     k_spin_unlock(&survey_lock, key);
-    abandon_pair_start_delivery(superseded_delivery_handle,
-                                "accepted-new-start");
+    abandon_pair_start_delivery(
+        superseded_delivery_handle,
+        decision == SURVEY_PAIR_LEASE_SUPERSEDED ?
+            "superseded-start" : "accepted-new-start");
     *status = COMMAND_OK;
     *reason = 0u;
     LOG_INF("survey pair start %s: survey=%u round=%u initiator=0x%016llx responder=0x%016llx samples=%u local_role=%s",
-            decision == SURVEY_PAIR_LEASE_ACCEPTED ? "accepted" : "duplicate",
+            decision == SURVEY_PAIR_LEASE_ACCEPTED ? "accepted" :
+            decision == SURVEY_PAIR_LEASE_SUPERSEDED ? "superseded" :
+                                                       "duplicate",
             pair.survey_id,
             round_id,
             (unsigned long long)pair.initiator_id,

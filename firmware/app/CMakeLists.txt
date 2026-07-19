@@ -87,6 +87,9 @@ set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant"
 set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant")
 set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
 set(IMEC_STACK_DIAGNOSTICS_BUILD OFF CACHE BOOL "Enable exact-preset RTT stack diagnostics")
+set(IMEC_STACK_STRESS_BUILD OFF CACHE BOOL
+    "Enable opt-in stack canaries and retained fatal context for an exact production mesh preset")
+set(IMEC_DEPLOYABLE_MESH_PRESET OFF)
 set(IMEC_USE_HARDWARE_ANCHOR_ID OFF)
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
 set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
@@ -158,6 +161,7 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_PRESET_EXTRA_CONF "mesh-clicker.conf")
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
+        set(IMEC_DEPLOYABLE_MESH_PRESET ON)
     elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_([1-8])$")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
@@ -181,6 +185,7 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Test Gateway" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
+        set(IMEC_DEPLOYABLE_MESH_PRESET ON)
     elseif(IMEC_BUILD_PRESET STREQUAL "mesh_transmitter" OR
            IMEC_BUILD_PRESET STREQUAL "mesh_transmitter_forcedhop")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
@@ -214,6 +219,9 @@ if(IMEC_BUILD_PRESET)
             "Production mesh anchors always use the hardware-derived ID" FORCE)
         set(IMEC_USE_HARDWARE_ANCHOR_ID ON)
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
+        if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor")
+            set(IMEC_DEPLOYABLE_MESH_PRESET ON)
+        endif()
     else()
         message(FATAL_ERROR "Unknown IMEC_BUILD_PRESET: ${IMEC_BUILD_PRESET}")
     endif()
@@ -354,6 +362,15 @@ if(IMEC_STACK_DIAGNOSTICS_BUILD)
         "${CMAKE_CURRENT_LIST_DIR}/conf/mesh-stack-diagnostics.conf")
 endif()
 
+if(IMEC_STACK_STRESS_BUILD)
+    if(NOT IMEC_DEPLOYABLE_MESH_PRESET)
+        message(FATAL_ERROR
+            "IMEC_STACK_STRESS_BUILD requires mesh_clicker, mesh_anchor, or mesh_gateway")
+    endif()
+    list(APPEND EXTRA_CONF_FILE
+        "${CMAKE_CURRENT_LIST_DIR}/conf/mesh-stack-stress.conf")
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
@@ -480,6 +497,7 @@ else()
         ../src/uwb_ble_courtesy.c
         ../src/uwb_session.c
         ../src/mesh.c
+        ../src/mesh_event_owner.c
         ../src/mesh_preemption.c
         ../src/mesh_relay.c
         ../src/mesh_relay_channel9.c

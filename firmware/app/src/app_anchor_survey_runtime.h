@@ -31,6 +31,7 @@ struct app_anchor_survey_runtime_ops {
     int (*start_uwb_scan)(void);
     int (*queue_sample_result)(
         const struct survey_pair *pair,
+        uint16_t round_id,
         uint16_t sample_index,
         uint64_t reporter_id,
         const struct dwm3000_range_result *range_result);

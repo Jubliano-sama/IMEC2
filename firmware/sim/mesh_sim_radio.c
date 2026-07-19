@@ -366,6 +366,115 @@ uint16_t mesh_sim_radio_max_propagation_for_tx(
     return maximum;
 }
 
+static bool fault_config_active(const struct mesh_sim_fault_config *config)
+{
+    return config->frame_loss_permyriad != 0u ||
+           config->ack_loss_permyriad != 0u ||
+           config->duplicate_permyriad != 0u ||
+           config->delay_permyriad != 0u;
+}
+
+static bool fault_rate_selected(uint32_t sample, uint16_t rate)
+{
+    return sample % MESH_SIM_FAULT_RATE_SCALE < rate;
+}
+
+static uint64_t receiver_bit(uint8_t receiver_index)
+{
+    return UINT64_C(1) << receiver_index;
+}
+
+static void prepare_transmission_faults(struct mesh_sim_world *world,
+                                        struct mesh_sim_transmission *tx)
+{
+    const struct mesh_sim_fault_config *config = &world->fault_config;
+
+    tx->fault_active = fault_config_active(config);
+    if (!tx->fault_active) {
+        return;
+    }
+    for (uint8_t receiver_index = 0u;
+         receiver_index < world->role_count;
+         receiver_index++) {
+        uint32_t loss_sample;
+        uint32_t ack_loss_sample;
+        uint32_t duplicate_sample;
+        uint32_t delay_sample;
+        uint32_t delay_value_sample;
+        uint64_t bit;
+
+        if (receiver_index == tx->node_index ||
+            !world->reachable[tx->node_index][receiver_index]) {
+            continue;
+        }
+        bit = receiver_bit(receiver_index);
+        loss_sample = mesh_sim_fault_random(world);
+        ack_loss_sample = mesh_sim_fault_random(world);
+        duplicate_sample = mesh_sim_fault_random(world);
+        delay_sample = mesh_sim_fault_random(world);
+        delay_value_sample = mesh_sim_fault_random(world);
+        world->fault_stats.receiver_decisions++;
+        tx->fault_decision_ordinal[receiver_index] =
+            world->fault_stats.receiver_decisions;
+        if (fault_rate_selected(loss_sample,
+                                config->frame_loss_permyriad)) {
+            tx->fault_frame_loss_receivers |= bit;
+        }
+        if (fault_rate_selected(ack_loss_sample,
+                                config->ack_loss_permyriad)) {
+            tx->fault_ack_loss_receivers |= bit;
+        }
+        if (fault_rate_selected(duplicate_sample,
+                                config->duplicate_permyriad)) {
+            tx->fault_duplicate_receivers |= bit;
+        }
+        if (fault_rate_selected(delay_sample, config->delay_permyriad)) {
+            tx->fault_extra_delay_us[receiver_index] =
+                delay_value_sample % config->max_extra_delay_us + 1u;
+            world->fault_stats.delay_injections++;
+        }
+    }
+}
+
+static uint64_t transmission_arrival_end_us(
+    const struct mesh_sim_world *world,
+    const struct mesh_sim_transmission *tx,
+    uint8_t receiver_index)
+{
+    uint64_t arrival_end_rctu =
+        tx->end_rctu +
+        world->propagation_rctu[tx->node_index][receiver_index] +
+        dwm3000_timing_us_to_rctu_ceil(
+            tx->fault_extra_delay_us[receiver_index]);
+
+    return dwm3000_timing_rctu_to_us_ceil(arrival_end_rctu);
+}
+
+static uint64_t first_fault_evaluation_us(
+    const struct mesh_sim_world *world,
+    const struct mesh_sim_transmission *tx)
+{
+    uint64_t first_us = UINT64_MAX;
+
+    for (uint8_t receiver_index = 0u;
+         receiver_index < world->role_count;
+         receiver_index++) {
+        uint64_t arrival_end_us;
+
+        if (receiver_index == tx->node_index ||
+            !world->reachable[tx->node_index][receiver_index]) {
+            continue;
+        }
+        arrival_end_us = transmission_arrival_end_us(world,
+                                                      tx,
+                                                      receiver_index);
+        if (arrival_end_us < first_us) {
+            first_us = arrival_end_us;
+        }
+    }
+    return first_us == UINT64_MAX ? tx->end_us : first_us;
+}
+
 int mesh_sim_schedule_raw_tx(struct mesh_sim_world *world,
                              uint8_t node_index,
                              uint64_t start_us,
@@ -419,6 +528,20 @@ int mesh_sim_schedule_raw_tx(struct mesh_sim_world *world,
     tx->protocol_frame = protocol_frame;
     tx->valid = true;
     memcpy(tx->frame, frame, frame_len);
+    if (protocol_frame) {
+        struct proto_packet decoded_packet;
+        const uint8_t *decoded_payload;
+        size_t decoded_payload_len;
+
+        if (proto_packet_decode(frame,
+                                frame_len,
+                                &decoded_packet,
+                                &decoded_payload,
+                                &decoded_payload_len) == PROTO_OK) {
+            tx->protocol_msg_type = decoded_packet.msg_type;
+        }
+    }
+    prepare_transmission_faults(world, tx);
     if (transmission_index != NULL) {
         *transmission_index = index;
     }
@@ -430,10 +553,14 @@ int mesh_sim_schedule_raw_tx(struct mesh_sim_world *world,
     if (ret != MESH_SIM_OK) {
         return ret;
     }
-    return mesh_sim_scheduler_schedule(world,
-                          SIM_EVENT_TX_EVALUATE,
-                          tx->end_us + mesh_sim_radio_max_propagation_for_tx(world, node_index),
-                          index);
+    return mesh_sim_scheduler_schedule(
+        world,
+        SIM_EVENT_TX_EVALUATE,
+        tx->fault_active ?
+            first_fault_evaluation_us(world, tx) :
+            tx->end_us +
+                mesh_sim_radio_max_propagation_for_tx(world, node_index),
+        index);
 }
 
 int mesh_sim_schedule_packet_tx(struct mesh_sim_world *world,
@@ -479,7 +606,9 @@ int mesh_sim_schedule_packet_tx(struct mesh_sim_world *world,
     if (transmission_index != NULL) {
         *transmission_index = index;
     }
-    return MESH_SIM_OK;
+    return mesh_sim_connection_process_local_control_packet(
+        world, node_index, mesh_sim_time_ms(start_us), packet, payload,
+        payload_len);
 }
 
 int mesh_sim_outbound_radio(const struct mesh_outbound *outbound,
@@ -732,9 +861,13 @@ static bool transmission_collides_at(const struct mesh_sim_world *world,
             continue;
         }
         other_start = other->start_rctu +
-                      world->propagation_rctu[other->node_index][receiver_index];
+                      world->propagation_rctu[other->node_index][receiver_index] +
+                      dwm3000_timing_us_to_rctu_ceil(
+                          other->fault_extra_delay_us[receiver_index]);
         other_end = other->end_rctu +
-                    world->propagation_rctu[other->node_index][receiver_index];
+                    world->propagation_rctu[other->node_index][receiver_index] +
+                    dwm3000_timing_us_to_rctu_ceil(
+                        other->fault_extra_delay_us[receiver_index]);
         if (mesh_sim_interval_overlaps(arrival_start, arrival_end,
                                        other_start, other_end) &&
             mesh_sim_interval_overlaps(window->start_rctu, window->end_rctu,
@@ -743,6 +876,36 @@ static bool transmission_collides_at(const struct mesh_sim_world *world,
         }
     }
     return false;
+}
+
+static bool protocol_msg_is_ack(uint8_t msg_type)
+{
+    return msg_type == MSG_MESH_HOP_ACK ||
+           msg_type == MSG_GATEWAY_ACK ||
+           msg_type == MSG_ROUTE_REPLY_ACK ||
+           msg_type == MSG_GATEWAY_COLLECTION_EACK;
+}
+
+static int trace_fault_decision(struct mesh_sim_world *world,
+                                const struct mesh_sim_transmission *tx,
+                                uint8_t receiver_index,
+                                enum mesh_sim_transition_kind kind,
+                                uint32_t detail)
+{
+    int ret = mesh_sim_trace_add(world,
+                                 world->now_us,
+                                 world->roles[receiver_index].id,
+                                 world->roles[tx->node_index].id,
+                                 kind,
+                                 tx->protocol_msg_type,
+                                 detail);
+
+    if (ret == MESH_SIM_OK && world->transition_count > 0u) {
+        world->transitions[world->transition_count - 1u]
+            .fault_decision_ordinal =
+                tx->fault_decision_ordinal[receiver_index];
+    }
+    return ret;
 }
 
 static enum mesh_sim_rx_outcome partial_outcome(
@@ -1024,6 +1187,7 @@ int mesh_sim_radio_evaluate_transmission(
 {
     struct mesh_sim_transmission *tx = &world->transmissions[tx_index];
     enum dwm3000_timing_phy production_phy = mesh_sim_radio_timing_phy(tx->phy);
+    uint64_t next_evaluation_us = UINT64_MAX;
 
     if (!radio_transmission_work_current(world, tx)) {
         return MESH_SIM_OK;
@@ -1037,14 +1201,48 @@ int mesh_sim_radio_evaluate_transmission(
         uint64_t arrival_end;
         uint64_t preamble_end;
         uint64_t sfd_end;
+        uint64_t bit;
 
         if (receiver_index == tx->node_index ||
             !world->reachable[tx->node_index][receiver_index]) {
             continue;
         }
+        bit = receiver_bit(receiver_index);
+        if (tx->fault_active &&
+            (tx->fault_evaluated_receivers & bit) != 0u) {
+            continue;
+        }
         propagation = world->propagation_rctu[tx->node_index][receiver_index];
-        arrival_start = tx->start_rctu + propagation;
-        arrival_end = tx->end_rctu + propagation;
+        arrival_start = tx->start_rctu + propagation +
+                        dwm3000_timing_us_to_rctu_ceil(
+                            tx->fault_extra_delay_us[receiver_index]);
+        arrival_end = tx->end_rctu + propagation +
+                      dwm3000_timing_us_to_rctu_ceil(
+                          tx->fault_extra_delay_us[receiver_index]);
+        if (tx->fault_active) {
+            uint64_t arrival_end_us =
+                dwm3000_timing_rctu_to_us_ceil(arrival_end);
+
+            if (arrival_end_us > world->now_us) {
+                if (arrival_end_us < next_evaluation_us) {
+                    next_evaluation_us = arrival_end_us;
+                }
+                continue;
+            }
+            tx->fault_evaluated_receivers |= bit;
+            if (tx->fault_extra_delay_us[receiver_index] != 0u) {
+                int ret = trace_fault_decision(
+                    world,
+                    tx,
+                    receiver_index,
+                    MESH_SIM_TRANSITION_FAULT_DELAYED,
+                    tx->fault_extra_delay_us[receiver_index]);
+
+                if (ret != MESH_SIM_OK) {
+                    return ret;
+                }
+            }
+        }
         preamble_end = arrival_start +
                        dwm3000_timing_preamble_rctu(production_phy);
         sfd_end = preamble_end + dwm3000_timing_sfd_rctu(production_phy);
@@ -1097,6 +1295,33 @@ int mesh_sim_radio_evaluate_transmission(
                 outcome = world->directed_rx_failure_outcome[
                     tx->node_index][receiver_index];
             }
+            if (outcome == MESH_SIM_RX_DECODED && tx->fault_active) {
+                enum mesh_sim_transition_kind drop_kind;
+
+                if (tx->protocol_frame &&
+                    protocol_msg_is_ack(tx->protocol_msg_type) &&
+                    (tx->fault_ack_loss_receivers & bit) != 0u) {
+                    drop_kind = MESH_SIM_TRANSITION_FAULT_ACK_DROPPED;
+                    world->fault_stats.ack_losses++;
+                    outcome = MESH_SIM_RX_DECODE_ERROR;
+                } else if ((tx->fault_frame_loss_receivers & bit) != 0u) {
+                    drop_kind = MESH_SIM_TRANSITION_FAULT_FRAME_DROPPED;
+                    world->fault_stats.frame_losses++;
+                    outcome = MESH_SIM_RX_DECODE_ERROR;
+                } else {
+                    drop_kind = MESH_SIM_TRANSITION_COUNT;
+                }
+                if (drop_kind != MESH_SIM_TRANSITION_COUNT) {
+                    ret = trace_fault_decision(world,
+                                               tx,
+                                               receiver_index,
+                                               drop_kind,
+                                               0u);
+                    if (ret != MESH_SIM_OK) {
+                        return ret;
+                    }
+                }
+            }
             ret = append_reception(world,
                                    tx_index,
                                    receiver_index,
@@ -1110,8 +1335,41 @@ int mesh_sim_radio_evaluate_transmission(
             if (ret != MESH_SIM_OK) {
                 return ret;
             }
+            if (outcome == MESH_SIM_RX_DECODED && tx->protocol_frame &&
+                tx->fault_active &&
+                (tx->fault_duplicate_receivers & bit) != 0u) {
+                ret = trace_fault_decision(
+                    world,
+                    tx,
+                    receiver_index,
+                    MESH_SIM_TRANSITION_FAULT_DUPLICATED,
+                    1u);
+                if (ret != MESH_SIM_OK) {
+                    return ret;
+                }
+                world->fault_stats.duplicates++;
+                ret = append_reception(world,
+                                       tx_index,
+                                       receiver_index,
+                                       window,
+                                       outcome,
+                                       arrival_start,
+                                       arrival_end,
+                                       packet_handler,
+                                       runtime_claim_handler,
+                                       runtime_claim_context);
+                if (ret != MESH_SIM_OK) {
+                    return ret;
+                }
+            }
             break;
         }
+    }
+    if (next_evaluation_us != UINT64_MAX) {
+        return mesh_sim_scheduler_schedule(world,
+                                           SIM_EVENT_TX_EVALUATE,
+                                           next_evaluation_us,
+                                           (uint16_t)tx_index);
     }
     return MESH_SIM_OK;
 }
@@ -1168,7 +1426,9 @@ int mesh_sim_radio_note_preamble_at_tx_start(struct mesh_sim_world *world,
             continue;
         }
         arrival_start = tx->start_rctu +
-                        world->propagation_rctu[tx->node_index][window->node_index];
+                        world->propagation_rctu[tx->node_index][window->node_index] +
+                        dwm3000_timing_us_to_rctu_ceil(
+                            tx->fault_extra_delay_us[window->node_index]);
         preamble_end = arrival_start + preamble_rctu;
         if (mesh_sim_interval_overlaps(window->start_rctu,
                                        window->end_rctu,

@@ -39,6 +39,7 @@
 #include "dwm3000_driver.h"
 #include "discovery_assignment.h"
 #include "mesh.h"
+#include "mesh_event_owner.h"
 #include "mesh_preemption.h"
 #include "mesh_relay.h"
 #include "protocol.h"
@@ -569,6 +570,9 @@ static struct mesh_event_accept_completed
     mesh_event_accept_completed[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
 static uint8_t mesh_event_accept_completed_cursor;
 static struct app_mesh_event_retry_state mesh_event_accept_rx_cache;
+static struct mesh_event_owner
+    mesh_event_owners[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
+static uint32_t mesh_event_operation_session_next;
 static K_MUTEX_DEFINE(mesh_event_control_retry_scratch_lock);
 static struct mesh_outbound mesh_event_control_retry_scratch;
 static uint32_t mesh_direct_gateway_bulk_suppressed_until_ms;
@@ -714,6 +718,7 @@ static uint8_t mesh_advance_channel9_timing_past(uint64_t peer_id,
 static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
                                                       const char *reason);
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason);
+static void mesh_event_owner_abandon_peer(uint64_t peer_id);
 static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
                                            uint64_t peer_id,
                                            const char *reason);

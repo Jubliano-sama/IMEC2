@@ -97,7 +97,7 @@ static void test_reset_clears_every_phase(void)
     prepare_ok(&lease, &pair, 10u, 100u);
     start_ok(&lease, &pair, 11u, 101u);
     release_ok(&lease, &pair, 11u);
-    assert(survey_pair_lease_mark_running(&lease, NULL));
+    assert(survey_pair_lease_mark_running(&lease, NULL, NULL));
     assert(survey_pair_lease_abort(&lease));
     assert(lease.phase == SURVEY_PAIR_LEASE_ABORTING);
     survey_pair_lease_reset(&lease);
@@ -173,15 +173,15 @@ static void test_start_is_exact_ordered_transition(void)
     assert(survey_pair_lease_release_start(&lease, &start));
     assert(survey_pair_lease_ready_snapshot(&lease, NULL));
     assert(survey_pair_lease_start(&lease, &pair, &retry, 102u) ==
-           SURVEY_PAIR_LEASE_DUPLICATE);
+           SURVEY_PAIR_LEASE_SUPERSEDED);
     assert(lease.start_id.command_seq == retry.command_seq);
     assert(survey_pair_lease_pending_snapshot(&lease, NULL));
     assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(!survey_pair_lease_mark_running(&lease, NULL));
+    assert(!survey_pair_lease_mark_running(&lease, NULL, NULL));
     assert(!survey_pair_lease_release_start(&lease, &start));
     assert(survey_pair_lease_release_start(&lease, &retry));
     assert(survey_pair_lease_ready_snapshot(&lease, &snapshot));
-    assert(survey_pair_lease_mark_running(&lease, &snapshot));
+    assert(survey_pair_lease_mark_running(&lease, &snapshot, NULL));
     assert_pair_equal(&snapshot, &pair);
     assert(lease.phase == SURVEY_PAIR_LEASE_RUNNING);
     assert(survey_pair_lease_start(&lease, &pair, &start, 103u) ==
@@ -210,7 +210,7 @@ static void test_start_pending_expires_if_radio_never_runs(void)
     prepare_ok(&lease, &pair, 1u, 100u);
     assert(survey_pair_lease_start(&lease, &pair, &start, 101u) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(!survey_pair_lease_mark_running(&lease, NULL));
+    assert(!survey_pair_lease_mark_running(&lease, NULL, NULL));
     assert(!survey_pair_lease_release_start(&lease, &wrong));
     assert(survey_pair_lease_release_start(&lease, &start));
     assert(survey_pair_lease_ready_snapshot(&lease, NULL));
@@ -268,11 +268,11 @@ static void test_abort_is_bounded_and_idempotent(void)
     prepare_ok(&lease, &pair, 4u, 300u);
     start_ok(&lease, &pair, 5u, 301u);
     release_ok(&lease, &pair, 5u);
-    assert(survey_pair_lease_mark_running(&lease, NULL));
+    assert(survey_pair_lease_mark_running(&lease, NULL, NULL));
     assert(survey_pair_lease_abort(&lease));
     assert(lease.phase == SURVEY_PAIR_LEASE_ABORTING);
     assert(!survey_pair_lease_abort(&lease));
-    assert(!survey_pair_lease_mark_running(&lease, NULL));
+    assert(!survey_pair_lease_mark_running(&lease, NULL, NULL));
     assert(survey_pair_lease_finish(&lease));
     assert(lease.phase == SURVEY_PAIR_LEASE_IDLE);
     assert(survey_pair_lease_invariant(&lease));
@@ -394,7 +394,7 @@ static void run_random_state_sequence(uint32_t seed)
             (void)survey_pair_lease_release_start(&lease, &id);
             break;
         case 3u:
-            (void)survey_pair_lease_mark_running(&lease, NULL);
+            (void)survey_pair_lease_mark_running(&lease, NULL, NULL);
             break;
         case 4u:
             (void)survey_pair_lease_finish(&lease);
@@ -465,6 +465,9 @@ static void test_nonzero_round_waits_for_exact_go(void)
     const struct survey_pair_control_id prepare = control_id(110u, 10u);
     const struct survey_pair_control_id start = control_id(110u, 11u);
     const struct survey_pair_control_id retry = control_id(110u, 12u);
+    struct survey_pair running_pair = pair_with(999u, 9u);
+    const struct survey_pair untouched_pair = running_pair;
+    uint16_t running_round_id = UINT16_C(0xbeef);
     struct survey_pair_lease lease = {0};
 
     assert(survey_pair_lease_prepare_round(&lease,
@@ -500,12 +503,21 @@ static void test_nonzero_round_waits_for_exact_go(void)
                                          7u,
                                          &retry,
                                          103u) ==
-           SURVEY_PAIR_LEASE_DUPLICATE);
+           SURVEY_PAIR_LEASE_SUPERSEDED);
     assert(lease.start_id.command_seq == retry.command_seq);
     assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
+    assert(!survey_pair_lease_mark_running(&lease,
+                                           &running_pair,
+                                           &running_round_id));
+    assert_pair_equal(&running_pair, &untouched_pair);
+    assert(running_round_id == UINT16_C(0xbeef));
     assert(survey_pair_lease_release_start(&lease, &retry));
     assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_mark_running(&lease, NULL));
+    assert(survey_pair_lease_mark_running(&lease,
+                                          &running_pair,
+                                          &running_round_id));
+    assert_pair_equal(&running_pair, &pair);
+    assert(running_round_id == 7u);
     assert(survey_pair_lease_go(&lease, pair.survey_id, 7u, 104u) ==
            SURVEY_PAIR_LEASE_DUPLICATE);
     assert(lease.phase == SURVEY_PAIR_LEASE_RUNNING);

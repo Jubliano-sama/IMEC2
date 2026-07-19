@@ -675,49 +675,14 @@ static int gateway_note_survey_pair_result(const struct proto_packet *packet,
                                            size_t payload_len)
 {
     struct survey_sample sample = {0};
-    uint8_t range_status = RANGE_INTERNAL_ERROR;
     uint16_t sample_bit;
 
     if (packet == NULL || payload == NULL ||
         packet->msg_type != MSG_SURVEY_PAIR_RESULT) {
         return -EINVAL;
     }
-    if (command_find_u32_tlv(payload,
-                             payload_len,
-                             TLV_SURVEY_ID,
-                             &sample.pair.survey_id) != PROTO_OK ||
-        command_find_u64_tlv(payload,
-                             payload_len,
-                             TLV_INITIATOR_ID,
-                             &sample.pair.initiator_id) != PROTO_OK ||
-        command_find_u64_tlv(payload,
-                             payload_len,
-                             TLV_RESPONDER_ID,
-                             &sample.pair.responder_id) != PROTO_OK ||
-        command_find_u16_tlv(payload,
-                             payload_len,
-                             TLV_SAMPLE_COUNT,
-                             &sample.pair.sample_count) != PROTO_OK ||
-        command_find_u16_tlv(payload,
-                             payload_len,
-                             TLV_SAMPLE_INDEX,
-                             &sample.sample_index) != PROTO_OK ||
-        command_find_i32_tlv(payload,
-                             payload_len,
-                             TLV_DISTANCE_MM,
-                             &sample.distance_mm) != PROTO_OK ||
-        command_find_u8_tlv(payload,
-                            payload_len,
-                            TLV_QUALITY,
-                            &sample.quality) != PROTO_OK ||
-        command_find_u8_tlv(payload,
-                            payload_len,
-                            TLV_RANGE_STATUS,
-                            &range_status) != PROTO_OK) {
-        return -EBADMSG;
-    }
-    sample.range_status = (enum range_status)range_status;
-    if (survey_sample_validate(&sample) != PROTO_OK) {
+    if (survey_extract_sample_tlvs(payload, payload_len, &sample) !=
+        PROTO_OK) {
         return -EBADMSG;
     }
     if (packet->session_id != sample.pair.survey_id ||

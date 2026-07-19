@@ -185,6 +185,7 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
         if (action != ROUTE_DELIVERY_RETRY_CURRENT) {
             mesh_relay_clear_channel9_timing(&mesh_runtime,
                                              timed_out_next_hop_id);
+            mesh_event_owner_abandon_peer(timed_out_next_hop_id);
         }
         if (action == ROUTE_DELIVERY_DISCOVER || select_ret != PROTO_OK) {
             mesh_relay_invalidate_upstream_route(&mesh_runtime);
@@ -2198,6 +2199,8 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     mesh_event_propose_clear();
     memset(&mesh_event_accept_retry, 0, sizeof(mesh_event_accept_retry));
     app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+    memset(mesh_event_owners, 0, sizeof(mesh_event_owners));
+    mesh_event_operation_session_next = 0u;
 #if DEVICE_ROLE == ROLE_ANCHOR
     k_work_init_delayable(&mesh_route_request_action_work,
                           mesh_route_request_action_work_handler);

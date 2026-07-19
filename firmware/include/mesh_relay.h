@@ -312,16 +312,19 @@ struct mesh_duplicate_entry {
     uint64_t dst_id;
     uint32_t session_id;
     uint32_t last_seen_ms;
+    uint32_t busy_response_at_ms;
     uint16_t seq;
     uint16_t payload_len;
     uint16_t payload_crc;
+    uint16_t busy_response_interval_ms;
     uint8_t msg_type;
     bool payload_identity_valid;
+    bool delivery_accepted;
     bool valid;
 };
 
 _Static_assert(sizeof(struct mesh_duplicate_entry) == 40u,
-               "payload-bound duplicate identity must not increase relay RAM");
+               "duplicate and BUSY suppression state must not increase relay RAM");
 
 /*
  * External gateway-only acceptance history. The production gateway overlays

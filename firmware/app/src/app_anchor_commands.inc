@@ -979,27 +979,6 @@ static int command_find_u32_tlv(const uint8_t *payload,
     return PROTO_OK;
 }
 
-static int command_find_i32_tlv(const uint8_t *payload,
-                                size_t payload_len,
-                                uint8_t type,
-                                int32_t *value)
-{
-    uint32_t encoded_value;
-    int ret;
-
-    if (value == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = command_find_u32_tlv(payload, payload_len, type, &encoded_value);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-
-    memcpy(value, &encoded_value, sizeof(*value));
-    return PROTO_OK;
-}
-
 static int command_find_u16_tlv(const uint8_t *payload,
                                 size_t payload_len,
                                 uint8_t type,

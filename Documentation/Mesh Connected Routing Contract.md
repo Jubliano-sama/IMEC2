@@ -263,7 +263,10 @@ partial assignment or survey results into total firmware failure.
   send failure, or reset before the child-directed ACK transmits cannot mark
   the transit packet gateway-accepted. The ACK table may recognize an exact
   duplicate but must not replace an older unsent forwarded gateway ACK with a
-  different one. Only a successful child-directed channel 9 transmission
+  different one. While that exact child handoff is pending, another copy of
+  the same gateway ACK is inert: it cannot enqueue another child ACK, refresh
+  the handoff deadline, or otherwise change custody. Only a successful
+  child-directed channel 9 transmission
   completes the relay's original transit custody. If the bounded handoff
   window expires, the relay requeues the immutable original packet so the
   gateway can repeat its ACK; that recovery does not count as an upstream
@@ -271,6 +274,11 @@ partial assignment or survey results into total firmware failure.
 - If a gateway ACK and a hop-level ACK are both queued for the same channel 9
   transmit opportunity, the gateway ACK has priority because it reassures the
   original transmitter that the packet was successfully received.
+- Failure of an upstream parent clears timing and routes through that failed
+  peer, but it does not erase a current-epoch reverse downlink through a
+  different child. A gateway ACK may already be returning over that downlink;
+  the downlink terminates through its own bounded failures, explicit route
+  clearing, or route-epoch invalidation.
 - A hop ACK should extend or reset the gateway ACK timeout window because it
   proves that the packet is still making progress through the mesh.
 - A missed hop ACK, gateway ACK, or gateway batch ACK must not cause a new wake
@@ -413,6 +421,14 @@ window is a timeout. Route-depth PREPARE, START, command-result, and report
 delivery deadlines remain independent transport bounds and must never enlarge
 this local UWB receive window.
 
+An exact duplicate START command keeps the existing command-result custody. A
+newer START command sequence for the same prepared pair supersedes that custody:
+the anchor installs the new START identity and detaches the old delivery handle
+under one state lock, then abandons the old handle outside the lock. A terminal
+callback releases START only when both its handle and START command identity
+still match, so delayed delivery work from attempt N cannot release or abort
+attempt N+1.
+
 A survey sample is usable geometry only when its range status is `RANGE_OK`
 and its distance is greater than 50 mm. An unusable report remains ACK-eligible
 but does not consume the sample index, so the other pair participant may still
@@ -426,6 +442,17 @@ sequence. An unusable result still present at the end of the continuous window
 causes the same rerun even when only one participant reported it. Each pair has
 at most two reruns, so persistent bad geometry reaches one explicit pair
 failure instead of looping or being counted as success.
+
+Every pair result from a synchronized nonzero round carries that exact round
+generation in `TLV_SURVEY_ROUND_ID`. The gateway compares it with the live
+batch generation before pair lookup or sample-mask mutation. A missing,
+previous, or future generation is stale even when the survey ID, endpoints,
+sample count, and sample index are otherwise identical; this prevents delayed
+custody from attempt N completing a rerun of the same pair in attempt N+1.
+Legacy zero-round results remain valid only in the legacy zero-round
+coordinator path. Rejected stale result custody terminates at the sender's
+existing bounded pair-result delivery deadline rather than being ACKed as a
+current result.
 
 The bounded-control-flood profile always runs four real RF opportunities, even
 when an earlier transmission succeeds, because a blind broadcast has no link
@@ -732,6 +759,24 @@ matching ACCEPT arrives. Queue latency, ACCEPT retry delay, an exact duplicate
 ACCEPT, or a cached ACCEPT replay must not move an established phase; those
 responses confirm the proposal rather than proposing a new schedule.
 
+The PROPOSE session is also the wire-visible ownership identity for the whole
+connection operation. UPDATE and END must reuse that session; an unrelated
+UPDATE or END session cannot replace timing or tear down a newer operation.
+Each endpoint retains the immediate peer, operation session, and separate local
+and remote control-sequence histories because the peers' packet sequence
+domains are independent. An exact duplicate UPDATE or END is inert, the same
+sequence with different type or payload is a conflict, and an older sequence is
+stale. The responder classifies a PROPOSE against the active owner and a bounded
+history of at least eight retired sessions before reserving an ACCEPT or
+replacing timing. A retained session is stale, and a proposal with an older
+control sequence cannot displace a live owner; a genuinely newer proposal may
+start a replacement connection. New local proposals use a fresh boot-seeded
+operation identity that does not reuse any retained owner slot, so delayed work
+from operation N cannot mutate operation N+1 even when both start in the same
+uptime tick. A malformed UPDATE does not consume its sequence. A valid UPDATE
+carries the sender's even/odd transmit phase, and the receiver installs the
+complementary phase for the same event counter.
+
 In direct-or-relayed transmitter mode, a direct gateway route may satisfy route
 acquisition. In forced-relay transmitter mode, a direct gateway route must not
 satisfy route acquisition; the route must include at least one anchor hop.
@@ -958,6 +1003,13 @@ has received them:
 12. Command responses return toward the gateway through the normal response
     path, and the gateway resumes or remains in channel 9 receive while waiting
     for those responses.
+
+The relay deduplication identity for a broadcast `MSG_COMMAND` is its mandatory
+nonzero `TLV_COMMAND_SEQ`, together with source and destination. The mesh
+envelope session may intentionally name a longer operation, such as an anchor
+survey containing several GO rounds. Exact retries of one command sequence are
+inert, while a later command sequence in that same operation session must still
+be delivered and forwarded once.
 
 Any non-route-solicitation wake train that announces a following channel 5
 control frame sets `FLAG_CONTROL_FOLLOWUP`. Connected anchors use that bit to
@@ -1228,7 +1280,10 @@ that it has already accepted within the packet deduplication window, it may
 suppress duplicate processing and must not forward the payload twice. It must
 nevertheless include that packet in the hop-level ACK for the applicable
 response window, so a lost ACK can be repaired by retransmitting the same
-packet without causing another timeout.
+packet without causing another timeout. If the packet was rejected as busy,
+duplicate reception may repeat the BUSY response only after the advertised
+minimum retry interval; copies decoded before that boundary cannot create a
+BUSY train or continually refresh the sender's deferral.
 
 ## Route Candidate Retry And Invalidation
 
@@ -1270,8 +1325,10 @@ system has been running for more than 30 seconds.
 When any node along a connected route proves through repeated failures that the
 gateway cannot be reached through the active path, it invalidates that active
 route path, not only the single queued packet. The invalidation clears the
-node's failed upstream route, any downstream routes that depend on that
-upstream route, and the channel 9 timing reservations for that route epoch.
+node's failed upstream route, downstream entries that use the failed peer, and
+the channel 9 timing reservations for that route epoch. A current-epoch reverse
+mapping through a different child remains available for an ACK already in
+flight, while its timing is repaired or expires through its own bounded rules.
 Where possible, the node sends or queues a route-invalidation notice downstream
 along the dependent route so children and the original producer stop using the
 dead path quickly. Invalidation propagation stops at a hop-level delivery
@@ -1346,6 +1403,17 @@ return to low-duty channel 5 scanning only when one of these happens:
 
 The inactivity threshold must be long enough to tolerate worst-case
 click-handling time plus normal retune and scheduling jitter.
+
+An EVENT_END is authoritative only for the active immediate-peer operation
+session. The sender becomes terminal after a successful RF transmit and clears
+its local timing and pending peer-scoped work; the receiver does the same only
+after decoding the matching END. If that frame is lost, the resulting
+terminal/active asymmetry is valid only while the receiver's existing timing is
+still inside its supervision bound. Expiry, route invalidation, reset recovery,
+or an explicit send failure must abandon the remaining owner, clear peer timing
+and pending callbacks, and restore the role's normal idle duty cycle. Replayed
+or duplicated END frames cannot complete the operation twice, refresh the
+deadline, clear newer ACK custody, or alter a later negotiation.
 
 ## Efficiency Guidance
 

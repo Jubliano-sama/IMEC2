@@ -235,20 +235,33 @@ Production candidates:
 .venv/bin/west build ... -DIMEC_BUILD_PRESET=mesh_gateway
 ```
 
-Deployment flash (example):
+Verified deployment (example):
 ```sh
 .venv/bin/python firmware/scripts/flash_verified_mesh.py \
+  --build-dir build/mesh-clicker \
+  --probe-id <probe-id> --stage-only
+
+.venv/bin/python firmware/scripts/capture_stack_evidence.py \
   --build-dir build/mesh-clicker \
   --probe-id <probe-id> \
   --output-dir logs/stack-evidence \
   --duration-seconds 300
+
+.venv/bin/python firmware/scripts/flash_verified_mesh.py \
+  --build-dir build/mesh-clicker \
+  --hardware-manifest logs/stack-evidence/mesh-clicker-<capture-id>.json \
+  --probe-id <probe-id>
 ```
 
 The production mesh presets use only the verified wrapper, which fixes pyOCD
-at 4 MHz, captures evidence from the staged image, and consumes one successful
-capture. A failed qualification leaves that staged image on the target so it
-can be debugged directly. Bench and legacy images retain their explicitly
-documented direct-flash exceptions in `AGENTS.md`.
+at 4 MHz. `--stage-only` is the transaction's sole programming step; the board
+then runs as many qualification and regression workloads as needed without
+another flash. Promotion verifies the current code sectors against the staged
+artifact, permits expected NVS drift, and consumes one successful capture
+without programming again. A failed qualification leaves the durable
+`awaiting_qualification` transaction and staged image available for diagnosis
+and retry. Bench and legacy images retain their explicitly documented
+direct-flash exceptions in `AGENTS.md`.
 
 ---
 

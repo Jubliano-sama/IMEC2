@@ -457,14 +457,19 @@ def _parse_cgraph(path: Path, source_name: str) -> dict[tuple[str, str], set[str
             continue
         node_symbol = (_CGRAPH_VARIABLE_PREFIX + symbol
                        if immutable_variable else symbol)
-        calls = re.search(r"^  Calls:\s*(.*)$", block, re.MULTILINE)
+        # GCC may put IPA diagnostics immediately after an empty ``Calls:``
+        # field.  ``\s`` also consumes newlines, which would turn a diagnostic
+        # such as ``updating call of caller/7`` into an invented call edge.
+        calls = re.search(r"^  Calls:[ \t]*(.*)$", block, re.MULTILINE)
         targets = set()
         if calls is not None:
             targets = {
                 _canonical_function(target)
                 for target in re.findall(r"([^\s/]+)/\d+", calls.group(1))
             }
-        references = re.search(r"^  References:\s*(.*)$", block, re.MULTILINE)
+        references = re.search(
+            r"^  References:[ \t]*(.*)$", block, re.MULTILINE
+        )
         if references is not None:
             # Callback and ops tables are compiler variable nodes between the
             # function which uses the table and its address-taken functions.
@@ -518,7 +523,7 @@ def _parse_synchronous_cgraph(
             continue
         symbol = match.group(1)
         targets: set[str] = set()
-        calls = re.search(r"^  Calls:\s*(.*)$", block, re.MULTILINE)
+        calls = re.search(r"^  Calls:[ \t]*(.*)$", block, re.MULTILINE)
         if calls is not None:
             call_line = calls.group(1)
             call_matches = list(re.finditer(r"([^\s/]+)/\d+", call_line))

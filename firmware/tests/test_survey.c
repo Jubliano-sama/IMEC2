@@ -1,5 +1,6 @@
 #include "survey.h"
 #include "operation_policy.h"
+#include "survey_round_control.h"
 
 #include <assert.h>
 #include <string.h>
@@ -13,12 +14,27 @@ static struct survey_sample sample(void)
             .responder_id = 0x5555666677778888ull,
             .sample_count = 3u,
         },
+        .round_id = 7u,
         .sample_index = 1u,
         .distance_mm = -1234,
         .quality = 88u,
         .range_status = RANGE_OK,
     };
     return value;
+}
+
+static void assert_sample_equal(const struct survey_sample *left,
+                                const struct survey_sample *right)
+{
+    assert(left->pair.survey_id == right->pair.survey_id);
+    assert(left->pair.initiator_id == right->pair.initiator_id);
+    assert(left->pair.responder_id == right->pair.responder_id);
+    assert(left->pair.sample_count == right->pair.sample_count);
+    assert(left->round_id == right->round_id);
+    assert(left->sample_index == right->sample_index);
+    assert(left->distance_mm == right->distance_mm);
+    assert(left->quality == right->quality);
+    assert(left->range_status == right->range_status);
 }
 
 static void test_sample_count_validation(void)
@@ -142,6 +158,11 @@ static void test_sample_tlvs_include_required_fields(void)
     expect_u64_tlv(payload, payload_len, TLV_INITIATOR_ID, value.pair.initiator_id);
     expect_u64_tlv(payload, payload_len, TLV_RESPONDER_ID, value.pair.responder_id);
 
+    assert(tlv_find(payload, payload_len, TLV_SURVEY_ROUND_ID,
+                    &tlv_value, &tlv_len) == PROTO_OK);
+    assert(tlv_len == 2u);
+    assert(proto_get_u16_le(tlv_value) == value.round_id);
+
     assert(tlv_find(payload, payload_len, TLV_SAMPLE_INDEX, &tlv_value, &tlv_len) == PROTO_OK);
     assert(tlv_len == 2u);
     assert(proto_get_u16_le(tlv_value) == value.sample_index);
@@ -161,6 +182,87 @@ static void test_sample_tlvs_include_required_fields(void)
     assert(tlv_find(payload, payload_len, TLV_RANGE_STATUS, &tlv_value, &tlv_len) == PROTO_OK);
     assert(tlv_len == 1u);
     assert(tlv_value[0] == (uint8_t)value.range_status);
+}
+
+static void test_sample_tlvs_round_trip_round_ownership(void)
+{
+    struct survey_sample value = sample();
+    struct survey_sample decoded = {0};
+    uint8_t payload[SURVEY_SAMPLE_TLV_MAX_LEN];
+    size_t payload_len = 0u;
+
+    assert(survey_append_sample_tlvs(payload, sizeof(payload), &payload_len,
+                                     &value) == PROTO_OK);
+    assert(payload_len == SURVEY_SAMPLE_TLV_MAX_LEN);
+    assert(survey_extract_sample_tlvs(payload, payload_len, &decoded) ==
+           PROTO_OK);
+    assert(decoded.pair.survey_id == value.pair.survey_id);
+    assert(decoded.pair.initiator_id == value.pair.initiator_id);
+    assert(decoded.pair.responder_id == value.pair.responder_id);
+    assert(decoded.pair.sample_count == value.pair.sample_count);
+    assert(decoded.round_id == value.round_id);
+    assert(decoded.sample_index == value.sample_index);
+    assert(decoded.distance_mm == value.distance_mm);
+    assert(decoded.quality == value.quality);
+    assert(decoded.range_status == value.range_status);
+
+    value.round_id = SURVEY_LEGACY_ROUND_ID;
+    payload_len = 0u;
+    assert(survey_append_sample_tlvs(payload, sizeof(payload), &payload_len,
+                                     &value) == PROTO_OK);
+    assert(payload_len == SURVEY_SAMPLE_TLV_MAX_LEN -
+                              PROTO_TLV_U16_ENCODED_LEN);
+    assert(survey_extract_sample_tlvs(payload, payload_len, &decoded) ==
+           PROTO_OK);
+    assert(decoded.round_id == SURVEY_LEGACY_ROUND_ID);
+}
+
+static void test_sample_tlv_parser_rejects_bad_scalar_lengths_atomically(void)
+{
+    const struct survey_sample value = sample();
+    struct survey_sample output = sample();
+    struct survey_sample expected_output;
+    uint8_t payload[SURVEY_SAMPLE_TLV_MAX_LEN + 1u];
+    const uint8_t *tlv_value = NULL;
+    size_t payload_len = 0u;
+    size_t value_offset;
+    uint8_t tlv_len = 0u;
+
+    output.pair.survey_id++;
+    output.round_id++;
+    output.sample_index = 0u;
+    output.distance_mm++;
+    output.quality--;
+    output.range_status = RANGE_RX_TIMEOUT;
+    expected_output = output;
+
+    assert(survey_append_sample_tlvs(payload, sizeof(payload), &payload_len,
+                                     &value) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_DISTANCE_MM,
+                    &tlv_value, &tlv_len) == PROTO_OK);
+    assert(tlv_len == sizeof(uint32_t));
+    value_offset = (size_t)(tlv_value - payload);
+    payload[value_offset - 1u] = sizeof(uint32_t) - 1u;
+    memmove(&payload[value_offset + sizeof(uint32_t) - 1u],
+            &payload[value_offset + sizeof(uint32_t)],
+            payload_len - value_offset - sizeof(uint32_t));
+    payload_len--;
+    assert(survey_extract_sample_tlvs(payload, payload_len, &output) ==
+           PROTO_ERR_MALFORMED);
+    assert_sample_equal(&output, &expected_output);
+
+    payload_len = 0u;
+    assert(survey_append_sample_tlvs(payload, sizeof(payload), &payload_len,
+                                     &value) == PROTO_OK);
+    assert(tlv_find(payload, payload_len, TLV_RANGE_STATUS,
+                    &tlv_value, &tlv_len) == PROTO_OK);
+    assert(tlv_len == sizeof(uint8_t));
+    value_offset = (size_t)(tlv_value - payload);
+    payload[value_offset - 1u] = sizeof(uint16_t);
+    payload[payload_len++] = 0xa5u;
+    assert(survey_extract_sample_tlvs(payload, payload_len, &output) ==
+           PROTO_ERR_MALFORMED);
+    assert_sample_equal(&output, &expected_output);
 }
 
 static void test_reach_request_tlvs_include_survey_and_duration(void)
@@ -2414,6 +2516,8 @@ int main(void)
     test_missing_samples_require_unusable_from_both_reporters();
     test_sample_nonce_is_unique_across_sequence_wrap();
     test_sample_tlvs_include_required_fields();
+    test_sample_tlvs_round_trip_round_ownership();
+    test_sample_tlv_parser_rejects_bad_scalar_lengths_atomically();
     test_reach_request_tlvs_include_survey_and_duration();
     test_reach_request_parser_rejects_malformed_tlvs();
     test_discovery_start_tlvs_round_trip_timing_config();

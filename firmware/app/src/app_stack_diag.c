@@ -18,6 +18,13 @@
 BUILD_ASSERT(STACK_DIAG_MAX_ACTIVE_RUNS >= APP_STACK_DIAG_COMBINED_PEAK_RUNS,
              "stack diagnostics must retain the mandated combined peak");
 
+#if defined(CONFIG_IMEC_STACK_STRESS_DIAGNOSTICS)
+BUILD_ASSERT(IS_ENABLED(CONFIG_HW_STACK_PROTECTION),
+             "stack stress diagnostics require the nRF MPU guard");
+BUILD_ASSERT(IS_ENABLED(CONFIG_STACK_CANARIES),
+             "stack stress diagnostics require compiler canaries");
+#endif
+
 #if defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
 
 struct stack_diag_run {
@@ -129,13 +136,15 @@ static const char *stack_diag_terminal_outcome_name(
     }
 }
 
-static struct app_stack_diag_state stack_diag_state_or_empty(
+static const struct app_stack_diag_state stack_diag_empty_state;
+
+static const struct app_stack_diag_state *stack_diag_state_or_empty(
     const struct app_stack_diag_state *state)
 {
     if (state != NULL) {
-        return *state;
+        return state;
     }
-    return (struct app_stack_diag_state){0};
+    return &stack_diag_empty_state;
 }
 
 static const char *stack_diag_thread_name(const struct k_thread *thread)
@@ -254,7 +263,7 @@ uint32_t app_stack_diag_run_begin(enum app_stack_diag_workload workload,
 #if defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
     const char *workload_name = stack_diag_workload_name(workload);
     const char *owner_name = stack_diag_owner_name(owner);
-    const struct app_stack_diag_state captured = stack_diag_state_or_empty(state);
+    const struct app_stack_diag_state *captured = stack_diag_state_or_empty(state);
     struct stack_diag_run *run = NULL;
     uint32_t emitted_run_id;
     uint32_t previous_run_id;
@@ -300,7 +309,7 @@ uint32_t app_stack_diag_run_begin(enum app_stack_diag_workload workload,
         run->owner = owner;
         run->sequence = 0u;
         run->previous_click_run = 0u;
-        run->identity = captured;
+        run->identity = *captured;
         if (workload == APP_STACK_DIAG_WORKLOAD_CLICK_SPAM) {
             stack_diag_click_sequence++;
             run->sequence = stack_diag_click_sequence;
@@ -326,13 +335,13 @@ uint32_t app_stack_diag_run_begin(enum app_stack_diag_workload workload,
         "DBG_STACK_RUN_BEGIN epoch=%llu run=%u kind=%s owner=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u sequence=%u previous=%u uptime=%u\n",
         (unsigned long long)stack_diag_boot_epoch,
         run->id, workload_name, owner_name,
-        captured.queue_depth, captured.custody_depth,
-        captured.credit_available, captured.retry_depth,
-        captured.drain_depth,
-        (unsigned long long)captured.source_id,
-        (unsigned long long)captured.destination_id,
-        captured.session_id, captured.packet_sequence,
-        captured.message_type,
+        captured->queue_depth, captured->custody_depth,
+        captured->credit_available, captured->retry_depth,
+        captured->drain_depth,
+        (unsigned long long)captured->source_id,
+        (unsigned long long)captured->destination_id,
+        captured->session_id, captured->packet_sequence,
+        captured->message_type,
         run->sequence, run->previous_click_run,
         k_uptime_get_32());
     status_stack_diag_transaction_end();
@@ -361,7 +370,7 @@ int app_stack_diag_sample(uint32_t run_id,
                           const struct app_stack_diag_state *state)
 {
 #if defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
-    const struct app_stack_diag_state captured = stack_diag_state_or_empty(state);
+    const struct app_stack_diag_state *captured = stack_diag_state_or_empty(state);
     struct stack_diag_sample_context context;
     struct stack_diag_run *run;
     const char *workload_name;
@@ -404,14 +413,14 @@ int app_stack_diag_sample(uint32_t run_id,
         "DBG_STACK_SAMPLE_BEGIN epoch=%llu run=%u sample=%u kind=%s owner=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u uptime=%u\n",
         (unsigned long long)stack_diag_boot_epoch,
         context.run_id, context.sample_id, workload_name,
-        owner_name, captured.queue_depth,
-        captured.custody_depth,
-        captured.credit_available, captured.retry_depth,
-        captured.drain_depth,
-        (unsigned long long)captured.source_id,
-        (unsigned long long)captured.destination_id,
-        captured.session_id, captured.packet_sequence,
-        captured.message_type, k_uptime_get_32());
+        owner_name, captured->queue_depth,
+        captured->custody_depth,
+        captured->credit_available, captured->retry_depth,
+        captured->drain_depth,
+        (unsigned long long)captured->source_id,
+        (unsigned long long)captured->destination_id,
+        captured->session_id, captured->packet_sequence,
+        captured->message_type, k_uptime_get_32());
     /* ISR size is configuration evidence. Zephyr exposes no supported ISR watermark. */
     if (context.emit_error == 0) {
         context.emit_error = stack_diag_emit_record(
@@ -450,7 +459,7 @@ int app_stack_diag_run_end(uint32_t run_id,
                            const struct app_stack_diag_state *state)
 {
 #if defined(CONFIG_IMEC_STACK_DIAGNOSTICS)
-    const struct app_stack_diag_state captured = stack_diag_state_or_empty(state);
+    const struct app_stack_diag_state *captured = stack_diag_state_or_empty(state);
     struct stack_diag_run completed;
     struct stack_diag_run *run;
     const char *workload_name;
@@ -489,13 +498,13 @@ int app_stack_diag_run_end(uint32_t run_id,
         "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u samples=%u sequence=%u previous=%u uptime=%u\n",
         (unsigned long long)stack_diag_boot_epoch,
         completed.id, workload_name, owner_name, outcome_name,
-        captured.queue_depth, captured.custody_depth,
-        captured.credit_available, captured.retry_depth,
-        captured.drain_depth,
-        (unsigned long long)captured.source_id,
-        (unsigned long long)captured.destination_id,
-        captured.session_id, captured.packet_sequence,
-        captured.message_type,
+        captured->queue_depth, captured->custody_depth,
+        captured->credit_available, captured->retry_depth,
+        captured->drain_depth,
+        (unsigned long long)captured->source_id,
+        (unsigned long long)captured->destination_id,
+        captured->session_id, captured->packet_sequence,
+        captured->message_type,
         completed.sample_count, completed.sequence,
         completed.previous_click_run, k_uptime_get_32());
     status_stack_diag_transaction_end();

@@ -261,10 +261,59 @@ static void test_connection_and_rx_telemetry_tails(void)
     }
 }
 
+static void test_same_timestamp_dispatch_is_bounded(void)
+{
+    static struct mesh_sim_world world;
+    const uint64_t at_us = 1234u;
+
+    mesh_sim_init(&world, UINT32_C(0x5a4e71e0));
+    for (uint16_t marker = 0u;
+         marker < MESH_SIM_MAX_SAME_TIME_DISPATCHES + 1u;
+         marker++) {
+        CHECK(mesh_sim_schedule_trace_marker(&world, at_us, 1u, marker) ==
+                  MESH_SIM_OK,
+              "same-time marker %u schedule failed", marker);
+    }
+    CHECK(mesh_sim_run_until(&world, at_us) == MESH_SIM_ERR_LIVENESS,
+          "same-time dispatch cycle did not return explicit liveness failure");
+    CHECK(world.last_error == MESH_SIM_ERR_LIVENESS,
+          "same-time dispatch recorded status %d", world.last_error);
+    CHECK(world.last_error_event_valid &&
+              world.last_error_event_time_us == at_us,
+          "same-time liveness failure did not retain the blocked event");
+    CHECK(world.event_count == 1u,
+          "same-time liveness failure consumed the over-budget event");
+}
+
+static void test_unbounded_periodic_dispatch_is_bounded(void)
+{
+    static struct mesh_sim_world world;
+    uint8_t anchor;
+
+    mesh_sim_init(&world, UINT32_C(0xb01d1e55));
+    CHECK(mesh_sim_add_role(&world,
+                            MESH_SIM_ROLE_ANCHOR,
+                            UINT64_C(0xa501),
+                            UINT64_C(0xa502),
+                            1u,
+                            &anchor) == MESH_SIM_OK,
+          "periodic anchor setup failed");
+    CHECK(mesh_sim_start_anchor_low_duty(&world, anchor, 0u) == MESH_SIM_OK,
+          "periodic low-duty schedule failed");
+    CHECK(mesh_sim_run(&world) == MESH_SIM_ERR_LIVENESS,
+          "unbounded periodic dispatch did not return explicit liveness failure");
+    CHECK(world.last_error == MESH_SIM_ERR_LIVENESS,
+          "periodic dispatch recorded status %d", world.last_error);
+    CHECK(world.last_error_event_valid && world.event_count > 0u,
+          "periodic liveness failure did not retain pending work diagnostics");
+}
+
 int main(void)
 {
     test_timestamp_priority_sequence_and_compaction_order();
     test_connection_and_rx_telemetry_tails();
+    test_same_timestamp_dispatch_is_bounded();
+    test_unbounded_periodic_dispatch_is_bounded();
     if (failures != 0) {
         fprintf(stderr, "mesh simulator trace/scheduler scenarios: FAIL (%d)\n",
                 failures);

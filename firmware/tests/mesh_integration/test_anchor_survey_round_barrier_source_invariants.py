@@ -94,6 +94,57 @@ round_start = start_handler.index("survey_pair_lease_start_round(", round_decode
 assert "round_id" in start_handler[round_start : round_start + 300], (
     "START must retain the round identity installed by PREPARE"
 )
+superseded_admission = start_handler.index(
+    "decision != SURVEY_PAIR_LEASE_SUPERSEDED", round_start
+)
+superseded_branch = start_handler.index(
+    "decision == SURVEY_PAIR_LEASE_SUPERSEDED", superseded_admission
+)
+capture_old_delivery = start_handler.index(
+    "superseded_delivery_handle = pair_start_delivery_handle",
+    superseded_branch,
+)
+detach_old_delivery = start_handler.index(
+    "pair_start_delivery_handle = 0u", capture_old_delivery
+)
+unlock_after_detach = start_handler.index(
+    "k_spin_unlock(&survey_lock, key)", detach_old_delivery
+)
+abandon_old_delivery = start_handler.index(
+    "abandon_pair_start_delivery(", unlock_after_detach
+)
+replacement_section = start_handler[superseded_branch:unlock_after_detach]
+assert (
+    superseded_admission
+    < superseded_branch
+    < capture_old_delivery
+    < detach_old_delivery
+    < unlock_after_detach
+    < abandon_old_delivery
+), "newer START identity must detach old result custody atomically before abandon"
+assert "decision == SURVEY_PAIR_LEASE_DUPLICATE" not in replacement_section, (
+    "an exact START duplicate must keep its already-bound result custody"
+)
+
+delivery_bind = function_body(
+    RUNTIME, "app_anchor_survey_runtime_bind_pair_start_delivery"
+)
+assert "pair_lease.start_id.session_id == command->session_id" in delivery_bind
+assert "pair_lease.start_id.command_seq == command->seq" in delivery_bind
+assert "pair_start_delivery_handle == 0u" in delivery_bind, (
+    "the superseding START result may bind only after old custody is detached"
+)
+
+stale_terminal = function_body(RUNTIME, "pair_start_delivery_ready")
+for exact_identity_guard in (
+    "pair_start_delivery_handle == delivery_handle",
+    "pair_lease.start_id.session_id == control_id.session_id",
+    "pair_lease.start_id.command_seq == control_id.command_seq",
+):
+    assert exact_identity_guard in stale_terminal
+assert stale_terminal.index("still_current =") < stale_terminal.index(
+    "survey_pair_lease_release_start("
+), "a terminal event must prove exact current custody before releasing START"
 
 local_command = function_body(COMMANDS, "anchor_handle_local_command")
 late_guard = local_command.index("command_id == CMD_SURVEY_GO")

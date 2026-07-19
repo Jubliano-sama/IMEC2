@@ -1185,7 +1185,11 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
         if (mesh_relay_tx_active(relay) &&
             !gateway_targeted_control_can_forward_independently(
                 relay, packet, previous_hop_id)) {
-            add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
+            if (duplicate_busy_response_due(relay, packet, payload,
+                                            payload_len, now_ms)) {
+                add_busy_action(relay, packet, payload, payload_len,
+                                previous_hop_id, result);
+            }
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_BUSY;
             return PROTO_OK;
@@ -1211,7 +1215,11 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
         !gateway_targeted_control_can_forward_independently(
             relay, packet, previous_hop_id) &&
         mesh_relay_tx_active(relay)) {
-        add_busy_action(relay, packet, payload, payload_len, previous_hop_id, result);
+        if (duplicate_busy_response_due(relay, packet, payload,
+                                        payload_len, now_ms)) {
+            add_busy_action(relay, packet, payload, payload_len,
+                            previous_hop_id, result);
+        }
         result->status = PROTO_ERR_BUSY;
         result->actions |= MESH_RELAY_ACTION_DROP;
         return PROTO_OK;
@@ -1239,7 +1247,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
             result->status = ret;
             result->actions |= MESH_RELAY_ACTION_DROP;
         } else {
-            duplicate_store(relay, packet, now_ms);
+            duplicate_store(relay, packet, payload, payload_len, now_ms);
         }
         return PROTO_OK;
     }
@@ -1257,7 +1265,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
             result->status = ret;
             result->actions |= MESH_RELAY_ACTION_DROP;
         } else {
-            duplicate_store(relay, packet, now_ms);
+            duplicate_store(relay, packet, payload, payload_len, now_ms);
         }
         return PROTO_OK;
     }
@@ -1276,7 +1284,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
             result->status = ret;
             result->actions |= MESH_RELAY_ACTION_DROP;
         } else {
-            duplicate_store(relay, packet, now_ms);
+            duplicate_store(relay, packet, payload, payload_len, now_ms);
         }
         return PROTO_OK;
     }
@@ -1325,14 +1333,14 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
             result->actions |= MESH_RELAY_ACTION_DROP;
             return PROTO_OK;
         }
-        duplicate_store(relay, packet, now_ms);
+        duplicate_store(relay, packet, payload, payload_len, now_ms);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
         (void)add_gateway_ack_action(relay, packet, previous_hop_id, result);
         return PROTO_OK;
     }
 
     if (packet->dst_id == MESH_BROADCAST_ID) {
-        duplicate_store(relay, packet, now_ms);
+        duplicate_store(relay, packet, payload, payload_len, now_ms);
         result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
         ret = build_broadcast_forward(relay,
                                       packet,
@@ -1374,7 +1382,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                                        collection_epoch_id,
                                                        now_ms);
             if (ret == PROTO_OK || ret == PROTO_ERR_STALE) {
-                duplicate_store(relay, packet, now_ms);
+                duplicate_store(relay, packet, payload, payload_len, now_ms);
                 if (reservation_applies) {
                     result_offer_reservation_clear(relay);
                 }
@@ -1397,7 +1405,7 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
 
     ret = build_forward(relay, packet, payload, payload_len, &result->forward);
     if (ret == PROTO_OK) {
-        duplicate_store(relay, packet, now_ms);
+        duplicate_store(relay, packet, payload, payload_len, now_ms);
         if (relay->result_offer_reservation.valid &&
             relay->result_offer_reservation.child_id == packet->src_id) {
             result_offer_reservation_clear(relay);

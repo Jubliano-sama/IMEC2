@@ -12,6 +12,11 @@ WORKLOAD_SOURCE = (ROOT / "app/src/app_stack_workload_diag.c").read_text(
 CONFIG = (ROOT / "app/conf/mesh-stack-diagnostics.conf").read_text(
     encoding="utf-8"
 )
+STRESS_CONFIG = (ROOT / "app/conf/mesh-stack-stress.conf").read_text(
+    encoding="utf-8"
+)
+CMAKE = (ROOT / "app/CMakeLists.txt").read_text(encoding="utf-8")
+MAIN = (ROOT / "app/src/main.c").read_text(encoding="utf-8")
 CAPTURE = (ROOT / "scripts/capture_stack_evidence.py").read_text(
     encoding="utf-8"
 )
@@ -36,6 +41,20 @@ assert "CONFIG_SEGGER_RTT_CUSTOM_LOCKING=y" in CONFIG
 assert "CONFIG_SEGGER_RTT_MODE_NO_BLOCK_SKIP=y" in CONFIG
 assert '"--up-channel-id", "0"' in CAPTURE
 assert "CONFIG_LOG_BACKEND_RTT_BUFFER=0" not in CONFIG
+assert "CONFIG_IMEC_STACK_STRESS_DIAGNOSTICS=y" in STRESS_CONFIG
+assert "CONFIG_HW_STACK_PROTECTION=y" in STRESS_CONFIG
+assert "CONFIG_STACK_CANARIES=y" in STRESS_CONFIG
+assert "CONFIG_THREAD_ANALYZER" not in STRESS_CONFIG
+assert "CONFIG_STACK_SENTINEL" not in STRESS_CONFIG
+assert "STACK_SIZE" not in STRESS_CONFIG
+assert "IMEC_STACK_STRESS_BUILD requires mesh_clicker, mesh_anchor, or mesh_gateway" in CMAKE
+assert 'conf/mesh-stack-stress.conf' in CMAKE
+assert "defined(CONFIG_IMEC_MESH_ROUTE_TEST)" in MAIN
+assert "defined(CONFIG_IMEC_STACK_STRESS_DIAGNOSTICS)" in MAIN
+assert "#if IMEC_RETAIN_FATAL_BREADCRUMB" in MAIN
+assert "mesh_route_test_fatal_thread" in MAIN
+assert "mesh_route_test_fatal_stack_start" in MAIN
+assert "mesh_route_test_fatal_stack_size" in MAIN
 assert "char line[128]" not in SOURCE
 assert "static char stack_diag_record[APP_STACK_DIAG_RECORD_CAPACITY]" in SOURCE
 assert "K_MUTEX_DEFINE(stack_diag_emit_mutex)" in SOURCE
@@ -58,9 +77,12 @@ end = sample.index("DBG_STACK_SAMPLE_END")
 unlock = sample.rindex("k_mutex_unlock(&stack_diag_emit_mutex)")
 assert lock < begin < rows < end < unlock
 assert sample.count("if (context.emit_error == 0)") >= 4
+assert "thread_analyzer_print" not in SOURCE
 assert sample.index("run->sample_count++") > end
 
 run_begin = function_body("app_stack_diag_run_begin")
+assert "const struct app_stack_diag_state captured" not in run_begin
+assert "run->identity = *captured" in run_begin
 assert run_begin.index("DBG_STACK_RUN_BEGIN") < run_begin.index("emit_ret < 0")
 assert run_begin.index("emit_ret < 0") < run_begin.index("memset(run, 0")
 assert run_begin.index("memset(run, 0") < run_begin.index("emitted_run_id = 0u")

@@ -389,7 +389,7 @@ static int test_no_alternate_fourth_failure(uint32_t seed, uint32_t start_ms)
     CHECK(producer.pending.retry_after_ms > now_ms);
     CHECK(producer.outbox_record.valid);
     CHECK(pending_payload_matches(&producer, &identity));
-    CHECK(mesh_relay_find_downlink(&producer, DEPENDENT_CHILD_ID) == NULL);
+    CHECK(mesh_relay_find_downlink(&producer, DEPENDENT_CHILD_ID) != NULL);
     CHECK(find_event_timing(&producer, DEPENDENT_CHILD_ID) == NULL);
     return 0;
 }
@@ -439,7 +439,7 @@ static int test_alternate_parent_fourth_failure(uint32_t seed,
     CHECK(producer.pending.retry_after_ms == now_ms);
     CHECK(producer.outbox_record.valid);
     CHECK(pending_payload_matches(&producer, &identity));
-    CHECK(mesh_relay_find_downlink(&producer, DEPENDENT_CHILD_ID) == NULL);
+    CHECK(mesh_relay_find_downlink(&producer, DEPENDENT_CHILD_ID) != NULL);
     CHECK(find_event_timing(&producer, DEPENDENT_CHILD_ID) == NULL);
 
     test_ctx.phase = "alternate_retry_boundary";

@@ -131,11 +131,17 @@ struct survey_pair {
 
 struct survey_sample {
     struct survey_pair pair;
+    /* Nonzero synchronized-round generation; zero is legacy serialization. */
+    uint16_t round_id;
     uint16_t sample_index;
     int32_t distance_mm;
     uint8_t quality;
     enum range_status range_status;
 };
+
+#define SURVEY_SAMPLE_TLV_MAX_LEN                                         \
+    (2u * PROTO_TLV_U64_ENCODED_LEN + 2u * PROTO_TLV_U32_ENCODED_LEN +   \
+     3u * PROTO_TLV_U16_ENCODED_LEN + 2u * PROTO_TLV_U8_ENCODED_LEN)
 
 struct survey_reachability_report {
     uint64_t anchor_id;
@@ -455,6 +461,9 @@ int survey_append_sample_tlvs(uint8_t *payload,
                                    size_t payload_cap,
                                    size_t *offset,
                                    const struct survey_sample *sample);
+int survey_extract_sample_tlvs(const uint8_t *payload,
+                               size_t payload_len,
+                               struct survey_sample *sample);
 int survey_init_result_packet(struct proto_packet *packet,
                                    const struct survey_sample *sample,
                                    uint64_t gateway_id,

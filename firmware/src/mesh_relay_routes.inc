@@ -343,7 +343,14 @@ static void invalidate_failed_upstream_dependents(struct mesh_relay *relay,
     for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
         struct mesh_downlink_entry *entry = downlink_at_mutable(relay, i);
 
-        if (entry->valid && entry->route_epoch == route_epoch) {
+        /*
+         * A failed upstream parent invalidates only reverse routes that use
+         * that same peer.  Other child routes remain the accepted return path
+         * for gateway ACKs already in flight; their Channel-9 timing is
+         * cleared above and can be repaired independently.
+         */
+        if (entry->valid && entry->route_epoch == route_epoch &&
+            entry->next_hop_id == failed_parent_id) {
             memset(entry, 0, sizeof(*entry));
         }
     }

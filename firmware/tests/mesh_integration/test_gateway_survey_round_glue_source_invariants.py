@@ -229,11 +229,36 @@ assert "delivery_confirmed &&" in delivery_gate
 assert "survey_pair_lease_ready_snapshot(&pair_lease, NULL)" in delivery_gate
 
 survey_worker = function_body(ANCHOR_RUNTIME, "survey_work_handler")
+running_claim = re.search(
+    r"survey_pair_lease_mark_running\s*\(\s*&pair_lease\s*,\s*"
+    r"&pair\s*,\s*&pair_round_id\s*\)",
+    survey_worker,
+)
+assert running_claim is not None, (
+    "the RUNNING transition must return pair and round as one ownership snapshot"
+)
 assert_ordered(
     survey_worker,
     "if (!pair_start_delivery_ready())",
     "return;",
     "survey_pair_lease_ready_snapshot(&pair_lease, &pair)",
-    "radio_guard_uwb_start(",
-    "run_pair_responder(&pair)",
+    'radio_guard_uwb_start("survey pair DS-TWR")',
+    "survey_pair_lease_mark_running(&pair_lease",
+    "as_responder = pair.responder_id == DEVICE_ID",
+    "run_pair_responder(&pair, pair_round_id)",
+    "run_pair_initiator(&pair, pair_round_id)",
 )
+assert "pair_round_id = pair_lease.round_id" not in survey_worker, (
+    "a pre-claim round snapshot could mismatch the operation that enters RUNNING"
+)
+
+for run_name in ("run_pair_initiator", "run_pair_responder"):
+    run_pair = function_body(ANCHOR_RUNTIME, run_name)
+    declaration = run_pair[: run_pair.index("{")]
+    assert "uint16_t round_id" in declaration
+    assert_ordered(
+        run_pair,
+        "runtime_ops.queue_sample_result(pair",
+        "round_id",
+        "sample_index",
+    )

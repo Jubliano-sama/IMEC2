@@ -69,6 +69,27 @@ int mesh_sim_scheduler_reschedule_watchdog(struct mesh_sim_world *world,
                                                 generation);
 }
 
+int mesh_sim_scheduler_reschedule_route_discovery(
+    struct mesh_sim_world *world,
+    uint8_t node_index,
+    uint64_t at_us)
+{
+    for (size_t i = 0u; i < world->event_count; i++) {
+        struct mesh_sim_event *event = &world->events[i];
+
+        if (event->pending &&
+            event->type == SIM_EVENT_ROUTE_DISCOVERY_RETRY &&
+            event->object_index == node_index) {
+            event->time_us = at_us;
+            return MESH_SIM_OK;
+        }
+    }
+    return mesh_sim_scheduler_schedule(world,
+                                       SIM_EVENT_ROUTE_DISCOVERY_RETRY,
+                                       at_us,
+                                       node_index);
+}
+
 static bool event_uses_role(const struct mesh_sim_world *world,
                             const struct mesh_sim_event *event,
                             uint8_t node_index)
@@ -153,6 +174,136 @@ static void invalidate_event_object(struct mesh_sim_world *world,
     }
 }
 
+static bool radio_event_uses_connection_repair(
+    const struct mesh_sim_world *world,
+    const struct mesh_sim_event *event,
+    const struct mesh_sim_connection *connection)
+{
+    switch ((enum mesh_sim_event_type)event->type) {
+    case SIM_EVENT_TX_START:
+    case SIM_EVENT_TX_END:
+    case SIM_EVENT_TX_EVALUATE:
+        if (event->object_index < world->transmission_count) {
+            const struct mesh_sim_transmission *tx =
+                &world->transmissions[event->object_index];
+
+            return tx->valid &&
+                   (tx->node_index == connection->node_a ||
+                    tx->node_index == connection->node_b) &&
+                   tx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+                   (tx->protocol_msg_type == MSG_MESH_EVENT_PROPOSE ||
+                    tx->protocol_msg_type == MSG_MESH_EVENT_ACCEPT) &&
+                   tx->start_us >= connection->repair_start_us &&
+                   tx->end_us <= connection->repair_end_us;
+        }
+        return false;
+    case SIM_EVENT_RX_START:
+    case SIM_EVENT_RX_END:
+        if (event->object_index < world->rx_window_count) {
+            const struct mesh_sim_rx_window *window =
+                &world->rx_windows[event->object_index];
+
+            return window->valid &&
+                   (window->node_index == connection->node_a ||
+                    window->node_index == connection->node_b) &&
+                   window->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+                   window->start_us >= connection->repair_start_us &&
+                   window->end_us <= connection->repair_end_us;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+void mesh_sim_scheduler_cancel_connection_repair(
+    struct mesh_sim_world *world,
+    uint16_t connection_index)
+{
+    const struct mesh_sim_connection *connection;
+    size_t i = 0u;
+
+    if (world == NULL || connection_index >= world->connection_count) {
+        return;
+    }
+    connection = &world->connections[connection_index];
+    for (i = 0u; i < world->event_count;) {
+        const struct mesh_sim_event *event = &world->events[i];
+        bool repair_event =
+            ((event->type == SIM_EVENT_CONNECTION_REPAIR_START ||
+              event->type == SIM_EVENT_CONNECTION_REPAIR_END) &&
+             event->object_index == connection_index) ||
+            radio_event_uses_connection_repair(world, event, connection);
+
+        if (!repair_event) {
+            i++;
+            continue;
+        }
+        invalidate_event_object(world, event);
+        if (i + 1u < world->event_count) {
+            memmove(&world->events[i],
+                    &world->events[i + 1u],
+                    (world->event_count - i - 1u) *
+                        sizeof(world->events[0]));
+        }
+        world->event_count--;
+    }
+}
+
+void mesh_sim_scheduler_cancel_relay_tick(struct mesh_sim_world *world,
+                                          uint8_t node_index)
+{
+    size_t i = 0u;
+
+    if (world == NULL || node_index >= world->role_count) {
+        return;
+    }
+    while (i < world->event_count) {
+        const struct mesh_sim_event *event = &world->events[i];
+
+        if (event->pending && event->type == SIM_EVENT_RELAY_TICK &&
+            event->object_index == node_index) {
+            if (i + 1u < world->event_count) {
+                memmove(&world->events[i],
+                        &world->events[i + 1u],
+                        (world->event_count - i - 1u) *
+                            sizeof(world->events[0]));
+            }
+            world->event_count--;
+            continue;
+        }
+        i++;
+    }
+}
+
+void mesh_sim_scheduler_cancel_route_discovery(
+    struct mesh_sim_world *world,
+    uint8_t node_index)
+{
+    size_t i = 0u;
+
+    if (world == NULL || node_index >= world->role_count) {
+        return;
+    }
+    while (i < world->event_count) {
+        const struct mesh_sim_event *event = &world->events[i];
+
+        if (event->pending &&
+            event->type == SIM_EVENT_ROUTE_DISCOVERY_RETRY &&
+            event->object_index == node_index) {
+            if (i + 1u < world->event_count) {
+                memmove(&world->events[i],
+                        &world->events[i + 1u],
+                        (world->event_count - i - 1u) *
+                            sizeof(world->events[0]));
+            }
+            world->event_count--;
+            continue;
+        }
+        i++;
+    }
+}
+
 void mesh_sim_scheduler_cancel_role_work(struct mesh_sim_world *world,
                                          uint8_t node_index)
 {
@@ -160,13 +311,6 @@ void mesh_sim_scheduler_cancel_role_work(struct mesh_sim_world *world,
 
     if (world == NULL || node_index >= world->role_count) {
         return;
-    }
-    for (i = 0u; i < world->connection_count; i++) {
-        struct mesh_sim_connection *connection = &world->connections[i];
-
-        if (connection->node_a == node_index || connection->node_b == node_index) {
-            connection->repair_pending = false;
-        }
     }
     for (i = 0u; i < world->event_count;) {
         if (event_uses_role(world, &world->events[i], node_index)) {
@@ -233,7 +377,47 @@ int mesh_sim_schedule_trace_marker(struct mesh_sim_world *world,
                                                 0u);
 }
 
-int mesh_sim_run_until(struct mesh_sim_world *world, uint64_t end_us)
+struct mesh_sim_dispatch_budget {
+    uint64_t dispatch_count;
+    uint64_t last_dispatch_time_us;
+    uint32_t same_time_dispatch_count;
+    bool has_last_dispatch_time;
+};
+
+static int fail_dispatch_liveness(struct mesh_sim_world *world,
+                                  const struct mesh_sim_event *event)
+{
+    world->last_error_event_valid = true;
+    world->last_error_event_type = event->type;
+    world->last_error_event_object_index = event->object_index;
+    world->last_error_event_time_us = event->time_us;
+    return mesh_sim_fail(world, MESH_SIM_ERR_LIVENESS);
+}
+
+static int account_dispatch(struct mesh_sim_world *world,
+                            const struct mesh_sim_event *event,
+                            struct mesh_sim_dispatch_budget *budget)
+{
+    budget->dispatch_count++;
+    if (budget->has_last_dispatch_time &&
+        event->time_us == budget->last_dispatch_time_us) {
+        budget->same_time_dispatch_count++;
+    } else {
+        budget->same_time_dispatch_count = 1u;
+        budget->last_dispatch_time_us = event->time_us;
+        budget->has_last_dispatch_time = true;
+    }
+    if (budget->dispatch_count > MESH_SIM_MAX_DISPATCHES_PER_RUN ||
+        budget->same_time_dispatch_count >
+            MESH_SIM_MAX_SAME_TIME_DISPATCHES) {
+        return fail_dispatch_liveness(world, event);
+    }
+    return MESH_SIM_OK;
+}
+
+static int run_until_with_budget(struct mesh_sim_world *world,
+                                 uint64_t end_us,
+                                 struct mesh_sim_dispatch_budget *budget)
 {
     int event_index;
 
@@ -247,10 +431,19 @@ int mesh_sim_run_until(struct mesh_sim_world *world, uint64_t end_us)
         struct mesh_sim_event event;
         int ret;
 
+        event = world->events[event_index];
+        ret = account_dispatch(world, &event, budget);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
         mesh_sim_scheduler_pop(world, (size_t)event_index, &event);
         world->now_us = event.time_us;
         ret = mesh_sim_process_event(world, &event);
         if (ret != MESH_SIM_OK) {
+            world->last_error_event_valid = true;
+            world->last_error_event_type = event.type;
+            world->last_error_event_object_index = event.object_index;
+            world->last_error_event_time_us = event.time_us;
             if (world->last_error == MESH_SIM_OK) {
                 world->last_error = ret;
             }
@@ -261,8 +454,17 @@ int mesh_sim_run_until(struct mesh_sim_world *world, uint64_t end_us)
     return MESH_SIM_OK;
 }
 
+int mesh_sim_run_until(struct mesh_sim_world *world, uint64_t end_us)
+{
+    struct mesh_sim_dispatch_budget budget = {0};
+
+    return run_until_with_budget(world, end_us, &budget);
+}
+
 int mesh_sim_run(struct mesh_sim_world *world)
 {
+    struct mesh_sim_dispatch_budget budget = {0};
+
     if (world == NULL) {
         return MESH_SIM_ERR_ARG;
     }
@@ -274,7 +476,7 @@ int mesh_sim_run(struct mesh_sim_world *world)
                 final_time = world->events[i].time_us;
             }
         }
-        if (mesh_sim_run_until(world, final_time) != MESH_SIM_OK) {
+        if (run_until_with_budget(world, final_time, &budget) != MESH_SIM_OK) {
             return world->last_error;
         }
     }

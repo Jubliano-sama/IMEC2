@@ -11,6 +11,7 @@ REPORT_HEADER = (ROOT / "app/src/app_mesh_report.h").read_text()
 ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
 SURVEY_RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
+CORE_SURVEY = (ROOT / "src/survey.c").read_text()
 NODE_COMM_APP = (ROOT / "app/src/app_node_comm.c").read_text()
 CONFIG = (ROOT / "app/src/app_config.h").read_text()
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
@@ -138,18 +139,43 @@ assert re.search(
     "pair-planning failure after report storage must not revoke acceptance"
 )
 
-for required_sample_field in (
+pair_decode = function_body(CORE_SURVEY, "survey_extract_pair_tlvs")
+for required_pair_field in (
     "TLV_SURVEY_ID",
     "TLV_INITIATOR_ID",
     "TLV_RESPONDER_ID",
     "TLV_SAMPLE_COUNT",
+):
+    assert required_pair_field in pair_decode
+
+sample_decode = function_body(CORE_SURVEY, "survey_extract_sample_tlvs")
+assert "survey_extract_pair_tlvs(" in sample_decode
+assert "survey_round_id_extract_tlv(" in sample_decode
+for required_sample_field in (
     "TLV_SAMPLE_INDEX",
     "TLV_DISTANCE_MM",
     "TLV_QUALITY",
     "TLV_RANGE_STATUS",
 ):
-    assert required_sample_field in pair_accept
-assert "survey_sample_validate(&sample)" in pair_accept
+    assert required_sample_field in sample_decode
+assert "survey_sample_validate(&parsed)" in sample_decode
+assert sample_decode.index("survey_sample_validate(&parsed)") < sample_decode.index(
+    "*sample = parsed"
+), "the central decoder must not mutate caller output before full validation"
+
+assert pair_accept.count("survey_extract_sample_tlvs(") == 1, (
+    "the gateway must use the shared complete survey-sample decoder"
+)
+assert "command_find_" not in pair_accept, (
+    "gateway-local field parsing would bypass the shared round identity contract"
+)
+sample_result = function_body(ANCHOR, "anchor_queue_survey_sample_result")
+assert "uint16_t round_id" in sample_result
+assert sample_result.index("sample.round_id = round_id") < sample_result.index(
+    "survey_append_sample_tlvs("
+) < sample_result.index("survey_init_result_packet_from_reporter("), (
+    "the synchronized round must enter the sample before result serialization"
+)
 assert "packet->session_id != sample.pair.survey_id" in pair_accept
 assert "packet->src_id != sample.pair.initiator_id" in pair_accept
 assert "packet->src_id != sample.pair.responder_id" in pair_accept

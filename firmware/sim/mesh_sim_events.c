@@ -196,15 +196,17 @@ static int watchdog_worker_completed(struct mesh_sim_world *world,
     return mesh_sim_watchdog_feed(world, node_index);
 }
 
-static int watchdog_abort_active_workers(struct mesh_sim_world *world,
-                                         uint8_t node_index)
+static int watchdog_abort_workers(struct mesh_sim_world *world,
+                                  uint8_t node_index,
+                                  uint32_t worker_count)
 {
     struct mesh_sim_role_instance *node = &world->roles[node_index];
     struct mesh_sim_watchdog *watchdog = &node->watchdog;
-    uint32_t active_workers = watchdog->workers_active;
+    uint32_t aborted_workers = worker_count < watchdog->workers_active ?
+                               worker_count : watchdog->workers_active;
 
-    watchdog->workers_active = 0u;
-    while (active_workers-- > 0u) {
+    watchdog->workers_active -= aborted_workers;
+    while (aborted_workers-- > 0u) {
         int ret;
 
         watchdog->workers_aborted++;
@@ -222,12 +224,142 @@ static int watchdog_abort_active_workers(struct mesh_sim_world *world,
     return MESH_SIM_OK;
 }
 
+static int watchdog_abort_active_workers(struct mesh_sim_world *world,
+                                         uint8_t node_index)
+{
+    return watchdog_abort_workers(world,
+                                  node_index,
+                                  world->roles[node_index].watchdog.workers_active);
+}
+
 static void advance_work_epoch(struct mesh_sim_role_instance *node)
 {
     node->work_epoch++;
     if (node->work_epoch == 0u) {
         node->work_epoch = 1u;
     }
+}
+
+static int reset_relay_generation(struct mesh_sim_world *world,
+                                  struct mesh_sim_role_instance *node)
+{
+    struct mesh_relay *relay = &node->relay;
+
+    if (!node->relay_initialized) {
+        return MESH_SIM_OK;
+    }
+
+    /*
+     * Routes and downlinks are simulator-provisioned topology, so they remain
+     * attached across this volatile reboot boundary. Connection timing is
+     * invalidated before this reset. Every operation-owned relay field returns
+     * to relay-init state; no outbox/custody transaction is implicitly
+     * restored from persistence.
+     */
+    memset(relay->duplicates, 0, sizeof(relay->duplicates));
+    memset(relay->flood_seen, 0, sizeof(relay->flood_seen));
+    memset(&relay->pending, 0, sizeof(relay->pending));
+    memset(&relay->outbox_record, 0, sizeof(relay->outbox_record));
+    memset(&relay->route_discovery, 0, sizeof(relay->route_discovery));
+    memset(&relay->result_bundle, 0, sizeof(relay->result_bundle));
+    memset(&relay->result_offer_reservation,
+           0,
+           sizeof(relay->result_offer_reservation));
+    memset(&relay->diagnostics, 0, sizeof(relay->diagnostics));
+    relay->duplicate_next = 0u;
+    relay->flood_seen_next = 0u;
+    relay->next_seq = 1u;
+
+    if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
+        struct mesh_gateway_ack_store *store = &world->gateway_ack_store;
+
+        mesh_gateway_ack_store_init(store);
+        relay->gateway_ack_store = store;
+    } else {
+        struct mesh_anchor_downlink_store *store = &node->anchor_route_store;
+
+        /* The anchor sidecar contains provisioned route topology only. */
+        relay->anchor_downlink_store = store;
+    }
+    return MESH_SIM_OK;
+}
+
+static void reset_runtime_generation(struct mesh_sim_role_instance *node,
+                                     uint64_t now_us)
+{
+    const struct mesh_runtime_ops ops = node->runtime.ops;
+
+    /*
+     * A watchdog reboot is an operation-generation boundary.  Reinitializing
+     * the complete runtime, rather than just releasing its radio owner, drops
+     * queued callbacks and transit reservations from the expired generation.
+     * The freshly reset relay and its configured topology remain attached;
+     * persistence restore is deliberately outside this simulator boundary.
+     */
+    mesh_runtime_init(&node->runtime,
+                      node->relay_initialized ? &node->relay : NULL,
+                      node->id,
+                      &ops);
+    node->runtime.radio_busy_until_us = now_us;
+}
+
+static bool abort_repair_endpoint_radio(struct mesh_sim_world *world,
+                                        uint8_t node_index,
+                                        uint64_t repair_end_us)
+{
+    struct mesh_sim_role_instance *node = &world->roles[node_index];
+
+    if (node->runtime.radio_owner != MESH_RUNTIME_RADIO_CHANNEL9_EVENT ||
+        node->runtime.radio_busy_until_us != repair_end_us) {
+        return false;
+    }
+    node->runtime.radio_owner = MESH_RUNTIME_RADIO_NONE;
+    node->runtime.radio_busy_until_us = world->now_us;
+    node->radio_state = MESH_SIM_RADIO_SLEEP;
+    dwm3000_runtime_init(&node->dwm3000);
+    return true;
+}
+
+static int abort_connection_repairs_for_reset(struct mesh_sim_world *world,
+                                              uint8_t reset_node_index)
+{
+    for (size_t i = 0u; i < world->connection_count; i++) {
+        struct mesh_sim_connection *connection = &world->connections[i];
+        uint8_t peer_index;
+        bool reset_owned_radio;
+        bool peer_owned_radio;
+        int ret;
+
+        if (!connection->repair_pending ||
+            (connection->node_a != reset_node_index &&
+             connection->node_b != reset_node_index)) {
+            continue;
+        }
+        peer_index = connection->node_a == reset_node_index ?
+                     connection->node_b : connection->node_a;
+        mesh_sim_scheduler_cancel_connection_repair(world, (uint16_t)i);
+        reset_owned_radio = abort_repair_endpoint_radio(
+            world,
+            reset_node_index,
+            connection->repair_end_us);
+        peer_owned_radio = abort_repair_endpoint_radio(
+            world,
+            peer_index,
+            connection->repair_end_us);
+        if (peer_owned_radio) {
+            ret = watchdog_abort_workers(world, peer_index, 1u);
+            if (ret != MESH_SIM_OK) {
+                return ret;
+            }
+        }
+        (void)reset_owned_radio;
+        connection->repair_pending = false;
+        connection->repair_propose_decoded = false;
+        connection->repair_accept_decoded = false;
+        connection->repair_session_id = 0u;
+        connection->repair_seq = 0u;
+    }
+    return MESH_SIM_OK;
 }
 
 static bool transmission_work_current(const struct mesh_sim_world *world,
@@ -242,6 +374,72 @@ static bool rx_window_work_current(const struct mesh_sim_world *world,
 {
     return window->valid && window->node_index < world->role_count &&
            window->work_epoch == world->roles[window->node_index].work_epoch;
+}
+
+static int reset_role_state(struct mesh_sim_world *world, uint8_t node_index)
+{
+    struct mesh_sim_role_instance *node = &world->roles[node_index];
+    struct mesh_sim_watchdog *watchdog = &node->watchdog;
+    int ret;
+
+    advance_work_epoch(node);
+    for (size_t i = 0u; i < world->connection_count; i++) {
+        struct mesh_sim_connection *connection = &world->connections[i];
+
+        if (connection->node_a == node_index ||
+            connection->node_b == node_index) {
+            mesh_event_owner_abandon(&connection->owner_a);
+            mesh_event_owner_abandon(&connection->owner_b);
+            connection->timing_a.route_fresh = false;
+            connection->timing_a.timing_fresh = false;
+            connection->timing_a.fallback_required = true;
+            connection->timing_b.route_fresh = false;
+            connection->timing_b.timing_fresh = false;
+            connection->timing_b.fallback_required = true;
+            mesh_sim_clear_connection_timing(world, connection);
+        }
+    }
+    ret = abort_connection_repairs_for_reset(world, node_index);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    mesh_sim_scheduler_cancel_role_work(world, node_index);
+    ret = watchdog_abort_active_workers(world, node_index);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    node->radio_state = MESH_SIM_RADIO_SLEEP;
+    dwm3000_runtime_init(&node->dwm3000);
+    ret = reset_relay_generation(world, node);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    reset_runtime_generation(node, world->now_us);
+    memset(node->tx_queue, 0, sizeof(node->tx_queue));
+    node->tx_queue_count = 0u;
+    node->route_waiting_valid = false;
+    node->resume_low_duty_after_ds_twr = false;
+    node->event_control_seq = 0u;
+    node->relay_timer_guard.generation++;
+    if (node->relay_timer_guard.generation == 0u) {
+        node->relay_timer_guard.generation = 1u;
+    }
+    node->relay_timer_guard.valid = false;
+    watchdog->armed = false;
+    watchdog->expiry_event_pending = false;
+    watchdog->resets++;
+    watchdog->radio_lease_state = MESH_SIM_RADIO_LEASE_RESET;
+    return mesh_sim_trace_add(world, world->now_us, node->id, 0u,
+                          MESH_SIM_TRANSITION_WATCHDOG_RESET, 0u,
+                          watchdog->resets);
+}
+
+int mesh_sim_reset_role(struct mesh_sim_world *world, uint8_t node_index)
+{
+    if (!mesh_sim_node_index_valid(world, node_index)) {
+        return MESH_SIM_ERR_ARG;
+    }
+    return reset_role_state(world, node_index);
 }
 
 static int process_watchdog_expiry(struct mesh_sim_world *world,
@@ -282,26 +480,7 @@ static int process_watchdog_expiry(struct mesh_sim_world *world,
         return mesh_sim_fail(world, MESH_SIM_ERR_WATCHDOG);
     }
 
-    advance_work_epoch(node);
-    mesh_sim_scheduler_cancel_role_work(world, node_index);
-    ret = watchdog_abort_active_workers(world, node_index);
-    if (ret != MESH_SIM_OK) {
-        return ret;
-    }
-    node->radio_state = MESH_SIM_RADIO_SLEEP;
-    dwm3000_runtime_init(&node->dwm3000);
-    node->runtime.radio_owner = MESH_RUNTIME_RADIO_NONE;
-    node->runtime.radio_busy_until_us = world->now_us;
-    memset(node->tx_queue, 0, sizeof(node->tx_queue));
-    node->tx_queue_count = 0u;
-    node->route_waiting_valid = false;
-    node->resume_low_duty_after_ds_twr = false;
-    node->relay.pending.state = MESH_RELAY_TX_IDLE;
-    watchdog->resets++;
-    watchdog->radio_lease_state = MESH_SIM_RADIO_LEASE_RESET;
-    return mesh_sim_trace_add(world, world->now_us, node->id, 0u,
-                          MESH_SIM_TRANSITION_WATCHDOG_RESET, 0u,
-                          watchdog->resets);
+    return reset_role_state(world, node_index);
 }
 
 static int dispatch_received_packet(struct mesh_sim_world *world,
@@ -644,7 +823,9 @@ int mesh_sim_process_event(struct mesh_sim_world *world,
                                                        event->object_index,
                                                        &connection_callbacks);
     case SIM_EVENT_RELAY_TICK:
-        return mesh_sim_relay_process_tick(world, (uint8_t)event->object_index);
+        return mesh_sim_relay_process_tick(world,
+                                           (uint8_t)event->object_index,
+                                           event->token);
     case SIM_EVENT_CONNECTION_START:
         return mesh_sim_connection_process_start(world,
                                                  event->object_index,

@@ -757,8 +757,10 @@ static int test_gateway_collection_duplicate_redelivers_for_eack_rearm(void)
                 &world, anchor, air_start_us, window_end_us, NULL) ==
             MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
-    REQUIRE(world.roles[gateway].delivery_count == 2u);
-    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 2u);
+    REQUIRE(world.roles[gateway].delivery_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 1u);
+    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_redelivery_count ==
+            1u);
     REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
     REQUIRE(gateway_ack_queue_index(gateway, ANCHOR_ID_BASE) >= 0);
 

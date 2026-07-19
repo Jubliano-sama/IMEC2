@@ -120,6 +120,7 @@ static void test_planner_keeps_distinct_reverse_paths_parallel(void)
 }
 
 static struct survey_sample lane_sample(
+    const struct survey_pair_round_runtime *runtime,
     const struct survey_pair_round_lane *lane,
     uint16_t sample_index,
     int32_t distance_mm,
@@ -127,6 +128,7 @@ static struct survey_sample lane_sample(
 {
     return (struct survey_sample) {
         .pair = lane->pair,
+        .round_id = runtime->batch_sequence,
         .sample_index = sample_index,
         .distance_mm = distance_mm,
         .quality = 80u,
@@ -178,7 +180,11 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
     assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) == PROTO_OK);
     assert(survey_pair_round_runtime_mark_observing(&runtime, 1u) == PROTO_OK);
 
-    sample = lane_sample(&runtime.lanes[1], 0u, 1200, RANGE_OK);
+    sample = lane_sample(&runtime,
+                         &runtime.lanes[1],
+                         0u,
+                         1200,
+                         RANGE_OK);
     assert(survey_pair_round_runtime_note_sample(
                &runtime,
                sample.pair.initiator_id,
@@ -215,7 +221,8 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
            PROTO_ERR_MALFORMED);
 
     for (uint16_t index = 0u; index < 2u; index++) {
-        sample = lane_sample(&runtime.lanes[0],
+        sample = lane_sample(&runtime,
+                             &runtime.lanes[0],
                              index,
                              0,
                              RANGE_RX_TIMEOUT);
@@ -235,7 +242,11 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
     assert(survey_pair_round_lane_missing_samples_all_unusable(
         &runtime.lanes[0]));
 
-    sample = lane_sample(&runtime.lanes[0], 0u, 800, RANGE_OK);
+    sample = lane_sample(&runtime,
+                         &runtime.lanes[0],
+                         0u,
+                         800,
+                         RANGE_OK);
     assert(survey_pair_round_runtime_note_sample(
                &runtime,
                sample.pair.initiator_id,
@@ -248,7 +259,11 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
     assert((runtime.lanes[0].initiator_unusable_mask & 0x01u) == 0u);
     assert((runtime.lanes[0].responder_unusable_mask & 0x01u) == 0u);
 
-    sample = lane_sample(&runtime.lanes[0], 1u, 850, RANGE_OK);
+    sample = lane_sample(&runtime,
+                         &runtime.lanes[0],
+                         1u,
+                         850,
+                         RANGE_OK);
     assert(survey_pair_round_runtime_note_sample(
                &runtime,
                sample.pair.responder_id,
@@ -258,7 +273,11 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
     assert(!survey_pair_round_lane_missing_samples_all_unusable(
         &runtime.lanes[0]));
 
-    sample = lane_sample(&runtime.lanes[1], 1u, 900, RANGE_OK);
+    sample = lane_sample(&runtime,
+                         &runtime.lanes[1],
+                         1u,
+                         900,
+                         RANGE_OK);
     assert(survey_pair_round_runtime_note_sample(
                &runtime,
                sample.pair.responder_id,
@@ -267,6 +286,93 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                NULL) == PROTO_OK);
     assert(survey_pair_round_lane_results_complete(&runtime.lanes[1]));
     assert(survey_pair_round_lane_results_complete(&runtime.lanes[0]));
+}
+
+static void test_delayed_prior_batch_sample_cannot_complete_rerun(void)
+{
+    struct survey_gateway_context plan;
+    struct survey_pair_round_metadata metadata[1];
+    struct survey_pair_round_runtime runtime;
+    struct survey_sample delayed_sample;
+    struct survey_sample current_sample;
+    struct survey_pair first_attempt_pair;
+    uint16_t first_round_id;
+    size_t lane_index = SIZE_MAX;
+    bool accepted_new = false;
+
+    plan_init(&plan, metadata, 1u, 1u);
+    assert(survey_pair_round_runtime_begin(&runtime,
+                                           &plan,
+                                           metadata,
+                                           1u,
+                                           1u,
+                                           1u) == PROTO_OK);
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.batch_kind == SURVEY_PAIR_ROUND_BATCH_PLANNED);
+    first_round_id = runtime.batch_sequence;
+    first_attempt_pair = runtime.lanes[0].pair;
+    arm_lane(&runtime, 0u);
+    assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) ==
+           PROTO_OK);
+    delayed_sample = lane_sample(&runtime,
+                                 &runtime.lanes[0],
+                                 0u,
+                                 1250,
+                                 RANGE_OK);
+
+    assert(survey_pair_round_runtime_require_cleanup(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
+               SURVEY_PAIR_ROUND_CLEANUP_RETRY) == PROTO_OK);
+    assert(survey_pair_round_runtime_note_cleanup_complete(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+    assert(survey_pair_round_runtime_note_cleanup_complete(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
+    assert(survey_pair_round_runtime_batch_complete(&runtime));
+
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.batch_kind == SURVEY_PAIR_ROUND_BATCH_RERUN);
+    assert(runtime.batch_sequence != first_round_id);
+    assert(runtime.lanes[0].pair.survey_id == first_attempt_pair.survey_id);
+    assert(runtime.lanes[0].pair.initiator_id ==
+           first_attempt_pair.initiator_id);
+    assert(runtime.lanes[0].pair.responder_id ==
+           first_attempt_pair.responder_id);
+    assert(runtime.lanes[0].pair.sample_count ==
+           first_attempt_pair.sample_count);
+    arm_lane(&runtime, 0u);
+    assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) ==
+           PROTO_OK);
+
+    assert(survey_pair_round_runtime_note_sample(
+               &runtime,
+               delayed_sample.pair.initiator_id,
+               &delayed_sample,
+               &lane_index,
+               &accepted_new) == PROTO_ERR_STALE);
+    assert(runtime.lanes[0].usable_result_mask == 0u);
+    assert(runtime.lanes[0].initiator_unusable_mask == 0u);
+    assert(runtime.lanes[0].responder_unusable_mask == 0u);
+
+    current_sample = lane_sample(&runtime,
+                                 &runtime.lanes[0],
+                                 0u,
+                                 1250,
+                                 RANGE_OK);
+    assert(survey_pair_round_runtime_note_sample(
+               &runtime,
+               current_sample.pair.initiator_id,
+               &current_sample,
+               &lane_index,
+               &accepted_new) == PROTO_OK);
+    assert(lane_index == 0u);
+    assert(accepted_new);
+    assert(runtime.lanes[0].usable_result_mask == 0x01u);
 }
 
 static void test_chunks_cleanup_and_reruns_remain_isolated(void)
@@ -436,6 +542,7 @@ int main(void)
     test_planner_serializes_endpoint_used_as_reverse_next_hop();
     test_planner_keeps_distinct_reverse_paths_parallel();
     test_exact_result_demux_and_usability_are_lane_local();
+    test_delayed_prior_batch_sample_cannot_complete_rerun();
     test_chunks_cleanup_and_reruns_remain_isolated();
     test_interleaved_round_metadata_loads_in_round_position_order();
     test_maximum_runtime_cap_is_bounded();

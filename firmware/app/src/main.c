@@ -32,7 +32,14 @@
 
 LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
 
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST) || \
+    defined(CONFIG_IMEC_STACK_STRESS_DIAGNOSTICS)
+#define IMEC_RETAIN_FATAL_BREADCRUMB 1
+#else
+#define IMEC_RETAIN_FATAL_BREADCRUMB 0
+#endif
+
+#if IMEC_RETAIN_FATAL_BREADCRUMB
 #define MESH_FATAL_BREADCRUMB_MAGIC UINT32_C(0x4641544c)
 volatile uint32_t mesh_route_test_fatal_magic __attribute__((section(".noinit")));
 volatile uint32_t mesh_route_test_fatal_count __attribute__((section(".noinit")));
@@ -55,9 +62,15 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
         mesh_route_test_fatal_count++;
     }
     mesh_route_test_fatal_reason = reason;
-    mesh_route_test_fatal_thread = (uint32_t)thread;
-    mesh_route_test_fatal_stack_start = (uint32_t)thread->stack_info.start;
-    mesh_route_test_fatal_stack_size = (uint32_t)thread->stack_info.size;
+    mesh_route_test_fatal_thread = (uint32_t)(uintptr_t)thread;
+    if (thread != NULL) {
+        mesh_route_test_fatal_stack_start =
+            (uint32_t)(uintptr_t)thread->stack_info.start;
+        mesh_route_test_fatal_stack_size = (uint32_t)thread->stack_info.size;
+    } else {
+        mesh_route_test_fatal_stack_start = 0u;
+        mesh_route_test_fatal_stack_size = 0u;
+    }
     if (esf != NULL) {
         mesh_route_test_fatal_pc = esf->basic.pc;
         mesh_route_test_fatal_lr = esf->basic.lr;
@@ -264,7 +277,7 @@ int main(void)
     enum button_action boot_button_action STAGE1_WAKE_SPAM_UNUSED = BUTTON_ACTION_NONE;
     int ret;
     int battery_adc_ret;
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if IMEC_RETAIN_FATAL_BREADCRUMB
     bool fatal_recovery_boot = false;
 #endif
 
@@ -280,18 +293,21 @@ int main(void)
            IMEC_BUILD_PRESET_NAME);
 #endif
 
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if IMEC_RETAIN_FATAL_BREADCRUMB
     if (mesh_route_test_fatal_magic == MESH_FATAL_BREADCRUMB_MAGIC) {
         uint32_t recovery_delay_ms = mesh_route_test_fatal_count >= 6u ?
                                      30000u :
                                      mesh_route_test_fatal_count * 5000u;
 
         fatal_recovery_boot = true;
-        printk("retained fatal: count=%u reason=%u pc=0x%08x lr=0x%08x recovery_delay_ms=%u\n",
+        printk("retained fatal: count=%u reason=%u pc=0x%08x lr=0x%08x thread=0x%08x stack_start=0x%08x stack_size=%u recovery_delay_ms=%u\n",
                mesh_route_test_fatal_count,
                mesh_route_test_fatal_reason,
                mesh_route_test_fatal_pc,
                mesh_route_test_fatal_lr,
+               mesh_route_test_fatal_thread,
+               mesh_route_test_fatal_stack_start,
+               mesh_route_test_fatal_stack_size,
                recovery_delay_ms);
         k_msleep(recovery_delay_ms);
     }
@@ -333,12 +349,17 @@ int main(void)
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     app_mesh_direct_probe_breadcrumb_boot_diagnostics();
+#endif
+#if IMEC_RETAIN_FATAL_BREADCRUMB
     if (fatal_recovery_boot) {
-        status_debug_printf("DBG_MESH_FATAL_BOOT count=%u reason=%u pc=0x%08x lr=0x%08x\n",
+        status_debug_printf("DBG_MESH_FATAL_BOOT count=%u reason=%u pc=0x%08x lr=0x%08x thread=0x%08x stack_start=0x%08x stack_size=%u\n",
                             mesh_route_test_fatal_count,
                             mesh_route_test_fatal_reason,
                             mesh_route_test_fatal_pc,
-                            mesh_route_test_fatal_lr);
+                            mesh_route_test_fatal_lr,
+                            mesh_route_test_fatal_thread,
+                            mesh_route_test_fatal_stack_start,
+                            mesh_route_test_fatal_stack_size);
     }
 #endif
 
@@ -545,11 +566,14 @@ int main(void)
                 gateway_ble_transport_enabled() ? "advertising" : "disabled");
     }
 
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if IMEC_RETAIN_FATAL_BREADCRUMB
     if (fatal_recovery_boot) {
+        LOG_INF("fatal recovery boot reached normal role startup: thread=0x%08x stack_start=0x%08x stack_size=%u",
+                mesh_route_test_fatal_thread,
+                mesh_route_test_fatal_stack_start,
+                mesh_route_test_fatal_stack_size);
         mesh_route_test_fatal_magic = 0u;
         mesh_route_test_fatal_count = 0u;
-        LOG_INF("fatal recovery boot reached normal role startup");
     }
 #endif
 

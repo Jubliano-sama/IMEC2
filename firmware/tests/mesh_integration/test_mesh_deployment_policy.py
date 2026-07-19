@@ -26,7 +26,8 @@ class MeshDeploymentPolicyTests(unittest.TestCase):
         flasher.write_text(
             "FLASH_FREQUENCY_HZ = 4_000_000\n"
             "WEST_EXECUTABLE = REPO_ROOT / \".venv\" / \"bin\" / \"west\"\n"
-            "verify_flash(\n--frequency\n_record_consumed_capture\n",
+            "verify_flash(\n--frequency\n--stage-only\n--hardware-manifest\n"
+            "awaiting_qualification\n_code_sectors_match\n_record_consumed_capture\n",
             encoding="utf-8",
         )
 
@@ -63,6 +64,16 @@ class MeshDeploymentPolicyTests(unittest.TestCase):
         issues = policy.check_repository(self.root)
         self.assertEqual(1, len(issues), issues)
         self.assertIn("firmware/README.md:1", issues[0])
+
+    def test_requires_two_phase_stage_and_promotion_policy(self) -> None:
+        flasher = self.root / "firmware/scripts/flash_verified_mesh.py"
+        flasher.write_text(
+            flasher.read_text(encoding="utf-8").replace("--stage-only\n", ""),
+            encoding="utf-8",
+        )
+        issues = policy.check_repository(self.root)
+        self.assertEqual(1, len(issues), issues)
+        self.assertIn("'--stage-only'", issues[0])
 
 
 if __name__ == "__main__":

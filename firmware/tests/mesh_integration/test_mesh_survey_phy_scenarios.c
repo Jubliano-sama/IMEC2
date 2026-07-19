@@ -1,10 +1,13 @@
 #include "mesh_sim.h"
+#include "mesh_sim_invariants.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_gateway_command_priority.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "protocol.h"
 #include "survey.h"
+#include "survey_pair_lease.h"
+#include "survey_pair_round_runtime.h"
 #include "uwb.h"
 
 #include <stdbool.h>
@@ -769,6 +772,416 @@ static void test_pair_prepare_phr_and_complete_airtime_sweep(void)
     }
 }
 
+static bool range_header_matches(const struct uwb_range_header *actual,
+                                 const struct uwb_range_header *expected)
+{
+    return actual != NULL && expected != NULL &&
+           actual->type == expected->type &&
+           actual->seq == expected->seq &&
+           actual->round_index == expected->round_index &&
+           actual->network_id == expected->network_id &&
+           actual->session_id == expected->session_id &&
+           actual->session_nonce == expected->session_nonce &&
+           actual->initiator_short_addr == expected->initiator_short_addr &&
+           actual->responder_short_addr == expected->responder_short_addr &&
+           actual->flags == expected->flags &&
+           actual->initiator_id == expected->initiator_id &&
+           actual->responder_id == expected->responder_id;
+}
+
+static bool model_unreceived_airtime_tx(struct mesh_sim_world *world,
+                                        uint8_t sender,
+                                        uint64_t *at_us,
+                                        const uint8_t *frame,
+                                        size_t frame_len,
+                                        uint8_t msg_type)
+{
+    const size_t receptions_before = world->reception_count;
+    uint16_t transmission = UINT16_MAX;
+    uint64_t end_us;
+
+    if (mesh_sim_schedule_raw_tx(world, sender, *at_us,
+                                 UWB_CHANNEL_WAKE_CONTACT,
+                                 MESH_SIM_PHY_CHANNEL5_RANGE,
+                                 frame, frame_len, false,
+                                 &transmission) != MESH_SIM_OK) {
+        CHECK(false, "lost-FINAL TX scheduling failed");
+        return false;
+    }
+    world->transmissions[transmission].protocol_msg_type = msg_type;
+    end_us = world->transmissions[transmission].end_us;
+    if (mesh_sim_run_until(world, end_us + 1u) != MESH_SIM_OK) {
+        CHECK(false, "lost-FINAL PHY simulation failed");
+        return false;
+    }
+    CHECK(world->reception_count == receptions_before,
+          "frame without a receive window unexpectedly decoded");
+    *at_us = end_us + 1u;
+    return true;
+}
+
+static void test_planned_pair_runs_full_bounded_exchange(
+    const struct survey_pair *planned_pair)
+{
+    static struct mesh_sim_world world;
+    static struct survey_gateway_context plan;
+    static struct survey_pair_round_runtime round_runtime;
+    const uint16_t round_id = 1u;
+    const struct survey_pair_control_id initiator_prepare = {
+        .session_id = SURVEY_ID,
+        .command_seq = 10u,
+    };
+    const struct survey_pair_control_id responder_prepare = {
+        .session_id = SURVEY_ID,
+        .command_seq = 11u,
+    };
+    const struct survey_pair_control_id initiator_start = {
+        .session_id = SURVEY_ID,
+        .command_seq = 12u,
+    };
+    const struct survey_pair_control_id responder_start = {
+        .session_id = SURVEY_ID,
+        .command_seq = 13u,
+    };
+    const struct survey_pair_round_metadata metadata = {
+        .round_index = 0u,
+        .pair_index_in_round = 0u,
+        .pair_count_in_round = 1u,
+    };
+    struct survey_pair_lease initiator_lease;
+    struct survey_pair_lease responder_lease;
+    struct mesh_sim_invariant_report invariant = {0};
+    struct survey_pair next_pair;
+    uint8_t initiator = UINT8_MAX;
+    uint8_t responder = UINT8_MAX;
+    uint64_t at_us = TX_START_US;
+    size_t lane_index = SIZE_MAX;
+    bool accepted_new = false;
+
+    if (planned_pair == NULL ||
+        survey_pair_validate(planned_pair) != PROTO_OK) {
+        CHECK(false, "planned pair exchange received an invalid pair");
+        return;
+    }
+    CHECK(planned_pair->sample_count <=
+              SURVEY_PAIR_ROUND_RUNTIME_MAX_RESULT_SAMPLES,
+          "planned pair exceeds bounded gateway result storage");
+
+    survey_pair_lease_reset(&initiator_lease);
+    survey_pair_lease_reset(&responder_lease);
+    CHECK(survey_pair_lease_prepare_round(
+              &initiator_lease, planned_pair, round_id, &initiator_prepare,
+              10u, SURVEY_PAIR_PREPARED_LEASE_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
+          "initiator did not accept planned PREPARE");
+    CHECK(survey_pair_lease_prepare_round(
+              &responder_lease, planned_pair, round_id, &responder_prepare,
+              10u, SURVEY_PAIR_PREPARED_LEASE_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
+          "responder did not accept planned PREPARE");
+    CHECK(survey_pair_lease_start_round(
+              &responder_lease, planned_pair, round_id, &responder_start,
+              11u) == SURVEY_PAIR_LEASE_ACCEPTED,
+          "responder did not accept planned START");
+    CHECK(survey_pair_lease_start_round(
+              &initiator_lease, planned_pair, round_id, &initiator_start,
+              11u) == SURVEY_PAIR_LEASE_ACCEPTED,
+          "initiator did not accept planned START");
+    CHECK(survey_pair_lease_release_start(&responder_lease, &responder_start) &&
+              survey_pair_lease_release_start(&initiator_lease,
+                                               &initiator_start),
+          "START result custody did not release both endpoint leases");
+    CHECK(survey_pair_lease_go(&initiator_lease, SURVEY_ID, round_id + 1u,
+                               12u) == SURVEY_PAIR_LEASE_STALE &&
+              !survey_pair_lease_ready_snapshot(&initiator_lease, NULL),
+          "mismatched GO released the initiator");
+    CHECK(survey_pair_lease_go(&initiator_lease, SURVEY_ID, round_id, 12u) ==
+              SURVEY_PAIR_LEASE_ACCEPTED &&
+              survey_pair_lease_go(&responder_lease, SURVEY_ID, round_id,
+                                   12u) == SURVEY_PAIR_LEASE_ACCEPTED,
+          "matching GO did not release the pair");
+    CHECK(survey_pair_lease_mark_running(&responder_lease, NULL, NULL) &&
+              survey_pair_lease_mark_running(&initiator_lease, NULL, NULL),
+          "released endpoint leases did not enter RUNNING");
+
+    memset(&plan, 0, sizeof(plan));
+    plan.survey_id = planned_pair->survey_id;
+    plan.sample_count = planned_pair->sample_count;
+    plan.pair_count = 1u;
+    plan.pairs_planned = true;
+    plan.pairs[0] = (struct survey_gateway_pair_entry) {
+        .initiator_id = planned_pair->initiator_id,
+        .responder_id = planned_pair->responder_id,
+    };
+    CHECK(survey_pair_round_runtime_begin(&round_runtime, &plan, &metadata,
+                                           1u, 1u, 1u) == PROTO_OK &&
+              survey_pair_round_runtime_load_next_batch(&round_runtime) ==
+                  PROTO_OK,
+          "gateway did not load the planned pair round");
+    CHECK(survey_pair_round_runtime_note_prepared(
+              &round_runtime, 0u,
+              SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK &&
+              survey_pair_round_runtime_note_prepared(
+                  &round_runtime, 0u,
+                  SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK,
+          "gateway round did not record both PREPARE results");
+    CHECK(survey_pair_round_runtime_note_started(
+              &round_runtime, 0u,
+              SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK &&
+              survey_pair_round_runtime_note_started(
+                  &round_runtime, 0u,
+                  SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK &&
+              survey_pair_round_runtime_mark_observing(&round_runtime, 0u) ==
+                  PROTO_OK,
+          "gateway round did not cross the START/GO observation barrier");
+
+    {
+        struct survey_sample stale_sample = {
+            .pair = *planned_pair,
+            .round_id = round_runtime.batch_sequence,
+            .sample_index = 0u,
+            .distance_mm = 3400,
+            .quality = 90u,
+            .range_status = RANGE_OK,
+        };
+        const struct survey_pair_round_lane *lane =
+            survey_pair_round_runtime_lane(&round_runtime, 0u);
+        enum survey_pair_round_lane_state state_before = lane->state;
+        uint16_t usable_before = lane->usable_result_mask;
+
+        stale_sample.pair.survey_id++;
+        CHECK(survey_pair_round_runtime_note_sample(
+                  &round_runtime, planned_pair->initiator_id, &stale_sample,
+                  NULL, NULL) == PROTO_ERR_STALE,
+              "stale survey sample was admitted to the active round");
+        lane = survey_pair_round_runtime_lane(&round_runtime, 0u);
+        CHECK(lane->state == state_before &&
+                  lane->usable_result_mask == usable_before,
+              "stale survey sample mutated the active round");
+    }
+
+    mesh_sim_init(&world, UINT32_C(0x5066f00d));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            planned_pair->initiator_id, GATEWAY_ID,
+                            ROUTE_EPOCH, &initiator) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                planned_pair->responder_id, GATEWAY_ID,
+                                ROUTE_EPOCH, &responder) == MESH_SIM_OK &&
+              mesh_sim_set_link(&world, initiator, responder, 100u, 0u) ==
+                  MESH_SIM_OK,
+          "planned pair radio setup failed");
+
+    for (uint16_t sample_index = 0u;
+         sample_index < planned_pair->sample_count;
+         sample_index++) {
+        const uint8_t attempt_count = sample_index == 0u ? 2u : 1u;
+
+        for (uint8_t attempt = 0u; attempt < attempt_count; attempt++) {
+            const uint8_t seq = (uint8_t)(sample_index + 1u);
+            const uint32_t timestamp_base = UINT32_C(0x10000000) +
+                (uint32_t)sample_index * UINT32_C(0x00100000) +
+                (uint32_t)attempt * UINT32_C(0x00010000);
+            const struct uwb_range_header identity = {
+                .type = MSG_UWB_POLL,
+                .seq = seq,
+                .round_index = 0u,
+                .network_id = UINT32_C(0x494d4543),
+                .session_id = planned_pair->survey_id,
+                .session_nonce = survey_sample_nonce(planned_pair,
+                                                      sample_index),
+                .initiator_short_addr = uwb_session_short_addr_from_id(
+                    planned_pair->initiator_id),
+                .responder_short_addr = uwb_session_short_addr_from_id(
+                    planned_pair->responder_id),
+                .flags = FLAG_DIAGNOSTIC,
+                .initiator_id = planned_pair->initiator_id,
+                .responder_id = planned_pair->responder_id,
+            };
+            struct uwb_range_header decoded_poll = {0};
+            struct uwb_response_frame response = {
+                .header = identity,
+                .poll_rx_ts_32 = timestamp_base + 100u,
+                .resp_tx_ts_32 = timestamp_base + 8100u,
+            };
+            struct uwb_final_frame final = {
+                .header = identity,
+                .poll_tx_ts_32 = timestamp_base,
+                .resp_rx_ts_32 = timestamp_base + 8200u,
+                .final_tx_ts_32 = timestamp_base + 16200u,
+            };
+            struct uwb_report_frame report = {
+                .header = identity,
+                .distance_mm = 3200 + (int32_t)sample_index * 10,
+                .quality = (uint8_t)(92u - sample_index),
+                .status = RANGE_OK,
+                .rsl_dbm = -54,
+            };
+            struct uwb_response_frame decoded_response = {0};
+            struct uwb_final_frame decoded_final = {0};
+            struct uwb_report_frame decoded_report = {0};
+            struct survey_sample sample;
+            uint8_t poll[UWB_POLL_LEN];
+            uint8_t response_bytes[UWB_RESP_LEN];
+            uint8_t final_bytes[UWB_FINAL_LEN];
+            uint8_t report_bytes[UWB_REPORT_LEN];
+            size_t poll_len = 0u;
+            size_t response_len = 0u;
+            size_t final_len = 0u;
+            size_t report_len = 0u;
+
+            response.header.type = MSG_UWB_RESP;
+            final.header.type = MSG_UWB_FINAL;
+            report.header.type = MSG_UWB_REPORT;
+            if (uwb_encode_poll(&identity, poll, sizeof(poll), &poll_len) !=
+                    PROTO_OK ||
+                uwb_encode_response(&response, response_bytes,
+                                    sizeof(response_bytes), &response_len) !=
+                    PROTO_OK ||
+                uwb_encode_final(&final, final_bytes, sizeof(final_bytes),
+                                 &final_len) != PROTO_OK ||
+                uwb_encode_report(&report, report_bytes,
+                                  sizeof(report_bytes), &report_len) !=
+                    PROTO_OK) {
+                CHECK(false, "production survey range frame encoding failed");
+                return;
+            }
+
+            if (!model_exact_airtime_hop(
+                    &world, initiator, responder, &at_us,
+                    UWB_CHANNEL_WAKE_CONTACT, MESH_SIM_PHY_CHANNEL5_RANGE,
+                    MESH_SIM_PHY_CHANNEL5_RANGE, poll, poll_len,
+                    MSG_UWB_POLL, true) ||
+                uwb_decode_poll(poll, poll_len, &decoded_poll) != PROTO_OK ||
+                !range_header_matches(&decoded_poll, &identity)) {
+                CHECK(false, "responder did not decode the exact survey POLL");
+                return;
+            }
+            at_us += UWB_DS_TWR_REPLY_DELAY_US - PHY_HOP_GAP_US;
+            if (!model_exact_airtime_hop(
+                    &world, responder, initiator, &at_us,
+                    UWB_CHANNEL_WAKE_CONTACT, MESH_SIM_PHY_CHANNEL5_RANGE,
+                    MESH_SIM_PHY_CHANNEL5_RANGE, response_bytes, response_len,
+                    MSG_UWB_RESP, true) ||
+                uwb_decode_response(response_bytes, response_len,
+                                    &decoded_response) != PROTO_OK ||
+                !range_header_matches(&decoded_response.header,
+                                      &response.header)) {
+                CHECK(false, "initiator did not decode the exact survey RESP");
+                return;
+            }
+            at_us += UWB_DS_TWR_REPLY_DELAY_US - PHY_HOP_GAP_US;
+
+            if (sample_index == 0u && attempt == 0u) {
+                if (!model_unreceived_airtime_tx(
+                        &world, initiator, &at_us, final_bytes, final_len,
+                        MSG_UWB_FINAL)) {
+                    return;
+                }
+                at_us += (uint64_t)SURVEY_PAIR_INITIATOR_TIMEOUT_MS * 1000u;
+                continue;
+            }
+            if (!model_exact_airtime_hop(
+                    &world, initiator, responder, &at_us,
+                    UWB_CHANNEL_WAKE_CONTACT, MESH_SIM_PHY_CHANNEL5_RANGE,
+                    MESH_SIM_PHY_CHANNEL5_RANGE, final_bytes, final_len,
+                    MSG_UWB_FINAL, true) ||
+                uwb_decode_final(final_bytes, final_len, &decoded_final) !=
+                    PROTO_OK ||
+                !range_header_matches(&decoded_final.header, &final.header)) {
+                CHECK(false, "responder did not decode the exact survey FINAL");
+                return;
+            }
+            if (!model_exact_airtime_hop(
+                    &world, responder, initiator, &at_us,
+                    UWB_CHANNEL_WAKE_CONTACT, MESH_SIM_PHY_CHANNEL5_RANGE,
+                    MESH_SIM_PHY_CHANNEL5_RANGE, report_bytes, report_len,
+                    MSG_UWB_REPORT, true) ||
+                uwb_decode_report(report_bytes, report_len, &decoded_report) !=
+                    PROTO_OK ||
+                !range_header_matches(&decoded_report.header,
+                                      &report.header)) {
+                CHECK(false, "initiator did not decode the exact survey REPORT");
+                return;
+            }
+
+            sample = (struct survey_sample) {
+                .pair = *planned_pair,
+                .round_id = round_runtime.batch_sequence,
+                .sample_index = sample_index,
+                .distance_mm = decoded_report.distance_mm,
+                .quality = decoded_report.quality,
+                .range_status = decoded_report.status,
+            };
+            CHECK(survey_pair_round_runtime_note_sample(
+                      &round_runtime, planned_pair->initiator_id, &sample,
+                      &lane_index, &accepted_new) == PROTO_OK &&
+                      lane_index == 0u && accepted_new,
+                  "gateway did not accept a decoded survey sample once");
+            if (sample_index == 0u) {
+                CHECK(survey_pair_round_runtime_note_sample(
+                          &round_runtime, planned_pair->initiator_id, &sample,
+                          &lane_index, &accepted_new) == PROTO_OK &&
+                          !accepted_new,
+                      "duplicate decoded survey sample was not idempotent");
+            }
+        }
+    }
+
+    CHECK(world.transmission_count ==
+              (size_t)planned_pair->sample_count * 4u + 3u &&
+              world.reception_count == world.transmission_count - 1u,
+          "lost-FINAL retry traffic exceeded the exact tested bound");
+    CHECK(world.now_us - TX_START_US <
+              ((uint64_t)planned_pair->sample_count + 1u) *
+                  SURVEY_PAIR_RESPONDER_WINDOW_MS * 1000u,
+          "survey exchange exceeded its local bounded-time envelope");
+    CHECK(survey_pair_round_lane_results_complete(
+              survey_pair_round_runtime_lane(&round_runtime, 0u)),
+          "gateway did not settle all planned survey samples");
+    CHECK(survey_pair_round_runtime_require_cleanup(
+              &round_runtime, 0u, SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
+              SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK &&
+              survey_pair_round_runtime_note_cleanup_complete(
+                  &round_runtime, 0u,
+                  SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK &&
+              survey_pair_round_runtime_note_cleanup_complete(
+                  &round_runtime, 0u,
+                  SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK &&
+              survey_pair_round_runtime_batch_complete(&round_runtime) &&
+              survey_pair_round_runtime_complete(&round_runtime),
+          "completed survey round retained gateway ownership");
+    CHECK(survey_pair_lease_finish(&initiator_lease) &&
+              survey_pair_lease_finish(&responder_lease) &&
+              survey_pair_lease_invariant(&initiator_lease) &&
+              survey_pair_lease_invariant(&responder_lease),
+          "completed survey endpoints did not release their leases");
+
+    next_pair = *planned_pair;
+    next_pair.survey_id++;
+    {
+        const struct survey_pair_control_id next_prepare = {
+            .session_id = next_pair.survey_id,
+            .command_seq = 1u,
+        };
+
+        CHECK(survey_pair_lease_prepare_round(
+                  &initiator_lease, &next_pair, round_id + 1u, &next_prepare,
+                  20u, SURVEY_PAIR_PREPARED_LEASE_MS) ==
+                  SURVEY_PAIR_LEASE_ACCEPTED,
+              "next survey operation could not acquire the released lease");
+        CHECK(survey_pair_lease_go(&initiator_lease, planned_pair->survey_id,
+                                   round_id, 21u) == SURVEY_PAIR_LEASE_STALE &&
+                  initiator_lease.phase == SURVEY_PAIR_LEASE_PREPARED &&
+                  initiator_lease.pair.survey_id == next_pair.survey_id,
+              "stale GO from operation N mutated operation N+1");
+        CHECK(survey_pair_lease_abort(&initiator_lease),
+              "next survey lease did not clean up after stale-control check");
+    }
+
+    CHECK(mesh_sim_check_settled(&world, &invariant) == MESH_SIM_OK,
+          "survey PHY exchange left radio, work, queue, or custody ownership");
+}
+
 static void test_two_anchor_survey_lifecycle(void)
 {
     static const struct survey_discovery_config config = {
@@ -1001,6 +1414,7 @@ static void test_two_anchor_survey_lifecycle(void)
     CHECK(survey_gateway_auto_next_action(&auto_context, &gateway_context,
                                            &action) == PROTO_OK && action.complete,
           "survey auto lifecycle did not complete after one pair");
+    test_planned_pair_runs_full_bounded_exchange(&planned_pair);
 }
 
 int main(void)

@@ -170,6 +170,84 @@ static bool mesh_event_accept_timing_compatible(
                proposed->supervision_timeout_ms;
 }
 
+static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id)
+{
+    for (size_t i = 0u; i < ARRAY_SIZE(mesh_event_owners); i++) {
+        if (mesh_event_owners[i].generation != 0u &&
+            mesh_event_owners[i].peer_id == peer_id) {
+            return &mesh_event_owners[i];
+        }
+    }
+    return NULL;
+}
+
+static int mesh_event_owner_begin_peer(uint64_t peer_id,
+                                       uint32_t session_id,
+                                       uint16_t proposal_sequence,
+                                       bool proposal_from_peer)
+{
+    struct mesh_event_owner *owner = mesh_event_owner_for_peer(peer_id);
+
+    if (owner == NULL) {
+        for (size_t i = 0u; i < ARRAY_SIZE(mesh_event_owners); i++) {
+            if (!mesh_event_owners[i].active) {
+                owner = &mesh_event_owners[i];
+                break;
+            }
+        }
+    }
+    if (owner == NULL) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    return mesh_event_owner_begin(owner, peer_id, session_id,
+                                  proposal_sequence, proposal_from_peer);
+}
+
+static void mesh_event_owner_abandon_peer(uint64_t peer_id)
+{
+    struct mesh_event_owner *owner = mesh_event_owner_for_peer(peer_id);
+
+    if (owner != NULL) {
+        mesh_event_owner_abandon(owner);
+    }
+}
+
+static bool mesh_event_session_retained(uint32_t session_id)
+{
+    for (size_t i = 0u; i < ARRAY_SIZE(mesh_event_owners); i++) {
+        if (mesh_event_owner_retains_session(&mesh_event_owners[i],
+                                             session_id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t mesh_event_new_operation_session(void)
+{
+    uint32_t seed;
+
+    if (mesh_event_operation_session_next == 0u) {
+        seed = sys_rand32_get() ^ k_uptime_get_32() ^
+               (uint32_t)(uint64_t)DEVICE_ID ^
+               (uint32_t)(((uint64_t)DEVICE_ID) >> 32);
+        mesh_event_operation_session_next = seed == 0u ? 1u : seed;
+    }
+
+    for (size_t attempt = 0u;
+         attempt <= ARRAY_SIZE(mesh_event_owners);
+         attempt++) {
+        mesh_event_operation_session_next++;
+        if (mesh_event_operation_session_next == 0u) {
+            mesh_event_operation_session_next = 1u;
+        }
+        if (!mesh_event_session_retained(mesh_event_operation_session_next)) {
+            return mesh_event_operation_session_next;
+        }
+    }
+    return 0u;
+}
+
 static int mesh_prepare_event_control_record(
     struct mesh_event_control_record *record,
     uint64_t peer_id,
@@ -217,7 +295,8 @@ static int mesh_prepare_event_control_record(
                                   DEVICE_ID,
                                   peer_id,
                                   session_id == 0u ?
-                                      nonzero_uptime_session_id() : session_id,
+                                      mesh_event_new_operation_session() :
+                                      session_id,
                                   sequence == 0u ?
                                       mesh_next_event_control_seq() : sequence,
                                   (uint8_t)payload_len);
@@ -290,15 +369,27 @@ static int mesh_send_event_control(uint64_t peer_id,
 {
     struct mesh_event_timing timing = {0};
     struct mesh_outbound outbound = {0};
+    struct mesh_event_owner *owner = NULL;
     size_t payload_len = 0u;
     uint32_t now_ms = k_uptime_get_32();
     uint32_t timing_reference_ms = mesh_event_control_tx_reference_ms(msg_type, now_ms);
     uint32_t encoded_delay_ms = 0u;
+    uint32_t operation_session_id;
     bool close_event = msg_type == MSG_MESH_EVENT_END;
+    bool owner_scoped = close_event || msg_type == MSG_MESH_EVENT_UPDATE;
     int ret;
 
     if (!mesh_id_is_unicast(peer_id) || peer_id == DEVICE_ID) {
         return -EINVAL;
+    }
+    if (owner_scoped) {
+        owner = mesh_event_owner_for_peer(peer_id);
+        if (owner == NULL || !owner->active) {
+            return -ESTALE;
+        }
+        operation_session_id = owner->session_id;
+    } else {
+        operation_session_id = mesh_event_new_operation_session();
     }
 
     if (!close_event) {
@@ -329,7 +420,7 @@ static int mesh_send_event_control(uint64_t peer_id,
                                   msg_type,
                                   DEVICE_ID,
                                   peer_id,
-                                  nonzero_uptime_session_id(),
+                                  operation_session_id,
                                   mesh_next_event_control_seq(),
                                   (uint8_t)payload_len);
     if (ret != PROTO_OK) {
@@ -397,6 +488,13 @@ static int mesh_send_event_control(uint64_t peer_id,
         }
         mesh_schedule_uwb_rx(uptime_ms_until_deadline(k_uptime_get_32(),
                                                       mesh_channel9_prepare_start_ms(&local_timing)));
+    }
+    if (owner_scoped &&
+        mesh_event_owner_commit_local(owner, DEVICE_ID, &outbound.packet,
+                                      outbound.payload,
+                                      outbound.payload_len) !=
+            PROTO_OK) {
+        return -ESTALE;
     }
     return 0;
 }
@@ -589,6 +687,7 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id, const cha
         if (ret < 0) {
             (void)mesh_ch9_ack_batch_clear_for_peer(peer_id, "event-accept-timeout");
             mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
+            mesh_event_owner_abandon_peer(peer_id);
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_note("DBG_EVENT_ACCEPT_TIMEOUT\n");
             }
@@ -615,6 +714,16 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id, const cha
                                            reason == NULL ?
                                                "event-propose" : reason);
         if (ret != PROTO_OK) {
+            mesh_event_propose_clear();
+            return mesh_errno_from_proto(ret);
+        }
+        ret = mesh_event_owner_begin_peer(
+            peer_id,
+            mesh_event_propose_record.packet.session_id,
+            mesh_event_propose_record.packet.seq,
+            false);
+        if (ret != PROTO_OK) {
+            mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
             mesh_event_propose_clear();
             return mesh_errno_from_proto(ret);
         }
@@ -781,6 +890,16 @@ static int mesh_event_accept_finish_send(
             MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
             reason == NULL ? "event-accept-tx-aligned" : reason);
         if (ret != PROTO_OK) {
+            retry->timing_installed = false;
+            mesh_event_accept_clear();
+            return mesh_errno_from_proto(ret);
+        }
+        ret = mesh_event_owner_begin_peer(peer_id,
+                                          retry->request.session_id,
+                                          retry->request.sequence,
+                                          true);
+        if (ret != PROTO_OK) {
+            mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
             retry->timing_installed = false;
             mesh_event_accept_clear();
             return mesh_errno_from_proto(ret);
@@ -1003,6 +1122,8 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                                       uint32_t received_at_ms)
 {
     struct mesh_event_timing timing = {0};
+    struct mesh_event_owner *owner = NULL;
+    enum mesh_event_owner_decision owner_decision = MESH_EVENT_OWNER_INVALID;
     bool replayed_event_accept = false;
     uint32_t timing_reference_ms;
     int ret;
@@ -1018,7 +1139,28 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         LOG_WRN("mesh event control ignored without unicast previous hop");
         return true;
     }
+    if (packet->msg_type == MSG_MESH_EVENT_UPDATE ||
+        packet->msg_type == MSG_MESH_EVENT_END) {
+        owner = mesh_event_owner_for_peer(previous_hop_id);
+        owner_decision = mesh_event_owner_classify(
+            owner, DEVICE_ID, previous_hop_id, packet, payload, payload_len);
+        if (owner_decision != MESH_EVENT_OWNER_APPLY) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_EVENT_OWNER_REJECT msg=%02x prev=0x%llx session=%u seq=%u decision=%u\n",
+                                    packet->msg_type,
+                                    (unsigned long long)previous_hop_id,
+                                    packet->session_id,
+                                    packet->seq,
+                                    (unsigned int)owner_decision);
+            }
+            return true;
+        }
+    }
     if (packet->msg_type == MSG_MESH_EVENT_END) {
+        if (mesh_event_owner_commit(owner, DEVICE_ID, previous_hop_id,
+                                    packet, payload, payload_len) != PROTO_OK) {
+            return true;
+        }
         (void)mesh_ch9_ack_batch_clear_for_peer(previous_hop_id, "event-end-rx");
         mesh_event_accept_rx_clear_peer(previous_hop_id);
         mesh_event_accept_completed_clear_peer(previous_hop_id);
@@ -1051,6 +1193,12 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                             timing.event_counter,
                             timing.local_tx_on_even_events ? 1u : 0u);
     }
+    if (packet->msg_type == MSG_MESH_EVENT_UPDATE) {
+        /* UPDATE carries the sender's phase; the immediate peer owns the
+         * complementary TX/RX direction for that same event counter. */
+        mesh_event_timing_set_local_first_slot_tx(
+            &timing, !timing.local_tx_on_even_events);
+    }
     if (packet->msg_type == MSG_MESH_EVENT_PROPOSE) {
         struct mesh_event_timing active_timing = {0};
         struct mesh_event_timing reservation_timing = {0};
@@ -1063,6 +1211,19 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                                         payload,
                                         payload_len,
                                         previous_hop_id)) {
+            return true;
+        }
+        owner = mesh_event_owner_for_peer(previous_hop_id);
+        owner_decision = mesh_event_owner_classify_proposal(
+            owner, DEVICE_ID, previous_hop_id, packet, payload, payload_len);
+        if (owner_decision != MESH_EVENT_OWNER_APPLY) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_EVENT_PROPOSE_OWNER_REJECT prev=0x%llx session=%u seq=%u decision=%u\n",
+                                    (unsigned long long)previous_hop_id,
+                                    packet->session_id,
+                                    packet->seq,
+                                    (unsigned int)owner_decision);
+            }
             return true;
         }
         mesh_event_timing_set_local_first_slot_tx(&timing, false);
@@ -1216,8 +1377,28 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         return true;
     }
 
+    if (packet->msg_type == MSG_MESH_EVENT_UPDATE &&
+        mesh_event_owner_commit(owner, DEVICE_ID, previous_hop_id, packet,
+                                payload, payload_len) != PROTO_OK) {
+        mesh_relay_clear_channel9_timing(&mesh_runtime, previous_hop_id);
+        mesh_event_owner_abandon_peer(previous_hop_id);
+        return true;
+    }
+
     if (packet->msg_type == MSG_MESH_EVENT_ACCEPT) {
         if (!replayed_event_accept) {
+            ret = mesh_event_owner_begin_peer(
+                previous_hop_id,
+                mesh_event_propose_record.packet.session_id,
+                mesh_event_propose_record.packet.seq,
+                false);
+            if (ret != PROTO_OK) {
+                mesh_relay_clear_channel9_timing(&mesh_runtime,
+                                                 previous_hop_id);
+                app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+                mesh_event_propose_clear();
+                return true;
+            }
             app_mesh_event_retry_note_send_success(&mesh_event_accept_rx_cache);
             mesh_event_propose_clear();
         }
@@ -1292,6 +1473,7 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
     if (ret == 0) {
         status_debug_note("DBG_CH9_EVENT_END_TX\n");
     } else {
+        mesh_event_owner_abandon_peer(peer_id);
         status_debug_note("DBG_CH9_EVENT_END_FAIL\n");
         LOG_WRN("mesh channel-9 event close TX failed: peer=0x%016llx ret=%d reason=%s",
                 (unsigned long long)peer_id,

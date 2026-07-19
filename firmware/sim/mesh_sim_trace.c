@@ -53,13 +53,14 @@ static uint64_t retained_matches(const struct mesh_sim_world *world,
     return matches;
 }
 
-int mesh_sim_trace_add(struct mesh_sim_world *world,
-                       uint64_t time_us,
-                       uint64_t node_id,
-                       uint64_t peer_id,
-                       enum mesh_sim_transition_kind kind,
-                       uint8_t msg_type,
-                       uint32_t detail)
+static int trace_add(struct mesh_sim_world *world,
+                     uint64_t time_us,
+                     uint64_t node_id,
+                     uint64_t peer_id,
+                     enum mesh_sim_transition_kind kind,
+                     const struct proto_packet *packet,
+                     uint8_t msg_type,
+                     uint32_t detail)
 {
     struct mesh_sim_transition *transition;
     size_t node_index = 0u;
@@ -84,11 +85,42 @@ int mesh_sim_trace_add(struct mesh_sim_world *world,
         .time_us = time_us,
         .node_id = node_id,
         .peer_id = peer_id,
+        .packet_src_id = packet == NULL ? 0u : packet->src_id,
+        .packet_dst_id = packet == NULL ? 0u : packet->dst_id,
+        .packet_session_id = packet == NULL ? 0u : packet->session_id,
         .kind = kind,
         .detail = detail,
-        .msg_type = msg_type,
+        .packet_seq = packet == NULL ? 0u : packet->seq,
+        .msg_type = packet == NULL ? msg_type : packet->msg_type,
     };
     return MESH_SIM_OK;
+}
+
+int mesh_sim_trace_add(struct mesh_sim_world *world,
+                       uint64_t time_us,
+                       uint64_t node_id,
+                       uint64_t peer_id,
+                       enum mesh_sim_transition_kind kind,
+                       uint8_t msg_type,
+                       uint32_t detail)
+{
+    return trace_add(world, time_us, node_id, peer_id, kind, NULL, msg_type,
+                     detail);
+}
+
+int mesh_sim_trace_add_packet(struct mesh_sim_world *world,
+                              uint64_t time_us,
+                              uint64_t node_id,
+                              uint64_t peer_id,
+                              enum mesh_sim_transition_kind kind,
+                              const struct proto_packet *packet,
+                              uint32_t detail)
+{
+    if (packet == NULL) {
+        return MESH_SIM_ERR_ARG;
+    }
+    return trace_add(world, time_us, node_id, peer_id, kind, packet, 0u,
+                     detail);
 }
 
 size_t mesh_sim_count_transitions(const struct mesh_sim_world *world,
@@ -212,11 +244,39 @@ static bool event_references(const struct mesh_sim_world *world,
     return false;
 }
 
-static bool event_type_pending(const struct mesh_sim_world *world,
-                               enum mesh_sim_event_type type)
+static bool pending_transmission_may_reach_window(
+    const struct mesh_sim_world *world,
+    uint16_t window_index)
 {
+    const struct mesh_sim_rx_window *window = &world->rx_windows[window_index];
+
     for (size_t i = 0u; i < world->event_count; i++) {
-        if (world->events[i].pending && world->events[i].type == type) {
+        const struct mesh_sim_event *event = &world->events[i];
+        const struct mesh_sim_transmission *tx;
+        uint64_t delay_us;
+        uint64_t arrival_start_us;
+        uint64_t arrival_end_us;
+
+        if (!event->pending || event->type != SIM_EVENT_TX_EVALUATE ||
+            event->object_index >= world->transmission_count) {
+            continue;
+        }
+        tx = &world->transmissions[event->object_index];
+        if (!tx->valid || tx->node_index == window->node_index ||
+            tx->channel != window->channel || tx->phy != window->phy ||
+            !world->reachable[tx->node_index][window->node_index]) {
+            continue;
+        }
+        delay_us = world->propagation_us[tx->node_index][window->node_index] +
+                   tx->fault_extra_delay_us[window->node_index];
+        if (tx->start_us > UINT64_MAX - delay_us ||
+            tx->end_us > UINT64_MAX - delay_us) {
+            return true;
+        }
+        arrival_start_us = tx->start_us + delay_us;
+        arrival_end_us = tx->end_us + delay_us;
+        if (arrival_start_us < window->end_us &&
+            window->start_us < arrival_end_us) {
             return true;
         }
     }
@@ -236,7 +296,7 @@ static bool rx_window_pending(const struct mesh_sim_world *world,
 {
     return event_references(world, SIM_EVENT_RX_START, window_index) ||
            event_references(world, SIM_EVENT_RX_END, window_index) ||
-           event_type_pending(world, SIM_EVENT_TX_EVALUATE);
+           pending_transmission_may_reach_window(world, window_index);
 }
 
 static void shift_event_indices(struct mesh_sim_world *world,

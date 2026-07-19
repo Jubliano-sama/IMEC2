@@ -60,37 +60,56 @@ Sources: [capture_stack_evidence.py:31-129](https://github.com/Jubliano-sama/IME
 <!-- BEGIN:AUTOGEN imec2-11-verified-deployment-verified-flash -->
 ## Verified Flash Workflow
 
-The current deployment entrypoint performs staging and qualification as one repository-owned transaction. Its accepted interface is `--build-dir`, `--probe-id`, and optional capture output/duration arguments; it does not accept an externally supplied `--hardware-manifest` ([flash_verified_mesh.py:629-656](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L629-L656)). The repository guide still shows an older standalone-capture then `--hardware-manifest` handoff ([AGENTS.md:124-142](../../AGENTS.md#L124-L142)); until that guide is aligned, use the executable interface below because it is the path the current wrapper actually implements. A mesh-anchor deployment therefore starts like this, after verifying that the named probe is physically connected to the intended anchor:
+The deployment entrypoint uses one durable transaction with separate staging and promotion phases. Staging is the only phase that programs the target; qualification can then run repeatedly against the exact staged image, and promotion only verifies current code sectors and records the accepted evidence. A mesh-anchor transaction therefore starts with:
 
 ```sh
 .venv/bin/python firmware/scripts/flash_verified_mesh.py \
   --build-dir build/mesh-anchor \
+  --probe-id E46070D247233537 \
+  --stage-only
+```
+
+The wrapper fixes both west and pyOCD to the repository environment and fixes programming frequency at 4 MHz. It backs up the complete 512 KiB target image, overlays the candidate HEX onto the sectors it touches, journals the expected result and exact artifact hashes, stages through west with `--no-reset`, and confirms a full-flash readback before resetting the candidate. The durable journal then remains in `awaiting_qualification`, which blocks another stage on that probe.
+
+Collect evidence and run the real workload in separate terminals. The capture tool does not program the device, so a failed scenario can be diagnosed and the same image can be exercised again without reflashing:
+
+```sh
+.venv/bin/python firmware/scripts/capture_stack_evidence.py \
+  --build-dir build/mesh-anchor \
+  --probe-id E46070D247233537 \
+  --output-dir logs/stack-evidence \
+  --duration-seconds 300
+```
+
+Promote one successful exact-artifact capture with:
+
+```sh
+.venv/bin/python firmware/scripts/flash_verified_mesh.py \
+  --build-dir build/mesh-anchor \
+  --hardware-manifest logs/stack-evidence/mesh-anchor-<capture-id>.json \
   --probe-id E46070D247233537
 ```
 
-The wrapper fixes both west and pyOCD to the repository environment and fixes programming frequency at 4 MHz ([flash_verified_mesh.py:23-35](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L23-L35)). It then executes this bounded flow:
+The complete bounded flow is:
 
 ```mermaid
 graph TD
-    A["Verify exact build and probe"] --> B["Back up target flash"]
-    B --> C["Journal artifact hashes"]
-    C --> D["Stage candidate at 4 MHz"]
-    D --> E["Read back full flash"]
-    E --> F{"Bytes match expected image?"}
-    F -->|"No"| G["Reset and fail explicitly"]
-    F -->|"Yes"| H["Reset and capture workloads"]
-    H --> I{"Evidence matches artifact and probe?"}
-    I -->|"No"| G
-    I -->|"Yes"| J["Consume capture and commit"]
+    A["Verify exact build and probe"] --> B["Back up and stage candidate once"]
+    B --> C{"Full readback matches?"}
+    C -->|"No"| D["Reset and fail explicitly"]
+    C -->|"Yes"| E["Reset into staged candidate"]
+    E --> F["Run bounded qualification workloads"]
+    F --> G{"Evidence accepted?"}
+    G -->|"No"| H["Keep staged candidate and retry"]
+    G -->|"Yes"| I["Read and verify current code sectors"]
+    I --> J{"Code still matches?"}
+    J -->|"No"| H
+    J -->|"Yes"| K["Consume capture and commit"]
 ```
 
-The backup is a complete 512 KiB target image. The wrapper overlays the candidate HEX onto the sectors it touches, journals the expected image and exact artifact hashes, stages through west with `--dev-id`, `--frequency 4000000`, and pyOCD `--no-reset`, then compares a full-flash readback with that expected overlay before allowing the target to reset ([flash_verified_mesh.py:204-245](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L204-L245), [flash_verified_mesh.py:510-577](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L510-L577)). The artifact hashes are checked again around staging so a rebuild or replacement during the transaction cannot inherit the earlier eligibility result ([flash_verified_mesh.py:292-300](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L292-L300), [flash_verified_mesh.py:560-587](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L560-L587)).
+Promotion validates the manifest, build, probe, and durable staging journal before touching target state. Its readback compares the code-sector hash map recorded at staging, so ordinary NVS changes caused by qualification are allowed while any code drift fails closed. A mismatch, stale manifest, malformed evidence, or failure before the deployment record becomes durable preserves the staged image and returns the journal to `awaiting_qualification`; an ambiguous or malformed ledger fails closed with the transaction intact for diagnosis. An exact capture is consumed once only after the deployment record is durable. Promotion never invokes west or writes firmware.
 
-After readback passes, the wrapper resets the staged image, invokes the qualification capture itself, verifies that the new manifest matches the exact build and selected probe, synchronizes the manifest and transcript, and durably appends the capture ID to the one-time consumption ledger before committing and cleaning up the transaction ([flash_verified_mesh.py:577-612](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L577-L612)). Reusing a capture is rejected, and selecting a different probe than the manifest records is also rejected ([flash_verified_mesh.py:419-442](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L419-L442)).
-
-Failure is explicit and intentionally does not roll the target back. The wrapper resets the board and removes local transaction state after an ordinary failure, while leaving the staged candidate available for bench diagnosis; an interrupted transaction is handled the same way on the next invocation ([flash_verified_mesh.py:377-387](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L377-L387), [flash_verified_mesh.py:613-626](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L613-L626)). The board may contain the candidate after a failed qualification, but the capture is not consumed and repository deployment eligibility has not succeeded.
-
-Sources: [flash_verified_mesh.py:204-300](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L204-L300), [flash_verified_mesh.py:419-453](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L419-L453), [flash_verified_mesh.py:510-656](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L510-L656)
+Sources: [flash_verified_mesh.py](../../firmware/scripts/flash_verified_mesh.py), [capture_stack_evidence.py](../../firmware/scripts/capture_stack_evidence.py), [test_flash_verified_mesh.py](../../firmware/tests/mesh_integration/test_flash_verified_mesh.py)
 <!-- END:AUTOGEN imec2-11-verified-deployment-verified-flash -->
 
 ---

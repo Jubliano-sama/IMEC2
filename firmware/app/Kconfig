@@ -208,6 +208,18 @@ config IMEC_STACK_DIAGNOSTICS
       ELF can be tied to a hardware capture. Interrupt-stack output is explicit
       configuration evidence only; Zephyr has no supported ISR high-water mark.
 
+config IMEC_STACK_STRESS_DIAGNOSTICS
+    bool "Enable embedded stack stress diagnostics"
+    depends on IMEC_STACK_DIAGNOSTICS && STACK_CANARIES
+    depends on HW_STACK_PROTECTION
+    help
+      Adds compiler stack canaries and retained fatal thread/stack context.
+      Existing typed workload samples already record each thread's stack
+      watermark without a periodic analyzer thread or nested logger output.
+      This option does not change any configured stack size. CMake exposes it
+      only through IMEC_STACK_STRESS_BUILD on the exact mesh_clicker,
+      mesh_anchor, and mesh_gateway presets.
+
 config IMEC_DS_TWR_RTT_DEBUG
     bool "Emit compact DS-TWR stage diagnostics over RTT"
     help

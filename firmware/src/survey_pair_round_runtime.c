@@ -428,7 +428,10 @@ int survey_pair_round_runtime_note_sample(
     if (runtime == NULL || sample == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!runtime->active || survey_sample_validate(sample) != PROTO_OK ||
+    if (!runtime->active || sample->round_id != runtime->batch_sequence) {
+        return PROTO_ERR_STALE;
+    }
+    if (survey_sample_validate(sample) != PROTO_OK ||
         sample->sample_index >= SURVEY_PAIR_ROUND_RUNTIME_MAX_RESULT_SAMPLES ||
         (reporter_id != sample->pair.initiator_id &&
          reporter_id != sample->pair.responder_id)) {

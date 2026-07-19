@@ -837,6 +837,30 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         close = function_body(REPORT, "mesh_close_channel9_connection")
         self.assertIn("mesh_event_accept_rx_clear_peer(peer_id)", close)
 
+    def test_stale_proposal_is_rejected_before_active_timing_replacement(self):
+        handler_source = REPORT[
+            REPORT.rindex("static bool mesh_handle_event_control") :
+        ]
+        handler = function_body(handler_source, "mesh_handle_event_control")
+        proposal = handler.index("packet->msg_type == MSG_MESH_EVENT_PROPOSE")
+        duplicate = handler.index("mesh_event_accept_duplicate", proposal)
+        classify = handler.index("mesh_event_owner_classify_proposal", duplicate)
+        reject = handler.index(
+            "owner_decision != MESH_EVENT_OWNER_APPLY", classify
+        )
+        active_lookup = handler.index(
+            "mesh_find_active_channel9_timing", reject
+        )
+        reserve = handler.index("app_mesh_c5_event_accept_reservation", active_lookup)
+        prepare_accept = handler.index("mesh_prepare_event_control_record", reserve)
+
+        self.assertLess(duplicate, classify)
+        self.assertLess(classify, reject)
+        self.assertIn("return true", handler[reject:active_lookup])
+        self.assertLess(reject, active_lookup)
+        self.assertLess(active_lookup, reserve)
+        self.assertLess(reserve, prepare_accept)
+
 
 if __name__ == "__main__":
     unittest.main()

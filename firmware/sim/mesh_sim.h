@@ -3,6 +3,7 @@
 
 #include "mesh.h"
 #include "mesh_capacity.h"
+#include "mesh_event_owner.h"
 #include "mesh_relay.h"
 #include "mesh_radio_timing.h"
 #include "mesh_runtime.h"
@@ -27,13 +28,20 @@ struct mesh_sim_world;
 #define MESH_SIM_MAX_RX_WINDOWS 512u
 #define MESH_SIM_MAX_TRANSMISSIONS 512u
 #define MESH_SIM_MAX_RECEPTIONS 1024u
-#define MESH_SIM_MAX_TRANSITIONS 2048u
+/* Preserve a complete 300-step adversarial replay instead of a lossy tail. */
+#define MESH_SIM_MAX_TRANSITIONS 8192u
+#define MESH_SIM_MAX_DISPATCHES_PER_RUN (MESH_SIM_MAX_TRANSITIONS * 2u)
+#define MESH_SIM_MAX_SAME_TIME_DISPATCHES 1024u
 #define MESH_SIM_TX_QUEUE_CAPACITY 16u
 #define MESH_SIM_DELIVERY_CAPACITY 256u
+#define MESH_SIM_FAULT_RATE_SCALE 10000u
 #define MESH_SIM_SLOT_TX_OFFSET_US \
     ((uint32_t)MESH_RADIO_EVENT_TX_OFFSET_MS * 1000u)
 #define MESH_SIM_WATCHDOG_PRODUCTION_TIMEOUT_US UINT64_C(180000000)
 #define MESH_SIM_WATCHDOG_PRODUCTION_LEASE_US UINT64_C(120000000)
+#define MESH_SIM_C5_RESPONSE_RX_DELAY_US 250u
+#define MESH_SIM_C5_RESPONSE_TX_DELAY_US 1000u
+#define MESH_SIM_C5_RESPONSE_RX_WINDOW_US 10000u
 
 enum mesh_sim_status {
     MESH_SIM_OK = 0,
@@ -50,6 +58,7 @@ enum mesh_sim_status {
     MESH_SIM_ERR_CONNECTION_PLAN = -1010,
     MESH_SIM_ERR_SENDER_PLAN = -1011,
     MESH_SIM_ERR_RADIO_DEADLINE = -1012,
+    MESH_SIM_ERR_LIVENESS = -1013,
 };
 
 enum mesh_sim_watchdog_action {
@@ -159,7 +168,41 @@ enum mesh_sim_transition_kind {
     MESH_SIM_TRANSITION_CONNECTION_EVENTS_SKIPPED = 31,
     MESH_SIM_TRANSITION_WATCHDOG_WORKER_ABORTED = 32,
     MESH_SIM_TRANSITION_SCHEDULER_MARKER = 33,
+    MESH_SIM_TRANSITION_FAULT_DELAYED = 34,
+    MESH_SIM_TRANSITION_FAULT_FRAME_DROPPED = 35,
+    MESH_SIM_TRANSITION_FAULT_ACK_DROPPED = 36,
+    MESH_SIM_TRANSITION_FAULT_DUPLICATED = 37,
+    MESH_SIM_TRANSITION_PACKET_COALESCED = 38,
     MESH_SIM_TRANSITION_COUNT,
+};
+
+/*
+ * Deterministic receiver-side radio faults.  Rates are expressed in parts per
+ * MESH_SIM_FAULT_RATE_SCALE.  The seed owns a separate PRNG stream so enabling
+ * or disabling radio faults cannot perturb production-policy randomness.
+ */
+struct mesh_sim_fault_config {
+    uint32_t seed;
+    uint32_t max_extra_delay_us;
+    uint16_t frame_loss_permyriad;
+    uint16_t ack_loss_permyriad;
+    uint16_t duplicate_permyriad;
+    uint16_t delay_permyriad;
+};
+
+/* One peer's independently timed receive turn for a unicast C5 response. */
+struct mesh_sim_contact_response_timing {
+    uint32_t rx_delay_us;
+    uint32_t rx_window_us;
+    uint32_t tx_delay_us;
+};
+
+struct mesh_sim_fault_stats {
+    uint64_t receiver_decisions;
+    uint64_t delay_injections;
+    uint64_t frame_losses;
+    uint64_t ack_losses;
+    uint64_t duplicates;
 };
 
 struct mesh_sim_connection_action {
@@ -206,8 +249,13 @@ struct mesh_sim_transition {
     uint64_t time_us;
     uint64_t node_id;
     uint64_t peer_id;
+    uint64_t packet_src_id;
+    uint64_t packet_dst_id;
+    uint64_t fault_decision_ordinal;
+    uint32_t packet_session_id;
     enum mesh_sim_transition_kind kind;
     uint32_t detail;
+    uint16_t packet_seq;
     uint8_t msg_type;
 };
 
@@ -243,6 +291,17 @@ struct mesh_sim_queued_tx {
     bool valid;
 };
 
+struct mesh_sim_relay_timer_guard {
+    uint64_t src_id;
+    uint64_t dst_id;
+    uint32_t session_id;
+    uint32_t generation;
+    uint16_t seq;
+    uint8_t msg_type;
+    bool pending_owned;
+    bool valid;
+};
+
 struct mesh_sim_role_instance {
     enum mesh_sim_role role;
     enum mesh_sim_radio_state radio_state;
@@ -269,9 +328,12 @@ struct mesh_sim_role_instance {
     uint32_t gateway_semantic_commit_count;
     uint32_t gateway_semantic_rejection_count;
     uint32_t gateway_semantic_duplicate_ack_count;
+    uint32_t gateway_semantic_duplicate_redelivery_count;
     uint32_t runtime_action_duration_us[4];
     uint32_t next_relay_random;
     uint32_t work_epoch;
+    struct mesh_sim_relay_timer_guard relay_timer_guard;
+    uint16_t event_control_seq;
     uint16_t gateway_semantic_rejections_remaining;
     uint8_t node_index;
     uint8_t route_request_flags;
@@ -292,6 +354,8 @@ struct mesh_sim_connection {
     struct mesh_event_diagnostics diagnostics_b;
     struct mesh_event_timing repair_requester_timing;
     struct mesh_event_timing repair_peer_timing;
+    struct mesh_event_owner owner_a;
+    struct mesh_event_owner owner_b;
     uint64_t repair_start_us;
     uint64_t repair_end_us;
     uint32_t completed_events;
@@ -346,6 +410,12 @@ struct mesh_sim_transmission {
     uint64_t rmarker_rctu;
     uint64_t end_rctu;
     uint32_t work_epoch;
+    uint32_t fault_extra_delay_us[MESH_SIM_MAX_ROLES];
+    uint64_t fault_decision_ordinal[MESH_SIM_MAX_ROLES];
+    uint64_t fault_evaluated_receivers;
+    uint64_t fault_frame_loss_receivers;
+    uint64_t fault_ack_loss_receivers;
+    uint64_t fault_duplicate_receivers;
     uint8_t node_index;
     uint8_t channel;
     uint8_t protocol_msg_type;
@@ -355,6 +425,7 @@ struct mesh_sim_transmission {
     bool protocol_frame;
     bool has_outbound;
     bool dwm_runtime_owned;
+    bool fault_active;
     bool valid;
     uint8_t frame[PACKET_EXT_MAX_LEN];
     struct mesh_outbound outbound;
@@ -380,9 +451,20 @@ struct mesh_sim_world {
     uint64_t now_us;
     uint32_t channel9_tx_offset_us;
     uint32_t rng_state;
+    uint32_t fault_rng_state;
     uint32_t next_sequence;
     uint32_t next_enqueue_order;
     int last_error;
+    bool last_error_event_valid;
+    uint8_t last_error_event_type;
+    uint16_t last_error_event_object_index;
+    uint64_t last_error_event_time_us;
+    const char *last_error_file;
+    uint32_t last_error_line;
+    struct mesh_sim_fault_config fault_config;
+    struct mesh_sim_fault_stats fault_stats;
+    struct mesh_sim_contact_response_timing next_contact_response_timing;
+    bool next_contact_response_timing_valid;
     struct mesh_sim_role_instance roles[MESH_SIM_MAX_ROLES];
     struct mesh_gateway_ack_store gateway_ack_store;
     struct mesh_sim_connection connections[MESH_SIM_MAX_CONNECTIONS];
@@ -423,8 +505,16 @@ struct mesh_sim_world {
 };
 
 void mesh_sim_init(struct mesh_sim_world *world, uint32_t seed);
+int mesh_sim_set_fault_config(struct mesh_sim_world *world,
+                              const struct mesh_sim_fault_config *config);
+int mesh_sim_get_fault_stats(const struct mesh_sim_world *world,
+                             struct mesh_sim_fault_stats *stats);
 int mesh_sim_set_channel9_tx_offset_us(struct mesh_sim_world *world,
                                       uint32_t offset_us);
+/* Override exactly one subsequent paired unicast Channel-5 response turn. */
+int mesh_sim_override_next_contact_response_timing(
+    struct mesh_sim_world *world,
+    const struct mesh_sim_contact_response_timing *timing);
 uint32_t mesh_sim_random(struct mesh_sim_world *world);
 const struct mesh_sim_phy_profile *mesh_sim_phy_profile(enum mesh_sim_phy phy);
 uint32_t mesh_sim_frame_duration_us(enum mesh_sim_phy phy, size_t frame_len);
@@ -490,9 +580,16 @@ int mesh_sim_add_connection_over_radio(struct mesh_sim_world *world,
                                        const struct mesh_event_params *params,
                                        bool node_a_transmits_first,
                                        uint16_t *connection_index);
+int mesh_sim_renegotiate_connection_over_radio(
+    struct mesh_sim_world *world,
+    uint16_t connection_index,
+    uint8_t requester);
 int mesh_sim_schedule_next_connection_event(struct mesh_sim_world *world,
                                             uint16_t connection_index,
                                             bool receiver_preempted);
+int mesh_sim_expire_connection_ownership(struct mesh_sim_world *world,
+                                         uint16_t connection_index,
+                                         uint8_t *expired_endpoints);
 int mesh_sim_connection_next_action(const struct mesh_sim_world *world,
                                     uint16_t connection_index,
                                     struct mesh_sim_connection_action *action);
@@ -575,6 +672,9 @@ int mesh_sim_watchdog_arm(struct mesh_sim_world *world,
                           enum mesh_sim_watchdog_action action);
 int mesh_sim_watchdog_feed(struct mesh_sim_world *world,
                            uint8_t node_index);
+/* Inject a reboot boundary without changing the loaded simulated artifact. */
+int mesh_sim_reset_role(struct mesh_sim_world *world,
+                        uint8_t node_index);
 int mesh_sim_schedule_raw_tx(struct mesh_sim_world *world,
                              uint8_t node_index,
                              uint64_t start_us,
