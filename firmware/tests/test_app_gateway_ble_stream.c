@@ -219,6 +219,50 @@ static void test_click_evicts_lower_priority_diagnostic(void)
            MSG_CLICK_REPORT);
 }
 
+static void test_click_cannot_evict_durable_result_records(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_ble_stream_diagnostics diag;
+    struct send_capture capture = {0};
+    uint8_t payload[1] = {0u};
+    struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 1u);
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 20u);
+
+    gateway_ble_stream_init(&state);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        result.seq = i;
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &result,
+                                                 payload,
+                                                 sizeof(payload),
+                                                 0u,
+                                                 i,
+                                                 true) == 1);
+    }
+    assert(gateway_ble_stream_reserve_packet(&state,
+                                             &click,
+                                             payload,
+                                             sizeof(payload),
+                                             0u,
+                                             20u,
+                                             true) == -ENOSPC);
+    assert(!state.reservation_active);
+    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    gateway_ble_stream_get_diagnostics(&state, 20u, &diag);
+    assert(diag.drops_priority == 0u);
+    assert(diag.drops_queue_full == 1u);
+    assert(gateway_ble_stream_drain(&state,
+                                    capture_send,
+                                    &capture,
+                                    30u,
+                                    true,
+                                    GATEWAY_BLE_STREAM_QUEUE_DEPTH) ==
+           GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        assert(capture.msg_types[i] == MSG_COMMAND_RESULT);
+    }
+}
+
 static void test_retained_assignment_event_survives_click_eviction(void)
 {
     struct gateway_ble_stream_state state;
@@ -713,6 +757,7 @@ int main(void)
     test_max_size_click_is_preserved_and_oversize_is_rejected();
     test_disconnected_full_queue_counts_not_ready();
     test_click_evicts_lower_priority_diagnostic();
+    test_click_cannot_evict_durable_result_records();
     test_retained_assignment_event_survives_click_eviction();
     test_terminal_command_event_evicts_lower_priority_status();
     test_fast_drain_and_counters();

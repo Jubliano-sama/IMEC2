@@ -287,6 +287,11 @@ add_test(NAME gateway_durable_accept_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_durable_accept_source_invariants.py)
 set_tests_properties(gateway_durable_accept_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway;survey;static_analysis")
+add_test(NAME click_ble_custody_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_ble_custody_source_invariants.py)
+set_tests_properties(click_ble_custody_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;gateway;click;ble;static_analysis")
 add_test(NAME assignment_claim_semantic_acceptance
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py)
@@ -1119,6 +1124,17 @@ add_test(NAME mesh_click_report_delivery_sweep
 set_tests_properties(mesh_click_report_delivery_sweep
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;stress;click;network_stress")
 
+add_executable(test_mesh_click_protocol_chain_scenarios
+    tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c
+    app/src/app_gateway_ble_stream.c
+)
+target_include_directories(test_mesh_click_protocol_chain_scenarios PRIVATE app/src)
+target_link_libraries(test_mesh_click_protocol_chain_scenarios PRIVATE mesh_sim)
+add_test(NAME mesh_click_protocol_chain_scenarios
+    COMMAND test_mesh_click_protocol_chain_scenarios)
+set_tests_properties(mesh_click_protocol_chain_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;click;wake;protocol;communication;delivery;ble;network_stress")
+
 add_executable(test_mesh_gateway_ble_scenarios
     tests/mesh_integration/test_mesh_gateway_ble_scenarios.c
     app/src/app_gateway_ble_stream.c
@@ -1128,7 +1144,18 @@ target_link_libraries(test_mesh_gateway_ble_scenarios PRIVATE mesh_sim)
 add_test(NAME mesh_gateway_ble_scenarios
     COMMAND test_mesh_gateway_ble_scenarios)
 set_tests_properties(mesh_gateway_ble_scenarios
-    PROPERTIES LABELS "mesh_integration;simulator;ble")
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;ble")
+
+add_executable(test_gateway_ble_pressure_scenarios
+    tests/mesh_integration/test_gateway_ble_pressure_scenarios.c
+    app/src/app_gateway_ble_stream.c
+)
+target_include_directories(test_gateway_ble_pressure_scenarios PRIVATE app/src)
+target_link_libraries(test_gateway_ble_pressure_scenarios PRIVATE core)
+add_test(NAME gateway_ble_pressure_scenarios
+    COMMAND test_gateway_ble_pressure_scenarios)
+set_tests_properties(gateway_ble_pressure_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;ble;stress;delivery")
 
 add_executable(test_mesh_app_arbitration_scenarios
     tests/mesh_integration/test_mesh_app_arbitration_scenarios.c
@@ -1338,11 +1365,13 @@ set_property(TEST
     uwb
     uwb_session
     dwm3000_models
+    gateway_ble_transport_model
     gateway_collection_journal
     gateway_eack_policy
     app_gateway_eack_retry
     gateway_eack_retry_source_invariants
     gateway_durable_accept_source_invariants
+    click_ble_custody_source_invariants
     assignment_claim_semantic_acceptance
     assignment_state_serialization_source_invariants
     app_gateway_assignment_publisher
@@ -1361,6 +1390,7 @@ set_property(TEST
     mesh_direct_probe_recovery_scenarios
     mesh_integration
     mesh_production_scenarios
+    mesh_runtime_priority_scenarios
     mesh_wake_scenarios
     mesh_forcedhop_connection_scenarios
     mesh_route_formation_scenarios
@@ -1388,6 +1418,11 @@ set_property(TEST
     mesh_post_operation_liveness_scenarios
     mesh_click_collision_sweep
     mesh_click_report_delivery_sweep
+    mesh_click_protocol_chain_scenarios
+    mesh_gateway_ble_scenarios
+    gateway_ble_pressure_scenarios
+    mesh_network_stress_scenarios
+    mesh_watchdog_lease_scenarios
     mesh_app_arbitration_scenarios
     mesh_stress_busy_line_reset
     mesh_stress_one_hop_fault_replay

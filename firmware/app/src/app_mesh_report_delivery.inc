@@ -2670,8 +2670,17 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                         pending->payload_len,
                         pending->received_at_ms,
                         k_msgq_num_used_get(&mesh_rx_msgq));
+                } else if (semantic_ret ==
+                               APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
+                           !internal_control) {
+                    gateway_ble_cancel_stream_reservation();
                 } else if (!internal_control) {
                     gateway_ble_cancel_stream_reservation();
+                    LOG_ERR("gateway semantic delivery returned invalid acceptance without ACK: msg=0x%02x src=0x%016llx ret=%d",
+                            pending->packet.msg_type,
+                            (unsigned long long)pending->packet.src_id,
+                            semantic_ret);
+                    continue;
                 }
 
                 ret = gateway_finalize_semantic_delivery(

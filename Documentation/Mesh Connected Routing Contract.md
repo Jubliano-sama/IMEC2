@@ -215,11 +215,12 @@ partial assignment or survey results into total firmware failure.
   load source transmitting while the real anchor exercises click priority.
 - Hop-level ACK and gateway-level ACK are separate. Hop ACK proves next-hop
   reception. Gateway ACK proves final gateway acceptance.
-- For gateway-local command results, result bundles, survey discovery reports,
-  and survey pair results, final acceptance is delayed until the owning
-  protocol validates the complete message and durably commits any required
-  state. The gateway reserves capacity for the complete host record before that
-  mutation, commits a newly accepted record to the BLE stream before sending
+- For gateway-local click reports, command results, result bundles, survey
+  discovery reports, and survey pair results, final acceptance is delayed
+  until the complete message is validated and any required protocol state is
+  durably committed. The gateway reserves capacity for the complete host record
+  before accepting transport custody or applying a protocol mutation, commits
+  a newly accepted record to the BLE stream before sending
   its semantic completion response, and cancels the reservation for an exact
   duplicate so the host sees one record. Before those commits, the gateway must
   neither remember the packet as a duplicate nor emit its gateway ACK. A full

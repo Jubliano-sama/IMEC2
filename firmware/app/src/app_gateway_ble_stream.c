@@ -217,6 +217,15 @@ static bool drop_one_lower_priority(struct gateway_ble_stream_state *state,
         if (state->items[i].retain_until_sent) {
             continue;
         }
+        /*
+         * Results, surveys, and command events may already own durable
+         * protocol custody.  Only best-effort diagnostics and status records
+         * may be displaced by a higher-priority click.
+         */
+        if (queued_priority <
+            priority_for_class(GATEWAY_BLE_STREAM_CLASS_DIAGNOSTIC)) {
+            continue;
+        }
         if (queued_priority > best_priority) {
             best_priority = queued_priority;
             best_offset = i;

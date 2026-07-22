@@ -2024,6 +2024,7 @@ static bool gateway_delivery_requires_commit(
     }
 
     switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
     case MSG_SURVEY_DISCOVERY_REPORT:

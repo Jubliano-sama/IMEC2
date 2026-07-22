@@ -64,6 +64,12 @@ no direct-delivery fallback.
 - a 3 ms low-duty channel-5 scan observing preamble activity but timing out;
 - a fully contained frame decoding successfully;
 - two overlapping transmissions colliding instead of decoding;
+- one joined click chain carrying wake ownership, discovery, schedule, exact-
+  airtime POLL/RESP/FINAL/REPORT codecs, a generated click report, two relays,
+  direct gateway custody, and BLE credit recovery; the UWB frame-to-state
+  adapter remains explicit rather than instantiating the Zephyr role handlers;
+- BLE queue-capacity, CCC-disabled, credit-stall, disconnect/retry, FIFO, and
+  durable-result priority pressure with exact drain accounting;
 - a truncated first route request, TTL expansion, two-relay request/reply
   formation, exact discovery identity and nonce preservation, and usable routes;
 - three and eight eligible responders occupying distinct bounded randomized

@@ -6958,6 +6958,7 @@ static void test_gateway_reaches_anchor_behind_relay_and_receives_result(void)
 static void test_gateway_semantic_delivery_requires_commit_before_ack(void)
 {
     static const uint8_t semantic_types[] = {
+        MSG_CLICK_REPORT,
         MSG_COMMAND_RESULT,
         MSG_RESULT_BUNDLE,
         MSG_SURVEY_DISCOVERY_REPORT,
@@ -7495,7 +7496,7 @@ static void test_gateway_shared_history_handles_unbatched_and_batch_churn(void)
                              &click_payload_len,
                              TLV_REASON,
                              (uint8_t)unbatched_index) == PROTO_OK);
-        assert(report_init_click_packet(&click,
+        assert(report_init_self_test_packet(&click,
                                         ANCHOR_A,
                                         GATEWAY,
                                         UINT32_C(0xb1000000) +
@@ -7536,7 +7537,7 @@ static void test_gateway_shared_history_handles_unbatched_and_batch_churn(void)
                              &click_payload_len,
                              TLV_MESH_CH9_BATCH_FLAGS,
                              1u) == PROTO_OK);
-        assert(report_init_click_packet(&click,
+        assert(report_init_self_test_packet(&click,
                                         ANCHOR_A,
                                         GATEWAY,
                                         UINT32_C(0xb9000000) +
@@ -7568,7 +7569,7 @@ static void test_gateway_shared_history_handles_unbatched_and_batch_churn(void)
                               TLV_MESH_CH9_BATCH_ID,
                               UINT32_C(0xc0000000) + (uint32_t)origin_index) ==
                PROTO_OK);
-        assert(report_init_click_packet(&click,
+        assert(report_init_self_test_packet(&click,
                                         origin_id,
                                         GATEWAY,
                                         UINT32_C(0xc1000000) +
@@ -7707,7 +7708,7 @@ static void test_gateway_acceptance_survives_full_origin_batches_and_churn(void)
                        packet_index + 1u ==
                                MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN ?
                            1u : 0u) == PROTO_OK);
-            assert(report_init_click_packet(&intervening_click,
+            assert(report_init_self_test_packet(&intervening_click,
                                             origin_id,
                                             GATEWAY,
                                             UINT32_C(0x91000000) + identity,
@@ -7742,7 +7743,7 @@ static void test_gateway_acceptance_survives_full_origin_batches_and_churn(void)
                              &click_payload_len,
                              TLV_MESH_CH9_BATCH_FLAGS,
                              1u) == PROTO_OK);
-        assert(report_init_click_packet(&intervening_click,
+        assert(report_init_self_test_packet(&intervening_click,
                                         origin_base +
                                             MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX,
                                         GATEWAY,
@@ -7778,7 +7779,7 @@ static void test_gateway_acceptance_survives_full_origin_batches_and_churn(void)
                              &click_payload_len,
                              TLV_MESH_CH9_BATCH_FLAGS,
                              1u) == PROTO_OK);
-        assert(report_init_click_packet(&intervening_click,
+        assert(report_init_self_test_packet(&intervening_click,
                                         origin_base + 1u,
                                         GATEWAY,
                                         UINT32_C(0xa1000000) + (uint32_t)batch_index,
@@ -7876,7 +7877,7 @@ static void test_gateway_delivery_commit_rejects_invalid_contract(void)
                                               &result) == PROTO_ERR_ARG);
 
     invalid = packet;
-    invalid.msg_type = MSG_CLICK_REPORT;
+    invalid.msg_type = MSG_SELF_TEST_REPORT;
     assert(mesh_relay_commit_gateway_delivery(&gateway,
                                               &invalid,
                                               payload,
@@ -8164,6 +8165,14 @@ static void test_duplicate_retry_repairs_lost_gateway_ack(void)
                                 2030u,
                                 &gateway_result) == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &relay_tx.packet,
+                                              relay_tx.payload,
+                                              relay_tx.payload_len,
+                                              ANCHOR_B,
+                                              2031u,
+                                              &gateway_result) == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
     assert(!mesh_relay_tx_active(&relay));
 
@@ -9077,6 +9086,14 @@ static void test_reactive_route_and_report_flow_over_uwb_mesh_frames(void)
                                 1070u,
                                 &gateway_result) == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &decoded_packet,
+                                              decoded_payload,
+                                              decoded_payload_len,
+                                              previous_hop_id,
+                                              1071u,
+                                              &gateway_result) == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
 }
 
@@ -10297,6 +10314,14 @@ static void test_channel9_report_delivery_and_gateway_ack_require_events(void)
                                 3010u,
                                 &gateway_result) == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(!has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &tx.packet,
+                                              tx.payload,
+                                              tx.payload_len,
+                                              ANCHOR_A,
+                                              3011u,
+                                              &gateway_result) == PROTO_OK);
     assert(has_action(&gateway_result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
     assert(gateway_result.gateway_ack.next_hop_id == ANCHOR_A);
 

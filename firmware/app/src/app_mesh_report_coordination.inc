@@ -1123,6 +1123,7 @@ static bool mesh_gateway_delivery_requires_semantic_acceptance(
     }
 
     switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
     case MSG_SURVEY_DISCOVERY_REPORT:
@@ -1170,6 +1171,13 @@ static int mesh_gateway_accept_semantic_delivery(
                             &pending->current_channel9_plan : NULL;
 
     switch (pending->packet.msg_type) {
+    case MSG_CLICK_REPORT:
+        /*
+         * Click identity is committed by the relay runtime after the BLE
+         * reservation is committed.  Treat a new click as semantically
+         * accepted here so gateway ACK cannot precede host-output custody.
+         */
+        return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     case MSG_COMMAND_RESULT:
         return gateway_note_command_result(&pending->packet,
                                            pending->payload,
