@@ -29,6 +29,8 @@ Despite these significant advancements in software architecture and signal proce
 ## The Ambition
 This project should leverage electronic integration to capture richer data. By tracking the spatial location of these clicks, we can analyze how specific room layouts or furnishings facilitate or hinder office behavior. Furthermore, correlating these manual inputs with ambient data—such as temperature or humidity—allows us to observe how the environment dictates social friction.
 
+**Current scope addition**: Automated anchor self-setup. The system can now discover and solve the 3D geometry of the anchor network using only measured anchor-to-anchor distances plus an approximate minimum radio radius. This removes the need for manual anchor positioning surveys.
+
 To achieve this, the proposed device must transcend the limitations of the mechanical prototype. The Click-IO study explicitly noted that the lack of timestamps prevented researchers from knowing exactly when an event occurred, limiting the analysis to aggregate counts per session. By integrating a microcontroller, this project aims to log the precise millisecond of every input. This temporal granularity is critical; it allows us to overlay human feedback directly onto high-frequency environmental data, revealing if a specific spike in noise or $CO_2$ correlates with an immediate loss of concentration.
 
 Furthermore, the mechanical system relied on manual scanning at "localization poles," a process that introduced significant user error as participants frequently forgot to check in when moving between zones. The ambition is to automate this process through wireless localization. This ensures spatial context is captured passively and accurately without disrupting the user's workflow or relying on their memory. Finally, participants in the previous study expressed a desire for the data to be communicated back to them to support self-reflection, rather than just serving as a data extraction tool.
@@ -41,3 +43,4 @@ Furthermore, the mechanical system relied on manual scanning at "localization po
 | [[02-02-2026 Internship]] | Initial Creation |
 | [[03-02-2026 Internship]] | — Better flow and readability<br>— Elaborate on previous research<br>— Expound the ambition |
 | [[10-02-2026 Internship]] | Added 'The First Electronic Attempt' detailing previous work |
+| 2026-07 (agent update) | Added note on anchor self-setup protocol now in scope (automated geometry solving from inter-anchor distances) |

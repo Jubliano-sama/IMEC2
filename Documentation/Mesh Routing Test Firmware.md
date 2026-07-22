@@ -149,7 +149,15 @@ ctest --test-dir firmware/build --output-on-failure
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-transmitter -- -DIMEC_BUILD_PRESET=mesh_transmitter
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-transmitter-forcedhop -- -DIMEC_BUILD_PRESET=mesh_transmitter_forcedhop
 .venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor -- -DIMEC_BUILD_PRESET=mesh_anchor
+.venv/bin/west build --no-sysbuild -s firmware/app -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor-forcedhop -- -DIMEC_BUILD_PRESET=mesh_anchor_forcedhop
 ```
+
+`mesh_anchor_forcedhop` is a bench-only diagnostic anchor. It rejects direct
+gateway control copies and refuses to satisfy gateway-bound route acquisition
+with direct contact, so survey discovery, pair control, and report custody must
+cross another anchor even when all boards remain beside the debugger. It keeps
+the hardware-derived anchor identity and must not replace `mesh_anchor` in a
+deployment.
 
 Expected build results:
 
