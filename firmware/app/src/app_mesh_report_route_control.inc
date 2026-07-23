@@ -14,6 +14,78 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     return ret;
 }
 
+/*
+ * A route-reply listener normally owns the extended-PHR control PHY.  A
+ * standard wake claim cannot be decoded in that mode, but the DW3000 still
+ * reports the preamble/PHY error as activity.  Use that activity as a bounded
+ * probe trigger: retune to the standard wake PHY long enough to catch the
+ * clicker's next repeated claim, then restore the route-control PHY before
+ * returning to the continuous listener.
+ *
+ * The radio remains owned by the caller throughout this helper.  A captured
+ * claim is returned to the caller while the standard PHY is still selected so
+ * the caller can release its guard and hand the claim to the normal click
+ * sequence exactly once.
+ */
+static int mesh_probe_standard_click_claim(
+    uint8_t *frame,
+    size_t frame_cap,
+    struct uwb_wake_claim_frame *click_claim,
+    uint8_t *click_quality,
+    uint32_t *click_observed_ms)
+{
+    enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+    size_t frame_len = 0u;
+    uint8_t quality = 0u;
+    int ret;
+
+    if (frame == NULL || frame_cap == 0u || click_claim == NULL ||
+        click_quality == NULL || click_observed_ms == NULL) {
+        return -EINVAL;
+    }
+
+    ret = dwm3000_driver_configure_wake_mode();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
+        MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS,
+        ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
+        frame,
+        frame_cap,
+        &frame_len,
+        &quality,
+        NULL,
+        &rx_failure);
+    if (ret == 0 &&
+        mesh_frame_requires_anchor_click_handoff(frame,
+                                                 frame_len,
+                                                 click_claim)) {
+        *click_quality = quality;
+        *click_observed_ms = k_uptime_get_32();
+        status_debug_printf("DBG_ROUTE_REPLY_CLICK_PROBE_CAPTURE evt=%u attempt=%u q=%u\n",
+                            click_claim->click_event_id,
+                            click_claim->attempt_index,
+                            quality);
+        return 1;
+    }
+
+    /* A timeout, malformed standard frame, or another PHY's activity all
+     * consume this bounded opportunity but leave no claim to hand off. */
+    ret = app_wake_train_politeness_rx_activity(ret, rx_failure) ?
+          0 : ret;
+    if (ret != 0 && ret != -ETIMEDOUT) {
+        return ret;
+    }
+
+    ret = dwm3000_driver_configure_wake_mesh_control_mode();
+    if (ret < 0) {
+        return ret;
+    }
+    return 0;
+}
+
 #if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_same_tlv_value(const uint8_t *lhs,
                                 size_t lhs_len,
@@ -86,6 +158,10 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
     uint32_t deadline_ms;
     uint32_t latest_deadline_ms = 0u;
     bool captured = false;
+    bool click_captured = false;
+    struct uwb_wake_claim_frame click_claim = {0};
+    uint8_t click_quality = 0u;
+    uint32_t click_observed_ms = 0u;
     uint8_t capture_quality = 0u;
     int last_ret = -ETIMEDOUT;
     int ret;
@@ -169,6 +245,17 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
             {
                 bool embedded_route_frame = false;
                 bool click_priority = false;
+
+                if (mesh_frame_requires_anchor_click_handoff(frame,
+                                                             frame_len,
+                                                             &click_claim)) {
+                    click_captured = true;
+                    click_quality = quality;
+                    click_observed_ms = k_uptime_get_32();
+                    last_ret = -EAGAIN;
+                    status_debug_note("DBG_ROUTE_REPLY_ACK_CLICK_CAPTURE\n");
+                    break;
+                }
 
                 if (mesh_handle_channel5_wake_claim(frame,
                                                     frame_len,
@@ -282,6 +369,15 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
 
 out_unlock:
     k_mutex_unlock(&mesh_route_reply_ack_scratch_lock);
+    if (click_captured) {
+        bool handled;
+
+        mesh_c5_contact_clear("click-preempt");
+        handled = mesh_handoff_anchor_click_claim(&click_claim,
+                                                  click_quality,
+                                                  click_observed_ms);
+        return handled ? -EAGAIN : -EIO;
+    }
     return ret;
 }
 #endif
@@ -2337,6 +2433,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     bool captured_route_reply = false;
     bool yielded_to_competing_route_request = false;
     bool hold_post_rx_response_contact = false;
+    bool click_captured = false;
+    struct uwb_wake_claim_frame click_claim = {0};
+    uint8_t click_quality = 0u;
+    uint32_t click_observed_ms = 0u;
     bool rx_failure_diagnostic_logged = false;
     atomic_val_t route_ready_generation;
     int64_t uwb_window_start_ms = -1;
@@ -2437,6 +2537,28 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 continue;
             }
             if (ret < 0) {
+                if (DEVICE_ROLE == ROLE_ANCHOR &&
+                    app_wake_train_politeness_rx_activity(ret, rx_failure)) {
+                    int probe_ret = mesh_probe_standard_click_claim(
+                        frame,
+                        UWB_MESH_MAX_FRAME_LEN,
+                        &click_claim,
+                        &click_quality,
+                        &click_observed_ms);
+
+                    if (probe_ret > 0) {
+                        click_captured = true;
+                        last_ret = -EAGAIN;
+                        status_debug_note("DBG_ROUTE_REPLY_CLICK_PREEMPT_PROBE\n");
+                        break;
+                    }
+                    if (probe_ret < 0) {
+                        last_ret = probe_ret;
+                        status_debug_printf("DBG_ROUTE_REPLY_CLICK_PROBE_FAIL ret=%d\n",
+                                            probe_ret);
+                        break;
+                    }
+                }
                 if (!rx_failure_diagnostic_logged &&
                     IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     struct dwm3000_rx_debug_snapshot snapshot = {0};
@@ -2478,6 +2600,17 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             {
                 bool embedded_route_frame = false;
                 bool click_priority = false;
+
+                if (mesh_frame_requires_anchor_click_handoff(frame,
+                                                             frame_len,
+                                                             &click_claim)) {
+                    click_captured = true;
+                    click_quality = quality;
+                    click_observed_ms = k_uptime_get_32();
+                    last_ret = -EAGAIN;
+                    status_debug_note("DBG_ROUTE_REPLY_CLICK_CAPTURE\n");
+                    break;
+                }
 
                 if (mesh_handle_channel5_wake_claim(frame,
                                                     frame_len,
@@ -2912,6 +3045,15 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     } else {
         mesh_c5_contact_clear(capture_count > 0u ? "reply-listen-done" :
                               "reply-listen-timeout");
+    }
+    if (click_captured) {
+        bool handled;
+
+        mesh_c5_contact_clear("click-preempt");
+        handled = mesh_handoff_anchor_click_claim(&click_claim,
+                                                  click_quality,
+                                                  click_observed_ms);
+        return handled ? -EAGAIN : -EIO;
     }
     if (yielded_to_competing_route_request) {
         return -EAGAIN;

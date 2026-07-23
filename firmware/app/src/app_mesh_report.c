@@ -171,6 +171,11 @@ BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
     (MESH_ROUTE_WAKE_CLICK_RX_PERIOD_MS + \
      (MESH_ROUTE_WAKE_MAX_TX_PER_RX_CHECK * UWB_CONTROL_TX_TIMEOUT_MS) + \
      ((UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US + 999u) / 1000u))
+#define MESH_ROUTE_REPLY_CLICK_PROBE_RETUNE_GUARD_MS \
+    MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS
+#define MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS \
+    (MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS + \
+     (2u * MESH_ROUTE_REPLY_CLICK_PROBE_RETUNE_GUARD_MS))
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC0 0x4du
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC1 0x52u
 #define MESH_ROUTE_WAKE_ROUTE_VERSION 1u
@@ -240,6 +245,8 @@ BUILD_ASSERT(MESH_ROUTE_DISCOVERY_MIN_PAYLOAD_LEN >
              "mandatory route ancestry requires the standalone control frame");
 BUILD_ASSERT(MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS < WAKE_ADV_MS,
              "route wake TX gaps must leave a click receive opportunity inside one wake train");
+BUILD_ASSERT(MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS < WAKE_ADV_MS,
+             "route reply PHY probe must fit inside the repeated click wake train");
 BUILD_ASSERT(MESH_ROUTE_REPLY_LISTEN_WORST_CASE_MS <
              APP_WATCHDOG_PROGRESS_LEASE_MS,
              "worst-case route reply listen must fit inside the watchdog progress lease");
@@ -693,6 +700,12 @@ static bool mesh_handoff_anchor_click_claim(
     const struct uwb_wake_claim_frame *claim,
     uint8_t quality,
     uint32_t observed_packet_ms);
+static int mesh_probe_standard_click_claim(
+    uint8_t *frame,
+    size_t frame_cap,
+    struct uwb_wake_claim_frame *click_claim,
+    uint8_t *click_quality,
+    uint32_t *click_observed_ms);
 static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   uint8_t purpose,
                                   const char *reason,

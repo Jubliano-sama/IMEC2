@@ -126,6 +126,35 @@ int mesh_sim_schedule_rx(struct mesh_sim_world *world,
     return mesh_sim_scheduler_schedule(world, SIM_EVENT_RX_END, end_us, index);
 }
 
+int mesh_sim_schedule_rx_observe_phy_activity(
+    struct mesh_sim_world *world,
+    uint8_t node_index,
+    uint64_t start_us,
+    uint64_t end_us,
+    uint8_t channel,
+    enum mesh_sim_phy phy,
+    uint16_t *window_index)
+{
+    uint16_t index;
+    int ret;
+
+    ret = mesh_sim_schedule_rx(world,
+                               node_index,
+                               start_us,
+                               end_us,
+                               channel,
+                               phy,
+                               &index);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    world->rx_windows[index].observe_phy_activity = true;
+    if (window_index != NULL) {
+        *window_index = index;
+    }
+    return MESH_SIM_OK;
+}
+
 int mesh_sim_schedule_rx_extend_on_activity(struct mesh_sim_world *world,
                                             uint8_t node_index,
                                             uint64_t start_us,
@@ -1255,11 +1284,16 @@ int mesh_sim_radio_evaluate_transmission(
             uint64_t preamble_overlap_end;
             enum mesh_sim_rx_outcome outcome;
             bool complete;
+            bool phy_match;
             int ret;
 
             if (!radio_rx_window_work_current(world, window) ||
                 window->node_index != receiver_index ||
-                window->channel != tx->channel || window->phy != tx->phy) {
+                window->channel != tx->channel) {
+                continue;
+            }
+            phy_match = window->phy == tx->phy;
+            if (!phy_match && !window->observe_phy_activity) {
                 continue;
             }
             preamble_overlap_start = window->start_rctu > arrival_start ?
@@ -1283,7 +1317,10 @@ int mesh_sim_radio_evaluate_transmission(
                                          window)) {
                 outcome = MESH_SIM_RX_COLLISION;
             } else if (complete) {
-                outcome = MESH_SIM_RX_DECODED;
+                /* A same-channel frame with the wrong PHR/PHY is visible as
+                 * RF activity, but the DW3000 cannot decode it. */
+                outcome = phy_match ? MESH_SIM_RX_DECODED :
+                                      MESH_SIM_RX_DECODE_ERROR;
             } else {
                 outcome = partial_outcome(tx->phy,
                                           arrival_start,
@@ -1424,7 +1461,8 @@ int mesh_sim_radio_note_preamble_at_tx_start(struct mesh_sim_world *world,
 
         if (!window->valid || window->node_index == tx->node_index ||
             !world->reachable[tx->node_index][window->node_index] ||
-            window->channel != tx->channel || window->phy != tx->phy) {
+            window->channel != tx->channel ||
+            (window->phy != tx->phy && !window->observe_phy_activity)) {
             continue;
         }
         arrival_start = tx->start_rctu +

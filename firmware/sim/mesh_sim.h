@@ -404,6 +404,9 @@ struct mesh_sim_rx_window {
     enum mesh_sim_phy phy;
     bool preamble_detected;
     bool extend_on_activity;
+    /* Observe same-channel traffic sent with a different PHY as RF activity;
+     * the receiver must report a decode failure, never a successful frame. */
+    bool observe_phy_activity;
     bool continuous_operation;
     bool periodic_low_duty;
     bool wake_claim_handoff;
@@ -651,6 +654,14 @@ int mesh_sim_schedule_rx(struct mesh_sim_world *world,
                          uint8_t channel,
                          enum mesh_sim_phy phy,
                          uint16_t *window_index);
+int mesh_sim_schedule_rx_observe_phy_activity(
+    struct mesh_sim_world *world,
+    uint8_t node_index,
+    uint64_t start_us,
+    uint64_t end_us,
+    uint8_t channel,
+    enum mesh_sim_phy phy,
+    uint16_t *window_index);
 int mesh_sim_schedule_rx_extend_on_activity(struct mesh_sim_world *world,
                                             uint8_t node_index,
                                             uint64_t start_us,
