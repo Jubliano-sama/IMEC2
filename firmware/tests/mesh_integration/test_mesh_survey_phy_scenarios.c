@@ -188,9 +188,19 @@ static bool model_exact_airtime_hop(struct mesh_sim_world *world,
             CHECK(false, "fully contained matching-PHY frame did not decode");
             return false;
         }
-    } else if (world->reception_count != receptions_before) {
-        CHECK(false, "PHR-mismatched frame reached receiver decode");
-        return false;
+    } else {
+        const struct mesh_sim_reception *reception =
+            world->reception_count == receptions_before + 1u ?
+                &world->receptions[receptions_before] : NULL;
+
+        CHECK(reception != NULL &&
+                  reception->outcome != MESH_SIM_RX_DECODED &&
+                  reception->protocol_status != PROTO_OK,
+              "PHR-mismatched frame was not recorded as a rejected RF activity");
+        if (reception == NULL || reception->outcome == MESH_SIM_RX_DECODED ||
+            reception->protocol_status == PROTO_OK) {
+            return false;
+        }
     }
     return true;
 }
@@ -356,17 +366,19 @@ static void run_survey_start_phy_case(bool mutate_tx_to_standard_wake,
 
     if (!expect_reception) {
         CHECK(world.reception_count == 0u,
-              "PHY-mismatched survey start unexpectedly reached RX decode");
+              "incompatible survey-start PHY unexpectedly reached the receiver");
         return;
     }
     CHECK(world.reception_count == 1u,
           "survey-start scenario did not produce exactly one RX outcome");
     if (world.reception_count == 1u) {
         CHECK((world.receptions[0].outcome == MESH_SIM_RX_DECODED) ==
-                  expect_decode,
+                  expect_decode &&
+                  (expect_decode ||
+                   world.receptions[0].protocol_status != PROTO_OK),
               expect_decode ?
                   "fully contained extended-PHR survey start did not decode" :
-                  "partially contained survey start incorrectly decoded");
+                  "survey-start activity was not recorded as a rejected RF frame");
     }
 }
 
@@ -1421,7 +1433,7 @@ int main(void)
 {
     run_survey_start_phy_case(false, 0u, true, true);
     run_survey_start_phy_case(false, 1u, false, true);
-    run_survey_start_phy_case(true, 0u, false, false);
+    run_survey_start_phy_case(true, 0u, false, true);
     test_pair_start_skew_is_local_and_route_depth_independent();
     test_pair_prepare_phr_and_complete_airtime_sweep();
     test_two_anchor_survey_lifecycle();
