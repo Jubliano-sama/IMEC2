@@ -264,7 +264,7 @@ static bool pending_transmission_may_reach_window(
         tx = &world->transmissions[event->object_index];
         if (!tx->valid || tx->node_index == window->node_index ||
             tx->channel != window->channel ||
-            (tx->phy != window->phy && !window->observe_phy_activity) ||
+            !mesh_sim_phy_acquisition_compatible(tx->phy, window->phy) ||
             !world->reachable[tx->node_index][window->node_index]) {
             continue;
         }

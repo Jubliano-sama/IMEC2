@@ -41,6 +41,39 @@ enum dwm3000_timing_phy mesh_sim_radio_timing_phy(enum mesh_sim_phy phy)
     }
 }
 
+bool mesh_sim_phy_acquisition_compatible(enum mesh_sim_phy lhs,
+                                         enum mesh_sim_phy rhs)
+{
+    const struct dwm3000_phy_timing *left = dwm3000_timing_phy_profile(
+        mesh_sim_radio_timing_phy(lhs));
+    const struct dwm3000_phy_timing *right = dwm3000_timing_phy_profile(
+        mesh_sim_radio_timing_phy(rhs));
+
+    if (left == NULL || right == NULL) {
+        return false;
+    }
+
+    /* SFD timeout is a receiver deadline, not an acquisition shape.  Wake
+     * and ranging use the same CH5 preamble/SFD/PAC, while mesh-control keeps
+     * those acquisition fields and changes only the PHR mode. */
+    return left->channel == right->channel &&
+           left->preamble_symbols == right->preamble_symbols &&
+           left->sfd_symbols == right->sfd_symbols &&
+           left->pac_symbols == right->pac_symbols;
+}
+
+bool mesh_sim_phy_decode_compatible(enum mesh_sim_phy lhs,
+                                    enum mesh_sim_phy rhs)
+{
+    const struct dwm3000_phy_timing *left = dwm3000_timing_phy_profile(
+        mesh_sim_radio_timing_phy(lhs));
+    const struct dwm3000_phy_timing *right = dwm3000_timing_phy_profile(
+        mesh_sim_radio_timing_phy(rhs));
+
+    return mesh_sim_phy_acquisition_compatible(lhs, rhs) && left != NULL &&
+           right != NULL && left->phr_mode == right->phr_mode;
+}
+
 uint32_t mesh_sim_frame_duration_us(enum mesh_sim_phy phy, size_t frame_len)
 {
     uint64_t total;
@@ -124,35 +157,6 @@ int mesh_sim_schedule_rx(struct mesh_sim_world *world,
         return ret;
     }
     return mesh_sim_scheduler_schedule(world, SIM_EVENT_RX_END, end_us, index);
-}
-
-int mesh_sim_schedule_rx_observe_phy_activity(
-    struct mesh_sim_world *world,
-    uint8_t node_index,
-    uint64_t start_us,
-    uint64_t end_us,
-    uint8_t channel,
-    enum mesh_sim_phy phy,
-    uint16_t *window_index)
-{
-    uint16_t index;
-    int ret;
-
-    ret = mesh_sim_schedule_rx(world,
-                               node_index,
-                               start_us,
-                               end_us,
-                               channel,
-                               phy,
-                               &index);
-    if (ret != MESH_SIM_OK) {
-        return ret;
-    }
-    world->rx_windows[index].observe_phy_activity = true;
-    if (window_index != NULL) {
-        *window_index = index;
-    }
-    return MESH_SIM_OK;
 }
 
 int mesh_sim_schedule_rx_extend_on_activity(struct mesh_sim_world *world,
@@ -1120,6 +1124,7 @@ static int append_reception(struct mesh_sim_world *world,
     } else if (outcome == MESH_SIM_RX_DECODED) {
         reception->protocol_status = PROTO_OK;
         if (receiver->anchor_initialized &&
+            window->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
             tx->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
             (tx->protocol_msg_type == 0u ||
              tx->protocol_msg_type == MSG_UWB_WAKE_CLAIM)) {
@@ -1161,6 +1166,7 @@ static int append_reception(struct mesh_sim_world *world,
         receiver->collision_frames++;
         transition_kind = MESH_SIM_TRANSITION_RX_COLLISION;
         if (receiver->anchor_initialized &&
+            window->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
             tx->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
             uwb_anchor_note_wake_decode_failure(&receiver->anchor_session,
                                                 UWB_WAKE_DECODE_CRC_FAILURE);
@@ -1169,6 +1175,7 @@ static int append_reception(struct mesh_sim_world *world,
         receiver->partial_frames++;
         transition_kind = MESH_SIM_TRANSITION_RX_PARTIAL;
         if (receiver->anchor_initialized &&
+            window->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
             tx->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
             enum uwb_wake_decode_failure failure = UWB_WAKE_DECODE_FRAME_TIMEOUT;
 
@@ -1292,8 +1299,8 @@ int mesh_sim_radio_evaluate_transmission(
                 window->channel != tx->channel) {
                 continue;
             }
-            phy_match = window->phy == tx->phy;
-            if (!phy_match && !window->observe_phy_activity) {
+            phy_match = mesh_sim_phy_decode_compatible(window->phy, tx->phy);
+            if (!mesh_sim_phy_acquisition_compatible(window->phy, tx->phy)) {
                 continue;
             }
             preamble_overlap_start = window->start_rctu > arrival_start ?
@@ -1462,7 +1469,7 @@ int mesh_sim_radio_note_preamble_at_tx_start(struct mesh_sim_world *world,
         if (!window->valid || window->node_index == tx->node_index ||
             !world->reachable[tx->node_index][window->node_index] ||
             window->channel != tx->channel ||
-            (window->phy != tx->phy && !window->observe_phy_activity)) {
+            !mesh_sim_phy_acquisition_compatible(window->phy, tx->phy)) {
             continue;
         }
         arrival_start = tx->start_rctu +

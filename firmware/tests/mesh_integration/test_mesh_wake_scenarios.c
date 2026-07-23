@@ -1,5 +1,6 @@
 #include "dwm3000_timing.h"
 #include "mesh_radio_timing.h"
+#include "mesh_relay.h"
 #include "mesh_sim.h"
 #include "uwb.h"
 #include "uwb_session.h"
@@ -22,9 +23,15 @@
 
 #define PRODUCTION_WAKE_TRAIN_US UINT64_C(400000)
 #define CLAIMED_DURATION_MS 1200u
+/* These are the production route-listener bounds. HIL captures measure the
+ * actual reset/configuration time; the simulator consumes the configured
+ * worst-case budget so a passing phase sweep cannot hide a retune gap. */
 #define ROUTE_LISTENER_PHY_RETUNE_GUARD_US UINT64_C(30000)
-#define ROUTE_LISTENER_CLICK_PROBE_US UINT64_C(61000)
+#define ROUTE_LISTENER_CLICK_ACQUIRE_US UINT64_C(61000)
 #define ROUTE_LISTENER_CLICK_PROBE_COMPLETION_US UINT64_C(15000)
+#define ROUTE_LISTENER_CLICK_PROBE_US \
+    (ROUTE_LISTENER_CLICK_ACQUIRE_US + \
+     ROUTE_LISTENER_CLICK_PROBE_COMPLETION_US)
 
 _Static_assert(MESH_RADIO_ANCHOR_SCAN_RX_US == 3000u,
                "wake scenarios require the production 3 ms anchor scan");
@@ -35,6 +42,11 @@ _Static_assert(PRODUCTION_WAKE_TRAIN_US / 1000u <=
                "the production wake train must fit the UWB claim field");
 _Static_assert(CLAIMED_DURATION_MS <= UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
                "the test claim must fit the UWB claim field");
+_Static_assert(ROUTE_LISTENER_CLICK_PROBE_US == UINT64_C(76000),
+               "route-listener standard probe budget drifted from production");
+_Static_assert((2u * ROUTE_LISTENER_PHY_RETUNE_GUARD_US) +
+                   ROUTE_LISTENER_CLICK_PROBE_US == UINT64_C(136000),
+               "route-listener retune/probe sequence budget drifted from production");
 
 struct fixture {
     struct mesh_sim_world *world;
@@ -620,175 +632,589 @@ static size_t count_receptions_for_phy(const struct mesh_sim_world *world,
     return count;
 }
 
-static void test_route_listener_phy_mismatch_and_bounded_probe(void)
+static bool reception_in_window(const struct mesh_sim_reception *reception,
+                                uint64_t start_us,
+                                uint64_t end_us)
 {
-    static const int64_t phases[] = { 0, 25000, 75000 };
-    static struct mesh_sim_world world;
-    const uint32_t seed = UINT32_C(0x71f00d42);
+    return reception->start_us >= start_us && reception->end_us <= end_us;
+}
+
+static size_t count_wake_receptions_in_window(
+    const struct mesh_sim_world *world,
+    uint64_t start_us,
+    uint64_t end_us,
+    enum mesh_sim_rx_outcome outcome)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *reception = &world->receptions[i];
+
+        if (reception->source_id == CLICKER_ID &&
+            reception->receiver_id == ANCHOR_ID &&
+            reception->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
+            reception->outcome == outcome &&
+            reception_in_window(reception, start_us, end_us)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static size_t count_route_request_receptions(
+    const struct mesh_sim_world *world,
+    uint64_t source_id)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *reception = &world->receptions[i];
+
+        if (reception->source_id == source_id &&
+            reception->receiver_id == ANCHOR_ID &&
+            reception->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+            reception->outcome == MESH_SIM_RX_DECODED &&
+            reception->protocol_status == PROTO_OK &&
+            reception->packet.msg_type == MSG_ROUTE_REQ) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static bool build_real_route_request(struct mesh_outbound *out,
+                                     uint64_t target_id,
+                                     uint32_t now_ms,
+                                     uint32_t seed,
+                                     int64_t phase_us,
+                                     const char *scenario)
+{
+    struct mesh_relay relay;
+    int ret;
+
+    mesh_relay_init(&relay,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    INTERFERER_ID,
+                    GATEWAY_ID,
+                    ROUTE_EPOCH);
+    ret = mesh_relay_build_route_request_with_timing_flags(&relay,
+                                                           target_id,
+                                                           NULL,
+                                                           0u,
+                                                           0u,
+                                                           0u,
+                                                           out,
+                                                           now_ms);
+    return check_result(ret == PROTO_OK &&
+                            out->packet.msg_type == MSG_ROUTE_REQ &&
+                            out->packet.payload_len == out->payload_len &&
+                            out->payload_len > 0u,
+                        scenario,
+                        seed,
+                        phase_us,
+                        "could not build an encoded route-request control frame");
+}
+
+static bool schedule_route_listener_probe(struct fixture *fixture,
+                                          uint64_t first_end_us,
+                                          uint64_t standard_start_us,
+                                          uint64_t standard_end_us,
+                                          bool resumed_extended,
+                                          uint64_t resumed_end_us,
+                                          uint32_t seed,
+                                          int64_t phase_us,
+                                          const char *scenario)
+{
+    struct mesh_sim_world *world = fixture->world;
+
+    if (!check_result(mesh_sim_schedule_rx(world,
+                                           fixture->anchor,
+                                           0u,
+                                           first_end_us,
+                                           UWB_CHANNEL_WAKE_CONTACT,
+                                           MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                           NULL) == MESH_SIM_OK,
+                      scenario,
+                      seed,
+                      phase_us,
+                      "could not arm first extended route listener slice") ||
+        !check_result(mesh_sim_schedule_rx(world,
+                                           fixture->anchor,
+                                           standard_start_us,
+                                           standard_end_us,
+                                           UWB_CHANNEL_WAKE_CONTACT,
+                                           MESH_SIM_PHY_CHANNEL5_WAKE,
+                                           NULL) == MESH_SIM_OK,
+                      scenario,
+                      seed,
+                      phase_us,
+                      "could not arm the bounded standard wake probe")) {
+        return false;
+    }
+    if (resumed_extended &&
+        !check_result(mesh_sim_schedule_rx(world,
+                                           fixture->anchor,
+                                           standard_end_us +
+                                               ROUTE_LISTENER_PHY_RETUNE_GUARD_US,
+                                           resumed_end_us,
+                                           UWB_CHANNEL_WAKE_CONTACT,
+                                           MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                           NULL) == MESH_SIM_OK,
+                      scenario,
+                      seed,
+                      phase_us,
+                      "could not arm resumed extended route listener slice")) {
+        return false;
+    }
+    return true;
+}
+
+static void test_phy_compatibility_matrix(void)
+{
+    const uint32_t seed = UINT32_C(0x71000001);
     unsigned int failures_before = failure_count;
 
-    /* An extended-PHR route listener must observe standard wake activity as a
-     * decode failure, not silently discard the evidence and report zero RF. */
-    {
-        struct fixture fixture;
-        struct train_schedule train;
-        uint16_t listener_window = UINT16_MAX;
-
-        if (!setup_fixture(&fixture, &world, seed, 0, false)) {
-            return;
-        }
-        world.roles[fixture.anchor].anchor_initialized = false;
-        if (!check_result(mesh_sim_schedule_rx_observe_phy_activity(
-                              &world,
-                              fixture.anchor,
-                              0u,
-                              PRODUCTION_WAKE_TRAIN_US + 10000u,
-                              UWB_CHANNEL_WAKE_CONTACT,
-                              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
-                              &listener_window) == MESH_SIM_OK,
-                          "route_listener_phy_mismatch",
-                          seed,
-                          0,
-                          "could not arm extended route listener") ||
-            !schedule_wake_train(&fixture,
-                                 1000u,
-                                 seed,
-                                 0,
-                                 &train) ||
-            !check_result(mesh_sim_run_until(&world, train.last_end_us + 1u) ==
-                              MESH_SIM_OK,
-                          "route_listener_phy_mismatch",
-                          seed,
-                          0,
-                          "extended route listener simulation failed")) {
-            return;
-        }
-        check_result(count_receptions_for_phy(
-                         &world,
+    check_result(mesh_sim_phy_acquisition_compatible(
+                     MESH_SIM_PHY_CHANNEL5_WAKE,
+                     MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) &&
+                     mesh_sim_phy_acquisition_compatible(
                          MESH_SIM_PHY_CHANNEL5_WAKE,
-                         MESH_SIM_RX_DECODE_ERROR) > 0u &&
-                         accepted_wake_receptions(&world) == 0u,
-                     "route_listener_phy_mismatch",
-                     seed,
-                     0,
-                     "standard wake traffic was not recorded as an extended-PHR decode failure");
-    }
-
-    for (size_t phase_index = 0u; phase_index < ARRAY_SIZE(phases);
-         phase_index++) {
-        struct fixture fixture;
-        struct train_schedule train;
-        uint8_t route_frame[64];
-        uint16_t route_tx = UINT16_MAX;
-        const uint64_t ext_first_end_us = UINT64_C(100000);
-        const uint64_t standard_start_us =
-            ext_first_end_us + ROUTE_LISTENER_PHY_RETUNE_GUARD_US;
-        const uint64_t standard_end_us =
-            standard_start_us + ROUTE_LISTENER_CLICK_PROBE_US +
-            ROUTE_LISTENER_CLICK_PROBE_COMPLETION_US;
-        const uint64_t ext_second_start_us =
-            standard_end_us + ROUTE_LISTENER_PHY_RETUNE_GUARD_US;
-        const uint64_t ext_second_end_us = UINT64_C(600000);
-        int64_t phase_us = phases[phase_index];
-
-        if (!setup_fixture(&fixture,
-                           &world,
-                           seed + (uint32_t)phase_index,
-                           phase_us,
-                           true)) {
-            return;
-        }
-        world.roles[fixture.anchor].anchor_initialized = false;
-        if (!check_result(mesh_sim_schedule_rx_observe_phy_activity(
-                              &world,
-                              fixture.anchor,
-                              0u,
-                              ext_first_end_us,
-                              UWB_CHANNEL_WAKE_CONTACT,
-                              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
-                              NULL) == MESH_SIM_OK,
-                          "route_listener_phy_probe",
-                          seed,
-                          phase_us,
-                          "could not arm first extended route listener slice") ||
-            !check_result(mesh_sim_schedule_rx(
-                              &world,
-                              fixture.anchor,
-                              standard_start_us,
-                              standard_end_us,
-                              UWB_CHANNEL_WAKE_CONTACT,
-                              MESH_SIM_PHY_CHANNEL5_WAKE,
-                              NULL) == MESH_SIM_OK,
-                          "route_listener_phy_probe",
-                          seed,
-                          phase_us,
-                          "could not arm bounded standard wake probe") ||
-            !check_result(mesh_sim_schedule_rx_observe_phy_activity(
-                              &world,
-                              fixture.anchor,
-                              ext_second_start_us,
-                              ext_second_end_us,
-                              UWB_CHANNEL_WAKE_CONTACT,
-                              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
-                              NULL) == MESH_SIM_OK,
-                          "route_listener_phy_probe",
-                          seed,
-                          phase_us,
-                          "could not arm resumed extended route listener") ||
-            !schedule_wake_train(&fixture,
-                                 (uint64_t)phase_us,
-                                 seed + (uint32_t)phase_index,
-                                 phase_us,
-                                 &train)) {
-            return;
-        }
-
-        for (size_t i = 0u; i < sizeof(route_frame); i++) {
-            route_frame[i] = (uint8_t)(i ^ 0xa5u);
-        }
-        if (!check_result(mesh_sim_schedule_raw_tx(
-                              &world,
-                              fixture.interferer,
-                              UINT64_C(500000),
-                              UWB_CHANNEL_WAKE_CONTACT,
-                              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
-                              route_frame,
-                              sizeof(route_frame),
-                              false,
-                              &route_tx) == MESH_SIM_OK,
-                          "route_listener_phy_probe",
-                          seed,
-                          phase_us,
-                          "could not schedule extended route-control frame") ||
-            !check_result(mesh_sim_run_until(&world,
-                                             UINT64_C(600000) + 1u) == MESH_SIM_OK,
-                          "route_listener_phy_probe",
-                          seed,
-                          phase_us,
-                          "interleaved route listener simulation failed")) {
-            return;
-        }
-
-        check_result(count_receptions_for_phy(&world,
-                                              MESH_SIM_PHY_CHANNEL5_WAKE,
-                                              MESH_SIM_RX_DECODED) > 0u &&
-                         count_receptions_for_phy(
-                             &world,
-                             MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
-                             MESH_SIM_RX_DECODED) == 1u &&
-                         world.roles[fixture.anchor].anchor_session.diagnostics.claims == 0u,
-                     "route_listener_phy_probe",
-                     seed,
-                     phase_us,
-                     "bounded standard probe did not capture a repeated click while preserving route-control decode");
-    }
-
+                         MESH_SIM_PHY_CHANNEL5_RANGE) &&
+                     !mesh_sim_phy_acquisition_compatible(
+                         MESH_SIM_PHY_CHANNEL5_WAKE,
+                         MESH_SIM_PHY_CHANNEL9_MESH) &&
+                     mesh_sim_phy_decode_compatible(
+                         MESH_SIM_PHY_CHANNEL5_WAKE,
+                         MESH_SIM_PHY_CHANNEL5_RANGE) &&
+                     !mesh_sim_phy_decode_compatible(
+                         MESH_SIM_PHY_CHANNEL5_WAKE,
+                         MESH_SIM_PHY_CHANNEL5_MESH_CONTROL),
+                 "route_listener_phy_profiles",
+                 seed,
+                 0,
+                 "simulator PHY acquisition/decode compatibility matrix is wrong");
     if (failure_count == failures_before) {
-        printf("PASS route_listener_phy_probe phases=%zu retune_guard_us=%" PRIu64
-               " probe_us=%" PRIu64 "\n",
+        printf("PASS route_listener_phy_profiles acquisition_and_phr_matrix\n");
+    }
+}
+
+static void test_route_listener_mismatch_without_click(void)
+{
+    static struct mesh_sim_world world;
+    struct fixture fixture;
+    struct train_schedule train;
+    const uint32_t seed = UINT32_C(0x71f00d42);
+    const int64_t phase_us = 1000;
+    unsigned int failures_before = failure_count;
+
+    /* A standard wake preamble has the same CH5 acquisition shape as the
+     * extended route listener, but its standard PHR must fail to decode. */
+    if (!setup_fixture(&fixture, &world, seed, phase_us, false) ||
+        !check_result(mesh_sim_schedule_rx(
+                          &world,
+                          fixture.anchor,
+                          0u,
+                          PRODUCTION_WAKE_TRAIN_US + 10000u,
+                          UWB_CHANNEL_WAKE_CONTACT,
+                          MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                          NULL) == MESH_SIM_OK,
+                      "route_listener_phy_mismatch",
+                      seed,
+                      phase_us,
+                      "could not arm extended route listener") ||
+        !schedule_wake_train(&fixture,
+                             1000u,
+                             seed,
+                             phase_us,
+                             &train) ||
+        !check_result(mesh_sim_run_until(&world, train.last_end_us + 1u) ==
+                          MESH_SIM_OK,
+                      "route_listener_phy_mismatch",
+                      seed,
+                      phase_us,
+                      "extended route listener simulation failed")) {
+        return;
+    }
+
+    check_result(count_receptions_for_phy(
+                     &world,
+                     MESH_SIM_PHY_CHANNEL5_WAKE,
+                     MESH_SIM_RX_DECODE_ERROR) > 0u &&
+                     accepted_wake_receptions(&world) == 0u &&
+                     world.roles[fixture.anchor].anchor_session.diagnostics.claims == 0u,
+                 "route_listener_phy_mismatch",
+                 seed,
+                 phase_us,
+                 "standard wake activity was silently discarded or accepted by the extended listener");
+    if (failure_count == failures_before) {
+        printf("PASS route_listener_phy_mismatch decode_errors=%zu claims=0\n",
+               count_receptions_for_phy(&world,
+                                        MESH_SIM_PHY_CHANNEL5_WAKE,
+                                        MESH_SIM_RX_DECODE_ERROR));
+    }
+}
+
+static bool run_route_listener_click_case(uint32_t seed,
+                                          int64_t phase_us,
+                                          bool collide,
+                                          bool expect_claim)
+{
+    static struct mesh_sim_world world;
+    struct fixture fixture;
+    struct train_schedule train;
+    const uint64_t first_end_us = UINT64_C(100000);
+    const uint64_t standard_start_us =
+        first_end_us + ROUTE_LISTENER_PHY_RETUNE_GUARD_US;
+    const uint64_t standard_end_us =
+        standard_start_us + ROUTE_LISTENER_CLICK_PROBE_US;
+    uint16_t collision_tx = UINT16_MAX;
+    int ret;
+
+    if (!setup_fixture(&fixture, &world, seed, phase_us, collide) ||
+        !schedule_route_listener_probe(&fixture,
+                                       first_end_us,
+                                       standard_start_us,
+                                       standard_end_us,
+                                       false,
+                                       0u,
+                                       seed,
+                                       phase_us,
+                                       collide ? "route_listener_collision" :
+                                                  "route_listener_phase") ||
+        !schedule_wake_train(&fixture,
+                             (uint64_t)phase_us,
+                             seed,
+                             phase_us,
+                             &train)) {
+        return false;
+    }
+
+    if (collide) {
+        for (size_t i = 0u; i < world.transmission_count; i++) {
+            const struct mesh_sim_transmission *tx = &world.transmissions[i];
+
+            if (tx->valid && tx->node_index == fixture.clicker &&
+                tx->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
+                tx->start_us >= standard_start_us &&
+                tx->end_us <= standard_end_us) {
+                collision_tx = (uint16_t)i;
+                break;
+            }
+        }
+        if (!check_result(collision_tx != UINT16_MAX,
+                          "route_listener_collision",
+                          seed,
+                          phase_us,
+                          "collision phase did not place a complete wake frame in the standard probe")) {
+            return false;
+        }
+        ret = mesh_sim_schedule_raw_tx(
+            &world,
+            fixture.interferer,
+            world.transmissions[collision_tx].start_us,
+            UWB_CHANNEL_WAKE_CONTACT,
+            MESH_SIM_PHY_CHANNEL5_WAKE,
+            world.transmissions[collision_tx].frame,
+            world.transmissions[collision_tx].frame_len,
+            false,
+            NULL);
+        if (!check_result(ret == MESH_SIM_OK,
+                          "route_listener_collision",
+                          seed,
+                          phase_us,
+                          "could not schedule colliding standard wake frame")) {
+            return false;
+        }
+    }
+
+    if (!check_result(mesh_sim_run_until(&world, train.last_end_us + 1u) ==
+                          MESH_SIM_OK,
+                      collide ? "route_listener_collision" :
+                                "route_listener_phase",
+                      seed,
+                      phase_us,
+                      "route listener phase simulation failed")) {
+        return false;
+    }
+
+    {
+        struct uwb_anchor_session *anchor_session =
+            &world.roles[fixture.anchor].anchor_session;
+        struct mesh_runtime *runtime = &world.roles[fixture.anchor].runtime;
+        size_t accepted = accepted_wake_receptions(&world);
+        bool owned = anchor_session->diagnostics.claims > 0u &&
+                     anchor_session->state == UWB_ANCHOR_CLAIMED &&
+                     anchor_session->epoch.active &&
+                     runtime->radio_owner == MESH_RUNTIME_RADIO_DS_TWR &&
+                     mesh_sim_count_transitions(
+                         &world,
+                         MESH_SIM_TRANSITION_WAKE_CLAIM_OWNED,
+                         ANCHOR_ID) > 0u;
+        bool probe_claim = count_wake_receptions_in_window(
+                               &world,
+                               standard_start_us,
+                               standard_end_us,
+                               MESH_SIM_RX_DECODED) > 0u;
+
+        if (!check_result(owned == expect_claim,
+                          collide ? "route_listener_collision" :
+                                    "route_listener_phase",
+                          seed,
+                          phase_us,
+                          expect_claim ?
+                              "complete standard wake frame did not transfer claim custody into DS-TWR" :
+                              "wake train outside the bounded probe unexpectedly acquired a claim") ||
+            !check_result(!expect_claim || (accepted > 0u && probe_claim),
+                          collide ? "route_listener_collision" :
+                                    "route_listener_phase",
+                          seed,
+                          phase_us,
+                          "accepted claim was not a fully contained frame in the standard probe")) {
+            return false;
+        }
+        if (collide &&
+            !check_result(world.roles[fixture.anchor].collision_frames >= 2u &&
+                              accepted > 0u,
+                          "route_listener_collision",
+                          seed,
+                          phase_us,
+                          "later repeated wake claims did not recover after the probe collision")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_route_listener_phase_sweep(void)
+{
+    const uint32_t seed = UINT32_C(0x72000001);
+    const uint32_t wake_airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE,
+        UWB_WAKE_CLAIM_LEN);
+    const uint64_t standard_start_us = UINT64_C(100000) +
+                                       ROUTE_LISTENER_PHY_RETUNE_GUARD_US;
+    const uint64_t standard_end_us = standard_start_us +
+                                     ROUTE_LISTENER_CLICK_PROBE_US;
+    const struct phase_case phases[] = {
+        { "train_before_listener", 0u },
+        { "first_frame_at_extended_close", 100000u },
+        { "first_frame_in_retune_gap", 129999u },
+        { "first_frame_at_probe_open", 130000u },
+        { "probe_deadline_minus_one_frame", (int64_t)(standard_end_us - wake_airtime_us - 1u) },
+        { "probe_deadline_exact", (int64_t)(standard_end_us - wake_airtime_us) },
+        { "probe_deadline_tail_only", (int64_t)(standard_end_us - wake_airtime_us + 1u) },
+        { "after_probe_deadline", (int64_t)(standard_end_us + 1u) },
+    };
+    const bool expected_claim[] = {
+        true, true, true, true, true, true, false, false,
+    };
+    unsigned int failures_before = failure_count;
+
+    for (size_t i = 0u; i < ARRAY_SIZE(phases); i++) {
+        if (phases[i].offset_us < 0 ||
+            !run_route_listener_click_case(seed + (uint32_t)i,
+                                           phases[i].offset_us,
+                                           false,
+                                           expected_claim[i])) {
+            return;
+        }
+    }
+    if (failure_count == failures_before) {
+        printf("PASS route_listener_phase_sweep phases=%zu probe=[%" PRIu64
+               ",%" PRIu64 "] budget_us=%" PRIu64 "\n",
                ARRAY_SIZE(phases),
-               ROUTE_LISTENER_PHY_RETUNE_GUARD_US,
+               standard_start_us,
+               standard_end_us,
                ROUTE_LISTENER_CLICK_PROBE_US);
+    }
+}
+
+static void test_route_listener_multi_node_collision(void)
+{
+    static const int64_t phases[] = { 0, 75000, 129999 };
+    const uint32_t seed = UINT32_C(0x73000001);
+    unsigned int failures_before = failure_count;
+
+    for (size_t i = 0u; i < ARRAY_SIZE(phases); i++) {
+        if (!run_route_listener_click_case(seed + (uint32_t)i,
+                                           phases[i],
+                                           true,
+                                           true)) {
+            return;
+        }
+    }
+    if (failure_count == failures_before) {
+        printf("PASS route_listener_multi_node_collision phases=%zu recovery=1\n",
+               ARRAY_SIZE(phases));
+    }
+}
+
+static void test_route_listener_tail_activity_is_bounded(void)
+{
+    static struct mesh_sim_world world;
+    struct fixture fixture;
+    uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    size_t frame_len = 0u;
+    uint16_t tx_index;
+    const uint64_t ext_end_us = UINT64_C(100000);
+    const uint64_t standard_start_us =
+        ext_end_us + ROUTE_LISTENER_PHY_RETUNE_GUARD_US;
+    const uint64_t standard_end_us =
+        standard_start_us + ROUTE_LISTENER_CLICK_PROBE_US;
+    const uint32_t seed = UINT32_C(0x74000001);
+    const int64_t phase_us = (int64_t)(ext_end_us -
+                                      dwm3000_timing_airtime_us_ceil(
+                                          DWM3000_TIMING_PHY_CH5_WAKE,
+                                          UWB_WAKE_CLAIM_LEN) +
+                                      1u);
+    unsigned int failures_before = failure_count;
+
+    if (!setup_fixture(&fixture, &world, seed, phase_us, false) ||
+        !schedule_route_listener_probe(&fixture,
+                                       ext_end_us,
+                                       standard_start_us,
+                                       standard_end_us,
+                                       false,
+                                       0u,
+                                       seed,
+                                       phase_us,
+                                       "route_listener_tail") ||
+        !encode_wake_claim(&fixture,
+                           (uint16_t)(PRODUCTION_WAKE_TRAIN_US / 1000u),
+                           frame,
+                           &frame_len,
+                           seed,
+                           phase_us,
+                           "route_listener_tail") ||
+        !check_result(mesh_sim_schedule_raw_tx(&world,
+                                               fixture.clicker,
+                                               (uint64_t)phase_us,
+                                               UWB_CHANNEL_WAKE_CONTACT,
+                                               MESH_SIM_PHY_CHANNEL5_WAKE,
+                                               frame,
+                                               frame_len,
+                                               false,
+                                               &tx_index) == MESH_SIM_OK,
+                      "route_listener_tail",
+                      seed,
+                      phase_us,
+                      "could not schedule final extended-listener wake frame") ||
+        !check_result(mesh_sim_run_until(&world,
+                                         world.transmissions[tx_index].end_us + 1u) ==
+                          MESH_SIM_OK,
+                      "route_listener_tail",
+                      seed,
+                      phase_us,
+                      "tail-overlap simulation failed")) {
+        return;
+    }
+
+    check_result(accepted_wake_receptions(&world) == 0u &&
+                     world.roles[fixture.anchor].anchor_session.diagnostics.claims == 0u &&
+                     world.roles[fixture.anchor].runtime.radio_owner ==
+                         MESH_RUNTIME_RADIO_NONE &&
+                     world.reception_count == 1u &&
+                     world.receptions[0].outcome != MESH_SIM_RX_DECODED,
+                 "route_listener_tail",
+                 seed,
+                 phase_us,
+                 "a final wake frame overlapping the extended-listener tail was falsely handed off");
+    if (failure_count == failures_before) {
+        printf("PASS route_listener_tail final_frame_without_later_claim=1\n");
+    }
+}
+
+static void test_route_listener_malformed_activity_and_real_control(void)
+{
+    static struct mesh_sim_world world;
+    struct fixture fixture;
+    struct mesh_outbound route_request;
+    uint8_t malformed[UWB_WAKE_CLAIM_LEN];
+    size_t frame_len = 0u;
+    uint16_t malformed_tx = UINT16_MAX;
+    uint16_t route_tx = UINT16_MAX;
+    const uint64_t probe_start_us = UINT64_C(130000);
+    const uint64_t probe_end_us = probe_start_us + ROUTE_LISTENER_CLICK_PROBE_US;
+    const uint32_t seed = UINT32_C(0x75000001);
+    const int64_t phase_us = 150000;
+    unsigned int failures_before = failure_count;
+
+    if (!setup_fixture(&fixture, &world, seed, phase_us, true) ||
+        !schedule_route_listener_probe(&fixture,
+                                       UINT64_C(100000),
+                                       probe_start_us,
+                                       probe_end_us,
+                                       true,
+                                       UINT64_C(600000),
+                                       seed,
+                                       phase_us,
+                                       "route_listener_malformed") ||
+        !encode_wake_claim(&fixture,
+                           (uint16_t)(PRODUCTION_WAKE_TRAIN_US / 1000u),
+                           malformed,
+                           &frame_len,
+                           seed,
+                           phase_us,
+                           "route_listener_malformed")) {
+        return;
+    }
+    malformed[0] ^= 0x80u;
+    if (!check_result(mesh_sim_schedule_raw_tx(&world,
+                                               fixture.clicker,
+                                               probe_start_us + 1000u,
+                                               UWB_CHANNEL_WAKE_CONTACT,
+                                               MESH_SIM_PHY_CHANNEL5_WAKE,
+                                               malformed,
+                                               frame_len,
+                                               false,
+                                               &malformed_tx) == MESH_SIM_OK,
+                      "route_listener_malformed",
+                      seed,
+                      phase_us,
+                      "could not schedule malformed standard wake activity") ||
+        !build_real_route_request(&route_request,
+                                  ANCHOR_ID,
+                                  500u,
+                                  seed,
+                                  phase_us,
+                                  "route_listener_malformed") ||
+        !check_result(mesh_sim_schedule_packet_tx(&world,
+                                                  fixture.interferer,
+                                                  UINT64_C(500000),
+                                                  UWB_CHANNEL_WAKE_CONTACT,
+                                                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                                  &route_request.packet,
+                                                  route_request.payload,
+                                                  route_request.payload_len,
+                                                  &route_tx) == MESH_SIM_OK,
+                      "route_listener_malformed",
+                      seed,
+                      phase_us,
+                      "could not schedule real encoded route-request activity") ||
+        !check_result(mesh_sim_run_until(&world, UINT64_C(600000) + 1u) ==
+                          MESH_SIM_OK,
+                      "route_listener_malformed",
+                      seed,
+                      phase_us,
+                      "malformed/control listener simulation failed")) {
+        return;
+    }
+
+    check_result(count_receptions_for_phy(&world,
+                                          MESH_SIM_PHY_CHANNEL5_WAKE,
+                                          MESH_SIM_RX_DECODE_ERROR) >= 1u &&
+                     count_route_request_receptions(&world, INTERFERER_ID) == 1u &&
+                     mesh_sim_count_transitions(
+                         &world,
+                         MESH_SIM_TRANSITION_PACKET_QUEUED,
+                         ANCHOR_ID) > 0u &&
+                     world.roles[fixture.anchor].anchor_session.diagnostics.claims == 0u,
+                 "route_listener_malformed",
+                 seed,
+                 phase_us,
+                 "malformed standard activity caused a false claim or hid a valid encoded route request");
+    if (failure_count == failures_before) {
+        printf("PASS route_listener_malformed malformed_rejected=1 route_request_decoded=1\n");
     }
 }
 
@@ -845,12 +1271,6 @@ static void test_claim_holds_channel5_through_ds_twr(
     exchange_end_us = train.first_start_us + PRODUCTION_WAKE_TRAIN_US +
                       bounded_ds_twr_exchange_us();
 
-    /*
-     * Missing public simulator seam: accepting a UWB wake claim updates only
-     * uwb_anchor_session. mesh_sim does not transfer the low-duty receiver to
-     * a channel-5 click owner or reserve MESH_RUNTIME_RADIO_DS_TWR. Keep this
-     * as a failing contract assertion until that handoff is publicly modeled.
-     */
     check_result(runtime->radio_owner == MESH_RUNTIME_RADIO_DS_TWR &&
                      runtime->radio_busy_until_us >= exchange_end_us,
                  "claim_channel5_ownership",
@@ -880,7 +1300,12 @@ int main(void)
         test_attempt_one_wake_trains(&timing, (uint32_t)wake_airtime_us);
         test_partial_frame_is_not_accepted();
         test_collision_is_not_accepted();
-        test_route_listener_phy_mismatch_and_bounded_probe();
+        test_phy_compatibility_matrix();
+        test_route_listener_mismatch_without_click();
+        test_route_listener_phase_sweep();
+        test_route_listener_multi_node_collision();
+        test_route_listener_tail_activity_is_bounded();
+        test_route_listener_malformed_activity_and_real_control();
         test_claim_holds_channel5_through_ds_twr(&timing);
     }
 
