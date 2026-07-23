@@ -222,15 +222,33 @@ partial assignment or survey results into total firmware failure.
   before accepting transport custody or applying a protocol mutation, commits
   a newly accepted record to the BLE stream before sending
   its semantic completion response, and cancels the reservation for an exact
-  duplicate so the host sees one record. Before those commits, the gateway must
-  neither remember the packet as a duplicate nor emit its gateway ACK. A full
-  host queue, rejected message, or failed persistence attempt therefore remains
-  retryable end to end. After the commits, duplicate reception is ACK-sticky and
-  must not apply the protocol mutation or BLE delivery twice. Collection results
-  remain in collection-EACK custody, so a generic gateway ACK cannot complete
-  their sender-side transaction. The gateway keeps each accepted ACK identity
-  for at least the sender's maximum custody lifetime; the shorter route
-  deduplication window cannot expire an ACK while the sender may still retry.
+  duplicate so one uninterrupted gateway stream emits one committed record.
+  Before those commits, the gateway must neither remember the packet as a
+  duplicate nor emit its gateway ACK. A full host queue, rejected message, or
+  failed persistence attempt therefore remains retryable end to end. The
+  journal clear and BLE notification are separate durable steps: a gateway
+  reset after notification completion but before NVS clear may replay the exact
+  accepted packet, so BLE host delivery is at-least-once across reset. The GUI
+  keeps a bounded, session-scoped cache keyed by the complete packet identity
+  and exact payload across reconnects; an exact replay remains one visible,
+  merged host record, while a same-identity payload or flag mutation
+  remains visible as a conflict. For gateway journal identity, message type,
+  semantic flags, endpoints, session/sequence, payload length, and durable
+  payload bytes remain immutable; relay-local TTL and message age may change
+  on a retry and are excluded from duplicate matching. After the commits,
+  duplicate reception is ACK-sticky and must not apply the protocol mutation
+  or gateway-side BLE delivery twice. Collection results remain in
+  collection-EACK custody, so a
+  generic gateway ACK cannot complete their sender-side transaction. The
+  gateway keeps each accepted ACK identity for at least the sender's maximum
+  custody lifetime; the shorter route deduplication window cannot expire an ACK
+  while the sender may still retry.
+  A GUI-process restart clears the session cache, and no persistent host
+  acknowledgement exists here, so this contract does not claim end-to-end
+  exactly-once delivery across host restart. Cache eviction under host memory
+  pressure has the same residual gap for an old replay, which is why a
+  persistent host acknowledgement or host-side journal would be required for
+  a stronger end-to-end guarantee.
 - For relay paths, ACKs are sent in the sender's next channel 9 transmit
   window. This applies to hop-level ACKs and to gateway-level ACKs that are
   bubbling back through anchors.
@@ -777,6 +795,20 @@ from operation N cannot mutate operation N+1 even when both start in the same
 uptime tick. A malformed UPDATE does not consume its sequence. A valid UPDATE
 carries the sender's even/odd transmit phase, and the receiver installs the
 complementary phase for the same event counter.
+
+Every EVENT_PROPOSE also carries a nonzero 64-bit boot incarnation chosen once
+per sender boot. Remote control-sequence ordering is scoped by that incarnation:
+the first proposal from a new, non-retired incarnation may restart at sequence
+one after a peer reset, while a proposal using the active incarnation must still
+be newer than the retained sequence. Each endpoint retains the incarnations of
+retired peer sessions alongside the retired session history; a nonce in that
+history is stale when it is no longer the active peer incarnation, so a delayed
+proposal from before a reset remains stale even when it reuses a low sequence or
+names a fresh session. Zero is invalid on the wire, and an incarnation is never
+reused within the sender's boot lifetime. A missing, zero, or malformed nonce
+is rejected before the receiver mutates its event owner or timing state; this
+fail-closed rule applies to EVENT_PROPOSE only, while UPDATE and END retain
+their independent sequence domains.
 
 In direct-or-relayed transmitter mode, a direct gateway route may satisfy route
 acquisition. In forced-relay transmitter mode, a direct gateway route must not

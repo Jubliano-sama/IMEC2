@@ -20,6 +20,8 @@ enum mesh_event_owner_decision {
 };
 
 #define MESH_EVENT_OWNER_RETIRED_SESSION_CAPACITY 8u
+#define MESH_EVENT_OWNER_RETIRED_BOOT_NONCE_CAPACITY \
+    MESH_EVENT_OWNER_RETIRED_SESSION_CAPACITY
 
 /*
  * A PROPOSE session is the wire-visible connection operation identity.  The
@@ -29,6 +31,7 @@ enum mesh_event_owner_decision {
 struct mesh_event_owner {
     uint64_t peer_id;
     uint32_t session_id;
+    uint64_t remote_boot_nonce;
     uint32_t generation;
     uint32_t local_payload_fingerprint;
     uint32_t remote_payload_fingerprint;
@@ -40,6 +43,7 @@ struct mesh_event_owner {
     uint8_t local_message_type;
     uint8_t remote_message_type;
     uint32_t retired_session_ids[MESH_EVENT_OWNER_RETIRED_SESSION_CAPACITY];
+    uint64_t retired_boot_nonces[MESH_EVENT_OWNER_RETIRED_BOOT_NONCE_CAPACITY];
     uint8_t retired_session_count;
     uint8_t retired_session_cursor;
     uint16_t remote_proposal_sequence;
@@ -57,10 +61,30 @@ int mesh_event_owner_begin(struct mesh_event_owner *owner,
                            uint16_t proposal_sequence,
                            bool proposal_from_peer);
 
+/* Begin an owner while binding a peer-originated proposal to its boot
+ * incarnation. Wire EVENT_PROPOSE classification requires a nonzero nonce;
+ * zero is retained here only for locally initiated owners and old fixtures
+ * that do not represent a received proposal. */
+int mesh_event_owner_begin_with_boot_nonce(
+    struct mesh_event_owner *owner,
+    uint64_t peer_id,
+    uint32_t session_id,
+    uint16_t proposal_sequence,
+    bool proposal_from_peer,
+    uint64_t remote_boot_nonce);
+
+/* Extract the per-boot nonce from a PROPOSE payload. A missing nonce returns
+ * PROTO_ERR_NOT_FOUND; proposal classification treats that as invalid. */
+int mesh_event_owner_proposal_boot_nonce(const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint64_t *boot_nonce);
+
 /*
- * Classify a PROPOSE before reserving or replacing channel-9 timing. A prior
- * operation retained for this peer is stale, and an older proposal cannot
- * displace a live owner. Fresh replacements remain legal.
+ * Classify a PROPOSE before reserving or replacing channel-9 timing. The
+ * payload must carry one nonzero TLV_MESH_EVENT_BOOT_NONCE; missing or zero
+ * incarnations are invalid. A prior operation retained for this peer is
+ * stale, and an older proposal cannot displace a live owner. Fresh
+ * replacements remain legal.
  */
 enum mesh_event_owner_decision mesh_event_owner_classify_proposal(
     const struct mesh_event_owner *owner,

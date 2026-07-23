@@ -535,6 +535,10 @@ static bool gateway_collection_restore_pending;
 static bool gateway_membership_persistence_dirty;
 static bool gateway_membership_clear_pending;
 static bool gateway_membership_restore_pending;
+static bool gateway_click_journal_restore_pending;
+static bool gateway_click_journal_clear_pending;
+static bool gateway_click_journal_restored;
+static bool gateway_ble_stream_initialized;
 static uint8_t gateway_persistence_retry_round;
 
 void gateway_command_timeout_side_effects(const struct proto_packet *command,
@@ -547,6 +551,7 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
 static bool gateway_collection_tracking_active(void);
 static int gateway_restore_membership_runtime(void);
 static int gateway_restore_collection_runtime(void);
+static int gateway_restore_click_journal_runtime(void);
 
 static void gateway_schedule_persistence_retry(const char *reason)
 {
@@ -594,6 +599,22 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
+    if (gateway_click_journal_restore_pending) {
+        ret = gateway_restore_click_journal_runtime();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("click-restore");
+            return;
+        }
+    }
+    if (gateway_click_journal_clear_pending) {
+        ret = app_mesh_persistence_clear_gateway_click_journal();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("click-clear");
+            return;
+        }
+        gateway_click_journal_clear_pending = false;
+        gateway_click_journal_restored = false;
+    }
     if (gateway_membership_restore_pending) {
         ret = gateway_restore_membership_runtime();
         if (ret < 0) {
@@ -698,6 +719,25 @@ int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
         return -ENOTSUP;
     }
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (packet != NULL && packet->msg_type == MSG_CLICK_REPORT) {
+        int journal_ret;
+
+        /* A journal left by a previous boot owns admission until it has been
+         * restored into the host queue.  This prevents a new click from
+         * overwriting the only durable copy. */
+        if (gateway_click_journal_restore_pending ||
+            gateway_click_journal_clear_pending) {
+            return -EAGAIN;
+        }
+        journal_ret = app_mesh_persistence_gateway_click_journal_matches(
+            packet, payload, payload_len);
+        if (journal_ret != 0) {
+            return journal_ret;
+        }
+    }
+#endif
+
     ready = gateway_ble_stream_ready();
     key = k_spin_lock(&gateway_ble_stream_lock);
     ret = gateway_ble_stream_reserve_packet(&gateway_ble_stream_state,
@@ -731,6 +771,13 @@ int gateway_ble_commit_stream_reservation(const struct proto_packet *packet,
                                                 payload,
                                                 payload_len);
     k_spin_unlock(&gateway_ble_stream_lock, key);
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (ret < 0 && packet != NULL && packet->msg_type == MSG_CLICK_REPORT) {
+        gateway_click_journal_restore_pending = true;
+        gateway_click_journal_restored = false;
+        gateway_schedule_persistence_retry("click-stream-commit");
+    }
+#endif
     if (ret > 0) {
         gateway_ble_schedule_stream_drain();
     }
@@ -766,6 +813,96 @@ void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagno
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
+static int gateway_restore_click_journal_runtime(void)
+{
+    struct proto_packet *packet;
+    uint8_t *payload;
+    size_t payload_len = 0u;
+    uint32_t received_at_ms = 0u;
+    uint32_t staging_offset =
+        GATEWAY_BLE_STREAM_RECORD_POOL_BYTES -
+        PACKET_EXT_MAX_PAYLOAD_LEN;
+    k_spinlock_key_t key;
+    int ret;
+
+    if (!gateway_ble_stream_initialized) {
+        gateway_click_journal_restore_pending = true;
+        return -EAGAIN;
+    }
+    if (gateway_click_journal_restored) {
+        gateway_click_journal_restore_pending = false;
+        return 0;
+    }
+
+    /* Do not let a retry overwrite an active semantic reservation or a
+     * record already occupying the payload staging tail. */
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    if (gateway_ble_stream_state.reservation_active ||
+        gateway_ble_stream_state.head_send_active ||
+        gateway_ble_stream_state.restore_staging_active ||
+        gateway_ble_stream_state.count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
+        gateway_ble_stream_state.pool_used > staging_offset) {
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        gateway_click_journal_restore_pending = true;
+        return -EAGAIN;
+    }
+    packet = &gateway_ble_stream_state.items[
+        GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u].packet;
+    payload = &gateway_ble_stream_state.record_pool[staging_offset];
+    gateway_ble_stream_state.restore_staging_active = true;
+    gateway_ble_stream_state.restore_staging_offset = staging_offset;
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+
+    ret = app_mesh_persistence_restore_gateway_click_journal(
+        packet,
+        payload,
+        PACKET_EXT_MAX_PAYLOAD_LEN,
+        &payload_len,
+        &received_at_ms);
+    if (ret == 0 || ret == -EBADMSG) {
+        key = k_spin_lock(&gateway_ble_stream_lock);
+        gateway_ble_stream_state.restore_staging_active = false;
+        gateway_ble_stream_state.restore_staging_offset = 0u;
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        gateway_click_journal_restore_pending = false;
+        gateway_click_journal_restored = false;
+        return 0;
+    }
+    if (ret < 0) {
+        key = k_spin_lock(&gateway_ble_stream_lock);
+        gateway_ble_stream_state.restore_staging_active = false;
+        gateway_ble_stream_state.restore_staging_offset = 0u;
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        gateway_click_journal_restore_pending = true;
+        return ret;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_enqueue_staged_packet(
+        &gateway_ble_stream_state,
+        packet,
+        payload_len,
+        received_at_ms,
+        k_uptime_get_32(),
+        true);
+    gateway_ble_stream_state.restore_staging_active = false;
+    gateway_ble_stream_state.restore_staging_offset = 0u;
+    if (ret > 0) {
+        gateway_ble_stream_state.items[
+            gateway_ble_stream_state.count - 1u].retain_until_sent = true;
+    }
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret <= 0) {
+        gateway_click_journal_restore_pending = true;
+        return ret == 0 ? -EAGAIN : ret;
+    }
+
+    gateway_click_journal_restored = true;
+    gateway_click_journal_restore_pending = false;
+    gateway_ble_schedule_stream_drain();
+    return 0;
+}
+
 static int gateway_persist_collection_state(const char *reason)
 {
     int ret;
@@ -2092,6 +2229,10 @@ void gateway_command_result_tracking_init(void)
     gateway_membership_persistence_dirty = false;
     gateway_membership_clear_pending = false;
     gateway_membership_restore_pending = true;
+    gateway_click_journal_restore_pending = true;
+    gateway_click_journal_clear_pending = false;
+    gateway_click_journal_restored = false;
+    gateway_ble_stream_initialized = false;
     gateway_persistence_retry_round = 0u;
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
@@ -2636,6 +2777,23 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
         uint16_t queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
         k_spin_unlock(&gateway_ble_stream_lock, key);
         if (packet_ret == 0) {
+#if DEVICE_ROLE == ROLE_GATEWAY
+            if (completed_packet.msg_type == MSG_CLICK_REPORT) {
+                int clear_ret =
+                    app_mesh_persistence_clear_gateway_click_journal_if_matches(
+                        &completed_packet);
+
+                if (clear_ret < 0) {
+                    gateway_click_journal_clear_pending = true;
+                    gateway_schedule_persistence_retry("click-clear-send");
+                    LOG_WRN("gateway click journal clear deferred after BLE send: ret=%d",
+                            clear_ret);
+                } else {
+                    gateway_click_journal_clear_pending = false;
+                    gateway_click_journal_restored = false;
+                }
+            }
+#endif
             if (completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
                 gateway_command_observability_mark_sent(
                     &gateway_command_observability_state,
@@ -3059,6 +3217,15 @@ int gateway_ble_init(void)
     k_work_init_delayable(&gateway_ble_recovery_work,
                           gateway_ble_recovery_work_handler);
     gateway_ble_stream_init(&gateway_ble_stream_state);
+    gateway_ble_stream_initialized = true;
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        gateway_click_journal_restored = false;
+        gateway_click_journal_restore_pending = true;
+        ret = gateway_restore_click_journal_runtime();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("click-restore-init");
+        }
+    }
     gateway_command_observability_init(&gateway_command_observability_state);
     gateway_ble_tx_reset_locked();
     gateway_ble_rx_len = 0u;

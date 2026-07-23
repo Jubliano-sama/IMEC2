@@ -1,5 +1,6 @@
 #include "mesh_sim_internal.h"
 #include "mesh_sim_interval.h"
+#include "report.h"
 
 #include <limits.h>
 #include <string.h>
@@ -14,6 +15,8 @@ static int schedule_contact_response(
     const struct mesh_outbound *outbound);
 static int start_route_discovery_for_waiting(struct mesh_sim_world *world,
                                              uint8_t node_index);
+static int schedule_pending_runtime_tick(struct mesh_sim_world *world,
+                                         uint8_t node_index);
 int mesh_sim_relay_queue_index_for_peer(
     const struct mesh_sim_role_instance *node,
     uint64_t peer_id);
@@ -23,15 +26,21 @@ static int queue_index_for_peer_during_pending(
 void mesh_sim_relay_remove_queue_entry(struct mesh_sim_role_instance *node,
                                        size_t index);
 
+static bool packet_identity_matches(const struct proto_packet *left,
+                                    const struct proto_packet *right)
+{
+    return left->msg_type == right->msg_type &&
+           left->src_id == right->src_id &&
+           left->dst_id == right->dst_id &&
+           left->session_id == right->session_id &&
+           left->seq == right->seq;
+}
+
 static bool packet_identity_matches_pending(
     const struct proto_packet *packet,
     const struct mesh_pending_tx *pending)
 {
-    return packet->msg_type == pending->packet.msg_type &&
-           packet->src_id == pending->packet.src_id &&
-           packet->dst_id == pending->packet.dst_id &&
-           packet->session_id == pending->packet.session_id &&
-           packet->seq == pending->packet.seq;
+    return packet_identity_matches(packet, &pending->packet);
 }
 
 static bool queued_can_run_during_pending(
@@ -68,6 +77,37 @@ static void cancel_completed_pending_tick(struct mesh_sim_world *world,
         !node->relay.route_discovery.active) {
         mesh_sim_scheduler_cancel_route_discovery(world, node_index);
     }
+}
+
+static int schedule_pending_runtime_tick(struct mesh_sim_world *world,
+                                         uint8_t node_index)
+{
+    const struct mesh_pending_tx *pending;
+    uint32_t due_ms;
+    uint64_t due_us;
+
+    if (!mesh_sim_node_index_valid(world, node_index)) {
+        return MESH_SIM_ERR_ARG;
+    }
+    pending = &world->roles[node_index].relay.pending;
+    switch (pending->state) {
+    case MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD:
+        due_ms = pending->gateway_ack_deadline_ms;
+        break;
+    case MESH_RELAY_TX_WAIT_RETRY_BACKOFF:
+        due_ms = pending->retry_after_ms;
+        break;
+    default:
+        return MESH_SIM_OK;
+    }
+    if (due_ms == 0u) {
+        return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+    }
+    due_us = (uint64_t)due_ms * 1000u;
+    if (due_us < world->now_us) {
+        due_us = world->now_us;
+    }
+    return mesh_sim_schedule_relay_tick(world, node_index, due_us);
 }
 
 static uint8_t outbound_priority(const struct mesh_sim_role_instance *node,
@@ -320,7 +360,6 @@ int mesh_sim_direct_gateway_start_queued_tx(struct mesh_sim_world *world,
     } else {
         if (!mesh_relay_tx_active(&sender->relay) ||
             queued.outbound.packet.msg_type == MSG_GATEWAY_ACK ||
-            queued.outbound.packet.src_id != sender->id ||
             queued.outbound.next_hop_id != sender->gateway_id ||
             sender->relay.pending.packet.src_id !=
                 queued.outbound.packet.src_id ||
@@ -351,7 +390,11 @@ int mesh_sim_direct_gateway_start_queued_tx(struct mesh_sim_world *world,
         *transmission_index = (uint16_t)(world->transmission_count - 1u);
     }
     mesh_sim_relay_remove_queue_entry(sender, (size_t)queue_index);
-    return MESH_SIM_OK;
+    /* An unscheduled direct turn has no connection-event owner to complete
+     * the worker lease in mesh_sim_events.c.  Feed the sender at the actual
+     * RF admission boundary so a live direct turn cannot let its watchdog
+     * expire while the gateway ACK is being collected. */
+    return mesh_sim_watchdog_feed(world, sender_index);
 }
 
 int mesh_sim_direct_gateway_schedule_ack(struct mesh_sim_world *world,
@@ -455,7 +498,13 @@ int mesh_sim_direct_gateway_schedule_ack(struct mesh_sim_world *world,
         *transmission_index = (uint16_t)(world->transmission_count - 1u);
     }
     mesh_sim_relay_remove_queue_entry(gateway, (size_t)queue_index);
-    return MESH_SIM_OK;
+    /* The direct gateway RX/TX pair uses the unscheduled runtime seam, so it
+     * has no connection event to feed either endpoint's worker lease. */
+    ret = mesh_sim_watchdog_feed(world, gateway_index);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    return mesh_sim_watchdog_feed(world, sender_index);
 }
 
 int mesh_sim_relay_queue_index_for_peer(const struct mesh_sim_role_instance *node,
@@ -506,6 +555,19 @@ void mesh_sim_relay_remove_queue_entry(struct mesh_sim_role_instance *node,
     memset(&node->tx_queue[index], 0, sizeof(node->tx_queue[index]));
     if (node->tx_queue_count > 0u) {
         node->tx_queue_count--;
+    }
+}
+
+static void remove_queued_packet_identity(
+    struct mesh_sim_role_instance *node,
+    const struct proto_packet *packet)
+{
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        if (node->tx_queue[i].valid &&
+            packet_identity_matches(&node->tx_queue[i].outbound.packet,
+                                    packet)) {
+            mesh_sim_relay_remove_queue_entry(node, i);
+        }
     }
 }
 
@@ -1185,12 +1247,29 @@ static int process_relay_actions(struct mesh_sim_world *world,
                                            received_payload,
                                            received_payload_len);
 
-            if (delivery_match == SEMANTIC_DELIVERY_CONFLICT) {
+            if (received_packet->msg_type == MSG_CLICK_REPORT &&
+                report_validate_click_payload(received_packet,
+                                              received_payload,
+                                              received_payload_len) !=
+                    PROTO_OK) {
+                node->gateway_semantic_rejection_count++;
+                semantic_rejected = true;
+            } else if (delivery_match == SEMANTIC_DELIVERY_CONFLICT) {
                 node->gateway_semantic_rejection_count++;
                 semantic_rejected = true;
             } else if (delivery_match == SEMANTIC_DELIVERY_NEW &&
                        node->delivery_count >= MESH_SIM_DELIVERY_CAPACITY) {
                 return mesh_sim_fail(world, MESH_SIM_ERR_CAPACITY);
+            } else if (delivery_match == SEMANTIC_DELIVERY_NEW &&
+                       node->gateway_admit != NULL &&
+                       node->gateway_admit(
+                           received_packet,
+                           received_payload,
+                           received_payload_len,
+                           mesh_sim_time_ms(world->now_us),
+                           node->gateway_admit_context) != PROTO_OK) {
+                node->gateway_semantic_rejection_count++;
+                semantic_rejected = true;
             } else {
                 ret = mesh_relay_commit_gateway_delivery(
                     &node->relay,
@@ -1230,9 +1309,45 @@ static int process_relay_actions(struct mesh_sim_world *world,
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_FORWARD) != 0u) {
-        ret = queue_outbound(world, node_index, &result->forward, true);
+        struct mesh_outbound forward = result->forward;
+        /* A gateway ACK produced for transit custody is already a complete
+         * child-directed packet.  Keep it independently schedulable while
+         * the original pending packet remains live; treating it as a fresh
+         * relay-start payload would exclude it from the pending turn and let
+         * a lower-priority hop ACK consume the opportunity first. */
+        bool needs_relay_start =
+            (result->actions &
+             MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING) == 0u;
+        if (needs_relay_start &&
+            node->relay.pending.state != MESH_RELAY_TX_IDLE &&
+            packet_identity_matches(&forward.packet,
+                                    &node->relay.pending.packet)) {
+            /* A duplicate retry of the packet already tracked by this relay
+             * is an immutable custody retransmission.  It must be admitted
+             * during the pending turn, just like the generated ACKs, while
+             * still using the exact pending identity. */
+            needs_relay_start = false;
+        }
+        if (!needs_relay_start) {
+            forward.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+        }
+        ret = queue_outbound(world,
+                             node_index,
+                             &forward,
+                             needs_relay_start);
         if (ret != MESH_SIM_OK) {
             return ret;
+        }
+        if ((result->actions &
+             MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING) != 0u) {
+            /*
+             * Gateway acceptance makes any already-queued upstream retry of
+             * the immutable transit packet obsolete.  Keep the core pending
+             * packet/outbox until the child ACK handoff commits, but do not
+             * let a stale upstream retry repeatedly win the direct-gateway
+             * lane and starve that handoff.
+             */
+            remove_queued_packet_identity(node, &node->relay.pending.packet);
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) != 0u) {
@@ -1321,6 +1436,7 @@ static int process_relay_actions(struct mesh_sim_world *world,
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) != 0u) {
+        remove_queued_packet_identity(node, &node->relay.pending.packet);
         ret = mesh_sim_trace_add_packet(world,
                                         world->now_us,
                                         node->id,
@@ -1350,7 +1466,7 @@ static int process_relay_actions(struct mesh_sim_world *world,
         return mesh_sim_fail(world, MESH_SIM_ERR_UNSUPPORTED_ACTION);
     }
     cancel_completed_pending_tick(world, node_index);
-    return MESH_SIM_OK;
+    return schedule_pending_runtime_tick(world, node_index);
 }
 
 int mesh_sim_relay_dispatch_packet(struct mesh_sim_world *world,
@@ -1610,6 +1726,7 @@ int mesh_sim_relay_start_connection_tx(
     if (sender->relay.pending.state ==
             MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
         outbound.packet.msg_type == MSG_GATEWAY_ACK) {
+        struct proto_packet confirmed_packet = sender->relay.pending.packet;
         uint32_t actions = MESH_RELAY_ACTION_NONE;
 
         ret = mesh_relay_commit_transit_gateway_ack_forward(
@@ -1621,12 +1738,13 @@ int mesh_sim_relay_start_connection_tx(
             actions != MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
             return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
         }
+        remove_queued_packet_identity(sender, &confirmed_packet);
         ret = mesh_sim_trace_add_packet(world,
                                         tx_start_us,
                                         sender->id,
                                         sender->gateway_id,
                                         MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                        &sender->relay.pending.packet,
+                                        &confirmed_packet,
                                         0u);
         if (ret != MESH_SIM_OK) {
             return ret;

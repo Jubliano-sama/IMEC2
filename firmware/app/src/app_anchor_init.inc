@@ -45,6 +45,16 @@ int app_anchor_init(void)
     if (ret < 0) {
         return ret;
     }
+#if DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY
+    /* Mount persistence before any mesh work can query deferred custody.  The
+     * scheduler's presence accessor is intentionally cache-only, so a failed
+     * mount remains visible as a retryable error instead of doing flash I/O
+     * from the system workqueue. */
+    ret = app_mesh_persistence_init();
+    if (ret < 0 && ret != -ENOTSUP) {
+        LOG_WRN("mesh persistence startup mount unavailable: %d", ret);
+    }
+#endif
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
     if (gateway_host_command_msgq.max_msgs != GATEWAY_HOST_COMMAND_QUEUE_DEPTH) {
@@ -114,6 +124,21 @@ int app_anchor_start_anchor_role(void)
     ret = app_mesh_persistence_restore_outbox(&mesh_runtime, k_uptime_get_32());
     if (ret < 0) {
         LOG_WRN("anchor mesh outbox restore unavailable: %d", ret);
+    }
+    if (mesh_relay_tx_active(&mesh_runtime)) {
+        ret = app_mesh_persistence_complete_deferred_outbox(
+            &mesh_runtime,
+            k_uptime_get_32());
+        if (ret < 0 && ret != -ENOTSUP) {
+            LOG_WRN("anchor deferred outbox cleanup unavailable: %d", ret);
+        }
+    } else {
+        ret = app_mesh_persistence_restore_deferred_outbox(
+            &mesh_runtime,
+            k_uptime_get_32());
+        if (ret < 0 && ret != -ENOTSUP) {
+            LOG_WRN("anchor deferred outbox restore unavailable: %d", ret);
+        }
     }
     ret = app_anchor_survey_discovery_restore(&delivery_restored);
     if (ret < 0) {

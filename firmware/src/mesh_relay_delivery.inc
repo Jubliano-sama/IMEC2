@@ -54,6 +54,9 @@ static int outbox_snapshot_validate(const struct mesh_relay *relay,
     if (pending_is_result_bundle(relay, pending)) {
         return PROTO_OK;
     }
+    if (pending_is_generic_transit_gateway_packet(relay, pending)) {
+        return PROTO_OK;
+    }
     if (!pending_has_valid_command_result_id(relay, pending) ||
         command_result_id_from_tlvs(pending->payload,
                                     pending->payload_len,
@@ -97,7 +100,8 @@ int mesh_relay_export_outbox_snapshot(struct mesh_relay *relay,
     memset(snapshot, 0, sizeof(*snapshot));
     if (!mesh_relay_tx_active(relay) ||
         (!pending_has_valid_command_result_id(relay, &relay->pending) &&
-         !pending_is_result_bundle(relay, &relay->pending)) ||
+         !pending_is_result_bundle(relay, &relay->pending) &&
+         !pending_is_generic_transit_gateway_packet(relay, &relay->pending)) ||
         !relay->outbox_record.valid) {
         return PROTO_ERR_NOT_FOUND;
     }
@@ -363,7 +367,8 @@ bool mesh_relay_can_defer_tx(const struct mesh_relay *relay)
     return relay != NULL &&
            (pending_is_local_collection_result(relay, &relay->pending) ||
             pending_is_forwarded_command_result(relay, &relay->pending) ||
-            pending_is_result_bundle(relay, &relay->pending));
+            pending_is_result_bundle(relay, &relay->pending) ||
+            pending_is_generic_transit_gateway_packet(relay, &relay->pending));
 }
 
 static bool pending_matches_outbound(const struct mesh_relay *relay,
@@ -1185,6 +1190,49 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
         if (mesh_relay_tx_active(relay) &&
             !gateway_targeted_control_can_forward_independently(
                 relay, packet, previous_hop_id)) {
+            bool same_pending_identity =
+                relay->pending.packet.msg_type == packet->msg_type &&
+                relay->pending.packet.src_id == packet->src_id &&
+                relay->pending.packet.dst_id == packet->dst_id &&
+                relay->pending.packet.session_id == packet->session_id &&
+                relay->pending.packet.seq == packet->seq;
+
+            /* A retry of the exact packet this relay already owns is a
+             * progress probe, not a competing transaction.  Identity alone
+             * is insufficient: a same-header packet with different bytes
+             * must never replace or extend custody. */
+            if (same_pending_identity) {
+                bool same_pending_payload =
+                    relay->pending.packet.payload_len ==
+                        relay->pending.payload_len &&
+                    relay->pending.payload_len == payload_len &&
+                    packet->payload_len == payload_len &&
+                    (payload_len == 0u ||
+                     memcmp(relay->pending.payload, payload, payload_len) == 0);
+
+                if (!same_pending_payload) {
+                    result->actions |= MESH_RELAY_ACTION_DROP;
+                    result->status = PROTO_ERR_MALFORMED;
+                    return PROTO_OK;
+                }
+
+                /* Re-forward immutable custody bytes.  In particular, do
+                 * not build from the received retry, whose payload may have
+                 * been altered after duplicate identity matched. */
+                ret = outbound_from_pending(relay,
+                                            &relay->pending,
+                                            now_ms,
+                                            &result->forward);
+                if (ret != PROTO_OK) {
+                    result->status = ret;
+                    result->actions |= MESH_RELAY_ACTION_DROP;
+                    return PROTO_OK;
+                }
+                result->actions |= MESH_RELAY_ACTION_FORWARD;
+                add_hop_ack_action(relay, packet, previous_hop_id, result);
+                result->status = PROTO_ERR_STALE;
+                return PROTO_OK;
+            }
             if (duplicate_busy_response_due(relay, packet, payload,
                                             payload_len, now_ms)) {
                 add_busy_action(relay, packet, payload, payload_len,

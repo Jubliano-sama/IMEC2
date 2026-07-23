@@ -407,10 +407,68 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     struct mesh_outbound *pending_waiting = &mesh_tx_timeout_pending_waiting;
     enum app_mesh_parent_loss_custody parent_loss_custody;
     bool pending_route_waiting = false;
+    uint32_t now_ms;
+    int restore_ret;
 
     ARG_UNUSED(work);
     if (mesh_transport_paused()) {
+        (void)mesh_reschedule_delayable(&mesh_tx_timeout_work,
+                                        REPORT_TX_RETRY_DELAY_MS);
         return;
+    }
+    now_ms = k_uptime_get_32();
+    if (!mesh_relay_tx_active(&mesh_runtime)) {
+        /*
+         * Click preemption transfers the frozen packet to the durable outbox
+         * before cancelling its in-RAM owner.  Resume that same packet in this
+         * boot once the click's radio-critical window has ended; startup-only
+         * restore would otherwise strand it until a reset.
+         */
+        restore_ret =
+            app_mesh_persistence_restore_outbox(&mesh_runtime, now_ms);
+        if (restore_ret < 0 && restore_ret != -ENOTSUP &&
+            mesh_relay_tx_active(&mesh_runtime)) {
+            LOG_WRN("mesh deferred outbox restore failed: %d", restore_ret);
+            (void)mesh_reschedule_delayable(&mesh_tx_timeout_work,
+                                            REPORT_TX_RETRY_DELAY_MS);
+            return;
+        }
+        if (!mesh_relay_tx_active(&mesh_runtime)) {
+            restore_ret = app_mesh_persistence_restore_deferred_outbox(
+                &mesh_runtime,
+                now_ms);
+            if (restore_ret == 0) {
+                mesh_deferred_outbox_pending = false;
+            }
+            if (restore_ret < 0 && restore_ret != -ENOTSUP) {
+                mesh_deferred_outbox_pending = true;
+                LOG_WRN("mesh deferred transit restore failed: %d",
+                        restore_ret);
+                (void)mesh_reschedule_delayable(&mesh_tx_timeout_work,
+                                                REPORT_TX_RETRY_DELAY_MS);
+                return;
+            }
+        } else {
+            restore_ret = app_mesh_persistence_complete_deferred_outbox(
+                &mesh_runtime,
+                now_ms);
+            if (restore_ret < 0 && restore_ret != -ENOTSUP) {
+                mesh_deferred_outbox_pending = true;
+                LOG_WRN("mesh deferred transit cleanup failed: %d",
+                        restore_ret);
+            } else if (restore_ret == 0) {
+                int deferred_present_ret =
+                    app_mesh_persistence_deferred_outbox_present();
+
+                if (deferred_present_ret >= 0) {
+                    mesh_deferred_outbox_pending = deferred_present_ret > 0;
+                } else if (deferred_present_ret != -ENOTSUP &&
+                           deferred_present_ret != -ENODEV &&
+                           deferred_present_ret != -EAGAIN) {
+                    mesh_deferred_outbox_pending = true;
+                }
+            }
+        }
     }
     memset(result, 0, sizeof(*result));
     memset(pending_waiting, 0, sizeof(*pending_waiting));
@@ -421,11 +479,11 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                             mesh_route_waiting_tx_valid ? 1u : 0u,
                             mesh_ch9_tx_pending_is_active() ? 1u : 0u,
                             mesh_relay_result_bundle_pending(&mesh_runtime) ? 1u : 0u,
-                            k_uptime_get_32());
+                            now_ms);
     }
 
-    mesh_ch9_tx_pending_handle_timeout(k_uptime_get_32());
-    if (mesh_defer_due_retry_to_channel9_tx_slot(k_uptime_get_32())) {
+    mesh_ch9_tx_pending_handle_timeout(now_ms);
+    if (mesh_defer_due_retry_to_channel9_tx_slot(now_ms)) {
         return;
     }
 
@@ -448,7 +506,7 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     }
 
     if (mesh_relay_tick_with_random(&mesh_runtime,
-                                    k_uptime_get_32(),
+                                    now_ms,
                                     sys_rand32_get(),
                                     result) != PROTO_OK) {
         return;
@@ -2175,6 +2233,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     k_work_init_delayable(&mesh_persistence_retry_work,
                           mesh_persistence_retry_work_handler);
     mesh_outbox_persistence_dirty = false;
+    mesh_deferred_outbox_pending = false;
     mesh_child_custody_persistence_dirty = false;
     mesh_persistence_retry_round = 0u;
     memset(&mesh_delivery_health, 0, sizeof(mesh_delivery_health));
@@ -2198,7 +2257,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
                           mesh_event_negotiation_retry_work_handler);
     mesh_event_propose_clear();
     memset(&mesh_event_accept_retry, 0, sizeof(mesh_event_accept_retry));
-    app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+    mesh_event_accept_rx_clear();
     memset(mesh_event_owners, 0, sizeof(mesh_event_owners));
     mesh_event_operation_session_next = 0u;
 #if DEVICE_ROLE == ROLE_ANCHOR

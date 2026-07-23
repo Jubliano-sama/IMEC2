@@ -288,6 +288,8 @@ enum tlv_type {
     TLV_ROUTE_NODE_PATH = 0xAD,
     TLV_OPERATION_POLICY = 0xAE,
     TLV_SURVEY_ROUND_ID = 0xAF,
+    /* Nonzero per-boot incarnation for channel-9 EVENT_PROPOSE recovery. */
+    TLV_MESH_EVENT_BOOT_NONCE = 0xB0,
 };
 
 enum detection_source {

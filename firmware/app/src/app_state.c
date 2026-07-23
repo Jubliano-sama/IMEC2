@@ -5,6 +5,7 @@
 #include "dwm3000_driver.h"
 
 #include <zephyr/logging/log.h>
+#include <zephyr/random/random.h>
 #include <zephyr/sys/util.h>
 
 #include <errno.h>
@@ -24,6 +25,8 @@ struct mesh_event_diagnostics mesh_event_stats;
 struct uwb_anchor_session anchor_uwb_session;
 uint32_t anchor_uwb_scan_interval_ms = ANCHOR_UWB_SCAN_INTERVAL_MS;
 uint16_t mesh_event_control_seq;
+static uint64_t mesh_event_boot_nonce_value;
+static K_MUTEX_DEFINE(mesh_event_boot_nonce_lock);
 static const char *uwb_rf_owner_reason;
 static uint32_t uwb_rf_owner_since_ms;
 static bool uwb_rf_admission_paused;
@@ -354,6 +357,23 @@ uint16_t mesh_next_event_control_seq(void)
         mesh_event_control_seq = 1u;
     }
     return mesh_event_control_seq;
+}
+
+uint64_t mesh_event_boot_nonce(void)
+{
+    uint64_t value;
+
+    k_mutex_lock(&mesh_event_boot_nonce_lock, K_FOREVER);
+    if (mesh_event_boot_nonce_value == 0u) {
+        mesh_event_boot_nonce_value = ((uint64_t)sys_rand32_get() << 32) |
+                                      (uint64_t)sys_rand32_get();
+        if (mesh_event_boot_nonce_value == 0u) {
+            mesh_event_boot_nonce_value = UINT64_C(1);
+        }
+    }
+    value = mesh_event_boot_nonce_value;
+    k_mutex_unlock(&mesh_event_boot_nonce_lock);
+    return value;
 }
 
 uint32_t nonzero_uptime_session_id(void)

@@ -242,6 +242,17 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
     dwm3000_runtime_init(&node->dwm3000);
     node->id = id;
     node->gateway_id = gateway_id;
+    /* Keep the initial simulator incarnation deterministic without consuming
+     * the traffic RNG stream; resets draw a fresh value explicitly. */
+    node->event_boot_nonce = id ^
+                             ((uint64_t)world->rng_state << 32) ^
+                             UINT64_C(0x9E3779B97F4A7C15);
+    node->event_boot_nonce ^= node->event_boot_nonce >> 29;
+    node->event_boot_nonce *= UINT64_C(0xBF58476D1CE4E5B9);
+    node->event_boot_nonce ^= node->event_boot_nonce >> 31;
+    if (node->event_boot_nonce == 0u) {
+        node->event_boot_nonce = 1u;
+    }
     node->world = world;
     node->node_index = *node_index;
     node->work_epoch = 1u;
@@ -318,6 +329,26 @@ int mesh_sim_gateway_reject_next_semantic_deliveries(
         return MESH_SIM_ERR_ARG;
     }
     gateway->gateway_semantic_rejections_remaining = count;
+    return MESH_SIM_OK;
+}
+
+int mesh_sim_gateway_set_admission(
+    struct mesh_sim_world *world,
+    uint8_t gateway_index,
+    mesh_sim_gateway_admit_fn admit,
+    void *context)
+{
+    struct mesh_sim_role_instance *gateway;
+
+    if (!mesh_sim_node_index_valid(world, gateway_index)) {
+        return MESH_SIM_ERR_ARG;
+    }
+    gateway = &world->roles[gateway_index];
+    if (gateway->role != MESH_SIM_ROLE_GATEWAY) {
+        return MESH_SIM_ERR_ARG;
+    }
+    gateway->gateway_admit = admit;
+    gateway->gateway_admit_context = context;
     return MESH_SIM_OK;
 }
 

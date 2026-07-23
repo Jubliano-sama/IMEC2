@@ -29,7 +29,11 @@ struct preempt_fixture {
     enum fixture_owner owner;
     bool active_present;
     bool durable_staged;
+    bool deferred_staged;
     bool click_report_staged;
+    struct mesh_outbound deferred_packet;
+    struct mesh_outbound expected_packet;
+    bool deferred_packet_valid;
     enum fixture_handoff_phase handoff_phase;
     uint8_t save_calls;
     uint8_t schedule_calls;
@@ -185,6 +189,19 @@ static int save_outbox(void *ctx)
     return fixture->save_ret;
 }
 
+static int save_deferred_outbox(void *ctx)
+{
+    struct preempt_fixture *fixture = ctx;
+
+    fixture->save_calls++;
+    if (fixture->save_ret == 0) {
+        fixture->deferred_staged = true;
+        fixture->deferred_packet = fixture->expected_packet;
+        fixture->deferred_packet_valid = true;
+    }
+    return fixture->save_ret;
+}
+
 static int schedule_timeout(void *ctx)
 {
     struct preempt_fixture *fixture = ctx;
@@ -285,7 +302,8 @@ static int cancel_active_tx(void *ctx)
         return fixture->cancel_active_ret;
     }
     assert(fixture->active_present);
-    assert(fixture->durable_staged || fixture->click_report_staged ||
+    assert(fixture->durable_staged || fixture->deferred_staged ||
+           fixture->click_report_staged ||
            fixture->handoff_phase == FIXTURE_HANDOFF_STAGED ||
            fixture->handoff_phase == FIXTURE_HANDOFF_COMMITTED);
     fixture->active_present = false;
@@ -483,6 +501,73 @@ static void test_durable_handoff_survives_restart_after_commit(void)
     assert_one_real_owner(&fixture, &result);
 }
 
+static void test_deferred_transit_survives_local_click_outbox_lifecycle(void)
+{
+    struct app_mesh_click_preempt_result result;
+    struct preempt_fixture fixture = active_fixture();
+    struct app_mesh_click_preempt_ops ops = ops_for(&fixture);
+    const struct mesh_click_preempt_plan plan = durable_plan();
+    struct mesh_outbound restored;
+
+    fixture.expected_packet.packet.msg_type = MSG_CLICK_REPORT;
+    fixture.expected_packet.packet.src_id = UINT64_C(0xB001);
+    fixture.expected_packet.packet.dst_id = UINT64_C(0x9000);
+    fixture.expected_packet.packet.session_id = 0x44556677u;
+    fixture.expected_packet.packet.seq = 0x1234u;
+    fixture.expected_packet.packet.ttl = MESH_GATEWAY_ACK_TTL;
+    fixture.expected_packet.payload_len = 3u;
+    fixture.expected_packet.packet.payload_len = 3u;
+    fixture.expected_packet.payload[0] = 0xa1u;
+    fixture.expected_packet.payload[1] = 0xb2u;
+    fixture.expected_packet.payload[2] = 0xc3u;
+    ops.save_deferred_outbox = save_deferred_outbox;
+
+    /* The exact transit identity is committed to its dedicated handoff slot. */
+    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == 0);
+    assert(result.outbox_saved);
+    assert(fixture.deferred_staged);
+    assert(fixture.deferred_packet_valid);
+    assert(!fixture.active_present);
+    assert(fixture.owner == FIXTURE_OWNER_DURABLE);
+
+    /* A later local click may use and retire the ordinary active-outbox slot. */
+    fixture.active_present = true;
+    fixture.owner = FIXTURE_OWNER_ACTIVE;
+    fixture.durable_staged = true;
+    fixture.durable_staged = false; /* local click gateway ACK */
+    fixture.active_present = false;
+    fixture.owner = FIXTURE_OWNER_DURABLE;
+    assert(fixture.deferred_staged);
+    assert(fixture.deferred_packet_valid);
+
+    /* Same-boot restore consumes only the deferred copy and preserves identity. */
+    restored = fixture.deferred_packet;
+    fixture.deferred_staged = false;
+    fixture.deferred_packet_valid = false;
+    fixture.active_present = true;
+    fixture.owner = FIXTURE_OWNER_ACTIVE;
+    assert(restored.packet.msg_type == MSG_CLICK_REPORT);
+    assert(restored.packet.src_id == UINT64_C(0xB001));
+    assert(restored.packet.session_id == 0x44556677u);
+    assert(restored.packet.seq == 0x1234u);
+    assert(restored.payload_len == 3u);
+    assert(memcmp(restored.payload,
+                  fixture.expected_packet.payload,
+                  restored.payload_len) == 0);
+    assert(!fixture.deferred_staged);
+    assert(fixture.active_present);
+}
+
+static void test_deferred_outbox_keeps_timeout_work_owned_after_local_ack(void)
+{
+    /* This is the production scheduler predicate used after gateway ACK. */
+    assert(!app_mesh_tx_timeout_work_needed(false, false, false, false));
+    assert(app_mesh_tx_timeout_work_needed(false, false, false, true));
+    assert(app_mesh_tx_timeout_work_needed(true, false, false, false));
+    assert(app_mesh_tx_timeout_work_needed(false, true, false, false));
+    assert(app_mesh_tx_timeout_work_needed(false, false, true, false));
+}
+
 static void test_queue_remove_rotates_once_and_preserves_relative_order(void)
 {
     struct queue_remove_fixture fixture = queue_remove_fixture();
@@ -666,6 +751,8 @@ int main(void)
     test_failed_cancel_and_rollback_keeps_recovery_journal_authoritative();
     test_reset_recovery_has_one_logical_owner_at_every_handoff_phase();
     test_durable_handoff_survives_restart_after_commit();
+    test_deferred_transit_survives_local_click_outbox_lifecycle();
+    test_deferred_outbox_keeps_timeout_work_owned_after_local_ack();
     test_queue_remove_rotates_once_and_preserves_relative_order();
     test_queue_remove_absent_target_preserves_order();
     test_queue_remove_reports_get_and_put_failures();

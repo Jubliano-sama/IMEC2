@@ -147,6 +147,34 @@ struct dwm3000_driver_stats {
     uint32_t radio_recoveries;
 };
 
+/*
+ * These predicates are the shared semantic boundary between the Zephyr
+ * radio handler and host-side handler tests.  Keeping the RESP/REPORT/FINAL
+ * identity checks in one production translation unit prevents a native
+ * harness from proving a different acceptance rule than the nRF handler uses.
+ */
+bool dwm3000_driver_header_matches_request(
+    const struct uwb_range_header *header,
+    const struct dwm3000_range_request *request,
+    uint8_t expected_type);
+bool dwm3000_driver_final_matches_poll(
+    const struct uwb_final_frame *final,
+    const struct uwb_range_header *poll,
+    uint64_t local_anchor_id);
+
+/* Pure DS-TWR math shared by the Zephyr handler and native boundary tests. */
+uint16_t dwm3000_driver_dwt_delta_to_uus(uint32_t start_ts,
+                                         uint32_t end_ts);
+int dwm3000_driver_validate_reply_timing(uint16_t poll_to_resp_uus,
+                                         uint16_t resp_to_final_uus,
+                                         uint16_t expected_uus,
+                                         uint16_t tolerance_uus);
+int dwm3000_driver_compute_distance_mm(const struct uwb_final_frame *final,
+                                       uint64_t poll_rx_ts,
+                                       uint64_t resp_tx_ts,
+                                       uint64_t final_rx_ts,
+                                       int32_t *distance_mm);
+
 int dwm3000_driver_probe(uint32_t *dev_id);
 int dwm3000_driver_configure_default(void);
 int dwm3000_driver_configure_range_mode(void);

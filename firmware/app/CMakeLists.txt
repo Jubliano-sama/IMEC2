@@ -20,6 +20,7 @@ set_property(CACHE FIRMWARE_PRESET PROPERTY STRINGS
     tag_stage0_highdebug
     tag_stage1_highdebug
     tag_stage1_wake_spam
+    tag_stage1_click_spam
     anchor_stage1_highdebug
     tag_stage2_highdebug
     anchor_stage2_highdebug
@@ -57,6 +58,7 @@ set_property(CACHE IMEC_BUILD_PRESET PROPERTY STRINGS
     tag_stage0_highdebug
     tag_stage1_highdebug
     tag_stage1_wake_spam
+    tag_stage1_click_spam
     anchor_stage1_highdebug
     tag_stage2_highdebug
     anchor_stage2_highdebug
@@ -123,6 +125,11 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_BENCH_STAGE 1)
         set(IMEC_PRESET_ROLE_CONF "role-tag.conf")
         set(IMEC_PRESET_EXTRA_CONF "tag-wake-spam.conf")
+    elseif(IMEC_BUILD_PRESET STREQUAL "tag_stage1_click_spam")
+        set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
+        set(IMEC_BENCH_STAGE 1)
+        set(IMEC_PRESET_ROLE_CONF "role-tag.conf")
+        set(IMEC_PRESET_EXTRA_CONF "tag-click-spam.conf")
     elseif(IMEC_BUILD_PRESET STREQUAL "anchor_stage1_highdebug")
         set(FIRMWARE_ROLE "anchor" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_BENCH_STAGE 1)
@@ -457,6 +464,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_anchor_survey_runtime.c
     src/app_high_debug.c
     src/app_watchdog.c
+    src/dwm3000_driver_handler_contract.c
 )
 
 target_sources(app PRIVATE

@@ -21,6 +21,13 @@ extern "C" {
 
 struct mesh_sim_world;
 
+typedef int (*mesh_sim_gateway_admit_fn)(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t received_at_ms,
+    void *context);
+
 #define MESH_SIM_MAX_ROLES 64u
 #define MESH_SIM_MAX_CONNECTIONS 64u
 #define MESH_SIM_MAX_CONNECTION_EVENTS 1024u
@@ -334,7 +341,10 @@ struct mesh_sim_role_instance {
     uint32_t work_epoch;
     struct mesh_sim_relay_timer_guard relay_timer_guard;
     uint16_t event_control_seq;
+    uint64_t event_boot_nonce;
     uint16_t gateway_semantic_rejections_remaining;
+    mesh_sim_gateway_admit_fn gateway_admit;
+    void *gateway_admit_context;
     uint8_t node_index;
     uint8_t route_request_flags;
     bool relay_initialized;
@@ -550,6 +560,11 @@ int mesh_sim_gateway_reject_next_semantic_deliveries(
     struct mesh_sim_world *world,
     uint8_t gateway_index,
     uint16_t count);
+int mesh_sim_gateway_set_admission(
+    struct mesh_sim_world *world,
+    uint8_t gateway_index,
+    mesh_sim_gateway_admit_fn admit,
+    void *context);
 int mesh_sim_set_directed_rx_failures(
     struct mesh_sim_world *world,
     uint8_t sender_index,

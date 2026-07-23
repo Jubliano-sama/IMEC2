@@ -181,6 +181,8 @@ static void test_click_preemption_retains_transit_click_report(void)
     };
     struct mesh_outbound tx;
     struct mesh_click_preempt_plan plan;
+    struct mesh_relay_outbox_snapshot snapshot;
+    struct mesh_relay_result result;
     uint8_t payload[] = {0xc0u, 0xffu, 0xeeu, 0x00u};
 
     mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 7u);
@@ -195,18 +197,44 @@ static void test_click_preemption_retains_transit_click_report(void)
     assert(mesh_relay_tx_active(&relay));
 
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) == PROTO_OK);
-    assert(!plan.save_outbox);
-    assert(!plan.schedule_timeout);
+    assert(plan.save_outbox);
+    assert(plan.schedule_timeout);
     assert(!plan.requeue_click_report);
     assert(!plan.clear_outbox);
     assert(!plan.cancel_timeout);
-    assert(!plan.cancel_active_tx);
+    assert(plan.cancel_active_tx);
     assert(mesh_relay_tx_active(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
     assert(relay.pending.packet.msg_type == MSG_CLICK_REPORT);
     assert(relay.pending.packet.src_id == TRANSMITTER);
     assert(relay.pending.payload_len == sizeof(payload));
     assert(memcmp(relay.pending.payload, payload, sizeof(payload)) == 0);
+
+    /* Model the app's atomic save-before-cancel preemption commit. */
+    assert(mesh_relay_export_outbox_snapshot(&relay, 5100u, &snapshot) ==
+           PROTO_OK);
+    mesh_relay_cancel_tx(&relay);
+    assert(!mesh_relay_tx_active(&relay));
+    assert(mesh_relay_restore_outbox_snapshot(&relay,
+                                              &snapshot,
+                                              5200u) == PROTO_OK);
+    assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.packet.msg_type == MSG_CLICK_REPORT);
+    assert(relay.pending.packet.src_id == TRANSMITTER);
+    assert(relay.pending.packet.session_id == packet.session_id);
+    assert(relay.pending.packet.seq == packet.seq);
+    assert(relay.pending.payload_len == sizeof(payload));
+    assert(memcmp(relay.pending.payload, payload, sizeof(payload)) == 0);
+
+    assert(mesh_relay_tick(&relay,
+                           relay.pending.retry_after_ms,
+                           &result) == PROTO_OK);
+    assert((result.actions & MESH_RELAY_ACTION_RETRANSMIT) != 0u);
+    assert(result.retransmit.packet.src_id == TRANSMITTER);
+    assert(result.retransmit.packet.session_id == packet.session_id);
+    assert(result.retransmit.packet.seq == packet.seq);
+    assert(result.retransmit.payload_len == sizeof(payload));
+    assert(memcmp(result.retransmit.payload, payload, sizeof(payload)) == 0);
 }
 
 int main(void)

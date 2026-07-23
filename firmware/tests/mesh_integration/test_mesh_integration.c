@@ -380,16 +380,26 @@ static size_t build_click_report(uint8_t *payload,
                                  size_t payload_cap,
                                  struct proto_packet *packet)
 {
+    const int32_t distance_samples_mm[] = {1234};
+    const uint8_t range_round_indices[] = {0u};
+    const uint64_t sequence_start_timestamps_ms[] = {100u};
     const struct range_report_fields fields = {
         .clicker_id = CLICKER_ID,
         .anchor_id = ANCHOR_1_ID,
-        .event_seq = 77u,
+        .event_seq = UINT32_C(0x2001),
         .timestamp_ms = 100u,
         .distance_mm = 1234,
         .quality = 99u,
         .range_status = RANGE_OK,
+        .distance_samples_mm = distance_samples_mm,
+        .range_round_indices = range_round_indices,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
+        .sample_count = 1u,
+        .distance_sample_count = 1u,
+        .burst_id = UINT32_C(0x2001),
         .omit_rsl = true,
         .omit_cir = true,
+        .burst_id_present = true,
     };
     size_t payload_len = 0u;
 
@@ -404,6 +414,8 @@ static size_t build_click_report(uint8_t *payload,
                                     0x2001u,
                                     1u,
                                     (uint8_t)payload_len) == PROTO_OK);
+    assert(report_validate_click_payload(packet, payload, payload_len) ==
+           PROTO_OK);
     return payload_len;
 }
 

@@ -323,6 +323,17 @@ config IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS
       repeatedly transmits normal Stage 1 WAKE_CLAIM trains from boot. This is
       intended for anchor RX bring-up with no manual button presses.
 
+config IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS
+    bool "Continuously run Stage 1 diagnostic click sessions"
+    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_TAG
+    depends on IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE
+    help
+      Bench-only diagnostic path for the tag_stage1_click_spam preset. It
+      repeatedly runs the normal click-session path from boot, including the
+      wake claim, discovery, one-anchor diagnostic schedule, DS-TWR, and the
+      resulting anchor report path. This image never enables a deployable mesh
+      preset and does not use the physical button or clicker idle path.
+
 config IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN
     bool "Use high-duty Stage 1 anchor UWB wake scan"
     depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_ANCHOR

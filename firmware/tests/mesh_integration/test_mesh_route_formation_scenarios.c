@@ -3,6 +3,7 @@
 
 #include "mesh_relay.h"
 #include "protocol.h"
+#include "report.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,6 +31,17 @@
 #define DISCOVERY_BUDGET_MS                                                \
     (2u * MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS + FLOOD_WAVE_MS +    \
      RREP_RESPONDER_JITTER_MAX_MS + 250u)
+#define UNSEEDED_CLICKER_ID UINT64_C(0xA1f0)
+#define UNSEEDED_CLICK_SESSION UINT32_C(0x5a110001)
+#define DIRECT_PROBE_SESSION UINT32_C(0x5a110002)
+#define DIRECT_PROBE_TX_PREPARE_US UINT64_C(2000)
+#define DIRECT_PROBE_ACK_GUARD_US UINT64_C(50000)
+#define DIRECT_PROBE_ACK_SERVICE_US UINT64_C(80000)
+#define DIRECT_CLICK_TX_PREPARE_US UINT64_C(20000)
+#define DIRECT_CLICK_TX_SERVICE_US UINT64_C(80000)
+#define DIRECT_CLICK_RX_GUARD_US UINT64_C(100)
+#define DIRECT_CLICK_ACK_GUARD_US UINT64_C(50000)
+#define DIRECT_CLICK_ACK_SERVICE_US UINT64_C(80000)
 
 struct route_reception {
     struct mesh_sim_reception radio;
@@ -248,6 +260,14 @@ static int schedule_outbound_rx(struct mesh_sim_world *world,
     window_start_us = arrival_start_us - RX_GUARD_US;
     window_end_us = complete_window ? arrival_end_us + RX_GUARD_US :
                                       arrival_end_us - 1u;
+
+    /* A discovery TX can be made ready at the current scheduler timestamp
+     * after a preceding direct-probe exchange.  In that case the test cannot
+     * pre-arm the guard portion of the window; arm at the current time while
+     * preserving the requested complete or partial end boundary. */
+    if (window_start_us < world->now_us) {
+        window_start_us = world->now_us;
+    }
 
     /* Immediate unicast C5 responses may already own the paired peer turn. */
     for (size_t i = 0u; i < world->rx_window_count; i++) {
@@ -508,6 +528,267 @@ static bool route_ack_matches(const struct mesh_outbound *outbound,
            requested_seq == data_packet->seq;
 }
 
+static void remove_queued_entry_for_test(struct mesh_sim_role_instance *node,
+                                         size_t index)
+{
+    memset(&node->tx_queue[index], 0, sizeof(node->tx_queue[index]));
+    if (node->tx_queue_count > 0u) {
+        node->tx_queue_count--;
+    }
+}
+
+static void make_direct_probe(struct mesh_outbound *probe, uint64_t source_id)
+{
+    memset(probe, 0, sizeof(*probe));
+    probe->packet.msg_type = MSG_GATEWAY_ROUTE_REQ;
+    probe->packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+    probe->packet.src_id = source_id;
+    probe->packet.dst_id = GATEWAY_ID;
+    probe->packet.session_id = DIRECT_PROBE_SESSION;
+    probe->packet.seq = 1u;
+    probe->packet.ttl = MESH_DEFAULT_TTL;
+    probe->next_hop_id = GATEWAY_ID;
+    probe->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+}
+
+static int run_direct_probe_for_route(struct mesh_sim_world *world,
+                                      uint8_t sender,
+                                      uint8_t gateway)
+{
+    struct mesh_outbound probe;
+    struct mesh_outbound gateway_ack;
+    struct route_reception reception;
+    struct route_reception ack_reception;
+    uint16_t probe_tx;
+    uint16_t ack_tx;
+    int ack_queue_index = -1;
+    uint64_t start_us;
+    int ret;
+
+    make_direct_probe(&probe, world->roles[sender].id);
+    start_us = world->now_us + DIRECT_PROBE_TX_PREPARE_US;
+    ret = transmit_route_outbound(world,
+                                  sender,
+                                  gateway,
+                                  &probe,
+                                  start_us,
+                                  true,
+                                  &reception,
+                                  &probe_tx);
+    if (ret != MESH_SIM_OK || reception.radio.outcome != MESH_SIM_RX_DECODED ||
+        reception.radio.packet.msg_type != MSG_GATEWAY_ROUTE_REQ) {
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_PROTOCOL : ret;
+    }
+
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued =
+            &world->roles[gateway].tx_queue[i];
+
+        if (queued->valid && !queued->needs_relay_start &&
+            queued->outbound.packet.msg_type == MSG_GATEWAY_ACK &&
+            queued->outbound.next_hop_id == world->roles[sender].id) {
+            ack_queue_index = (int)i;
+            break;
+        }
+    }
+    if (ack_queue_index < 0) {
+        return MESH_SIM_ERR_PROTOCOL;
+    }
+    gateway_ack = world->roles[gateway].tx_queue[ack_queue_index].outbound;
+    remove_queued_entry_for_test(&world->roles[gateway],
+                                 (size_t)ack_queue_index);
+    gateway_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    start_us = world->now_us + DIRECT_PROBE_ACK_GUARD_US;
+    ret = transmit_route_outbound(world,
+                                  gateway,
+                                  sender,
+                                  &gateway_ack,
+                                  start_us,
+                                  true,
+                                  &ack_reception,
+                                  &ack_tx);
+    if (ret != MESH_SIM_OK || ack_reception.radio.outcome != MESH_SIM_RX_DECODED ||
+        ack_reception.radio.packet.msg_type != MSG_GATEWAY_ACK) {
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_PROTOCOL : ret;
+    }
+    return mesh_relay_note_direct_gateway_route(
+        &world->roles[sender].relay,
+        mesh_sim_time_ms(world->now_us));
+}
+
+static int build_unseeded_click(struct proto_packet *packet,
+                                uint8_t *payload,
+                                size_t payload_capacity,
+                                size_t *payload_len,
+                                uint64_t anchor_id)
+{
+    const int32_t distance_samples[] = {120};
+    const uint8_t range_round_indices[] = {0u};
+    const uint64_t sequence_start_timestamps_ms[] = {1u};
+    const struct range_report_fields fields = {
+        .clicker_id = UNSEEDED_CLICKER_ID,
+        .anchor_id = anchor_id,
+        .event_seq = UNSEEDED_CLICK_SESSION,
+        .timestamp_ms = 1u,
+        .distance_mm = 120,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+        .distance_samples_mm = distance_samples,
+        .range_round_indices = range_round_indices,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
+        .sample_count = 1u,
+        .burst_id = UNSEEDED_CLICK_SESSION,
+        .burst_id_present = true,
+        .omit_rsl = true,
+        .omit_cir = true,
+    };
+    size_t length = 0u;
+    int ret;
+
+    if (packet == NULL || payload == NULL || payload_len == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = report_append_range_tlvs(payload,
+                                   payload_capacity,
+                                   &length,
+                                   &fields);
+    if (ret != PROTO_OK || length > UINT8_MAX) {
+        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+    }
+    ret = report_init_click_packet(packet,
+                                   anchor_id,
+                                   GATEWAY_ID,
+                                   UNSEEDED_CLICK_SESSION,
+                                   1u,
+                                   (uint8_t)length);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    *payload_len = length;
+    return report_validate_click_payload(packet, payload, length);
+}
+
+static bool click_identity_matches(const struct mesh_outbound *outbound,
+                                   const struct proto_packet *packet,
+                                   const uint8_t *payload,
+                                   size_t payload_len)
+{
+    return outbound != NULL && packet != NULL &&
+           outbound->packet.msg_type == packet->msg_type &&
+           outbound->packet.src_id == packet->src_id &&
+           outbound->packet.dst_id == packet->dst_id &&
+           outbound->packet.session_id == packet->session_id &&
+           outbound->packet.seq == packet->seq &&
+           outbound->payload_len == payload_len &&
+           memcmp(outbound->payload, payload, payload_len) == 0;
+}
+
+static bool queue_has_click(const struct mesh_sim_role_instance *node,
+                            const struct proto_packet *packet,
+                            const uint8_t *payload,
+                            size_t payload_len,
+                            uint64_t next_hop_id)
+{
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
+
+        if (queued->valid && queued->outbound.next_hop_id == next_hop_id &&
+            queued->needs_relay_start &&
+            click_identity_matches(&queued->outbound,
+                                   packet,
+                                   payload,
+                                   payload_len)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int run_scheduled_connection_repair(struct mesh_sim_world *world,
+                                           uint16_t connection_index)
+{
+    struct mesh_sim_connection_action action;
+    int ret = mesh_sim_connection_next_action(world, connection_index, &action);
+
+    if (ret != MESH_SIM_OK ||
+        action.kind != MESH_SIM_CONNECTION_ACTION_CHANNEL5_REPAIR ||
+        !action.already_scheduled) {
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_EVENT_ORDER : ret;
+    }
+    return mesh_sim_run_until(world, action.end_us);
+}
+
+static int run_direct_click_turn(struct mesh_sim_world *world,
+                                 uint8_t sender,
+                                 uint8_t gateway)
+{
+    uint64_t ready_us = world->now_us;
+    uint64_t air_start_us;
+    uint64_t tx_deadline_us;
+    uint64_t arrival_end_us;
+    uint64_t rx_end_us;
+    uint64_t ack_start_us;
+    uint64_t ack_end_us;
+    uint16_t payload_tx;
+    uint16_t ack_tx;
+    int ret;
+
+    if (world->roles[sender].dwm3000.cpu_busy_until_us > ready_us) {
+        ready_us = world->roles[sender].dwm3000.cpu_busy_until_us;
+    }
+    if (world->roles[gateway].dwm3000.cpu_busy_until_us > ready_us) {
+        ready_us = world->roles[gateway].dwm3000.cpu_busy_until_us;
+    }
+    if (ready_us > world->now_us) {
+        ret = mesh_sim_run_until(world, ready_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    air_start_us = world->now_us + DIRECT_CLICK_TX_PREPARE_US;
+    tx_deadline_us = air_start_us + DIRECT_CLICK_TX_SERVICE_US;
+    ret = mesh_sim_direct_gateway_start_queued_tx(world,
+                                                  sender,
+                                                  air_start_us,
+                                                  tx_deadline_us,
+                                                  &payload_tx);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    arrival_end_us = world->transmissions[payload_tx].end_us +
+                     world->propagation_us[sender][gateway];
+    rx_end_us = arrival_end_us + DIRECT_CLICK_RX_GUARD_US;
+    ret = mesh_sim_direct_gateway_arm_rx(world,
+                                         gateway,
+                                         air_start_us,
+                                         rx_end_us);
+    if (ret == MESH_SIM_OK) {
+        ret = mesh_sim_run_until(world, rx_end_us);
+    }
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    if (world->roles[gateway].dwm3000.cpu_busy_until_us > world->now_us) {
+        ret = mesh_sim_run_until(world,
+                                 world->roles[gateway].dwm3000.cpu_busy_until_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    ack_start_us = world->now_us + DIRECT_CLICK_ACK_GUARD_US;
+    ack_end_us = ack_start_us + DIRECT_CLICK_ACK_SERVICE_US;
+    ret = mesh_sim_direct_gateway_schedule_ack(world,
+                                               gateway,
+                                               sender,
+                                               ack_start_us,
+                                               ack_end_us,
+                                               &ack_tx);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    return mesh_sim_run_until(world, ack_end_us);
+}
+
 static int run_responder_slot_case(uint8_t responder_count)
 {
     static struct mesh_sim_world world;
@@ -720,6 +1001,7 @@ static int run_ttl_ladder_data_case(void)
     uint8_t first_gateway_ack_ttl = 0u;
     uint16_t gateway_ack_seq = 0u;
     char phase[96];
+    int ret;
 
     mesh_sim_init(&world, SCENARIO_SEED ^ UINT32_C(0x64006400));
     set_test_phase("ttl_ladder_setup");
@@ -1270,6 +1552,470 @@ static int run_route_collision_case(void)
     return 0;
 }
 
+static int run_unseeded_click_route_custody_case(void)
+{
+    static struct mesh_sim_world world;
+    struct proto_packet click_packet;
+    struct route_reception partial;
+    struct route_reception request_at_relay_1;
+    struct route_reception request_at_relay_2;
+    struct route_reception reply_at_relay_1;
+    struct route_reception reply_at_origin;
+    uint8_t click_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t click_payload_len = 0u;
+    uint8_t origin;
+    uint8_t relay_1;
+    uint8_t relay_2;
+    uint8_t gateway;
+    uint16_t first_request_tx;
+    uint16_t retry_request_tx;
+    uint16_t forwarded_request_tx;
+    uint16_t route_reply_tx;
+    uint16_t forwarded_reply_tx;
+    uint16_t connection_origin_relay;
+    uint16_t connection_relay_relay;
+    uint32_t retry_ms;
+    size_t transmission_count_before;
+    size_t gateway_delivery_before;
+    uint64_t latest_tx_end_us;
+    struct mesh_event_params params;
+    int ret;
+
+    set_test_phase("unseeded_click_setup");
+    mesh_sim_init(&world, SCENARIO_SEED ^ UINT32_C(0xc11c7e01));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            ORIGIN_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &origin) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            RELAY_1_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &relay_1) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            RELAY_2_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &relay_2) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &gateway) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, origin, relay_1, 97u, 7u) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, relay_1, relay_2, 94u, 11u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, relay_2, gateway, 99u, 5u) ==
+          MESH_SIM_OK);
+
+    /* Only the last relay has direct gateway contact, learned from a real
+     * probe/ACK exchange rather than a simulator route fixture. */
+    set_test_phase("unseeded_click_direct_probe");
+    CHECK(run_direct_probe_for_route(&world, relay_2, gateway) == MESH_SIM_OK);
+    CHECK(assert_selected_hop(&world.roles[relay_2].relay,
+                              GATEWAY_ID, GATEWAY_ID) == 0);
+    CHECK(route_selected(&world.roles[relay_1].relay.upstream) == NULL);
+    CHECK(route_selected(&world.roles[origin].relay.upstream) == NULL);
+    gateway_delivery_before = world.roles[gateway].delivery_count;
+
+    CHECK(build_unseeded_click(&click_packet,
+                               click_payload,
+                               sizeof(click_payload),
+                               &click_payload_len,
+                               ORIGIN_ID) == PROTO_OK);
+    set_test_phase("unseeded_click_queued_without_route");
+    CHECK(mesh_sim_queue_originated(&world,
+                                    origin,
+                                    &click_packet,
+                                    click_payload,
+                                    click_payload_len) == MESH_SIM_OK);
+    CHECK(world.roles[origin].route_waiting_valid);
+    CHECK(world.roles[origin].tx_queue_count == 0u);
+    CHECK(click_identity_matches(&world.roles[origin].route_waiting_outbound,
+                                 &click_packet,
+                                 click_payload,
+                                 click_payload_len));
+    CHECK(world.roles[origin].route_discovery_requests == 1u);
+    first_request_tx = (uint16_t)(world.transmission_count - 1u);
+
+    /* The first TTL-1 request is deliberately truncated.  The original
+     * click remains the sole route-wait owner while discovery retries. */
+    set_test_phase("unseeded_click_first_route_attempt_partial");
+    ret = schedule_outbound_rx(&world,
+                               first_request_tx,
+                               relay_1,
+                               false,
+                               &partial.window_index);
+    CHECK(ret == MESH_SIM_OK);
+    CHECK(mesh_sim_run_until(&world,
+                             transmission_evaluation_us(&world,
+                                                        first_request_tx)) ==
+          MESH_SIM_OK);
+    partial.radio = world.receptions[world.reception_count - 1u];
+    CHECK(partial.radio.outcome == MESH_SIM_RX_FRAME_TIMEOUT);
+    CHECK(world.roles[origin].route_waiting_valid);
+    CHECK(click_identity_matches(&world.roles[origin].route_waiting_outbound,
+                                 &click_packet,
+                                 click_payload,
+                                 click_payload_len));
+
+    retry_ms = world.roles[origin].relay.route_discovery.next_request_ms;
+    CHECK(retry_ms > mesh_sim_time_ms(world.now_us));
+    set_test_phase("unseeded_click_route_retry");
+    CHECK(mesh_sim_run_until(&world, (uint64_t)retry_ms * 1000u) ==
+          MESH_SIM_OK);
+    CHECK(world.transmission_count >= 2u);
+    retry_request_tx = (uint16_t)(world.transmission_count - 1u);
+    CHECK(world.transmissions[retry_request_tx].has_outbound);
+    CHECK(world.transmissions[retry_request_tx].outbound.packet.msg_type ==
+          MSG_ROUTE_REQ);
+    CHECK(world.transmissions[retry_request_tx].outbound.packet.ttl == 2u);
+    CHECK(world.transmissions[retry_request_tx].outbound.packet.session_id !=
+          world.transmissions[first_request_tx].outbound.packet.session_id);
+    CHECK(world.roles[origin].route_waiting_valid);
+    CHECK(click_identity_matches(&world.roles[origin].route_waiting_outbound,
+                                 &click_packet,
+                                 click_payload,
+                                 click_payload_len));
+
+    set_test_phase("unseeded_click_route_request_relay_1");
+    CHECK(mesh_sim_override_next_relay_random(&world, relay_1, 0u) ==
+          MESH_SIM_OK);
+    CHECK(receive_scheduled_outbound(&world,
+                                     retry_request_tx,
+                                     relay_1,
+                                     true,
+                                     &request_at_relay_1) == MESH_SIM_OK);
+    CHECK(request_at_relay_1.radio.outcome == MESH_SIM_RX_DECODED);
+    CHECK(request_at_relay_1.radio.packet.msg_type == MSG_ROUTE_REQ);
+    transmission_count_before = world.transmission_count;
+    CHECK(transmission_count_before > retry_request_tx + 1u);
+    forwarded_request_tx = (uint16_t)(transmission_count_before - 1u);
+    CHECK(world.transmissions[forwarded_request_tx].has_outbound);
+    CHECK(world.transmissions[forwarded_request_tx].outbound.packet.msg_type ==
+          MSG_ROUTE_REQ);
+    CHECK(world.transmissions[forwarded_request_tx].outbound.packet.ttl == 1u);
+
+    set_test_phase("unseeded_click_route_request_relay_2");
+    CHECK(mesh_sim_override_next_relay_random(&world, relay_2, 0u) ==
+          MESH_SIM_OK);
+    transmission_count_before = world.transmission_count;
+    CHECK(receive_scheduled_outbound(&world,
+                                     forwarded_request_tx,
+                                     relay_2,
+                                     true,
+                                     &request_at_relay_2) == MESH_SIM_OK);
+    CHECK(request_at_relay_2.radio.outcome == MESH_SIM_RX_DECODED);
+    CHECK(request_at_relay_2.radio.packet.msg_type == MSG_ROUTE_REQ);
+    CHECK(world.transmission_count == transmission_count_before + 1u);
+    route_reply_tx = (uint16_t)transmission_count_before;
+    CHECK(world.transmissions[route_reply_tx].has_outbound);
+    CHECK(world.transmissions[route_reply_tx].outbound.packet.msg_type ==
+          MSG_ROUTE_REPLY);
+    CHECK(world.transmissions[route_reply_tx].outbound.next_hop_id ==
+          world.roles[relay_1].id);
+
+    set_test_phase("unseeded_click_route_reply_relay_1");
+    transmission_count_before = world.transmission_count;
+    CHECK(receive_scheduled_outbound(&world,
+                                     route_reply_tx,
+                                     relay_1,
+                                     true,
+                                     &reply_at_relay_1) == MESH_SIM_OK);
+    CHECK(reply_at_relay_1.radio.outcome == MESH_SIM_RX_DECODED);
+    CHECK(reply_at_relay_1.radio.packet.msg_type == MSG_ROUTE_REPLY);
+    CHECK(world.transmission_count == transmission_count_before + 2u);
+    CHECK(world.transmissions[transmission_count_before].outbound.packet
+              .msg_type == MSG_ROUTE_REPLY_ACK);
+    forwarded_reply_tx = (uint16_t)(transmission_count_before + 1u);
+    CHECK(world.transmissions[forwarded_reply_tx].outbound.packet.msg_type ==
+          MSG_ROUTE_REPLY);
+    CHECK(world.transmissions[forwarded_reply_tx].outbound.next_hop_id ==
+          world.roles[origin].id);
+
+    set_test_phase("unseeded_click_route_reply_origin");
+    transmission_count_before = world.transmission_count;
+    CHECK(receive_scheduled_outbound(&world,
+                                     forwarded_reply_tx,
+                                     origin,
+                                     true,
+                                     &reply_at_origin) == MESH_SIM_OK);
+    CHECK(reply_at_origin.radio.outcome == MESH_SIM_RX_DECODED);
+    CHECK(reply_at_origin.radio.packet.msg_type == MSG_ROUTE_REPLY);
+    CHECK(world.transmission_count == transmission_count_before + 1u);
+    CHECK(world.transmissions[transmission_count_before].outbound.packet
+              .msg_type == MSG_ROUTE_REPLY_ACK);
+    CHECK(!world.roles[origin].route_waiting_valid);
+    CHECK(queue_has_click(&world.roles[origin],
+                          &click_packet,
+                          click_payload,
+                          click_payload_len,
+                          world.roles[relay_1].id));
+    CHECK(assert_selected_hop(&world.roles[origin].relay,
+                              GATEWAY_ID, RELAY_1_ID) == 0);
+    CHECK(assert_selected_hop(&world.roles[relay_1].relay,
+                              GATEWAY_ID, RELAY_2_ID) == 0);
+    CHECK(assert_selected_hop(&world.roles[relay_2].relay,
+                              GATEWAY_ID, GATEWAY_ID) == 0);
+
+    latest_tx_end_us = world.now_us;
+    for (size_t i = 0u; i < world.transmission_count; i++) {
+        if (world.transmissions[i].has_outbound) {
+            latest_tx_end_us = max_u64(latest_tx_end_us,
+                                       transmission_evaluation_us(
+                                           &world, (uint16_t)i));
+        }
+    }
+    CHECK(mesh_sim_run_until(&world, latest_tx_end_us) == MESH_SIM_OK);
+    CHECK(world.roles[origin].tx_queue_count == 1u);
+    CHECK(world.roles[relay_1].tx_queue_count == 0u);
+    CHECK(world.roles[relay_2].tx_queue_count == 0u);
+
+    params = route_connection_params(
+        mesh_sim_time_ms(world.now_us) + 500u, 250u);
+    params.max_missed_events = 20u;
+    CHECK(mesh_sim_add_connection_over_radio(&world,
+                                             origin,
+                                             relay_1,
+                                             &params,
+                                             true,
+                                             &connection_origin_relay) ==
+          MESH_SIM_OK);
+    CHECK(run_scheduled_connection_repair(&world,
+                                          connection_origin_relay) ==
+          MESH_SIM_OK);
+    params = route_connection_params(
+        mesh_sim_time_ms(world.now_us) + 500u, 250u);
+    params.max_missed_events = 20u;
+    CHECK(mesh_sim_add_connection_over_radio(&world,
+                                             relay_1,
+                                             relay_2,
+                                             &params,
+                                             true,
+                                             &connection_relay_relay) ==
+          MESH_SIM_OK);
+    CHECK(run_scheduled_connection_repair(&world,
+                                          connection_relay_relay) ==
+          MESH_SIM_OK);
+
+    set_test_phase("unseeded_click_origin_to_relay");
+    CHECK(run_connection_event(&world, connection_origin_relay) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[origin].relay.pending.state ==
+          MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    CHECK(queue_has_click(&world.roles[relay_1],
+                          &click_packet,
+                          click_payload,
+                          click_payload_len,
+                          world.roles[relay_2].id));
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[origin].id) == 0u);
+    CHECK(run_connection_event(&world, connection_origin_relay) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
+
+    set_test_phase("unseeded_click_relay_to_relay");
+    CHECK(run_connection_event(&world, connection_relay_relay) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[relay_1].relay.pending.state ==
+          MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    CHECK(world.roles[relay_1].relay.outbox_record.valid);
+    CHECK(queue_has_click(&world.roles[relay_2],
+                          &click_packet,
+                          click_payload,
+                          click_payload_len,
+                          GATEWAY_ID));
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay_1].id) == 0u);
+    CHECK(run_connection_event(&world, connection_relay_relay) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[relay_1].relay.pending.state != MESH_RELAY_TX_IDLE);
+
+    set_test_phase("unseeded_click_direct_gateway_ack");
+    CHECK(run_direct_click_turn(&world, relay_2, gateway) == MESH_SIM_OK);
+    CHECK(world.roles[gateway].delivery_count == gateway_delivery_before + 1u);
+    CHECK(world.roles[gateway].deliveries[world.roles[gateway].delivery_count - 1u]
+              .packet.session_id == click_packet.session_id);
+    CHECK(world.roles[relay_2].relay.pending.state ==
+          MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay_2].id) == 0u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay_1].id) == 0u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[origin].id) == 0u);
+
+    set_test_phase("unseeded_click_gateway_ack_to_relay_1");
+    CHECK(run_connection_event(&world, connection_relay_relay) ==
+          MESH_SIM_OK);
+    CHECK(run_connection_event(&world, connection_relay_relay) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[relay_2].relay.pending.state ==
+          MESH_RELAY_TX_IDLE);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay_2].id) == 1u);
+    CHECK(world.roles[relay_1].relay.pending.state ==
+          MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay_1].id) == 0u);
+
+    set_test_phase("unseeded_click_gateway_ack_to_origin");
+    CHECK(run_connection_event(&world, connection_origin_relay) ==
+          MESH_SIM_OK);
+    CHECK(run_connection_event(&world, connection_origin_relay) ==
+          MESH_SIM_OK);
+    CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[origin].id) == 1u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                     world.roles[relay_1].id) == 1u);
+    CHECK(world.roles[gateway].gateway_semantic_commit_count == 1u);
+    CHECK(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
+
+    {
+        size_t click_transmissions = 0u;
+
+        for (size_t i = 0u; i < world.transmission_count; i++) {
+            const struct mesh_sim_transmission *tx = &world.transmissions[i];
+
+            if (tx->has_outbound &&
+                click_identity_matches(&tx->outbound,
+                                        &click_packet,
+                                        click_payload,
+                                        click_payload_len)) {
+                click_transmissions++;
+            }
+        }
+        CHECK(click_transmissions == 3u);
+    }
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_ROUTE_REQUIRED,
+                                     world.roles[origin].id) >= 2u);
+    CHECK(world.last_error == MESH_SIM_OK);
+    return 0;
+}
+
+static int run_reset_after_established_events_case(uint32_t seed)
+{
+    static struct mesh_sim_world world;
+    struct mesh_event_params params;
+    struct mesh_sim_connection_action action;
+    uint8_t anchor;
+    uint8_t peer;
+    uint8_t gateway;
+    uint16_t connection;
+    uint32_t events_before_reset;
+    uint32_t repairs_before_reset;
+    uint32_t work_epoch_before;
+    uint32_t peer_session_before_reset;
+    uint64_t peer_expiry_us;
+    uint8_t expired_endpoints = 0u;
+    struct mesh_event_timing peer_timing_before_reset;
+
+    set_test_phase("reset_after_established_setup");
+    mesh_sim_init(&world, seed);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            ORIGIN_ID + UINT64_C(0x30), GATEWAY_ID,
+                            ROUTE_EPOCH, &anchor) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            RELAY_1_ID + UINT64_C(0x30), GATEWAY_ID,
+                            ROUTE_EPOCH, &peer) == MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
+                            &gateway) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, anchor, peer, 98u, 6u) == MESH_SIM_OK);
+    params = route_connection_params(500u, 250u);
+    params.max_missed_events = 20u;
+    CHECK(mesh_sim_add_connection_over_radio(&world,
+                                             anchor,
+                                             peer,
+                                             &params,
+                                             true,
+                                             &connection) == MESH_SIM_OK);
+    CHECK(run_scheduled_connection_repair(&world, connection) == MESH_SIM_OK);
+    CHECK(world.connections[connection].completed_repairs == 1u);
+
+    set_test_phase("reset_after_established_completed_events");
+    for (uint8_t i = 0u; i < 6u; i++) {
+        CHECK(run_connection_event(&world, connection) == MESH_SIM_OK);
+    }
+    events_before_reset = world.connections[connection].completed_events;
+    repairs_before_reset = world.connections[connection].completed_repairs;
+    work_epoch_before = world.roles[anchor].work_epoch;
+    CHECK(events_before_reset >= 6u);
+    CHECK(world.connections[connection].timing_a.timing_fresh);
+    CHECK(world.connections[connection].timing_b.timing_fresh);
+    peer_session_before_reset = world.connections[connection].owner_b.session_id;
+    peer_timing_before_reset = world.connections[connection].timing_b;
+
+    set_test_phase("reset_after_established_reset");
+    CHECK(mesh_sim_reset_role(&world, anchor) == MESH_SIM_OK);
+    CHECK(world.roles[anchor].work_epoch == work_epoch_before + 1u);
+    CHECK(world.connections[connection].completed_events == events_before_reset);
+    CHECK(world.connections[connection].completed_repairs == repairs_before_reset);
+    CHECK(!world.connections[connection].repair_pending);
+    CHECK(!world.connections[connection].owner_a.active);
+    CHECK(world.connections[connection].owner_a.terminal);
+    CHECK(world.connections[connection].owner_b.active);
+    CHECK(world.connections[connection].owner_b.session_id ==
+          peer_session_before_reset);
+    CHECK(!mesh_event_timing_usable(&world.connections[connection].timing_a,
+                                    mesh_sim_time_ms(world.now_us)));
+    CHECK(mesh_event_timing_usable(&world.connections[connection].timing_b,
+                                   mesh_sim_time_ms(world.now_us)));
+    CHECK(world.connections[connection].timing_b.last_successful_ch9_event_ms ==
+          peer_timing_before_reset.last_successful_ch9_event_ms);
+    CHECK(world.connections[connection].timing_b.next_event_time_ms ==
+          peer_timing_before_reset.next_event_time_ms);
+    CHECK(world.roles[anchor].event_control_seq == 0u);
+
+    set_test_phase("reset_after_established_peer_supervision_expiry");
+    peer_expiry_us =
+        ((uint64_t)peer_timing_before_reset.last_successful_ch9_event_ms +
+         peer_timing_before_reset.supervision_timeout_ms + 1u) * 1000u;
+    if (peer_expiry_us > world.now_us) {
+        CHECK(mesh_sim_run_until(&world, peer_expiry_us) == MESH_SIM_OK);
+    }
+    CHECK(mesh_sim_expire_connection_ownership(
+              &world, connection, &expired_endpoints) == MESH_SIM_OK);
+    CHECK(expired_endpoints == 1u);
+    CHECK(!world.connections[connection].owner_b.active);
+
+    set_test_phase("reset_after_established_repair");
+    CHECK(mesh_sim_renegotiate_connection_over_radio(&world,
+                                                     connection,
+                                                     anchor) == MESH_SIM_OK);
+    CHECK(run_scheduled_connection_repair(&world, connection) == MESH_SIM_OK);
+    CHECK(world.connections[connection].completed_repairs ==
+          repairs_before_reset + 1u);
+    CHECK(world.connections[connection].repair_seq == 1u);
+    CHECK(world.connections[connection].repair_propose_decoded);
+    CHECK(world.connections[connection].repair_accept_decoded);
+    CHECK(world.connections[connection].timing_a.timing_fresh);
+    CHECK(world.connections[connection].timing_b.timing_fresh);
+
+    set_test_phase("reset_after_established_post_recovery_events");
+    for (uint8_t i = 0u; i < 4u; i++) {
+        CHECK(mesh_sim_connection_next_action(&world, connection, &action) ==
+              MESH_SIM_OK);
+        CHECK(action.kind == MESH_SIM_CONNECTION_ACTION_CHANNEL9_EVENT);
+        CHECK(run_connection_event(&world, connection) == MESH_SIM_OK);
+    }
+    CHECK(world.connections[connection].completed_events >=
+          events_before_reset + 4u);
+    CHECK(world.roles[anchor].watchdog.resets == 1u);
+    CHECK(world.roles[peer].watchdog.resets == 0u);
+    CHECK(mesh_sim_count_transitions(&world,
+                                     MESH_SIM_TRANSITION_WATCHDOG_RESET,
+                                     world.roles[anchor].id) == 1u);
+    CHECK(world.last_error == MESH_SIM_OK);
+    (void)gateway;
+    return 0;
+}
+
 int main(void)
 {
     static struct mesh_sim_world world;
@@ -1509,6 +2255,9 @@ int main(void)
     if (run_ttl_ladder_data_case() != 0 ||
         run_blank_anchor_retains_local_click_until_route_case() != 0 ||
         run_route_collision_case() != 0 ||
+        run_unseeded_click_route_custody_case() != 0 ||
+        run_reset_after_established_events_case(
+            SCENARIO_SEED ^ UINT32_C(0x052e7a11)) != 0 ||
         run_responder_slot_case(3u) != 0 ||
         run_responder_slot_case(8u) != 0) {
         return 1;

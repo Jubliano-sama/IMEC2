@@ -322,7 +322,9 @@ static int receive_response(const struct dwm3000_range_request *request,
         return ret;
     }
 
-    if (!header_matches_request(&response->header, request, MSG_UWB_RESP)) {
+    if (!dwm3000_driver_header_matches_request(&response->header,
+                                               request,
+                                               MSG_UWB_RESP)) {
         *status_out = RANGE_WRONG_TARGET;
         return -EADDRNOTAVAIL;
     }
@@ -359,7 +361,9 @@ static int receive_report(const struct dwm3000_range_request *request,
         return ret;
     }
 
-    if (!header_matches_request(&report.header, request, MSG_UWB_REPORT) ||
+    if (!dwm3000_driver_header_matches_request(&report.header,
+                                               request,
+                                               MSG_UWB_REPORT) ||
         report.header.responder_short_addr != short_addr_from_id(responder_id) ||
         report.header.responder_id != responder_id) {
         result->status = RANGE_WRONG_TARGET;
@@ -972,34 +976,4 @@ static int send_anchor_diag(const struct uwb_range_header *poll,
         return ret;
     }
     return wait_tx_complete(ANCHOR_DIAG_TX_TIMEOUT_MS);
-}
-
-static int compute_distance_mm(const struct uwb_final_frame *final,
-                               uint64_t poll_rx_ts,
-                               uint64_t resp_tx_ts,
-                               uint64_t final_rx_ts,
-                               int32_t *distance_mm)
-{
-    uint32_t poll_tx_ts_32 = final->poll_tx_ts_32;
-    uint32_t resp_rx_ts_32 = final->resp_rx_ts_32;
-    uint32_t final_tx_ts_32 = final->final_tx_ts_32;
-    uint32_t poll_rx_ts_32 = (uint32_t)poll_rx_ts;
-    uint32_t resp_tx_ts_32 = (uint32_t)resp_tx_ts;
-    uint32_t final_rx_ts_32 = (uint32_t)final_rx_ts;
-    double ra = (double)(uint32_t)(resp_rx_ts_32 - poll_tx_ts_32);
-    double rb = (double)(uint32_t)(final_rx_ts_32 - resp_tx_ts_32);
-    double da = (double)(uint32_t)(final_tx_ts_32 - resp_rx_ts_32);
-    double db = (double)(uint32_t)(resp_tx_ts_32 - poll_rx_ts_32);
-    double denominator = ra + rb + da + db;
-    double tof_dtu;
-    double distance_m;
-
-    if (distance_mm == NULL || denominator == 0.0) {
-        return -EINVAL;
-    }
-
-    tof_dtu = ((ra * rb) - (da * db)) / denominator;
-    distance_m = tof_dtu * DWM3000_TIME_UNITS * DWM3000_SPEED_OF_LIGHT_MPS;
-    *distance_mm = (int32_t)(distance_m * 1000.0);
-    return 0;
 }

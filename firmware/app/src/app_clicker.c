@@ -48,6 +48,7 @@ LOG_MODULE_REGISTER(app_clicker, LOG_LEVEL_DBG);
 #define CLICKER_POLITENESS_UWB_RESTART 1
 #define BLE_COURTESY_STOP_RETRY_COUNT 3u
 #define BLE_COURTESY_STOP_RETRY_DELAY_MS 5u
+#define STAGE1_CLICK_SPAM_MAX_DELAY_MS 5000u
 
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
     .wake_adv_ms = WAKE_ADV_MS,
@@ -72,6 +73,12 @@ static const struct app_clicker_range_tx_config clicker_range_tx_config = {
 };
 
 static struct app_clicker_callbacks clicker_callbacks;
+
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+static struct k_work stage1_click_spam_work;
+static struct app_clicker_continuous_click_sessions_config stage1_click_spam_config;
+static void stage1_click_spam_work_handler(struct k_work *work);
+#endif
 
 int app_clicker_ble_courtesy_start(uint32_t event_seq,
                                    uint8_t attempt_index,
@@ -904,6 +911,101 @@ void app_clicker_run_continuous_wake_claims(
         k_msleep(ret < 0 ? 250u : 20u);
     }
 }
+
+void app_clicker_run_continuous_click_sessions(
+    const struct app_clicker_continuous_click_sessions_config *config)
+{
+    uint32_t session_count = 0u;
+
+    if (config == NULL) {
+        return;
+    }
+
+    while (true) {
+        int ret;
+        uint32_t requested_delay_ms;
+        uint32_t delay_ms;
+
+        if (session_count < UINT32_MAX) {
+            session_count++;
+        }
+        stage1_click_trace_reset();
+        high_debug_log_event("STAGE1_CLICK_SPAM",
+                             "phase=session_start session=%u path=normal_click min_anchor_count=%u max_anchor_count=%u samples_per_anchor=%u flags=0x%02x",
+                             session_count,
+                             app_clicker_debug_min_anchor_count(),
+                             app_clicker_debug_max_anchor_count(),
+                             app_clicker_debug_samples_per_anchor(),
+                             app_clicker_debug_session_flags());
+        stage1_click_diag("click_spam session_start session=%u min=%u max=%u samples=%u flags=0x%02x",
+                          session_count,
+                          app_clicker_debug_min_anchor_count(),
+                          app_clicker_debug_max_anchor_count(),
+                          app_clicker_debug_samples_per_anchor(),
+                          app_clicker_debug_session_flags());
+        LOG_INF("Stage 1 click-session spam start: session=%u path=normal_click min=%u max=%u samples=%u flags=0x%02x",
+                session_count,
+                app_clicker_debug_min_anchor_count(),
+                app_clicker_debug_max_anchor_count(),
+                app_clicker_debug_samples_per_anchor(),
+                app_clicker_debug_session_flags());
+
+        ret = app_clicker_run_normal_click();
+        requested_delay_ms = ret == 0 ? config->success_delay_ms : config->failure_delay_ms;
+        delay_ms = MIN(requested_delay_ms, STAGE1_CLICK_SPAM_MAX_DELAY_MS);
+        if (delay_ms == 0u) {
+            delay_ms = 1u;
+        }
+        high_debug_log_event("STAGE1_CLICK_SPAM",
+                             "phase=session_done session=%u ret=%d next_delay_ms=%u",
+                             session_count,
+                             ret,
+                             delay_ms);
+        stage1_click_diag("click_spam session_done session=%u ret=%d next_delay_ms=%u",
+                          session_count,
+                          ret,
+                          delay_ms);
+        LOG_INF("Stage 1 click-session spam done: session=%u ret=%d next_delay_ms=%u",
+                session_count,
+                ret,
+                delay_ms);
+        k_msleep(delay_ms);
+    }
+}
+
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+static void stage1_click_spam_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    app_clicker_run_continuous_click_sessions(&stage1_click_spam_config);
+}
+
+int app_clicker_start_continuous_click_sessions(
+    const struct app_clicker_continuous_click_sessions_config *config)
+{
+    int ret;
+
+    if (config == NULL) {
+        return -EINVAL;
+    }
+
+    stage1_click_spam_config = *config;
+    k_work_init(&stage1_click_spam_work, stage1_click_spam_work_handler);
+    ret = app_clicker_submit_work(&stage1_click_spam_work);
+    high_debug_log_event("STAGE1_CLICK_SPAM",
+                         "phase=worker_submit ret=%d stack_bytes=%u",
+                         ret,
+                         (unsigned int)CLICKER_ACTION_WORKQUEUE_STACK_SIZE);
+    return ret;
+}
+#else
+int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_start_continuous_click_sessions(
+    const struct app_clicker_continuous_click_sessions_config *config)
+{
+    ARG_UNUSED(config);
+    return -ENOTSUP;
+}
+#endif
 
 int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
 {
@@ -2396,7 +2498,8 @@ int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_ble_courtesy_low_power_stop(void)
 #endif
 
 #if DT_NODE_HAS_STATUS(CLICK_BUTTON_NODE, okay) && \
-    !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
+    !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) && \
+    !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
 static const struct gpio_dt_spec click_button = GPIO_DT_SPEC_GET(CLICK_BUTTON_NODE, gpios);
 static struct gpio_callback click_button_cb;
 static struct k_work click_button_work;
@@ -2410,7 +2513,8 @@ static struct k_work clicker_action_work;
 #define HAS_CLICK_BUTTON 0
 #endif
 
-#if HAS_CLICK_BUTTON || defined(CONFIG_IMEC_ML_CLICKER)
+#if HAS_CLICK_BUTTON || defined(CONFIG_IMEC_ML_CLICKER) || \
+    defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
 #define HAS_CLICKER_ACTION_WORK_QUEUE 1
 #else
 #define HAS_CLICKER_ACTION_WORK_QUEUE 0
@@ -2418,6 +2522,10 @@ static struct k_work clicker_action_work;
 
 #if HAS_CLICKER_ACTION_WORK_QUEUE
 K_THREAD_STACK_DEFINE(clicker_action_work_q_stack, CLICKER_ACTION_WORKQUEUE_STACK_SIZE);
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+BUILD_ASSERT(CLICKER_ACTION_WORKQUEUE_STACK_SIZE == 8192u,
+             "Stage 1 full-click sessions must run on the 8192-byte action stack");
+#endif
 #endif
 
 static struct button_fsm button_fsm;
@@ -3250,7 +3358,8 @@ void app_clicker_prepare_startup_idle(enum button_action *boot_action)
     if (DEVICE_ROLE == ROLE_CLICKER &&
         IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE) &&
         !clicker_systemon_retained_idle_enabled() &&
-        !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)) {
+        !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) &&
+        !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)) {
         if (clicker_reset_reason_was_systemoff()) {
             clicker_notify_early_led(APP_CLICKER_EARLY_LED_SYSTEMOFF_BUTTON_WAKE);
             if (!clicker_capture_systemoff_button_action(boot_action)) {

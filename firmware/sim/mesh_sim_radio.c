@@ -1091,7 +1091,9 @@ static int append_reception(struct mesh_sim_world *world,
     } else if (outcome == MESH_SIM_RX_DECODED) {
         reception->protocol_status = PROTO_OK;
         if (receiver->anchor_initialized &&
-            tx->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
+            tx->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
+            (tx->protocol_msg_type == 0u ||
+             tx->protocol_msg_type == MSG_UWB_WAKE_CLAIM)) {
             struct uwb_wake_claim_frame claim;
             enum uwb_anchor_claim_decision decision;
 

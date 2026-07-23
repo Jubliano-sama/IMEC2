@@ -409,8 +409,8 @@ int main(void)
            " attempted=%u deferred=%u delivered=%u dropped=%u retries=%u"
            " latency_max_us=%" PRIu64
            " empirical_delivery_percent=%.3f reliability_claim=none"
-           " covered_chain=wake-discovery-ds-twr-report-relay-ble-model"
-           " missing_seam=zephyr-app-ds-twr-and-ble-custody-harness\n",
+           " covered_chain=click-report-relay"
+           " missing_seam=wake-discovery-ds-twr-ble\n",
            metrics.cases,
            metrics.direct_cases,
            metrics.relayed_cases,

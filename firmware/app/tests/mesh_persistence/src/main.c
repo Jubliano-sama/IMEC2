@@ -6,6 +6,7 @@
 #include "route.h"
 
 #include <string.h>
+#include <errno.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/ztest.h>
 
@@ -17,6 +18,26 @@
 #define MEMBER_C_ID 0x2122232425262728ull
 
 static struct k_work_delayable test_tx_timeout_work;
+
+static struct proto_packet make_gateway_click_packet(uint16_t seq,
+                                                     uint16_t payload_len)
+{
+    return (struct proto_packet) {
+        .msg_type = MSG_CLICK_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        .src_id = CHILD_ID,
+        .dst_id = GATEWAY_ID,
+        .session_id = 0x12345678u,
+        .seq = seq,
+        .ttl = 5u,
+        .payload_len = payload_len,
+        .message_age_ms = 17u,
+    };
+}
+
+int app_mesh_persistence_test_write_gateway_membership_snapshot(
+    const void *snapshot,
+    size_t snapshot_len);
 
 static void *mesh_persistence_suite_setup(void)
 {
@@ -33,12 +54,9 @@ static void *mesh_persistence_suite_setup(void)
     ret = flash_area_erase(area, 0u, area->fa_size);
     flash_area_close(area);
     zassert_ok(ret);
+    app_mesh_persistence_test_reset_faults();
     return NULL;
 }
-
-int app_mesh_persistence_test_write_gateway_membership_snapshot(
-    const void *snapshot,
-    size_t snapshot_len);
 
 struct preempt_save_ctx {
     struct mesh_relay *relay;
@@ -61,12 +79,12 @@ static void timeout_handler(struct k_work *work)
     ARG_UNUSED(work);
 }
 
-static int save_outbox_for_preempt(void *opaque)
+static int save_deferred_outbox_for_preempt(void *opaque)
 {
     struct preempt_save_ctx *ctx = opaque;
 
     ctx->save_count++;
-    return app_mesh_persistence_save_outbox(ctx->relay, ctx->now_ms);
+    return app_mesh_persistence_save_deferred_outbox(ctx->relay, ctx->now_ms);
 }
 
 static int schedule_timeout_for_preempt(void *opaque)
@@ -158,6 +176,345 @@ static void assert_collection_result_id_equal(
     zassert_equal(actual->result_seq, expected->result_seq);
 }
 
+ZTEST(mesh_persistence, test_gateway_click_journal_round_trip_after_reset)
+{
+    const uint8_t payload[] = { 0x01u, 0x02u, 0x03u, 0x04u, 0x05u };
+    struct proto_packet packet = make_gateway_click_packet(
+        0x2201u, sizeof(payload));
+    struct proto_packet restored_packet;
+    uint8_t restored_payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t restored_len = 0u;
+    uint32_t restored_at_ms = 0u;
+
+    zassert_ok(app_mesh_persistence_init());
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 321u));
+
+    /* The caller-owned buffers model a fresh gateway process after reset. */
+    memset(&restored_packet, 0, sizeof(restored_packet));
+    memset(restored_payload, 0, sizeof(restored_payload));
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+    zassert_equal(restored_packet.msg_type, packet.msg_type);
+    zassert_equal(restored_packet.flags, packet.flags);
+    zassert_equal(restored_packet.src_id, packet.src_id);
+    zassert_equal(restored_packet.dst_id, packet.dst_id);
+    zassert_equal(restored_packet.session_id, packet.session_id);
+    zassert_equal(restored_packet.seq, packet.seq);
+    zassert_equal(restored_packet.ttl, packet.ttl);
+    zassert_equal(restored_packet.payload_len, packet.payload_len);
+    zassert_equal(restored_packet.message_age_ms, packet.message_age_ms);
+    zassert_equal(restored_len, sizeof(payload));
+    zassert_mem_equal(restored_payload, payload, sizeof(payload));
+    zassert_equal(restored_at_ms, 321u);
+
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal_if_matches(
+        &restored_packet));
+    restored_len = 0u;
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 0);
+}
+
+ZTEST(mesh_persistence, test_gateway_click_journal_idempotence_and_conflict)
+{
+    const uint8_t payload[] = { 0x10u, 0x20u, 0x30u };
+    const uint8_t other_payload[] = { 0x40u, 0x50u, 0x60u };
+    struct proto_packet packet = make_gateway_click_packet(
+        0x2202u, sizeof(payload));
+    struct proto_packet other = packet;
+
+    other.seq++;
+    zassert_ok(app_mesh_persistence_init());
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 100u));
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 101u));
+    zassert_equal(app_mesh_persistence_gateway_click_journal_matches(
+                      &packet, payload, sizeof(payload)), 1);
+    zassert_equal(app_mesh_persistence_gateway_click_journal_matches(
+                      &other, other_payload, sizeof(other_payload)), -EBUSY);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &other, other_payload, sizeof(other_payload), 102u), -EBUSY);
+}
+
+ZTEST(mesh_persistence, test_gateway_click_journal_retry_ignores_ttl_and_age)
+{
+    const uint8_t payload[] = { 0x71u, 0x82u, 0x93u, 0xa4u };
+    uint8_t changed_payload[sizeof(payload)];
+    struct proto_packet packet = make_gateway_click_packet(
+        0x2205u, sizeof(payload));
+    struct proto_packet restored_packet;
+    struct proto_packet flag_mutation;
+    uint8_t restored_payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t restored_len = 0u;
+    uint32_t restored_at_ms = 0u;
+
+    memcpy(changed_payload, payload, sizeof(changed_payload));
+    changed_payload[0] ^= 0x01u;
+
+    zassert_ok(app_mesh_persistence_init());
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 500u));
+
+    /* Restore through NVS to model a reboot, then receive the same report
+     * after another relay rewrote its transport-local header fields. */
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+    restored_packet.ttl = 1u;
+    restored_packet.message_age_ms = 0xfeedbeefu;
+    zassert_equal(app_mesh_persistence_gateway_click_journal_matches(
+                      &restored_packet, payload, sizeof(payload)), 1);
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &restored_packet, payload, sizeof(payload), 501u));
+
+    /* A payload mutation and a semantic-flag mutation remain conflicts even
+     * when the transport fields otherwise look like a retry. */
+    zassert_equal(app_mesh_persistence_gateway_click_journal_matches(
+                      &restored_packet,
+                      changed_payload,
+                      sizeof(changed_payload)), -EBUSY);
+    flag_mutation = restored_packet;
+    flag_mutation.flags ^= FLAG_COUNT_AS_CLICK;
+    zassert_equal(app_mesh_persistence_gateway_click_journal_matches(
+                      &flag_mutation, payload, sizeof(payload)), -EBUSY);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &flag_mutation,
+                      payload,
+                      sizeof(payload),
+                      502u), -EBUSY);
+
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+}
+
+ZTEST(mesh_persistence, test_gateway_click_journal_faults_retain_custody)
+{
+    const uint8_t payload[] = { 0x61u, 0x62u, 0x63u, 0x64u };
+    struct proto_packet packet = make_gateway_click_packet(
+        0x2203u, sizeof(payload));
+    struct proto_packet restored_packet;
+    uint8_t restored_payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t restored_len;
+    uint32_t restored_at_ms;
+
+    zassert_ok(app_mesh_persistence_init());
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+
+    app_mesh_persistence_test_fail_gateway_click_payload_write(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &packet, payload, sizeof(payload), 200u), -EIO);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 0);
+
+    app_mesh_persistence_test_reset_faults();
+    app_mesh_persistence_test_fail_gateway_click_metadata_write(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &packet, payload, sizeof(payload), 201u), -EIO);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 0);
+
+    app_mesh_persistence_test_reset_faults();
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 202u));
+    app_mesh_persistence_test_fail_gateway_click_metadata_read(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), -EIO);
+    app_mesh_persistence_test_reset_faults();
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+
+    app_mesh_persistence_test_fail_gateway_click_payload_read(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), -EIO);
+    app_mesh_persistence_test_reset_faults();
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+
+    app_mesh_persistence_test_fail_gateway_click_delete(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_clear_gateway_click_journal(), -EIO);
+    app_mesh_persistence_test_reset_faults();
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+}
+
+ZTEST(mesh_persistence, test_gateway_click_journal_extended_payload_and_torn_clear)
+{
+    static uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    static uint8_t restored_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    static uint8_t malformed_payload[1];
+    struct proto_packet packet = make_gateway_click_packet(
+        0x2204u, sizeof(payload));
+    struct proto_packet replacement = packet;
+    struct proto_packet restored_packet;
+    size_t restored_len = 0u;
+    uint32_t restored_at_ms = 0u;
+
+    for (size_t i = 0u; i < sizeof(payload); i++) {
+        payload[i] = (uint8_t)(i * 37u + 11u);
+    }
+    replacement.seq++;
+    malformed_payload[0] = 0xa5u;
+
+    zassert_ok(app_mesh_persistence_init());
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 400u));
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+    zassert_equal(restored_len, sizeof(payload));
+    zassert_mem_equal(restored_payload, payload, sizeof(payload));
+    zassert_equal(restored_at_ms, 400u);
+    zassert_equal(restored_packet.seq, packet.seq);
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+
+    /* A failed 958-byte write leaves no commit marker and is retryable. */
+    app_mesh_persistence_test_fail_gateway_click_payload_write(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &packet, payload, sizeof(payload), 401u), -EIO);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 0);
+    app_mesh_persistence_test_reset_faults();
+
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 402u));
+    app_mesh_persistence_test_fail_gateway_click_payload_read(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), -EIO);
+    app_mesh_persistence_test_reset_faults();
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+
+    /* Missing and truncated payload records are permanent corruption, so
+     * restore quarantines them instead of retrying forever. */
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 403u));
+    zassert_ok(app_mesh_persistence_test_delete_gateway_click_payload());
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), -EBADMSG);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 0);
+
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 404u));
+    zassert_ok(app_mesh_persistence_test_write_gateway_click_payload(
+        malformed_payload, sizeof(malformed_payload)));
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), -EBADMSG);
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 0);
+
+    /* A payload-delete failure leaves the marker visible, so a newer click
+     * cannot overwrite it while the clear retry is pending. */
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 405u));
+    app_mesh_persistence_test_fail_gateway_click_payload_delete(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_clear_gateway_click_journal(), -EIO);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &replacement, payload, sizeof(payload), 406u), -EBUSY);
+    app_mesh_persistence_test_reset_faults();
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+
+    /* A metadata-delete failure after payload deletion leaves the marker in
+     * place, so a newer click cannot overwrite it; retry clears the old
+     * identity before replacement admission. */
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &packet, payload, sizeof(payload), 407u));
+    app_mesh_persistence_test_fail_gateway_click_metadata_delete(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_clear_gateway_click_journal(), -EIO);
+    zassert_equal(app_mesh_persistence_save_gateway_click_journal(
+                      &replacement, payload, sizeof(payload), 408u), -EBUSY);
+    app_mesh_persistence_test_reset_faults();
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+    zassert_ok(app_mesh_persistence_save_gateway_click_journal(
+        &replacement, payload, sizeof(payload), 409u));
+    zassert_equal(app_mesh_persistence_restore_gateway_click_journal(
+                      &restored_packet,
+                      restored_payload,
+                      sizeof(restored_payload),
+                      &restored_len,
+                      &restored_at_ms), 1);
+    zassert_equal(restored_packet.seq, replacement.seq);
+    zassert_equal(restored_len, sizeof(payload));
+    zassert_mem_equal(restored_payload, payload, sizeof(payload));
+    zassert_ok(app_mesh_persistence_clear_gateway_click_journal());
+}
+
 static void assert_membership_roster_equal(
     const struct gateway_membership_roster *actual,
     const struct gateway_membership_roster *expected)
@@ -231,6 +588,51 @@ static void build_collection_command_result_payload(
                               payload_len,
                               TLV_COLLECTION_EPOCH_ID,
                               collection_epoch_id));
+}
+
+static void init_deferred_outbox_relay(struct mesh_relay *relay,
+                                       uint32_t command_seq,
+                                       uint32_t start_ms)
+{
+    struct route_candidate route = direct_gateway_route(90u);
+    struct command_result_id result_id = {
+        .gateway_id = GATEWAY_ID,
+        .gateway_epoch = 13u,
+        .command_seq = command_seq,
+        .node_id = LOCAL_ID,
+        .node_boot_counter = command_seq + 100u,
+        .result_seq = (uint16_t)(command_seq + 101u),
+    };
+    struct proto_packet packet = {0};
+    struct mesh_outbound tx;
+    uint8_t payload[128];
+    size_t payload_len = 0u;
+
+    build_collection_command_result_payload(payload,
+                                            sizeof(payload),
+                                            64u,
+                                            &result_id,
+                                            command_seq + 2000u,
+                                            &payload_len);
+    zassert_ok(mesh_init_command_result(&packet,
+                                        LOCAL_ID,
+                                        GATEWAY_ID,
+                                        command_seq,
+                                        result_id.result_seq,
+                                        (uint8_t)payload_len,
+                                        false));
+    mesh_relay_init(relay,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&relay->upstream, &route));
+    zassert_ok(mesh_relay_start_tx(relay,
+                                   &packet,
+                                   payload,
+                                   payload_len,
+                                   start_ms,
+                                   &tx));
 }
 
 static struct app_mesh_collection_result_snapshot make_snapshot(void)
@@ -829,6 +1231,182 @@ ZTEST(mesh_persistence, test_active_collection_retry_outbox_round_trip)
                       result_payload_len);
 }
 
+ZTEST(mesh_persistence, test_deferred_outbox_transient_read_retains_and_retries)
+{
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct route_candidate route = direct_gateway_route(90u);
+    int ret;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_deferred_outbox();
+    app_mesh_persistence_clear_outbox();
+    init_deferred_outbox_relay(&relay, 0x4001u, 1000u);
+    zassert_ok(app_mesh_persistence_save_deferred_outbox(&relay, 1100u));
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 1);
+
+    /* A reboot or remount starts with an unknown cache.  A failed first read
+     * must remain fail-closed until the retry can prove the slot is empty. */
+    app_mesh_persistence_test_reset_deferred_presence();
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), -EAGAIN);
+    app_mesh_persistence_test_fail_deferred_read(-EIO, 1u);
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    ret = app_mesh_persistence_restore_deferred_outbox(&restored, 2000u);
+    zassert_equal(ret, -EIO);
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), -EAGAIN);
+
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_ok(app_mesh_persistence_restore_deferred_outbox(&restored, 2100u));
+    zassert_true(mesh_relay_tx_active(&restored));
+    zassert_equal(restored.pending.packet.seq, (uint16_t)(0x4001u + 101u));
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 0);
+}
+
+ZTEST(mesh_persistence, test_deferred_outbox_same_snapshot_is_idempotent_and_conflict_busy)
+{
+    struct mesh_relay first;
+    struct mesh_relay same;
+    struct mesh_relay different;
+    int ret;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_deferred_outbox();
+    init_deferred_outbox_relay(&first, 0x4101u, 1000u);
+    zassert_ok(app_mesh_persistence_save_deferred_outbox(&first, 1100u));
+
+    /* A failed delete leaves the old bytes occupied.  Retrying the exact
+     * owner must succeed without replacing those bytes. */
+    app_mesh_persistence_test_fail_deferred_delete(-EIO, 1u);
+    zassert_equal(app_mesh_persistence_clear_deferred_outbox(), -EIO);
+    init_deferred_outbox_relay(&same, 0x4101u, 1200u);
+    zassert_ok(app_mesh_persistence_save_deferred_outbox(&same, 1300u));
+
+    init_deferred_outbox_relay(&different, 0x4102u, 1400u);
+    ret = app_mesh_persistence_save_deferred_outbox(&different, 1500u);
+    zassert_equal(ret, -EBUSY);
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 1);
+
+    mesh_relay_init(&same,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(app_mesh_persistence_restore_deferred_outbox(&same, 1600u));
+    zassert_equal(same.pending.packet.seq, (uint16_t)(0x4101u + 101u));
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 0);
+}
+
+ZTEST(mesh_persistence, test_deferred_outbox_contention_is_retryable)
+{
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_deferred_outbox();
+    init_deferred_outbox_relay(&relay, 0x4151u, 1000u);
+    zassert_ok(app_mesh_persistence_save_deferred_outbox(&relay, 1100u));
+
+    /* A competing read/write must never observe or publish a half-transaction. */
+    app_mesh_persistence_test_set_deferred_busy(true);
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), -EBUSY);
+    zassert_equal(app_mesh_persistence_clear_deferred_outbox(), -EBUSY);
+    zassert_equal(app_mesh_persistence_save_deferred_outbox(&relay, 1200u),
+                  -EBUSY);
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_equal(app_mesh_persistence_restore_deferred_outbox(&restored,
+                                                                 1300u),
+                  -EBUSY);
+    app_mesh_persistence_test_set_deferred_busy(false);
+
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 1);
+    zassert_ok(app_mesh_persistence_clear_deferred_outbox());
+}
+
+ZTEST(mesh_persistence, test_deferred_outbox_corrupt_record_is_cleared)
+{
+    struct mesh_relay relay;
+    struct mesh_relay_outbox_snapshot snapshot;
+    int ret;
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_deferred_outbox();
+    init_deferred_outbox_relay(&relay, 0x4201u, 1000u);
+    zassert_ok(app_mesh_persistence_save_deferred_outbox(&relay, 1100u));
+    zassert_ok(mesh_relay_export_outbox_snapshot(&relay, 1100u, &snapshot));
+    snapshot.version++;
+    zassert_ok(app_mesh_persistence_test_write_deferred_outbox_snapshot(
+        &snapshot,
+        sizeof(snapshot)));
+
+    mesh_relay_init(&relay,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    ret = app_mesh_persistence_restore_deferred_outbox(&relay, 2000u);
+    zassert_equal(ret, -EBADMSG);
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 0);
+}
+
+ZTEST(mesh_persistence, test_deferred_outbox_promotion_keeps_dual_copies_until_cleanup)
+{
+    struct mesh_relay relay;
+    struct mesh_relay restored;
+    struct route_candidate route = direct_gateway_route(90u);
+
+    zassert_ok(app_mesh_persistence_init());
+    app_mesh_persistence_clear_deferred_outbox();
+    app_mesh_persistence_clear_outbox();
+    init_deferred_outbox_relay(&relay, 0x4301u, 1000u);
+    zassert_ok(app_mesh_persistence_save_deferred_outbox(&relay, 1100u));
+
+    app_mesh_persistence_test_fail_outbox_write(-EIO, 1u);
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_equal(app_mesh_persistence_restore_deferred_outbox(&restored, 2000u),
+                  -EIO);
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 1);
+
+    app_mesh_persistence_test_fail_deferred_delete(-EIO, 1u);
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_equal(app_mesh_persistence_restore_deferred_outbox(&restored, 2100u),
+                  -EIO);
+    zassert_true(mesh_relay_tx_active(&restored));
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 1);
+
+    mesh_relay_init(&restored,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID,
+                    GATEWAY_ID,
+                    13u);
+    zassert_ok(route_upsert_candidate(&restored.upstream, &route));
+    zassert_ok(app_mesh_persistence_restore_deferred_outbox(&restored, 2200u));
+    zassert_equal(app_mesh_persistence_deferred_outbox_present(), 0);
+}
+
 ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_restore)
 {
     const struct command_result_id result_id = {
@@ -858,6 +1436,7 @@ ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_
 
     zassert_ok(app_mesh_persistence_init());
     app_mesh_persistence_clear_outbox();
+    app_mesh_persistence_clear_deferred_outbox();
     (void)k_work_cancel_delayable(&test_tx_timeout_work);
 
     build_collection_command_result_payload(result_payload,
@@ -902,7 +1481,7 @@ ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_
         .now_ms = preempt_ms,
     };
     ops = (struct app_mesh_click_preempt_ops) {
-        .save_outbox = save_outbox_for_preempt,
+        .save_deferred_outbox = save_deferred_outbox_for_preempt,
         .schedule_timeout = schedule_timeout_for_preempt,
         .cancel_active_tx = cancel_active_tx_for_preempt,
         .ctx = &save_ctx,
@@ -927,7 +1506,8 @@ ZTEST(mesh_persistence, test_click_preemption_saves_collection_outbox_for_retry_
                     GATEWAY_ID,
                     13u);
     zassert_ok(route_upsert_candidate(&restored.upstream, &route));
-    zassert_ok(app_mesh_persistence_restore_outbox(&restored, restore_ms));
+    zassert_ok(app_mesh_persistence_restore_deferred_outbox(&restored,
+                                                             restore_ms));
 
     restored_retry_ms = restore_ms + RELAY_BUSY_RETRY_MIN_MS;
     zassert_true(mesh_relay_tx_active(&restored));

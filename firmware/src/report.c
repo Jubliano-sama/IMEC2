@@ -12,6 +12,310 @@ static bool range_status_valid(enum range_status status)
            status != RANGE_STS_QUALITY_FAIL;
 }
 
+enum click_payload_field {
+    CLICK_PAYLOAD_CLICKER_ID = UINT32_C(1) << 0,
+    CLICK_PAYLOAD_ANCHOR_ID = UINT32_C(1) << 1,
+    CLICK_PAYLOAD_EVENT_SEQ = UINT32_C(1) << 2,
+    CLICK_PAYLOAD_TIMESTAMP = UINT32_C(1) << 3,
+    CLICK_PAYLOAD_DISTANCE = UINT32_C(1) << 4,
+    CLICK_PAYLOAD_QUALITY = UINT32_C(1) << 5,
+    CLICK_PAYLOAD_RANGE_STATUS = UINT32_C(1) << 6,
+    CLICK_PAYLOAD_SAMPLE_COUNT = UINT32_C(1) << 7,
+    CLICK_PAYLOAD_SAMPLE_INDEX = UINT32_C(1) << 8,
+    CLICK_PAYLOAD_DISTANCE_SAMPLES = UINT32_C(1) << 9,
+    CLICK_PAYLOAD_ROUND_INDICES = UINT32_C(1) << 10,
+    CLICK_PAYLOAD_SEQUENCE_TIMESTAMPS = UINT32_C(1) << 11,
+    CLICK_PAYLOAD_ATTEMPT_INDEX = UINT32_C(1) << 12,
+    CLICK_PAYLOAD_DETECTION_SOURCE = UINT32_C(1) << 13,
+    CLICK_PAYLOAD_BURST_ID = UINT32_C(1) << 14,
+    CLICK_PAYLOAD_FRAGMENT_INDEX = UINT32_C(1) << 15,
+    CLICK_PAYLOAD_FRAGMENT_COUNT = UINT32_C(1) << 16,
+    CLICK_PAYLOAD_CIR_BYTE_OFFSET = UINT32_C(1) << 17,
+    CLICK_PAYLOAD_CIR_TOTAL_BYTES = UINT32_C(1) << 18,
+    CLICK_PAYLOAD_CIR_FIRST_PATH = UINT32_C(1) << 19,
+    CLICK_PAYLOAD_CIR_START_INDEX = UINT32_C(1) << 20,
+};
+
+#define CLICK_PAYLOAD_COMMON_FIELDS \
+    (CLICK_PAYLOAD_CLICKER_ID | CLICK_PAYLOAD_ANCHOR_ID | \
+     CLICK_PAYLOAD_EVENT_SEQ | CLICK_PAYLOAD_TIMESTAMP)
+#define CLICK_PAYLOAD_RANGE_FIELDS \
+    (CLICK_PAYLOAD_DISTANCE | CLICK_PAYLOAD_QUALITY | CLICK_PAYLOAD_RANGE_STATUS)
+#define CLICK_PAYLOAD_SAMPLE_FIELDS \
+    (CLICK_PAYLOAD_SAMPLE_COUNT | CLICK_PAYLOAD_DISTANCE_SAMPLES | \
+     CLICK_PAYLOAD_ROUND_INDICES | CLICK_PAYLOAD_SEQUENCE_TIMESTAMPS)
+#define CLICK_PAYLOAD_DETECTION_FIELDS \
+    (CLICK_PAYLOAD_ATTEMPT_INDEX | CLICK_PAYLOAD_DETECTION_SOURCE)
+#define CLICK_PAYLOAD_CIR_FRAGMENT_FIELDS \
+    (CLICK_PAYLOAD_FRAGMENT_INDEX | CLICK_PAYLOAD_FRAGMENT_COUNT | \
+     CLICK_PAYLOAD_CIR_BYTE_OFFSET | CLICK_PAYLOAD_CIR_TOTAL_BYTES | \
+     CLICK_PAYLOAD_CIR_FIRST_PATH | CLICK_PAYLOAD_CIR_START_INDEX)
+
+int report_validate_click_payload(const struct proto_packet *packet,
+                                  const uint8_t *payload,
+                                  size_t payload_len)
+{
+    uint64_t clicker_id = 0u;
+    uint64_t anchor_id = 0u;
+    uint32_t event_seq = 0u;
+    uint16_t sample_count = 0u;
+    uint16_t sample_index = 0u;
+    uint16_t fragment_index = 0u;
+    uint16_t fragment_count = 0u;
+    uint16_t cir_byte_offset = 0u;
+    uint16_t cir_total_bytes = 0u;
+    size_t distance_sample_count = 0u;
+    size_t round_index_count = 0u;
+    size_t sequence_timestamp_count = 0u;
+    size_t cir_chunk_bytes = 0u;
+    size_t offset = 0u;
+    uint32_t seen = 0u;
+    uint8_t mode_flags;
+
+    if (packet == NULL || payload == NULL ||
+        packet->msg_type != MSG_CLICK_REPORT ||
+        packet->payload_len != payload_len ||
+        payload_len == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    mode_flags = packet->flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC);
+    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        mode_flags == 0u ||
+        mode_flags == (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    while (offset < payload_len) {
+        uint8_t type;
+        uint8_t length;
+        const uint8_t *value;
+        uint32_t field = 0u;
+
+        if (payload_len - offset < PROTO_TLV_HEADER_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+        type = payload[offset];
+        length = payload[offset + 1u];
+        offset += PROTO_TLV_HEADER_LEN;
+        if (length > payload_len - offset) {
+            return PROTO_ERR_MALFORMED;
+        }
+        value = &payload[offset];
+
+        switch (type) {
+        case TLV_CLICKER_ID:
+            field = CLICK_PAYLOAD_CLICKER_ID;
+            if (length != sizeof(uint64_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            clicker_id = proto_get_u64_le(value);
+            break;
+        case TLV_ANCHOR_ID:
+            field = CLICK_PAYLOAD_ANCHOR_ID;
+            if (length != sizeof(uint64_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            anchor_id = proto_get_u64_le(value);
+            break;
+        case TLV_EVENT_SEQ:
+            field = CLICK_PAYLOAD_EVENT_SEQ;
+            if (length != sizeof(uint32_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            event_seq = proto_get_u32_le(value);
+            break;
+        case TLV_TIMESTAMP_MS:
+            field = CLICK_PAYLOAD_TIMESTAMP;
+            if (length != sizeof(uint64_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_DISTANCE_MM:
+            field = CLICK_PAYLOAD_DISTANCE;
+            if (length != sizeof(uint32_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_QUALITY:
+            field = CLICK_PAYLOAD_QUALITY;
+            if (length != sizeof(uint8_t) || value[0] > 100u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_RANGE_STATUS:
+            field = CLICK_PAYLOAD_RANGE_STATUS;
+            if (length != sizeof(uint8_t) ||
+                !range_status_valid((enum range_status)value[0])) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_SAMPLE_COUNT:
+            field = CLICK_PAYLOAD_SAMPLE_COUNT;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            sample_count = proto_get_u16_le(value);
+            break;
+        case TLV_SAMPLE_INDEX:
+            field = CLICK_PAYLOAD_SAMPLE_INDEX;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            sample_index = proto_get_u16_le(value);
+            break;
+        case TLV_DISTANCE_SAMPLES_MM:
+            field = CLICK_PAYLOAD_DISTANCE_SAMPLES;
+            if (length == 0u || length % sizeof(uint32_t) != 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            distance_sample_count = length / sizeof(uint32_t);
+            break;
+        case TLV_RANGE_ROUND_INDICES:
+            field = CLICK_PAYLOAD_ROUND_INDICES;
+            if (length == 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            round_index_count = length;
+            break;
+        case TLV_SEQUENCE_START_TIMESTAMPS_MS:
+            field = CLICK_PAYLOAD_SEQUENCE_TIMESTAMPS;
+            if (length == 0u || length % sizeof(uint64_t) != 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            sequence_timestamp_count = length / sizeof(uint64_t);
+            break;
+        case TLV_ATTEMPT_INDEX:
+            field = CLICK_PAYLOAD_ATTEMPT_INDEX;
+            if (length != sizeof(uint8_t) || value[0] == 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_DETECTION_SOURCE:
+            field = CLICK_PAYLOAD_DETECTION_SOURCE;
+            if (length != sizeof(uint8_t) ||
+                value[0] != DETECTION_SOURCE_UWB_WAKE_CLAIM) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_BURST_ID:
+            field = CLICK_PAYLOAD_BURST_ID;
+            if (length != sizeof(uint32_t) || proto_get_u32_le(value) == 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_DIAG_FRAGMENT_INDEX:
+            field = CLICK_PAYLOAD_FRAGMENT_INDEX;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            fragment_index = proto_get_u16_le(value);
+            break;
+        case TLV_DIAG_FRAGMENT_COUNT:
+            field = CLICK_PAYLOAD_FRAGMENT_COUNT;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            fragment_count = proto_get_u16_le(value);
+            break;
+        case TLV_UWB_CIR_BYTE_OFFSET:
+            field = CLICK_PAYLOAD_CIR_BYTE_OFFSET;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            cir_byte_offset = proto_get_u16_le(value);
+            break;
+        case TLV_UWB_CIR_TOTAL_BYTES:
+            field = CLICK_PAYLOAD_CIR_TOTAL_BYTES;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            cir_total_bytes = proto_get_u16_le(value);
+            break;
+        case TLV_UWB_CIR_FIRST_PATH_INDEX:
+            field = CLICK_PAYLOAD_CIR_FIRST_PATH;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_UWB_CIR_START_INDEX:
+            field = CLICK_PAYLOAD_CIR_START_INDEX;
+            if (length != sizeof(uint16_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            break;
+        case TLV_UWB_CIR_FULL_CHUNK:
+            if (length == 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            cir_chunk_bytes += length;
+            break;
+        default:
+            break;
+        }
+
+        if (field != 0u) {
+            if ((seen & field) != 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            seen |= field;
+        }
+        offset += length;
+    }
+
+    if ((seen & CLICK_PAYLOAD_COMMON_FIELDS) != CLICK_PAYLOAD_COMMON_FIELDS ||
+        clicker_id == 0u || anchor_id == 0u ||
+        clicker_id == anchor_id ||
+        anchor_id != packet->src_id ||
+        event_seq == 0u || event_seq != packet->session_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((seen & CLICK_PAYLOAD_DETECTION_FIELDS) != 0u &&
+        (seen & CLICK_PAYLOAD_DETECTION_FIELDS) !=
+            CLICK_PAYLOAD_DETECTION_FIELDS) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    if (cir_chunk_bytes > 0u ||
+        (seen & CLICK_PAYLOAD_CIR_FRAGMENT_FIELDS) != 0u) {
+        if (mode_flags != FLAG_DIAGNOSTIC ||
+            (seen & CLICK_PAYLOAD_CIR_FRAGMENT_FIELDS) !=
+                CLICK_PAYLOAD_CIR_FRAGMENT_FIELDS ||
+            fragment_count == 0u || fragment_index >= fragment_count ||
+            cir_total_bytes == 0u || cir_byte_offset >= cir_total_bytes ||
+            cir_chunk_bytes == 0u ||
+            cir_chunk_bytes > (size_t)(cir_total_bytes - cir_byte_offset)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        return PROTO_OK;
+    }
+
+    if ((seen & CLICK_PAYLOAD_RANGE_FIELDS) != CLICK_PAYLOAD_RANGE_FIELDS) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((seen & (CLICK_PAYLOAD_SAMPLE_FIELDS |
+                 CLICK_PAYLOAD_SAMPLE_INDEX)) != 0u) {
+        if ((seen & CLICK_PAYLOAD_SAMPLE_FIELDS) !=
+                CLICK_PAYLOAD_SAMPLE_FIELDS ||
+            sample_count == 0u ||
+            sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES ||
+            distance_sample_count == 0u ||
+            distance_sample_count != round_index_count ||
+            distance_sample_count != sequence_timestamp_count ||
+            sample_index >= sample_count ||
+            distance_sample_count >
+                (size_t)(sample_count - sample_index)) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+    if (mode_flags == FLAG_COUNT_AS_CLICK &&
+        ((seen & CLICK_PAYLOAD_SAMPLE_FIELDS) !=
+             CLICK_PAYLOAD_SAMPLE_FIELDS ||
+         (seen & CLICK_PAYLOAD_BURST_ID) == 0u)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
 static int append_distance_samples(uint8_t *payload,
                                    size_t payload_cap,
                                    size_t *offset,
@@ -92,7 +396,8 @@ static int append_distance_samples(uint8_t *payload,
 static int append_diagnostics(uint8_t *payload,
                               size_t payload_cap,
                               size_t *offset,
-                              const struct range_report_diagnostics *diagnostics)
+                              const struct range_report_diagnostics *diagnostics,
+                              bool burst_id_present)
 {
     int ret;
 
@@ -114,11 +419,13 @@ static int append_diagnostics(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_append_u32(payload, payload_cap, offset,
-                         TLV_BURST_ID,
-                         diagnostics->burst_id);
-    if (ret != PROTO_OK) {
-        return ret;
+    if (!burst_id_present) {
+        ret = tlv_append_u32(payload, payload_cap, offset,
+                             TLV_BURST_ID,
+                             diagnostics->burst_id);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     ret = tlv_append_u16(payload, payload_cap, offset,
                          TLV_EXCHANGE_STRIDE_US,
@@ -301,7 +608,18 @@ int report_append_range_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = append_diagnostics(payload, payload_cap, offset, fields->diagnostics);
+    if (fields->burst_id_present) {
+        if (fields->burst_id == 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        ret = tlv_append_u32(payload, payload_cap, offset,
+                             TLV_BURST_ID, fields->burst_id);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    ret = append_diagnostics(payload, payload_cap, offset, fields->diagnostics,
+                             fields->burst_id_present);
     if (ret != PROTO_OK) {
         return ret;
     }

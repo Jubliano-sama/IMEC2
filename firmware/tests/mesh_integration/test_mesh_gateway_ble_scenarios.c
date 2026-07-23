@@ -79,6 +79,7 @@ struct shared_timeline_state {
     uint32_t mesh_events_disconnected;
     uint32_t deliveries_while_ble_blocked;
     uint32_t backpressure_events;
+    uint32_t cir_credit_starvation_events;
     uint32_t credit_completion_events;
     uint8_t max_stream_depth;
     uint8_t record_retire_count[TEST_RECORD_COUNT];
@@ -87,6 +88,7 @@ struct shared_timeline_state {
     bool chunk_submitted;
     bool backpressure_active;
     bool backpressure_exercised;
+    bool cir_credit_starved;
     bool disconnect_exercised;
     bool reconnect_pending;
     bool retry_verified;
@@ -552,7 +554,6 @@ static void schedule_next_mesh_action(void)
           test_world.roles[anchor_index].tx_queue_count,
           test_world.roles[gateway_index].tx_queue_count,
           (int)test_world.roles[anchor_index].relay.pending.state);
-
     ret = mesh_sim_connection_next_action(&test_world,
                                           mesh_connection_index,
                                           &action);
@@ -906,6 +907,10 @@ static void run_ble_connection_event(void)
                   ret,
                   test_link.available_credits);
             timeline.backpressure_events++;
+            if (current_record_index >= TEST_RECORD_CIR_FIRST) {
+                timeline.cir_credit_starved = true;
+                timeline.cir_credit_starvation_events++;
+            }
         } else {
             CHECK(test_link.available_credits == TEST_BLE_CREDIT_CAPACITY &&
                       test_link.in_flight == 0u,
@@ -1080,6 +1085,10 @@ static void start_or_submit_ble_chunk(void)
 
     if (timeline.first_ble_submit_us == 0u) {
         timeline.first_ble_submit_us = test_world.now_us;
+    }
+    if (!timeline.backpressure_active &&
+        current_record_index == TEST_RECORD_CIR_FIRST &&
+        current_chunk_index == 0u) {
         timeline.backpressure_active = true;
         timeline.backpressure_exercised = true;
         timeline.backpressure_release_us =
@@ -1087,7 +1096,7 @@ static void start_or_submit_ble_chunk(void)
         gateway_ble_link_set_stalled(&test_link, true);
     }
     if (!timeline.disconnect_exercised &&
-        current_record_index == TEST_RECORD_CIR_FIRST &&
+        current_record_index == TEST_RECORD_RANGE &&
         current_chunk_index == 1u) {
         disconnect_active_ble_chunk();
     }
@@ -1281,7 +1290,7 @@ static void verify_shared_mesh_state(void)
           test_world.roles[gateway_index].collision_frames,
           test_world.roles[gateway_index].decoded_frames);
     CHECK(test_world.roles[anchor_index].partial_frames == 0u &&
-              test_world.roles[anchor_index].collision_frames == 0u,
+          test_world.roles[anchor_index].collision_frames == 0u,
           "anchor ACK radio loss: partial=%u collision=%u decoded=%u",
           test_world.roles[anchor_index].partial_frames,
           test_world.roles[anchor_index].collision_frames,
@@ -1341,12 +1350,16 @@ static void verify_adversarial_interleaving_guards(void)
           timeline.max_stream_depth);
     CHECK(timeline.backpressure_exercised &&
               timeline.backpressure_events > 0u &&
+              timeline.cir_credit_starved &&
+              timeline.cir_credit_starvation_events > 0u &&
               timeline.retry_verified &&
               timeline.disconnect_exercised,
-          "adversarial BLE paths missing: stalled=%u stall_events=%u retry=%u "
-          "disconnect=%u",
+          "adversarial BLE paths missing: stalled=%u stall_events=%u "
+          "cir_starved=%u cir_events=%u retry=%u disconnect=%u",
           timeline.backpressure_exercised ? 1u : 0u,
           timeline.backpressure_events,
+          timeline.cir_credit_starved ? 1u : 0u,
+          timeline.cir_credit_starvation_events,
           timeline.retry_verified ? 1u : 0u,
           timeline.disconnect_exercised ? 1u : 0u);
     CHECK(timeline.first_ble_completion_us > timeline.first_ble_submit_us &&
@@ -1364,7 +1377,7 @@ static void verify_adversarial_interleaving_guards(void)
     CHECK(timeline.max_anchor_mesh_queue <= TEST_RECORD_COUNT &&
               timeline.max_gateway_mesh_queue <=
                   TEST_MAX_GATEWAY_MESH_QUEUE_DEPTH &&
-              timeline.max_stream_depth <= GATEWAY_BLE_STREAM_QUEUE_DEPTH,
+          timeline.max_stream_depth <= GATEWAY_BLE_STREAM_QUEUE_DEPTH,
           "queue bound exceeded: anchor=%zu gateway=%zu stream=%u",
           timeline.max_anchor_mesh_queue,
           timeline.max_gateway_mesh_queue,

@@ -3,6 +3,15 @@
 #include <errno.h>
 #include <string.h>
 
+bool app_mesh_tx_timeout_work_needed(bool relay_active,
+                                     bool channel9_tx_active,
+                                     bool result_bundle_pending,
+                                     bool deferred_outbox_pending)
+{
+    return relay_active || channel9_tx_active || result_bundle_pending ||
+           deferred_outbox_pending;
+}
+
 int app_mesh_apply_click_preempt_plan(
     const struct mesh_click_preempt_plan *plan,
     const struct app_mesh_click_preempt_ops *ops,
@@ -40,7 +49,10 @@ int app_mesh_apply_click_preempt_plan(
     }
 
     if (plan->save_outbox) {
-        if (ops->save_outbox == NULL) {
+        if (ops->save_deferred_outbox != NULL) {
+            local_result.save_outbox_ret =
+                ops->save_deferred_outbox(ops->ctx);
+        } else if (ops->save_outbox == NULL) {
             local_result.save_outbox_ret = -ENOTSUP;
         } else {
             local_result.save_outbox_ret = ops->save_outbox(ops->ctx);

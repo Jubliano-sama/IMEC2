@@ -60,6 +60,8 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                                                        bool apply_tracked_ack,
                                                        struct mesh_direct_gateway_ack_debug *debug)
 {
+    struct proto_packet ack_packet;
+    uint8_t ack_payload[MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP];
     uint8_t *frame = mesh_uwb_rx_frame;
     uint32_t deadline_ms;
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
@@ -80,8 +82,8 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
         uint8_t quality = 0u;
         bool valid_mesh_frame = false;
         uint64_t previous_hop_id = 0u;
-        struct proto_packet *packet = &mesh_direct_gateway_ack_packet;
-        uint8_t *payload = mesh_direct_gateway_ack_payload;
+        struct proto_packet *packet = &ack_packet;
+        uint8_t *payload = ack_payload;
         size_t payload_len = 0u;
         uint32_t remaining_ms = uptime_ms_until_deadline(k_uptime_get_32(),
                                                          deadline_ms);

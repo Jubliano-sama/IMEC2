@@ -49,6 +49,16 @@ MSG_COMMAND = 0x40
 MSG_COMMAND_RESULT = 0x41
 MSG_GATEWAY_COMMAND_EVENT = 0x56
 
+# Click-report semantic flags and bounds mirror firmware/include/protocol.h and
+# firmware/include/report.h.  Envelope decoding intentionally remains
+# independent; the semantic gate below is applied only at the receive-buffer
+# boundary where a malformed click must not reach the GUI.
+FLAG_GATEWAY_ACK_REQUIRED = 0x04
+FLAG_DIAGNOSTIC = 0x10
+FLAG_COUNT_AS_CLICK = 0x20
+RANGE_REPORT_MAX_DISTANCE_SAMPLES = 96
+DETECTION_SOURCE_UWB_WAKE_CLAIM = 1
+
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
@@ -813,6 +823,250 @@ def parse_tlvs(payload: bytes, *, allow_truncated_tail: bool = False) -> tuple[T
     return tuple(values)
 
 
+_CLICK_SINGLETON_TLVS = {
+    TLV_CLICKER_ID,
+    TLV_ANCHOR_ID,
+    TLV_EVENT_SEQ,
+    TLV_TIMESTAMP_MS,
+    TLV_DISTANCE_MM,
+    TLV_QUALITY,
+    TLV_RANGE_STATUS,
+    TLV_SAMPLE_COUNT,
+    TLV_SAMPLE_INDEX,
+    TLV_DISTANCE_SAMPLES_MM,
+    TLV_RANGE_ROUND_INDICES,
+    TLV_SEQUENCE_START_TIMESTAMPS_MS,
+    TLV_ATTEMPT_INDEX,
+    TLV_DETECTION_SOURCE,
+    TLV_BURST_ID,
+    TLV_DIAG_FRAGMENT_INDEX,
+    TLV_DIAG_FRAGMENT_COUNT,
+    TLV_UWB_CIR_BYTE_OFFSET,
+    TLV_UWB_CIR_TOTAL_BYTES,
+    TLV_UWB_CIR_FIRST_PATH_INDEX,
+    TLV_UWB_CIR_START_INDEX,
+}
+
+_CLICK_COMMON_TLVS = {
+    TLV_CLICKER_ID,
+    TLV_ANCHOR_ID,
+    TLV_EVENT_SEQ,
+    TLV_TIMESTAMP_MS,
+}
+
+_CLICK_RANGE_TLVS = {
+    TLV_DISTANCE_MM,
+    TLV_QUALITY,
+    TLV_RANGE_STATUS,
+}
+
+_CLICK_SAMPLE_TLVS = {
+    TLV_SAMPLE_COUNT,
+    TLV_DISTANCE_SAMPLES_MM,
+    TLV_RANGE_ROUND_INDICES,
+    TLV_SEQUENCE_START_TIMESTAMPS_MS,
+}
+
+_CLICK_DETECTION_TLVS = {
+    TLV_ATTEMPT_INDEX,
+    TLV_DETECTION_SOURCE,
+}
+
+_CLICK_CIR_FRAGMENT_TLVS = {
+    TLV_DIAG_FRAGMENT_INDEX,
+    TLV_DIAG_FRAGMENT_COUNT,
+    TLV_UWB_CIR_BYTE_OFFSET,
+    TLV_UWB_CIR_TOTAL_BYTES,
+    TLV_UWB_CIR_FIRST_PATH_INDEX,
+    TLV_UWB_CIR_START_INDEX,
+}
+
+
+def _click_tlv_values(tlvs: tuple[TlvValue, ...], type_id: int) -> list[TlvValue]:
+    return [tlv for tlv in tlvs if tlv.type_id == type_id]
+
+
+def validate_click_payload(packet: Packet, payload: bytes | None = None) -> None:
+    """Apply the firmware's semantic ``MSG_CLICK_REPORT`` admission rules.
+
+    Envelope parsers deliberately do not call this function so callers that
+    inspect raw packets retain access to malformed payloads.  The gateway
+    receive buffer invokes it before emitting a click packet.  ``payload`` is
+    optional for native-test parity with ``report_validate_click_payload``;
+    when supplied, its TLVs are decoded independently from ``packet.tlvs``.
+    """
+
+    if packet.msg_type != MSG_CLICK_REPORT:
+        raise DecodeError(
+            f"click payload validator requires MSG_CLICK_REPORT, got 0x{packet.msg_type:02x}"
+        )
+
+    payload_bytes = packet.payload if payload is None else payload
+    if not payload_bytes:
+        raise DecodeError("malformed click report: payload is empty")
+    tlvs = packet.tlvs if payload is None else parse_tlvs(payload_bytes)
+    if any(tlv.truncated for tlv in tlvs):
+        raise DecodeError("malformed click report: payload contains a truncated TLV")
+
+    mode_flags = packet.flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)
+    if (packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0:
+        raise DecodeError("malformed click report: gateway ACK is required")
+    if mode_flags == 0:
+        raise DecodeError("malformed click report: exactly one click/diagnostic mode is required")
+    if mode_flags == (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC):
+        raise DecodeError(
+            "malformed click report: click and diagnostic modes are mutually exclusive"
+        )
+
+    for type_id in _CLICK_SINGLETON_TLVS:
+        occurrences = _click_tlv_values(tlvs, type_id)
+        if len(occurrences) > 1:
+            name = TLV_SPECS.get(type_id, TlvSpec(f"TLV_0x{type_id:02x}")).name
+            raise DecodeError(f"malformed click report: duplicate {name} TLV")
+
+    def required(type_id: int, width: int, name: str) -> TlvValue:
+        values = _click_tlv_values(tlvs, type_id)
+        if not values:
+            raise DecodeError(f"malformed click report: missing required {name} TLV")
+        value = values[0]
+        if len(value.raw) != width:
+            raise DecodeError(
+                f"malformed click report: {name} TLV must be {width} bytes, got {len(value.raw)}"
+            )
+        return value
+
+    def present(type_id: int, name: str) -> TlvValue:
+        values = _click_tlv_values(tlvs, type_id)
+        if not values:
+            raise DecodeError(f"malformed click report: missing required {name} TLV")
+        return values[0]
+
+    clicker_tlv = required(TLV_CLICKER_ID, 8, "CLICKER_ID")
+    anchor_tlv = required(TLV_ANCHOR_ID, 8, "ANCHOR_ID")
+    event_tlv = required(TLV_EVENT_SEQ, 4, "EVENT_SEQ")
+    required(TLV_TIMESTAMP_MS, 8, "TIMESTAMP_MS")
+    clicker_id = int.from_bytes(clicker_tlv.raw, "little")
+    anchor_id = int.from_bytes(anchor_tlv.raw, "little")
+    event_seq = int.from_bytes(event_tlv.raw, "little")
+    if clicker_id == 0 or anchor_id == 0 or clicker_id == anchor_id:
+        raise DecodeError("malformed click report: clicker/anchor IDs must be nonzero and distinct")
+    if anchor_id != packet.src_id:
+        raise DecodeError("malformed click report: ANCHOR_ID must equal packet source")
+    if event_seq == 0 or event_seq != packet.session_id:
+        raise DecodeError("malformed click report: EVENT_SEQ must equal nonzero packet session")
+
+    detection_present = {
+        type_id: bool(_click_tlv_values(tlvs, type_id))
+        for type_id in _CLICK_DETECTION_TLVS
+    }
+    if any(detection_present.values()) and not all(detection_present.values()):
+        raise DecodeError("malformed click report: detection attempt/source pair is incomplete")
+    if detection_present[TLV_ATTEMPT_INDEX]:
+        attempt = required(TLV_ATTEMPT_INDEX, 1, "ATTEMPT_INDEX")
+        source = required(TLV_DETECTION_SOURCE, 1, "DETECTION_SOURCE")
+        if attempt.raw[0] == 0:
+            raise DecodeError("malformed click report: ATTEMPT_INDEX must be nonzero")
+        if source.raw[0] != DETECTION_SOURCE_UWB_WAKE_CLAIM:
+            raise DecodeError("malformed click report: unsupported DETECTION_SOURCE")
+
+    cir_chunks = _click_tlv_values(tlvs, TLV_UWB_CIR_FULL_CHUNK)
+    for chunk in cir_chunks:
+        if not chunk.raw:
+            raise DecodeError("malformed click report: UWB_CIR_FULL_CHUNK must not be empty")
+    cir_chunk_bytes = sum(len(chunk.raw) for chunk in cir_chunks)
+    cir_metadata_present = any(
+        _click_tlv_values(tlvs, type_id) for type_id in _CLICK_CIR_FRAGMENT_TLVS
+    )
+    if cir_chunks or cir_metadata_present:
+        if mode_flags != FLAG_DIAGNOSTIC:
+            raise DecodeError("malformed click report: CIR fragments require diagnostic mode")
+        fragment_index = int.from_bytes(
+            required(TLV_DIAG_FRAGMENT_INDEX, 2, "DIAG_FRAGMENT_INDEX").raw, "little"
+        )
+        fragment_count = int.from_bytes(
+            required(TLV_DIAG_FRAGMENT_COUNT, 2, "DIAG_FRAGMENT_COUNT").raw, "little"
+        )
+        byte_offset = int.from_bytes(
+            required(TLV_UWB_CIR_BYTE_OFFSET, 2, "UWB_CIR_BYTE_OFFSET").raw, "little"
+        )
+        total_bytes = int.from_bytes(
+            required(TLV_UWB_CIR_TOTAL_BYTES, 2, "UWB_CIR_TOTAL_BYTES").raw, "little"
+        )
+        required(TLV_UWB_CIR_FIRST_PATH_INDEX, 2, "UWB_CIR_FIRST_PATH_INDEX")
+        required(TLV_UWB_CIR_START_INDEX, 2, "UWB_CIR_START_INDEX")
+        if (
+            fragment_count == 0
+            or fragment_index >= fragment_count
+            or total_bytes == 0
+            or byte_offset >= total_bytes
+            or cir_chunk_bytes == 0
+            or cir_chunk_bytes > total_bytes - byte_offset
+        ):
+            raise DecodeError("malformed click report: invalid CIR fragment bounds")
+        return
+
+    for type_id, width, name in (
+        (TLV_DISTANCE_MM, 4, "DISTANCE_MM"),
+        (TLV_QUALITY, 1, "QUALITY"),
+        (TLV_RANGE_STATUS, 1, "RANGE_STATUS"),
+    ):
+        required(type_id, width, name)
+    quality = required(TLV_QUALITY, 1, "QUALITY").raw[0]
+    if quality > 100:
+        raise DecodeError("malformed click report: QUALITY must be at most 100")
+    range_status = required(TLV_RANGE_STATUS, 1, "RANGE_STATUS").raw[0]
+    if range_status > 8 or range_status == 5:
+        raise DecodeError("malformed click report: invalid RANGE_STATUS")
+
+    sample_present = any(_click_tlv_values(tlvs, type_id) for type_id in _CLICK_SAMPLE_TLVS)
+    sample_index_present = bool(_click_tlv_values(tlvs, TLV_SAMPLE_INDEX))
+    if sample_present or sample_index_present:
+        sample_count = int.from_bytes(
+            required(TLV_SAMPLE_COUNT, 2, "SAMPLE_COUNT").raw, "little"
+        )
+        sample_values = present(TLV_DISTANCE_SAMPLES_MM, "DISTANCE_SAMPLES_MM")
+        round_values = present(TLV_RANGE_ROUND_INDICES, "RANGE_ROUND_INDICES")
+        timestamp_values = present(
+            TLV_SEQUENCE_START_TIMESTAMPS_MS, "SEQUENCE_START_TIMESTAMPS_MS"
+        )
+        distance_sample_count = len(sample_values.raw) // 4
+        round_index_count = len(round_values.raw)
+        timestamp_count = len(timestamp_values.raw) // 8
+        sample_index = (
+            int.from_bytes(required(TLV_SAMPLE_INDEX, 2, "SAMPLE_INDEX").raw, "little")
+            if sample_index_present
+            else 0
+        )
+        if (
+            sample_count == 0
+            or sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES
+            or len(sample_values.raw) == 0
+            or len(sample_values.raw) % 4 != 0
+            or len(round_values.raw) == 0
+            or len(timestamp_values.raw) == 0
+            or len(timestamp_values.raw) % 8 != 0
+            or distance_sample_count != round_index_count
+            or distance_sample_count != timestamp_count
+            or sample_index >= sample_count
+            or distance_sample_count > sample_count - sample_index
+        ):
+            raise DecodeError("malformed click report: invalid sample alignment or bounds")
+
+    if mode_flags == FLAG_COUNT_AS_CLICK:
+        if not _CLICK_SAMPLE_TLVS.issubset(
+            {tlv.type_id for tlv in tlvs}
+        ):
+            raise DecodeError("malformed click report: count-as-click requires sample fields")
+        burst = required(TLV_BURST_ID, 4, "BURST_ID")
+        if int.from_bytes(burst.raw, "little") == 0:
+            raise DecodeError("malformed click report: BURST_ID must be nonzero")
+
+
+# Name the entry point after the packet type as well, so callers that do not
+# use the firmware's payload-oriented naming can reuse the same admission gate.
+validate_click_report = validate_click_payload
+
+
 def parse_shared_packet_bytes(
     raw: bytes,
     *,
@@ -941,6 +1195,15 @@ class GatewayReceiveBuffer:
     def reset(self) -> None:
         self._buffer.clear()
 
+    @staticmethod
+    def _append_packet(packets: list[Packet], packet: Packet) -> None:
+        # Keep parse_shared_packet_bytes/parse_stream_record useful for raw
+        # inspection, but make the live BLE receive boundary fail closed for
+        # semantically malformed click reports.
+        if packet.msg_type == MSG_CLICK_REPORT:
+            validate_click_payload(packet)
+        packets.append(packet)
+
     def feed(self, data: bytes) -> FeedResult:
         self._buffer.extend(data)
         packets: list[Packet] = []
@@ -971,7 +1234,7 @@ class GatewayReceiveBuffer:
                     frame = bytes(self._buffer[:delimiter + 1])
                     del self._buffer[:delimiter + 1]
                     try:
-                        packets.append(parse_cobs_packet(frame))
+                        self._append_packet(packets, parse_cobs_packet(frame))
                     except DecodeError as exc:
                         errors.append(f"packet notification decode failed: {exc}")
                     continue
@@ -980,7 +1243,7 @@ class GatewayReceiveBuffer:
                 record = bytes(self._buffer[:record_len])
                 del self._buffer[:record_len]
                 try:
-                    packets.append(parse_stream_record(record))
+                    self._append_packet(packets, parse_stream_record(record))
                 except DecodeError as exc:
                     errors.append(f"gateway stream record decode failed: {exc}")
                 continue
@@ -994,7 +1257,7 @@ class GatewayReceiveBuffer:
             frame = bytes(self._buffer[:delimiter + 1])
             del self._buffer[:delimiter + 1]
             try:
-                packets.append(parse_cobs_packet(frame))
+                self._append_packet(packets, parse_cobs_packet(frame))
             except DecodeError as exc:
                 errors.append(f"COBS packet notification decode failed: {exc}")
 

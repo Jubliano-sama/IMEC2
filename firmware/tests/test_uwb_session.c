@@ -539,6 +539,10 @@ static void test_clicker_separates_single_anchor_exchanges(void)
     struct uwb_range_schedule_frame schedule;
     struct uwb_clicker_config config = clicker_config();
 
+    /* This is a bounded timing-geometry test, not a normal-click quorum.
+     * Keep the synthetic one-anchor configuration internally consistent. */
+    config.flags = FLAG_DIAGNOSTIC;
+    config.min_anchor_count = 1u;
     config.max_anchor_count = 1u;
     config.samples_per_anchor = UWB_RANGING_REQUESTS_MAX_PER_ANCHOR;
     assert(uwb_clicker_session_start(&session, &config) == PROTO_OK);

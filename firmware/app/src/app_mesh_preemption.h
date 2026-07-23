@@ -7,7 +7,9 @@
 #include <stdint.h>
 
 struct app_mesh_click_preempt_ops {
+    /* Legacy fallback; save_deferred_outbox is the custody-preserving path. */
     int (*save_outbox)(void *ctx);
+    int (*save_deferred_outbox)(void *ctx);
     int (*clear_outbox)(void *ctx);
     int (*stage_click_handoff)(void *ctx,
                                const struct mesh_outbound *outbound);
@@ -112,6 +114,10 @@ int app_mesh_apply_click_preempt_plan(
     const struct mesh_click_preempt_plan *plan,
     const struct app_mesh_click_preempt_ops *ops,
     struct app_mesh_click_preempt_result *result);
+bool app_mesh_tx_timeout_work_needed(bool relay_active,
+                                     bool channel9_tx_active,
+                                     bool result_bundle_pending,
+                                     bool deferred_outbox_pending);
 int app_mesh_queue_remove_first(
     const struct app_mesh_queue_remove_ops *ops,
     const struct mesh_outbound *target,

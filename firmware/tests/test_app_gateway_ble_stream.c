@@ -496,6 +496,216 @@ static void test_pool_holds_core_click_and_two_cir_records(void)
     assert(state.pool_used <= GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
 }
 
+static void test_pool_boundary_preserves_retained_click_custody(void)
+{
+    struct gateway_ble_stream_state state;
+    uint8_t payload[GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN];
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 1u);
+    struct proto_packet diagnostic =
+        packet(MSG_UWB_ANCHOR_DIAG_FRAGMENT, 0u, 2u);
+    struct proto_packet status = packet(MSG_ANCHOR_HEARTBEAT, 0u, 3u);
+    uint16_t pool_before;
+
+    fill_payload(payload, sizeof(payload));
+
+    /* The documented click/CIR burst occupies every queue slot and must
+     * remain admissible after the pool was reduced to the deployable budget. */
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             PACKET_MAX_PAYLOAD_LEN,
+                                             0u,
+                                             1u,
+                                             true) == 1);
+    click.seq++;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             PACKET_EXT_MAX_PAYLOAD_LEN,
+                                             0u,
+                                             2u,
+                                             true) == 1);
+    click.seq++;
+    assert(gateway_ble_stream_enqueue_packet(
+               &state,
+               &click,
+               payload,
+               GATEWAY_BLE_STREAM_CLICK_CIR_TAIL_PAYLOAD_BYTES,
+               0u,
+               3u,
+               true) == 1);
+    assert(state.pool_used == GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES);
+    assert(state.pool_used + GATEWAY_BLE_STREAM_RECORD_POOL_SAFETY_MARGIN_BYTES <=
+           GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        state.items[i].retain_until_sent = true;
+    }
+    pool_before = state.pool_used;
+    click.seq = 99u;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             1u,
+                                             0u,
+                                             4u,
+                                             true) == -ENOSPC);
+    assert(state.pool_used == pool_before);
+    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    assert(state.items[0].packet.msg_type == MSG_CLICK_REPORT);
+    assert(state.items[0].packet.seq == 1u);
+    assert(state.items[0].retain_until_sent);
+
+    /* Fill the 1756-byte pool exactly with three retained records, then
+     * prove that a record requiring one more byte cannot displace custody. */
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(
+               &state,
+               &click,
+               payload,
+               GATEWAY_BLE_STREAM_RECORD_POOL_BYTES -
+                   (3u * GATEWAY_BLE_STREAM_RECORD_HEADER_LEN) -
+                   PACKET_EXT_MAX_PAYLOAD_LEN,
+               0u,
+               10u,
+               true) == 1);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &diagnostic,
+                                             payload,
+                                             PACKET_EXT_MAX_PAYLOAD_LEN,
+                                             0u,
+                                             11u,
+                                             true) == 1);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &status,
+                                             payload,
+                                             0u,
+                                             0u,
+                                             12u,
+                                             true) == 1);
+    assert(state.pool_used == GATEWAY_BLE_STREAM_RECORD_POOL_BYTES);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        state.items[i].retain_until_sent = true;
+    }
+    pool_before = state.pool_used;
+    click.seq = 100u;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             1u,
+                                             0u,
+                                             13u,
+                                             true) == -ENOSPC);
+    assert(state.pool_used == pool_before);
+    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    assert(state.items[0].packet.msg_type == MSG_CLICK_REPORT);
+
+    /* With one queue slot still available, make the attempted record exceed
+     * the remaining pool by exactly one byte, isolating the byte-capacity
+     * guard from queue-depth backpressure. */
+    gateway_ble_stream_init(&state);
+    click.seq = 200u;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             677u,
+                                             0u,
+                                             20u,
+                                             true) == 1);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &diagnostic,
+                                             payload,
+                                             PACKET_EXT_MAX_PAYLOAD_LEN,
+                                             0u,
+                                             21u,
+                                             true) == 1);
+    state.items[0].retain_until_sent = true;
+    state.items[1].retain_until_sent = true;
+    pool_before = state.pool_used;
+    click.seq = 201u;
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &click,
+                                             payload,
+                                             2u,
+                                             0u,
+                                             22u,
+                                             true) == -ENOSPC);
+    assert(pool_before + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN + 2u ==
+           GATEWAY_BLE_STREAM_RECORD_POOL_BYTES + 1u);
+    assert(state.pool_used == pool_before);
+    assert(gateway_ble_stream_depth(&state) == 2u);
+    assert(state.items[0].packet.seq == 200u);
+    assert(state.items[0].retain_until_sent);
+}
+
+static void test_staged_extended_payload_survives_overlap_and_pressure(void)
+{
+    struct gateway_ble_stream_state state;
+    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 401u);
+    struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 500u);
+    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    uint8_t result_payload[1] = {0x5au};
+    const uint8_t *record = NULL;
+    size_t record_len = 0u;
+    size_t staging_offset =
+        GATEWAY_BLE_STREAM_RECORD_POOL_BYTES - PACKET_EXT_MAX_PAYLOAD_LEN;
+    uint16_t pool_before;
+
+    fill_payload(payload, sizeof(payload));
+    click.payload_len = sizeof(payload);
+
+    /* The 958-byte source tail overlaps the first destination record. */
+    gateway_ble_stream_init(&state);
+    memcpy(&state.record_pool[staging_offset], payload, sizeof(payload));
+    state.restore_staging_active = true;
+    state.restore_staging_offset = (uint16_t)staging_offset;
+    assert(gateway_ble_stream_enqueue_staged_packet(&state,
+                                                    &click,
+                                                    sizeof(payload),
+                                                    0u,
+                                                    1u,
+                                                    true) == 1);
+    state.restore_staging_active = false;
+    state.restore_staging_offset = 0u;
+    assert(gateway_ble_stream_peek(&state, &record, &record_len) == 0);
+    assert(record_len == GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
+                              sizeof(payload));
+    assert(memcmp(&record[GATEWAY_BLE_STREAM_RECORD_HEADER_LEN],
+                  payload,
+                  sizeof(payload)) == 0);
+
+    /* Full BLE pressure must reject a staged click without changing the
+     * retained queue or the bytes that a later retry will restore. */
+    gateway_ble_stream_init(&state);
+    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
+        result.seq = (uint16_t)(500u + i);
+        assert(gateway_ble_stream_enqueue_packet(&state,
+                                                 &result,
+                                                 result_payload,
+                                                 sizeof(result_payload),
+                                                 0u,
+                                                 (uint32_t)(10u + i),
+                                                 true) == 1);
+    }
+    pool_before = state.pool_used;
+    memcpy(&state.record_pool[staging_offset], payload, sizeof(payload));
+    state.restore_staging_active = true;
+    state.restore_staging_offset = (uint16_t)staging_offset;
+    assert(gateway_ble_stream_enqueue_staged_packet(&state,
+                                                    &click,
+                                                    sizeof(payload),
+                                                    0u,
+                                                    20u,
+                                                    true) == -ENOSPC);
+    assert(state.pool_used == pool_before);
+    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
+    assert(memcmp(&state.record_pool[staging_offset],
+                  payload,
+                  sizeof(payload)) == 0);
+    state.restore_staging_active = false;
+    state.restore_staging_offset = 0u;
+}
+
 static void test_reservation_reports_full_queue_backpressure(void)
 {
     struct gateway_ble_stream_state state;
@@ -763,6 +973,8 @@ int main(void)
     test_fast_drain_and_counters();
     test_active_head_cannot_be_evicted();
     test_pool_holds_core_click_and_two_cir_records();
+    test_pool_boundary_preserves_retained_click_custody();
+    test_staged_extended_payload_survives_overlap_and_pressure();
     test_reservation_reports_full_queue_backpressure();
     test_reservation_protects_capacity_and_cancel_releases_it();
     test_reservation_commit_is_exact_and_single_use();

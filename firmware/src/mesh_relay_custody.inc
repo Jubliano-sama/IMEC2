@@ -122,12 +122,34 @@ static bool pending_has_valid_command_result_id(const struct mesh_relay *relay,
 static bool outbox_should_track_pending(const struct mesh_relay *relay,
                                         const struct mesh_pending_tx *pending)
 {
+    /* Gateway-ACK custody belongs to every gateway-bound packet, including
+     * a transit packet whose producer is a child.  Restricting this to local
+     * producers leaves the transit relay with no pending identity when the
+     * child-directed ACK returns, so it can neither validate nor hand off the
+     * exact ACK before releasing the original packet. */
     return relay != NULL &&
            pending != NULL &&
            pending->packet.dst_id == relay->gateway_id &&
-           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
-           (pending->packet.src_id == relay->local_id ||
-            pending_has_valid_command_result_id(relay, pending));
+           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+}
+
+static bool pending_is_generic_transit_gateway_packet(
+    const struct mesh_relay *relay,
+    const struct mesh_pending_tx *pending)
+{
+    if (relay == NULL || pending == NULL ||
+        pending->state == MESH_RELAY_TX_IDLE ||
+        pending->packet.src_id == relay->local_id ||
+        pending->packet.dst_id != relay->gateway_id ||
+        (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        pending->result_offer_active) {
+        return false;
+    }
+
+    /* Forwarded command results retain their existing identity contract; the
+     * generic branch is for ordinary transit classes such as click reports
+     * and mesh data, whose end-to-end identity is already packet-bound. */
+    return pending->packet.msg_type != MSG_COMMAND_RESULT;
 }
 
 static bool pending_is_local_collection_result(const struct mesh_relay *relay,
@@ -425,7 +447,8 @@ static bool preserve_pending_gateway_result(struct mesh_relay *relay,
     if (relay == NULL ||
         (!pending_is_local_collection_result(relay, &relay->pending) &&
          !pending_is_forwarded_command_result(relay, &relay->pending) &&
-         !pending_is_result_bundle(relay, &relay->pending))) {
+         !pending_is_result_bundle(relay, &relay->pending) &&
+         !pending_is_generic_transit_gateway_packet(relay, &relay->pending))) {
         return false;
     }
 
@@ -1569,6 +1592,7 @@ int mesh_relay_commit_transit_gateway_ack_forward(
     uint32_t *actions)
 {
     bool contains = false;
+    uint64_t expected_next_hop_id = 0u;
     int ret;
 
     if (relay == NULL || forwarded_ack == NULL || actions == NULL) {
@@ -1590,6 +1614,13 @@ int mesh_relay_commit_transit_gateway_ack_forward(
         forwarded_ack->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
         !id_is_unicast(forwarded_ack->next_hop_id) ||
         forwarded_ack->next_hop_id == relay->local_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = mesh_relay_select_next_hop(relay,
+                                     relay->pending.packet.src_id,
+                                     &expected_next_hop_id);
+    if (ret != PROTO_OK ||
+        forwarded_ack->next_hop_id != expected_next_hop_id) {
         return PROTO_ERR_MALFORMED;
     }
 

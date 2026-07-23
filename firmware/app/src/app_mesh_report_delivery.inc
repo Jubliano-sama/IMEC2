@@ -2436,6 +2436,7 @@ after_gateway_ack:
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
         const bool locally_originated =
             confirmed_packet != NULL && confirmed_packet->src_id == DEVICE_ID;
+        bool deferred_cleanup_safe = true;
         int comm_ret = locally_originated ?
             app_node_comm_note_gateway_confirmed(confirmed_packet) : -ENOENT;
 
@@ -2450,7 +2451,39 @@ after_gateway_ack:
             mesh_report_callbacks->anchor_survey_delivery_gateway_confirmed(
                 confirmed_packet);
         }
-        app_mesh_persistence_clear_outbox();
+        if (confirmed_packet != NULL) {
+            int deferred_clear_ret =
+                app_mesh_persistence_clear_deferred_outbox_if_matches(
+                    confirmed_packet);
+
+            if (deferred_clear_ret < 0 && deferred_clear_ret != -ENOTSUP) {
+                deferred_cleanup_safe = false;
+                mesh_deferred_outbox_pending = true;
+                LOG_WRN("mesh deferred outbox ACK cleanup failed: %d",
+                        deferred_clear_ret);
+            } else if (deferred_clear_ret == 0) {
+                /* The ACK may belong to a different active packet; refresh
+                 * instead of assuming the deferred owner was consumed. */
+                int deferred_present_ret =
+                    app_mesh_persistence_deferred_outbox_present();
+
+                if (deferred_present_ret >= 0) {
+                    mesh_deferred_outbox_pending = deferred_present_ret > 0;
+                } else if (deferred_present_ret != -ENOTSUP &&
+                           deferred_present_ret != -ENODEV &&
+                           deferred_present_ret != -EAGAIN) {
+                    deferred_cleanup_safe = false;
+                    mesh_deferred_outbox_pending = true;
+                }
+            }
+        }
+        if (deferred_cleanup_safe) {
+            app_mesh_persistence_clear_outbox();
+        } else {
+            /* Keep the primary snapshot so the next timeout can reconcile
+             * both durable copies before retrying this already-ACKed packet. */
+            LOG_WRN("mesh primary outbox retained until deferred cleanup succeeds");
+        }
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_HOP_PROGRESS) {
@@ -2652,6 +2685,20 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 } else if (semantic_ret ==
                                APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
                            !internal_control) {
+                    if (pending->packet.msg_type == MSG_CLICK_REPORT) {
+                        ret = app_mesh_persistence_save_gateway_click_journal(
+                            &pending->packet,
+                            pending->payload,
+                            pending->payload_len,
+                            pending->received_at_ms);
+                        if (ret < 0) {
+                            gateway_ble_cancel_stream_reservation();
+                            LOG_WRN("gateway click journal commit failed without ACK: src=0x%016llx ret=%d",
+                                    (unsigned long long)pending->packet.src_id,
+                                    ret);
+                            continue;
+                        }
+                    }
                     ret = gateway_ble_commit_stream_reservation(
                         &pending->packet,
                         pending->payload,

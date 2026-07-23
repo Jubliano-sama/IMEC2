@@ -19,7 +19,10 @@ extern "C" {
 #define GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN \
     (GATEWAY_BLE_STREAM_RECORD_MAX_LEN - GATEWAY_BLE_STREAM_RECORD_HEADER_LEN)
 #define GATEWAY_BLE_STREAM_QUEUE_DEPTH 3u
-#define GATEWAY_BLE_STREAM_RECORD_POOL_BYTES 1800u
+/* Keep the gateway's static RAM below the deployable mesh policy while
+ * retaining a 78-byte margin over the exact click/CIR burst bound below. */
+#define GATEWAY_BLE_STREAM_RECORD_POOL_BYTES 1756u
+#define GATEWAY_BLE_STREAM_RECORD_POOL_SAFETY_MARGIN_BYTES 78u
 #define GATEWAY_BLE_STREAM_CLICK_CIR_TAIL_PAYLOAD_BYTES \
     (RANGE_REPORT_CIR_REMAINDER_PAYLOAD_BYTES + MESH_CH9_BATCH_METADATA_TLV_BYTES)
 #define GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES \
@@ -86,6 +89,11 @@ struct gateway_ble_stream_state {
     uint8_t count;
     bool head_send_active;
     bool reservation_active;
+    /* Startup click-journal restore borrows the final queue item and the
+     * unused pool tail as staging.  While active, queue mutation and send
+     * completion are paused so flash I/O cannot race those buffers. */
+    bool restore_staging_active;
+    uint16_t restore_staging_offset;
     struct gateway_ble_stream_diagnostics diagnostics;
 };
 
@@ -106,6 +114,19 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
                                       uint32_t received_at_ms,
                                       uint32_t now_ms,
                                       bool ble_ready);
+/*
+ * Commit a packet whose payload was read into the state-owned restore tail.
+ * The payload and destination record may overlap, so this path moves the
+ * bytes before writing the record header.  It is valid only while
+ * restore_staging_active is held by the caller.
+ */
+int gateway_ble_stream_enqueue_staged_packet(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    size_t payload_len,
+    uint32_t received_at_ms,
+    uint32_t now_ms,
+    bool ble_ready);
 int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
                                       const struct proto_packet *packet,
                                       const uint8_t *payload,

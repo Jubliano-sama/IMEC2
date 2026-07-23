@@ -14,6 +14,9 @@ from tools.gateway_gui.protocol import (
     CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+    FLAG_COUNT_AS_CLICK,
+    FLAG_DIAGNOSTIC,
+    FLAG_GATEWAY_ACK_REQUIRED,
     GATEWAY_STREAM_MAGIC,
     GATEWAY_STREAM_FLAG_TRUNCATED,
     GATEWAY_STREAM_RECORD_HEADER_LEN,
@@ -31,6 +34,9 @@ from tools.gateway_gui.protocol import (
     TLV_COMMAND_ID,
     TLV_COMMAND_BUDGET_MS,
     TLV_DIAG_STATUS_FLAGS,
+    TLV_DIAG_FRAGMENT_COUNT,
+    TLV_DIAG_FRAGMENT_INDEX,
+    TLV_DETECTION_SOURCE,
     TLV_DISCOVERY_SLOT_COUNT,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
     TLV_DISCOVERY_ASSIGNMENT_HASH,
@@ -42,14 +48,21 @@ from tools.gateway_gui.protocol import (
     TLV_DISTANCE_SAMPLES_MM,
     TLV_DURATION_MS,
     TLV_EVENT_SEQ,
+    TLV_QUALITY,
+    TLV_RANGE_STATUS,
     TLV_RANGE_ROUND_INDICES,
     TLV_SAMPLE_COUNT,
     TLV_SAMPLE_INDEX,
     TLV_SEQUENCE_START_TIMESTAMPS_MS,
     TLV_SURVEY_ID,
     TLV_TIMESTAMP_MS,
+    TLV_ATTEMPT_INDEX,
     TLV_UWB_CIR_SAMPLE,
+    TLV_UWB_CIR_BYTE_OFFSET,
+    TLV_UWB_CIR_FIRST_PATH_INDEX,
     TLV_UWB_CIR_FULL_CHUNK,
+    TLV_UWB_CIR_START_INDEX,
+    TLV_UWB_CIR_TOTAL_BYTES,
     TLV_UWB_CLOCK_OFFSET_RAW,
     DecodeError,
     append_tlv,
@@ -64,6 +77,7 @@ from tools.gateway_gui.protocol import (
     parse_cobs_packet,
     parse_stream_record,
     parse_tlvs,
+    validate_click_payload,
 )
 
 
@@ -75,9 +89,11 @@ def click_payload() -> bytes:
     payload = bytearray()
     append_tlv(payload, TLV_CLICKER_ID, 0x1111222233334444.to_bytes(8, "little"))
     append_tlv(payload, TLV_ANCHOR_ID, 0x5555666677778888.to_bytes(8, "little"))
-    append_tlv(payload, TLV_EVENT_SEQ, (73).to_bytes(4, "little"))
+    append_tlv(payload, TLV_EVENT_SEQ, (0x11223344).to_bytes(4, "little"))
     append_tlv(payload, TLV_TIMESTAMP_MS, (1_234_567).to_bytes(8, "little"))
     append_tlv(payload, TLV_DISTANCE_MM, (4512).to_bytes(4, "little", signed=True))
+    append_tlv(payload, TLV_QUALITY, b"\x5a")
+    append_tlv(payload, TLV_RANGE_STATUS, b"\x00")
     append_tlv(payload, TLV_SAMPLE_COUNT, (5).to_bytes(2, "little"))
     append_tlv(payload, TLV_SAMPLE_INDEX, (2).to_bytes(2, "little"))
     append_tlv(
@@ -96,6 +112,80 @@ def click_payload() -> bytes:
     append_tlv(payload, TLV_UWB_CIR_SAMPLE, b"\x01\x02\x03\xfe\xff\xff")
     append_tlv(payload, 0xFE, b"\xaa\xbb")
     append_tlv(payload, 0xFE, b"\xcc")
+    return bytes(payload)
+
+
+def replace_tlv(payload: bytes, type_id: int, value: bytes, *, occurrence: int = 0) -> bytes:
+    out = bytearray()
+    index = 0
+    seen = 0
+    while index < len(payload):
+        current_type = payload[index]
+        value_len = payload[index + 1]
+        raw = payload[index + 2:index + 2 + value_len]
+        if current_type == type_id and seen == occurrence:
+            append_tlv(out, type_id, value)
+            seen += 1
+        else:
+            out.extend((current_type, value_len))
+            out.extend(raw)
+            if current_type == type_id:
+                seen += 1
+        index += 2 + value_len
+    if seen <= occurrence:
+        raise AssertionError(f"TLV 0x{type_id:02x} occurrence {occurrence} was not found")
+    return bytes(out)
+
+
+def remove_tlv(payload: bytes, type_id: int, *, occurrence: int = 0) -> bytes:
+    out = bytearray()
+    index = 0
+    seen = 0
+    removed = False
+    while index < len(payload):
+        current_type = payload[index]
+        value_len = payload[index + 1]
+        raw = payload[index + 2:index + 2 + value_len]
+        if current_type == type_id and seen == occurrence:
+            removed = True
+            seen += 1
+        else:
+            out.extend((current_type, value_len))
+            out.extend(raw)
+            if current_type == type_id:
+                seen += 1
+        index += 2 + value_len
+    if not removed:
+        raise AssertionError(f"TLV 0x{type_id:02x} occurrence {occurrence} was not found")
+    return bytes(out)
+
+
+def diagnostic_range_payload() -> bytes:
+    payload = bytearray()
+    append_tlv(payload, TLV_CLICKER_ID, 0x1111222233334444.to_bytes(8, "little"))
+    append_tlv(payload, TLV_ANCHOR_ID, 0x5555666677778888.to_bytes(8, "little"))
+    append_tlv(payload, TLV_EVENT_SEQ, (0x11223344).to_bytes(4, "little"))
+    append_tlv(payload, TLV_TIMESTAMP_MS, (1_234_567).to_bytes(8, "little"))
+    append_tlv(payload, TLV_DISTANCE_MM, (4512).to_bytes(4, "little", signed=True))
+    append_tlv(payload, TLV_QUALITY, b"\x5a")
+    append_tlv(payload, TLV_RANGE_STATUS, b"\x00")
+    return bytes(payload)
+
+
+def cir_payload(fragment_index: int, byte_offset: int, chunks: tuple[bytes, ...]) -> bytes:
+    payload = bytearray()
+    append_tlv(payload, TLV_CLICKER_ID, 0x1111222233334444.to_bytes(8, "little"))
+    append_tlv(payload, TLV_ANCHOR_ID, 0x5555666677778888.to_bytes(8, "little"))
+    append_tlv(payload, TLV_EVENT_SEQ, (0x11223344).to_bytes(4, "little"))
+    append_tlv(payload, TLV_TIMESTAMP_MS, (1_234_567).to_bytes(8, "little"))
+    append_tlv(payload, TLV_DIAG_FRAGMENT_INDEX, fragment_index.to_bytes(2, "little"))
+    append_tlv(payload, TLV_DIAG_FRAGMENT_COUNT, (2).to_bytes(2, "little"))
+    append_tlv(payload, TLV_UWB_CIR_BYTE_OFFSET, byte_offset.to_bytes(2, "little"))
+    append_tlv(payload, TLV_UWB_CIR_TOTAL_BYTES, (1152).to_bytes(2, "little"))
+    append_tlv(payload, TLV_UWB_CIR_FIRST_PATH_INDEX, (17).to_bytes(2, "little"))
+    append_tlv(payload, TLV_UWB_CIR_START_INDEX, (23).to_bytes(2, "little"))
+    for chunk in chunks:
+        append_tlv(payload, TLV_UWB_CIR_FULL_CHUNK, chunk)
     return bytes(payload)
 
 
@@ -245,9 +335,94 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(third.packets), 1)
         self.assertEqual(third.packets[0].seq, 0x1234)
 
+    def test_click_semantics_accept_normal_and_diagnostic_range_reports(self) -> None:
+        normal = parse_stream_record(stream_record(click_payload()))
+        validate_click_payload(normal)
+
+        diagnostic = parse_stream_record(
+            stream_record(
+                diagnostic_range_payload(),
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            )
+        )
+        validate_click_payload(diagnostic)
+
+    def test_click_semantics_accept_repeated_cir_chunks_across_fragments(self) -> None:
+        first_chunks = (b"a" * 255, b"b" * 255, b"c" * 255, b"d" * 116)
+        second_chunks = (b"e" * 255, b"f" * 16)
+        first = parse_stream_record(
+            stream_record(
+                cir_payload(0, 0, first_chunks),
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            )
+        )
+        second = parse_stream_record(
+            stream_record(
+                cir_payload(1, 881, second_chunks),
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            )
+        )
+        validate_click_payload(first)
+        validate_click_payload(second)
+        received = GatewayReceiveBuffer().feed(
+            stream_record(
+                cir_payload(0, 0, first_chunks),
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            )
+            + stream_record(
+                cir_payload(1, 881, second_chunks),
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            )
+        )
+        self.assertEqual(received.errors, ())
+        self.assertEqual(len(received.packets), 2)
+
+    def test_receive_buffer_rejects_malformed_click_but_direct_decode_remains_available(self) -> None:
+        cases = {
+            "missing burst": remove_tlv(click_payload(), TLV_BURST_ID),
+            "mismatched identity": replace_tlv(
+                click_payload(), TLV_ANCHOR_ID, (0x1234).to_bytes(8, "little")
+            ),
+            "duplicate singleton": click_payload() + tlv(TLV_QUALITY, b"\x5a"),
+            "unaligned sample arrays": replace_tlv(
+                click_payload(), TLV_RANGE_ROUND_INDICES, b"\x07\x08"
+            ),
+            "sample bounds": replace_tlv(click_payload(), TLV_SAMPLE_INDEX, (5).to_bytes(2, "little")),
+        }
+        for label, payload in cases.items():
+            with self.subTest(label=label):
+                record = stream_record(payload)
+                # Direct envelope decoding is intentionally syntax-only.
+                decoded = parse_stream_record(record)
+                self.assertEqual(decoded.msg_type, MSG_CLICK_REPORT)
+                received = GatewayReceiveBuffer().feed(record)
+                self.assertEqual(received.packets, ())
+                self.assertEqual(len(received.errors), 1)
+                self.assertIn("malformed click report", received.errors[0])
+
+    def test_click_semantics_reject_ack_mode_and_detection_contract_violations(self) -> None:
+        payload = click_payload()
+        for label, packet_flags, mutation in (
+            ("missing ACK", FLAG_COUNT_AS_CLICK, payload),
+            (
+                "both modes",
+                FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC,
+                payload,
+            ),
+            (
+                "partial detection pair",
+                FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+                payload + tlv(0xA9, b"\x01"),
+            ),
+        ):
+            with self.subTest(label=label):
+                packet = parse_stream_record(stream_record(mutation, packet_flags=packet_flags))
+                with self.assertRaisesRegex(DecodeError, "malformed click report"):
+                    validate_click_payload(packet)
+
     def test_gateway_stream_accepts_extended_payload_maximum(self) -> None:
         payload = extended_stream_payload()
-        record = stream_record(payload)
+        record = stream_record(payload, msg_type=MSG_MESH_DATA, packet_flags=0)
 
         self.assertEqual(len(record), GATEWAY_STREAM_RECORD_MAX_LEN)
         packet = parse_stream_record(record)
@@ -323,7 +498,7 @@ class ProtocolTests(unittest.TestCase):
     def test_receive_buffer_accepts_stream_then_legacy_cobs(self) -> None:
         record = stream_record(click_payload())
         legacy = encode_cobs_packet(
-            msg_type=MSG_CLICK_REPORT,
+            msg_type=MSG_MESH_DATA,
             flags=0,
             src_id=1,
             dst_id=2,

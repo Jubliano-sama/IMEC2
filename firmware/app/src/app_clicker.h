@@ -104,12 +104,18 @@ struct app_clicker_continuous_wake_claims_config {
     struct app_clicker_wake_train_config wake_train;
 };
 
+struct app_clicker_continuous_click_sessions_config {
+    uint32_t success_delay_ms;
+    uint32_t failure_delay_ms;
+};
+
 int app_clicker_init(const struct app_clicker_callbacks *callbacks);
 static inline bool clicker_systemon_retained_idle_enabled(void)
 {
     return DEVICE_ROLE == ROLE_CLICKER &&
            IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE) &&
-           !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS);
+           !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) &&
+           !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS);
 }
 int app_clicker_start_work_queue(void);
 int app_clicker_submit_work(struct k_work *work);
@@ -142,7 +148,12 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                         const struct uwb_range_schedule_frame *schedule,
                                         int64_t click_deadline_ms,
                                         uint8_t *attempted_count);
+int app_clicker_run_normal_click(void);
 void app_clicker_run_continuous_wake_claims(
     const struct app_clicker_continuous_wake_claims_config *config);
+void app_clicker_run_continuous_click_sessions(
+    const struct app_clicker_continuous_click_sessions_config *config);
+int app_clicker_start_continuous_click_sessions(
+    const struct app_clicker_continuous_click_sessions_config *config);
 
 #endif

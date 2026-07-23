@@ -61,6 +61,8 @@ void packet_age_add_elapsed(struct proto_packet *packet, uint32_t elapsed_ms);
 bool uptime_deadline_reached(uint32_t now_ms, uint32_t deadline_ms);
 uint32_t uptime_ms_until_deadline(uint32_t now_ms, uint32_t deadline_ms);
 uint16_t mesh_next_event_control_seq(void);
+/* Per-boot random incarnation used to safely restart event sequence domains. */
+uint64_t mesh_event_boot_nonce(void);
 uint32_t nonzero_uptime_session_id(void);
 uint16_t local_uwb_short_addr(void);
 uint32_t discovery_window_ms_for_slots(uint8_t slot_count);

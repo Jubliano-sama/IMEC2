@@ -81,18 +81,21 @@ static int connection_begin_owners(struct mesh_sim_world *world,
                                    struct mesh_sim_connection *connection,
                                    uint32_t session_id,
                                    uint16_t proposal_sequence,
-                                   uint8_t proposer)
+                                   uint8_t proposer,
+                                   uint64_t proposer_boot_nonce)
 {
-    int ret = mesh_event_owner_begin(
+    int ret = mesh_event_owner_begin_with_boot_nonce(
         &connection->owner_a, world->roles[connection->node_b].id,
-        session_id, proposal_sequence, proposer == connection->node_b);
+        session_id, proposal_sequence, proposer == connection->node_b,
+        proposer == connection->node_b ? proposer_boot_nonce : 0u);
 
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = mesh_event_owner_begin(
+    ret = mesh_event_owner_begin_with_boot_nonce(
         &connection->owner_b, world->roles[connection->node_a].id,
-        session_id, proposal_sequence, proposer == connection->node_a);
+        session_id, proposal_sequence, proposer == connection->node_a,
+        proposer == connection->node_a ? proposer_boot_nonce : 0u);
     if (ret != PROTO_OK) {
         mesh_event_owner_abandon(&connection->owner_a);
     }
@@ -189,6 +192,14 @@ static int connection_control_frame_len(
         &payload_len,
         &connection->timing_a,
         mesh_sim_time_ms(world->now_us));
+    if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+    }
+    ret = tlv_append_u64(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_MESH_EVENT_BOOT_NONCE,
+                         world->roles[connection->node_a].event_boot_nonce);
     if (ret != PROTO_OK || payload_len > UINT8_MAX) {
         return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
     }
@@ -391,7 +402,8 @@ int mesh_sim_add_connection(struct mesh_sim_world *world,
     ret = connection_begin_owners(world, connection,
                                   connection->repair_session_id,
                                   connection->repair_seq,
-                                  node_a);
+                                  node_a,
+                                  world->roles[node_a].event_boot_nonce);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -903,6 +915,16 @@ static int build_connection_control_packet(
     if (ret != PROTO_OK || *payload_len > UINT8_MAX) {
         return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
     }
+    if (msg_type == MSG_MESH_EVENT_PROPOSE) {
+        ret = tlv_append_u64(payload,
+                             payload_cap,
+                             payload_len,
+                             TLV_MESH_EVENT_BOOT_NONCE,
+                             world->roles[sender_index].event_boot_nonce);
+        if (ret != PROTO_OK || *payload_len > UINT8_MAX) {
+            return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+        }
+    }
     seq = connection->repair_seq;
     if (msg_type == MSG_MESH_EVENT_ACCEPT) {
         seq++;
@@ -1213,6 +1235,27 @@ int mesh_sim_connection_process_control_packet(
     if (packet->seq != expected_seq) {
         return MESH_SIM_OK;
     }
+    if (packet->msg_type == MSG_MESH_EVENT_PROPOSE) {
+        struct mesh_event_owner *owner = connection_owner_for_node(
+            connection, receiver_index);
+        enum mesh_event_owner_decision decision =
+            mesh_event_owner_classify_proposal(
+                owner,
+                world->roles[receiver_index].id,
+                world->roles[sender_index].id,
+                packet,
+                payload,
+                payload_len);
+
+        /* Classify before decoding timing or scheduling ACCEPT. An exact
+         * duplicate is still allowed to reach the existing decoded guard,
+         * while missing/zero/malformed incarnations and stale conflicts are
+         * inert and cannot mutate repair timing or owner state. */
+        if (decision != MESH_EVENT_OWNER_APPLY &&
+            decision != MESH_EVENT_OWNER_DUPLICATE) {
+            return MESH_SIM_OK;
+        }
+    }
     ret = mesh_event_timing_from_tlvs_at(&timing,
                                          payload,
                                          payload_len,
@@ -1508,7 +1551,8 @@ int mesh_sim_connection_process_repair_end(struct mesh_sim_world *world,
     ret = connection_begin_owners(world, connection,
                                   connection->repair_session_id,
                                   connection->repair_seq,
-                                  connection->repair_requester);
+                                  connection->repair_requester,
+                                  world->roles[connection->repair_requester].event_boot_nonce);
     if (ret != PROTO_OK) {
         mesh_sim_clear_connection_timing(world, connection);
         return mesh_sim_fail(world, ret);

@@ -13,6 +13,10 @@ _Static_assert(sizeof(struct gateway_ble_stream_state) <=
 _Static_assert(GATEWAY_BLE_STREAM_RECORD_POOL_BYTES >=
                GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES,
                "gateway BLE stream pool must hold one click and both CIR records");
+_Static_assert(GATEWAY_BLE_STREAM_RECORD_POOL_BYTES >=
+               GATEWAY_BLE_STREAM_CLICK_CIR_BURST_BYTES +
+               GATEWAY_BLE_STREAM_RECORD_POOL_SAFETY_MARGIN_BYTES,
+               "gateway BLE stream pool must retain its verified burst margin");
 _Static_assert(GATEWAY_BLE_STREAM_QUEUE_DEPTH > 0u,
                "gateway BLE stream reservation requires a queue slot");
 
@@ -346,7 +350,9 @@ static int build_record(const struct proto_packet *packet,
         return -EINVAL;
     }
     if (record != NULL && copy_len > 0u) {
-        memcpy(&record[offset], payload, copy_len);
+        /* The startup journal restore may use an in-pool staging tail whose
+         * bytes overlap the final record destination. */
+        memmove(&record[offset], payload, copy_len);
     }
     item->len = (uint16_t)(offset + copy_len);
     item->packet_type = packet->msg_type;
@@ -371,6 +377,9 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
 
     if (state == NULL || packet == NULL) {
         return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
     }
     state->diagnostics.enqueue_attempts++;
     packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
@@ -432,6 +441,109 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
     return 1;
 }
 
+int gateway_ble_stream_enqueue_staged_packet(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    size_t payload_len,
+    uint32_t received_at_ms,
+    uint32_t now_ms,
+    bool ble_ready)
+{
+    enum gateway_ble_stream_class packet_class;
+    struct gateway_ble_stream_item item;
+    size_t staging_offset;
+    size_t destination_offset;
+    uint8_t *destination_payload;
+    int ret;
+
+    if (state == NULL || packet == NULL ||
+        !state->restore_staging_active) {
+        return -EINVAL;
+    }
+    if (payload_len > GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN) {
+        note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
+        return -EMSGSIZE;
+    }
+    staging_offset = state->restore_staging_offset;
+    if (staging_offset > sizeof(state->record_pool) ||
+        payload_len > sizeof(state->record_pool) - staging_offset) {
+        return -EINVAL;
+    }
+    /* The staging tail must remain outside the used prefix.  Removing a
+     * lower-priority item can only shorten that prefix, so the source stays
+     * stable while queue pressure is resolved below. */
+    if (state->pool_used > staging_offset || state->reservation_active) {
+        return -EAGAIN;
+    }
+
+    state->diagnostics.enqueue_attempts++;
+    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
+                                                      packet->flags);
+    if (!gateway_ble_should_stream_packet(packet->msg_type,
+                                          packet->flags,
+                                          packet_class)) {
+        return 0;
+    }
+
+    ret = build_record(packet,
+                       &state->record_pool[staging_offset],
+                       payload_len,
+                       packet_class,
+                       received_at_ms,
+                       now_ms,
+                       NULL,
+                       0u,
+                       &item);
+    if (ret == -EMSGSIZE) {
+        note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
+        return ret;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+
+    while (!queue_capacity_available(state, item.len) &&
+           drop_one_lower_priority(state, item.priority)) {
+    }
+    if (!queue_capacity_available(state, item.len)) {
+        note_drop(state,
+                  packet->msg_type,
+                  ble_ready ? GATEWAY_BLE_STREAM_DROP_QUEUE_FULL :
+                              GATEWAY_BLE_STREAM_DROP_NOT_READY);
+        return ble_ready ? -ENOSPC : -ENOTCONN;
+    }
+
+    destination_offset = state->pool_used;
+    destination_payload = &state->record_pool[
+        destination_offset + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN];
+    /* Move the complete payload before writing the destination header.  A
+     * plain memcpy/header-first build would destroy bytes when the 958-byte
+     * tail overlaps the record being appended. */
+    memmove(destination_payload,
+            &state->record_pool[staging_offset],
+            payload_len);
+    ret = build_record(packet,
+                       destination_payload,
+                       payload_len,
+                       packet_class,
+                       received_at_ms,
+                       now_ms,
+                       &state->record_pool[destination_offset],
+                       sizeof(state->record_pool) - destination_offset,
+                       &item);
+    if (ret < 0) {
+        return ret;
+    }
+    item.offset = (uint16_t)destination_offset;
+    state->pool_used += item.len;
+    state->items[state->count] = item;
+    state->count++;
+    if (state->count > state->diagnostics.max_queue_depth_observed) {
+        state->diagnostics.max_queue_depth_observed = state->count;
+    }
+    return 1;
+}
+
 int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
                                       const struct proto_packet *packet,
                                       const uint8_t *payload,
@@ -447,6 +559,9 @@ int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
     if (state == NULL || packet == NULL ||
         (payload == NULL && payload_len != 0u)) {
         return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
     }
     state->diagnostics.enqueue_attempts++;
     if (state->reservation_active) {
@@ -515,6 +630,9 @@ int gateway_ble_stream_commit_reservation(
     if (state == NULL || packet == NULL ||
         (payload == NULL && payload_len != 0u)) {
         return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
     }
     if (!state->reservation_active) {
         return -ENOENT;
@@ -603,6 +721,9 @@ unsigned int gateway_ble_stream_drain(struct gateway_ble_stream_state *state,
     if (state == NULL || send_fn == NULL || max_records == 0u) {
         return 0u;
     }
+    if (state->restore_staging_active) {
+        return 0u;
+    }
     if (!ble_ready) {
         if (state->count > 0u) {
             state->diagnostics.oldest_queued_age_ms =
@@ -634,6 +755,9 @@ int gateway_ble_stream_peek(const struct gateway_ble_stream_state *state,
 {
     if (state == NULL || record == NULL || record_len == NULL) {
         return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
     }
     if (state->count == 0u) {
         return -ENOENT;
@@ -678,6 +802,9 @@ int gateway_ble_stream_begin_send_view(struct gateway_ble_stream_state *state,
     if (state == NULL || record == NULL || record_len == NULL) {
         return -EINVAL;
     }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
+    }
     if (state->count == 0u) {
         return -ENOENT;
     }
@@ -704,7 +831,8 @@ void gateway_ble_stream_mark_sent(struct gateway_ble_stream_state *state,
 {
     struct gateway_ble_stream_item *item;
 
-    if (state == NULL || state->count == 0u) {
+    if (state == NULL || state->count == 0u ||
+        state->restore_staging_active) {
         return;
     }
 
@@ -740,6 +868,9 @@ int gateway_ble_stream_head_packet(const struct gateway_ble_stream_state *state,
 {
     if (state == NULL || packet == NULL) {
         return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
     }
     if (state->count == 0u) {
         return -ENOENT;

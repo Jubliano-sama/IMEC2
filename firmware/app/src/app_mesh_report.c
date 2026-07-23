@@ -298,14 +298,36 @@ struct mesh_event_accept_retry_context {
     struct mesh_event_control_record response;
     struct app_mesh_event_retry_state retry;
     struct mesh_event_timing reservation_timing;
+    uint64_t remote_boot_nonce;
     bool replay_existing_response;
 };
 
 struct mesh_event_accept_completed {
     struct mesh_event_control_record response;
-    struct app_mesh_event_completion completion;
+    struct app_mesh_event_request_identity request;
+    uint32_t expires_at_ms;
     uint16_t retry_round;
 };
+
+BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 192u,
+             "event ACCEPT completion layout changed; re-audit gateway RAM");
+
+/*
+ * An RX ACCEPT is retained only as a bounded duplicate/conflict identity.
+ * It never participates in the retry scheduler, so carrying the generic RF
+ * retry state here wastes more than 96 bytes of gateway BSS and obscures the
+ * actual custody contract.  Keep the full request identity and expiry.
+ */
+struct mesh_event_accept_rx_cache {
+    struct app_mesh_event_request_identity request;
+    uint64_t peer_id;
+    uint32_t deadline_ms;
+    bool valid;
+    bool timing_installed;
+};
+
+BUILD_ASSERT(sizeof(struct mesh_event_accept_rx_cache) == 40u,
+             "event ACCEPT RX cache layout changed; re-audit gateway RAM");
 
 static bool mesh_packet_prefers_channel9(const struct proto_packet *packet);
 static size_t mesh_outbound_encoded_frame_len(const struct mesh_outbound *out);
@@ -325,6 +347,8 @@ static struct k_work_delayable mesh_uwb_rx_work;
 static struct k_work mesh_uwb_rx_rearm_work;
 static struct k_work_delayable mesh_persistence_retry_work;
 static bool mesh_outbox_persistence_dirty;
+/* A deferred NVS copy is a live custody owner even while the relay is idle. */
+static bool mesh_deferred_outbox_pending;
 static bool mesh_child_custody_persistence_dirty;
 static uint8_t mesh_persistence_retry_round;
 static struct mesh_delivery_health mesh_delivery_health;
@@ -523,8 +547,6 @@ static struct mesh_relay_result mesh_work_result;
 static struct mesh_outbound mesh_tx_timeout_pending_waiting;
 static struct mesh_rx_pending mesh_rx_work_pending;
 static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
-static struct proto_packet mesh_direct_gateway_ack_packet;
-static uint8_t mesh_direct_gateway_ack_payload[MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP];
 static K_MUTEX_DEFINE(mesh_direct_gateway_probe_scratch_lock);
 static struct mesh_outbound mesh_direct_gateway_probe_scratch;
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -569,7 +591,7 @@ static struct mesh_event_accept_retry_context mesh_event_accept_retry;
 static struct mesh_event_accept_completed
     mesh_event_accept_completed[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
 static uint8_t mesh_event_accept_completed_cursor;
-static struct app_mesh_event_retry_state mesh_event_accept_rx_cache;
+static struct mesh_event_accept_rx_cache mesh_event_accept_rx_cache;
 static struct mesh_event_owner
     mesh_event_owners[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
 static uint32_t mesh_event_operation_session_next;

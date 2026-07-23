@@ -147,12 +147,7 @@ static uint64_t read_rx_timestamp_u64(void)
 
 static uint16_t dwt_delta_to_uus(uint32_t start_ts, uint32_t end_ts)
 {
-    uint32_t delta = end_ts - start_ts;
-    uint32_t uus = (uint32_t)(((uint64_t)delta +
-                               (DWM3000_UUS_TO_DWT_TIME / 2u)) /
-                              DWM3000_UUS_TO_DWT_TIME);
-
-    return uus > UINT16_MAX ? UINT16_MAX : (uint16_t)uus;
+    return dwm3000_driver_dwt_delta_to_uus(start_ts, end_ts);
 }
 
 static uint32_t dwt_time32_delta_to_uus(uint32_t start_time32, uint32_t end_time32)
@@ -220,37 +215,32 @@ static uint16_t ds_twr_rx_timeout_uus(uint16_t reply_delay_uus)
     return timeout_uus > UINT16_MAX ? UINT16_MAX : (uint16_t)timeout_uus;
 }
 
+static int validate_driver_reply_timing(uint16_t poll_to_resp_uus,
+                                        uint16_t resp_to_final_uus,
+                                        uint16_t expected_uus)
+{
+    int ret = dwm3000_driver_validate_reply_timing(
+        poll_to_resp_uus,
+        resp_to_final_uus,
+        expected_uus,
+        DWM3000_REPLY_TIMING_TOLERANCE_US);
+
+    if (ret != PROTO_OK) {
+        LOG_WRN("DS-TWR timing invalid: poll_to_resp_uus=%u resp_to_final_uus=%u expected_uus=%u tolerance_uus=%u",
+                poll_to_resp_uus,
+                resp_to_final_uus,
+                expected_uus,
+                DWM3000_REPLY_TIMING_TOLERANCE_US);
+    }
+    return ret;
+}
+
 static uint32_t ds_twr_rx_wait_timeout_ms(uint16_t reply_delay_uus)
 {
     uint32_t timeout_uus = (uint32_t)ds_twr_rx_after_tx_delay_uus(reply_delay_uus) +
                            ds_twr_rx_timeout_uus(reply_delay_uus);
 
     return DS_TWR_UUS_TO_MS_CEIL(timeout_uus) + DWM3000_DS_TWR_RX_WAIT_MARGIN_MS;
-}
-
-static int validate_driver_reply_timing(uint16_t poll_to_resp_uus,
-                                        uint16_t resp_to_final_uus,
-                                        uint16_t expected_uus)
-{
-    uint16_t tolerance_uus = DWM3000_REPLY_TIMING_TOLERANCE_US;
-    uint16_t poll_error_uus = poll_to_resp_uus > expected_uus ?
-        poll_to_resp_uus - expected_uus : expected_uus - poll_to_resp_uus;
-    uint16_t final_error_uus = resp_to_final_uus > expected_uus ?
-        resp_to_final_uus - expected_uus : expected_uus - resp_to_final_uus;
-    uint16_t reply_delta_uus = poll_to_resp_uus > resp_to_final_uus ?
-        poll_to_resp_uus - resp_to_final_uus : resp_to_final_uus - poll_to_resp_uus;
-
-    if (poll_error_uus > tolerance_uus ||
-        final_error_uus > tolerance_uus ||
-        reply_delta_uus > tolerance_uus) {
-        LOG_WRN("DS-TWR timing invalid: poll_to_resp_uus=%u resp_to_final_uus=%u expected_uus=%u tolerance_uus=%u",
-                poll_to_resp_uus,
-                resp_to_final_uus,
-                expected_uus,
-                tolerance_uus);
-        return PROTO_ERR_MALFORMED;
-    }
-    return PROTO_OK;
 }
 
 static int ensure_local_data(void)
@@ -1424,34 +1414,8 @@ static int patch_tx_frame(const uint8_t *bytes,
     return take_port_error("tx-frame-patch");
 }
 
-static bool header_matches_request(const struct uwb_range_header *header,
-                                   const struct dwm3000_range_request *request,
-                                   uint8_t expected_type)
-{
-    uint16_t responder_short_addr;
-
-    if (header == NULL || request == NULL) {
-        return false;
-    }
-    if (header->type != expected_type ||
-        header->seq != request->seq ||
-        header->round_index != request->round_index ||
-        header->network_id != request->network_id ||
-        header->session_id != request->session_id ||
-        header->session_nonce != request->session_nonce ||
-        header->initiator_short_addr != short_addr_from_id(request->initiator_id) ||
-        header->initiator_id != request->initiator_id ||
-        header->flags != request->flags) {
-        return false;
-    }
-
-    responder_short_addr = request->responder_short_addr != 0u ?
-                           request->responder_short_addr :
-                           short_addr_from_id(request->responder_id);
-    return header->responder_short_addr == responder_short_addr &&
-           header->responder_id == request->responder_id;
-}
-
+/* Poll acceptance remains here because it includes optional round-index
+ * reply-delay calibration that only the Zephyr radio build knows about. */
 static bool poll_targets_anchor(const struct uwb_range_header *header,
                                 uint64_t local_anchor_id)
 {

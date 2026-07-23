@@ -292,6 +292,16 @@ add_test(NAME click_ble_custody_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_ble_custody_source_invariants.py)
 set_tests_properties(click_ble_custody_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway;click;ble;static_analysis")
+add_test(NAME stage1_click_spam_preset_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_stage1_click_spam_preset.py)
+set_tests_properties(stage1_click_spam_preset_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;click;static_analysis")
+add_test(NAME deferred_outbox_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_deferred_outbox_source_invariants.py)
+set_tests_properties(deferred_outbox_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;preemption;static_analysis")
 add_test(NAME assignment_claim_semantic_acceptance
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py)
@@ -1134,6 +1144,18 @@ add_test(NAME mesh_click_protocol_chain_scenarios
     COMMAND test_mesh_click_protocol_chain_scenarios)
 set_tests_properties(mesh_click_protocol_chain_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;click;wake;protocol;communication;delivery;ble;network_stress")
+
+add_executable(test_dwm3000_driver_handler_boundary
+    tests/mesh_integration/test_dwm3000_driver_handler_boundary.c
+    app/src/dwm3000_driver_handler_contract.c
+    app/src/dwm3000_driver_test_seam.c
+)
+target_include_directories(test_dwm3000_driver_handler_boundary PRIVATE app/src)
+target_link_libraries(test_dwm3000_driver_handler_boundary PRIVATE core)
+add_test(NAME dwm3000_driver_handler_boundary
+    COMMAND test_dwm3000_driver_handler_boundary)
+set_tests_properties(dwm3000_driver_handler_boundary
+    PROPERTIES LABELS "mesh_integration;hardware_models;click;dwm3000;ds_twr;protocol")
 
 add_executable(test_mesh_gateway_ble_scenarios
     tests/mesh_integration/test_mesh_gateway_ble_scenarios.c

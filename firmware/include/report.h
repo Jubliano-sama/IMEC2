@@ -84,10 +84,12 @@ struct range_report_fields {
     uint16_t sample_index;
     uint16_t sample_count;
     uint16_t distance_sample_count;
+    uint32_t burst_id;
     uint8_t attempt_index;
     uint8_t detection_source;
     bool omit_rsl;
     bool omit_cir;
+    bool burst_id_present;
     bool detection_attempt_present;
     const struct range_report_diagnostics *diagnostics;
 };
@@ -126,6 +128,9 @@ int report_append_range_tlvs(uint8_t *payload,
                                   size_t payload_cap,
                                   size_t *offset,
                                   const struct range_report_fields *fields);
+int report_validate_click_payload(const struct proto_packet *packet,
+                                  const uint8_t *payload,
+                                  size_t payload_len);
 int report_append_cir_fragment_tlvs(
     uint8_t *payload,
     size_t payload_cap,

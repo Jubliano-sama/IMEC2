@@ -251,10 +251,11 @@ static int reset_relay_generation(struct mesh_sim_world *world,
 
     /*
      * Routes and downlinks are simulator-provisioned topology, so they remain
-     * attached across this volatile reboot boundary. Connection timing is
-     * invalidated before this reset. Every operation-owned relay field returns
-     * to relay-init state; no outbox/custody transaction is implicitly
-     * restored from persistence.
+     * attached across this volatile reboot boundary. The resetting endpoint's
+     * connection timing is invalidated before this reset; a connected peer's
+     * timing remains under its own supervision deadline. Every
+     * operation-owned relay field returns to relay-init state; no
+     * outbox/custody transaction is implicitly restored from persistence.
      */
     memset(relay->duplicates, 0, sizeof(relay->duplicates));
     memset(relay->flood_seen, 0, sizeof(relay->flood_seen));
@@ -385,18 +386,32 @@ static int reset_role_state(struct mesh_sim_world *world, uint8_t node_index)
     advance_work_epoch(node);
     for (size_t i = 0u; i < world->connection_count; i++) {
         struct mesh_sim_connection *connection = &world->connections[i];
+        uint8_t peer_index;
+        struct mesh_event_owner *owner;
+        struct mesh_event_timing *timing;
 
         if (connection->node_a == node_index ||
             connection->node_b == node_index) {
-            mesh_event_owner_abandon(&connection->owner_a);
-            mesh_event_owner_abandon(&connection->owner_b);
-            connection->timing_a.route_fresh = false;
-            connection->timing_a.timing_fresh = false;
-            connection->timing_a.fallback_required = true;
-            connection->timing_b.route_fresh = false;
-            connection->timing_b.timing_fresh = false;
-            connection->timing_b.fallback_required = true;
-            mesh_sim_clear_connection_timing(world, connection);
+            peer_index = connection->node_a == node_index ?
+                         connection->node_b : connection->node_a;
+            owner = connection->node_a == node_index ?
+                    &connection->owner_a : &connection->owner_b;
+            timing = connection->node_a == node_index ?
+                     &connection->timing_a : &connection->timing_b;
+
+            /* A reset erases only the resetting endpoint's volatile event
+             * owner and timing.  The peer keeps its live owner and timing
+             * until its normal supervision bound expires; clearing those
+             * fields here would make reset recovery pass without exercising
+             * the stale-peer protocol path. */
+            mesh_event_owner_abandon(owner);
+            owner->terminal = true;
+            timing->route_fresh = false;
+            timing->timing_fresh = false;
+            timing->fallback_required = true;
+            mesh_relay_clear_channel9_timing(
+                &node->relay,
+                world->roles[peer_index].id);
         }
     }
     ret = abort_connection_repairs_for_reset(world, node_index);
@@ -420,6 +435,16 @@ static int reset_role_state(struct mesh_sim_world *world, uint8_t node_index)
     node->route_waiting_valid = false;
     node->resume_low_duty_after_ds_twr = false;
     node->event_control_seq = 0u;
+    {
+        uint64_t previous_boot_nonce = node->event_boot_nonce;
+
+        do {
+            node->event_boot_nonce =
+                ((uint64_t)mesh_sim_random(world) << 32) |
+                (uint64_t)mesh_sim_random(world);
+        } while (node->event_boot_nonce == 0u ||
+                 node->event_boot_nonce == previous_boot_nonce);
+    }
     node->relay_timer_guard.generation++;
     if (node->relay_timer_guard.generation == 0u) {
         node->relay_timer_guard.generation = 1u;

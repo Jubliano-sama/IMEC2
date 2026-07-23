@@ -745,7 +745,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_duplicate_accept_replay_is_cached_and_backed_off(self):
         body = function_body(REPORT, "mesh_event_accept_duplicate")
-        cache_match = body.index("app_mesh_event_completion_match")
+        cache_match = body.index("mesh_event_accept_completed_match")
         replay = body.index("replay_existing_response = true")
         retry = body.index("mesh_event_retry_after_failure", replay)
 
@@ -818,7 +818,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         propose = function_body(REPORT, "mesh_propose_event_after_channel5_contact")
         new_proposal = propose.index("if (!mesh_event_propose_retry.active)")
         clear = propose.index(
-            "app_mesh_event_retry_clear(&mesh_event_accept_rx_cache)",
+            "mesh_event_accept_rx_clear()",
             new_proposal,
         )
         prepare = propose.index("mesh_prepare_event_control_record", new_proposal)
@@ -836,6 +836,29 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
         close = function_body(REPORT, "mesh_close_channel9_connection")
         self.assertIn("mesh_event_accept_rx_clear_peer(peer_id)", close)
+
+    def test_accept_duplicate_caches_preserve_identity_with_compact_layout(self):
+        cache = REPORT[REPORT.index("struct mesh_event_accept_rx_cache {") :]
+        cache = cache[: cache.index("};") + 2]
+        self.assertIn("struct app_mesh_event_request_identity request", cache)
+        self.assertIn("uint64_t peer_id", cache)
+        self.assertIn("uint32_t deadline_ms", cache)
+        self.assertIn("bool timing_installed", cache)
+        self.assertNotIn("struct app_mesh_event_retry_state retry", cache)
+        self.assertIn(
+            "BUILD_ASSERT(sizeof(struct mesh_event_accept_rx_cache) == 40u",
+            REPORT,
+        )
+
+        completed = REPORT[REPORT.index("struct mesh_event_accept_completed {") :]
+        completed = completed[: completed.index("};") + 2]
+        self.assertIn("struct app_mesh_event_request_identity request", completed)
+        self.assertIn("uint32_t expires_at_ms", completed)
+        self.assertNotIn("struct app_mesh_event_completion completion", completed)
+        self.assertIn(
+            "BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 192u",
+            REPORT,
+        )
 
     def test_stale_proposal_is_rejected_before_active_timing_replacement(self):
         handler_source = REPORT[

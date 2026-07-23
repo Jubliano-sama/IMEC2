@@ -94,6 +94,15 @@ stream queue can drop lower-priority status or diagnostic records under
 pressure, and non-mesh gateway builds may pause BLE activity around UWB work.
 This GUI is therefore a host-delivery view, not a complete RF trace.
 
+Gateway click records are at-least-once across a gateway reset: the durable
+journal can replay an exact packet after BLE notification completion but before
+its NVS clear. The GUI keeps a bounded exact-identity-and-payload cache across
+BLE reconnects while this process remains alive, so an exact replay stays one
+visible/CIR-merged record; a same-identity mutation is shown as a conflict.
+The cache is bounded and RAM-only, so pressure can evict an old identity and a
+GUI-process restart has no persistent host acknowledgement; neither case
+provides end-to-end exactly-once delivery.
+
 ## Supported Commands
 
 - **Anchor Survey Discovery** sends a gateway-local `MSG_COMMAND` with

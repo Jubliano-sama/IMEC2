@@ -13,6 +13,7 @@ target_include_directories(app PRIVATE
 target_sources(app PRIVATE
     src/main.c
     ../../src/app_mesh_persistence.c
+    ../../src/app_mesh_local_delivery.c
     ../../src/app_mesh_preemption.c
     ../../src/app_mesh_result_handoff.c
     ../../../src/debug_log.c
@@ -25,5 +26,7 @@ target_sources(app PRIVATE
     ../../../src/mesh_preemption.c
     ../../../src/mesh_relay.c
     ../../../src/mesh_relay_channel9.c
+    ../../../src/mesh_route_path.c
+    ../../../src/operation_policy.c
     ../../../src/route.c
 )

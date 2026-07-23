@@ -94,6 +94,24 @@ static const struct app_clicker_wake_train_config clicker_wake_train_config = {
 };
 #endif
 
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+#define STAGE1_CLICK_SPAM_SUCCESS_DELAY_MS 1000u
+#define STAGE1_CLICK_SPAM_FAILURE_DELAY_MS 250u
+static const struct app_clicker_continuous_click_sessions_config clicker_session_spam_config = {
+    .success_delay_ms = STAGE1_CLICK_SPAM_SUCCESS_DELAY_MS,
+    .failure_delay_ms = STAGE1_CLICK_SPAM_FAILURE_DELAY_MS,
+};
+BUILD_ASSERT(STAGE1_CLICK_SPAM_SUCCESS_DELAY_MS > 0u,
+             "Stage 1 click-session spam must leave a bounded delay after success");
+BUILD_ASSERT(STAGE1_CLICK_SPAM_FAILURE_DELAY_MS > 0u,
+             "Stage 1 click-session spam must leave a bounded delay after failure");
+
+static void stage1_click_spam_boot_marker(const char *phase)
+{
+    high_debug_log_event("STAGE1_CLICK_SPAM_BOOT", "phase=%s", phase);
+}
+#endif
+
 BUILD_ASSERT(ANCHOR_UWB_SCAN_RX_MS * 1000u >= ANCHOR_UWB_SCAN_RX_US,
              "anchor scan millisecond timeout must cover configured RX microseconds");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS >=
@@ -248,7 +266,8 @@ int main(void)
         .handle_command = high_debug_handle_command,
     };
 #endif
-#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
+#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) || \
+    defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     const struct app_clicker_callbacks clicker_callbacks = {
         .early_led = high_debug_clicker_early_led,
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
@@ -274,7 +293,11 @@ int main(void)
 #endif
     };
 #endif
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    enum button_action boot_button_action __attribute__((unused)) = BUTTON_ACTION_NONE;
+#else
     enum button_action boot_button_action STAGE1_WAKE_SPAM_UNUSED = BUTTON_ACTION_NONE;
+#endif
     int ret;
     int battery_adc_ret;
 #if IMEC_RETAIN_FATAL_BREADCRUMB
@@ -332,12 +355,15 @@ int main(void)
     status_debug_gateway_boot_test();
     status_debug_anchor_boot_test();
 #endif
-#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
+#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) || \
+    defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     ret = app_clicker_init(&clicker_callbacks);
     if (ret < 0) {
         LOG_WRN("clicker runtime init failed: %d", ret);
     }
+#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     app_clicker_prepare_startup_idle(&boot_button_action);
+#endif
 #endif
 
     if (clicker_systemon_retained_idle_enabled()) {
@@ -376,9 +402,18 @@ int main(void)
     high_debug_log_event("BOOTLOADER_READY",
                          "configured=0 entry_command=0 recovery=disabled");
     app_high_debug_start(!clicker_systemon_retained_idle_enabled());
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_high_debug_start");
+#endif
 #endif
 
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("before_node_comm_init");
+#endif
     ret = app_node_comm_init(app_anchor_mesh_report_callbacks());
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_node_comm_init");
+#endif
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     status_debug_printf("DBG_NODE_COMM_BOOT stage=init ret=%d running=%u uptime=%u\n",
                         ret,
@@ -388,9 +423,21 @@ int main(void)
     if (ret < 0) {
         LOG_ERR("node communication initialization failed: %d", ret);
     }
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("before_mesh_test_init");
+#endif
     (void)app_mesh_test_init();
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_mesh_test_init");
+#endif
     gateway_command_result_tracking_init();
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_gateway_tracking_init");
+#endif
     (void)app_anchor_init();
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_anchor_init");
+#endif
     LOG_INF("UWB firmware starting as %s", role_name());
     if (battery_adc_ret < 0) {
         LOG_WRN("battery ADC divider disable failed: %d", battery_adc_ret);
@@ -424,6 +471,9 @@ int main(void)
 #endif
 
     ret = dwm3000_port_init();
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_dwm_port_init");
+#endif
     if (ret < 0) {
         LOG_WRN("DWM3000 reset/wake setup failed: %d", ret);
     } else {
@@ -431,7 +481,13 @@ int main(void)
     }
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
     if (ret == 0) {
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+        stage1_click_spam_boot_marker("before_dwm_probe");
+#endif
         ret = high_debug_probe_dwm3000();
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+        stage1_click_spam_boot_marker("after_dwm_probe");
+#endif
         if (ret < 0) {
             LOG_WRN("high-debug DWM3000 boot probe failed: %d", ret);
         }
@@ -458,11 +514,29 @@ int main(void)
     }
 #endif
 
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    if (DEVICE_ROLE == ROLE_CLICKER) {
+        stage1_click_spam_boot_marker("before_runner");
+        high_debug_log_event("STAGE1_CLICK_SPAM",
+                             "phase=enabled preset=%s physical_button=disabled path=normal_click",
+                             IMEC_BUILD_PRESET_NAME);
+        LOG_INF("Stage 1 click-session spam enabled; physical button path bypassed");
+        ret = app_clicker_start_continuous_click_sessions(&clicker_session_spam_config);
+        if (ret < 0) {
+            high_debug_log_event("STAGE1_CLICK_SPAM",
+                                 "phase=worker_submit_failed ret=%d",
+                                 ret);
+            LOG_ERR("Stage 1 click-session spam worker submit failed: %d", ret);
+        }
+    }
+#endif
+
     if (DEVICE_ROLE == ROLE_CLICKER) {
 #if defined(CONFIG_IMEC_ML_CLICKER)
         (void)app_ml_init();
 #else
-#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS)
+#if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) && \
+    !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
         (void)app_clicker_start_work_queue();
         ret = app_clicker_button_init();
         if (ret < 0) {

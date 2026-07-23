@@ -17,6 +17,7 @@ from .command_orchestration import (
     GatewayCommandPlan,
     GatewayCommandTransition,
 )
+from .delivery_dedup import GatewayClickDeduplicator, PacketDisposition
 from .diagnostics_integration import GatewayDiagnosticsMixin
 from .operation_policy import (
     ASSIGNMENT_DEFAULT_BUDGET_MS,
@@ -172,6 +173,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.events: queue.Queue[dict[str, Any]] = queue.Queue()
         self.transport = BleTransport(self.events.put)
         self.packet_by_iid: dict[str, Packet] = {}
+        # The gateway journal is durable, but BLE notification completion and
+        # NVS clear are separate operations. Keep this session cache alive
+        # across reconnects so an exact journal replay cannot become a second
+        # visible/model/export record. It is intentionally RAM-only and
+        # bounded; a new GUI process starts a fresh host session.
+        self.click_delivery_dedup = GatewayClickDeduplicator()
         self.cir_reassembler = CirReassembler()
         self.cir_key_by_packet_id: dict[int, CirAssemblyKey] = {}
         self.cir_errors_by_packet_id: dict[int, tuple[str, ...]] = {}
@@ -1237,6 +1244,34 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.log_text.configure(state="disabled")
 
     def _add_packet(self, packet: Packet) -> None:
+        dedup = getattr(self, "click_delivery_dedup", None)
+        if dedup is None:
+            # Keep headless/model fixtures that construct GatewayGui via
+            # ``__new__`` on the same safe receive path as the real app.
+            dedup = GatewayClickDeduplicator()
+            self.click_delivery_dedup = dedup
+        delivery = dedup.observe(packet)
+        if delivery.disposition is PacketDisposition.DUPLICATE:
+            identity = delivery.identity
+            assert identity is not None
+            self._append_log(
+                "event",
+                "Suppressed exact replay of click report "
+                f"src={format_device_id(identity.src_id)} "
+                f"session={identity.session_id} seq={identity.seq}; "
+                "the gateway journal is at-least-once across reset",
+            )
+            return
+        if delivery.disposition is PacketDisposition.CONFLICT:
+            identity = delivery.identity
+            assert identity is not None
+            self._append_log(
+                "error",
+                "Conflicting click report reused packet identity "
+                f"src={format_device_id(identity.src_id)} "
+                f"session={identity.session_id} seq={identity.seq}; "
+                "showing the record instead of suppressing it",
+            )
         self._observe_diagnostic_packet(packet)
         self.packet_counter += 1
         iid = f"packet-{self.packet_counter}"

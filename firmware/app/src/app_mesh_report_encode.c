@@ -532,6 +532,9 @@ build_payload:
         fields.sample_index = sample_index;
         fields.sample_count = sample_count;
         fields.distance_sample_count = chunk_count;
+        fields.burst_id = burst_id;
+        fields.burst_id_present =
+            (range_result->flags & FLAG_COUNT_AS_CLICK) != 0u;
         fields.omit_rsl = packet_index != 0u;
         fields.omit_cir = packet_index != 0u;
         fragmented = sample_count > chunk_count || packet_index != 0u;

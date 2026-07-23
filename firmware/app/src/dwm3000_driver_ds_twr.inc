@@ -780,20 +780,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
     ret = decode_final_frame(rx_buffer, frame_len, &final);
     if (ret < 0) {
         report_status = RANGE_BAD_FRAME;
-    } else if (final.header.seq != poll.seq ||
-               final.header.round_index != poll.round_index ||
-               final.header.network_id != poll.network_id ||
-               final.header.session_id != poll.session_id ||
-               final.header.session_nonce != poll.session_nonce ||
-               final.header.initiator_short_addr != poll.initiator_short_addr ||
-               final.header.responder_short_addr != short_addr_from_id(local_anchor_id) ||
-               final.header.flags != poll.flags ||
-               final.header.initiator_id != poll.initiator_id ||
-               final.header.responder_id != local_anchor_id) {
+    } else if (!dwm3000_driver_final_matches_poll(&final,
+                                                  &poll,
+                                                  local_anchor_id)) {
         report_status = RANGE_WRONG_TARGET;
     } else if (validate_driver_reply_timing(
-                   dwt_delta_to_uus((uint32_t)poll_rx_ts, (uint32_t)resp_tx_ts),
-                   dwt_delta_to_uus(final.resp_rx_ts_32, final.final_tx_ts_32),
+                   dwt_delta_to_uus((uint32_t)poll_rx_ts,
+                                    (uint32_t)resp_tx_ts),
+                   dwt_delta_to_uus(final.resp_rx_ts_32,
+                                    final.final_tx_ts_32),
                    reply_delay_uus) != PROTO_OK) {
         report_status = RANGE_TIMING_INVALID;
     } else {
@@ -806,7 +801,11 @@ static int responder_poll_once(uint64_t local_anchor_id,
                 (final.diagnostic_flags &
                  UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT) != 0u;
         }
-        ret = compute_distance_mm(&final, poll_rx_ts, resp_tx_ts, final_rx_ts, &distance_mm);
+        ret = dwm3000_driver_compute_distance_mm(&final,
+                                                 poll_rx_ts,
+                                                 resp_tx_ts,
+                                                 final_rx_ts,
+                                                 &distance_mm);
         if (ret < 0) {
             report_status = RANGE_INTERNAL_ERROR;
         }

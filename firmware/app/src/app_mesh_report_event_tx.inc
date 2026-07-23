@@ -184,7 +184,8 @@ static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id)
 static int mesh_event_owner_begin_peer(uint64_t peer_id,
                                        uint32_t session_id,
                                        uint16_t proposal_sequence,
-                                       bool proposal_from_peer)
+                                       bool proposal_from_peer,
+                                       uint64_t remote_boot_nonce)
 {
     struct mesh_event_owner *owner = mesh_event_owner_for_peer(peer_id);
 
@@ -199,8 +200,9 @@ static int mesh_event_owner_begin_peer(uint64_t peer_id,
     if (owner == NULL) {
         return PROTO_ERR_NO_SPACE;
     }
-    return mesh_event_owner_begin(owner, peer_id, session_id,
-                                  proposal_sequence, proposal_from_peer);
+    return mesh_event_owner_begin_with_boot_nonce(
+        owner, peer_id, session_id, proposal_sequence, proposal_from_peer,
+        remote_boot_nonce);
 }
 
 static void mesh_event_owner_abandon_peer(uint64_t peer_id)
@@ -289,6 +291,16 @@ static int mesh_prepare_event_control_record(
         now_ms);
     if (ret != PROTO_OK || payload_len > UINT8_MAX) {
         return -EMSGSIZE;
+    }
+    if (msg_type == MSG_MESH_EVENT_PROPOSE) {
+        ret = tlv_append_u64(record->payload,
+                             sizeof(record->payload),
+                             &payload_len,
+                             TLV_MESH_EVENT_BOOT_NONCE,
+                             mesh_event_boot_nonce());
+        if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+            return -EMSGSIZE;
+        }
     }
     ret = mesh_init_event_control(&record->packet,
                                   msg_type,
@@ -413,6 +425,16 @@ static int mesh_send_event_control(uint64_t peer_id,
         if (ret != PROTO_OK) {
             return -EINVAL;
         }
+        if (msg_type == MSG_MESH_EVENT_PROPOSE) {
+            ret = tlv_append_u64(outbound.payload,
+                                 sizeof(outbound.payload),
+                                 &payload_len,
+                                 TLV_MESH_EVENT_BOOT_NONCE,
+                                 mesh_event_boot_nonce());
+            if (ret != PROTO_OK) {
+                return -EINVAL;
+            }
+        }
         encoded_delay_ms = uptime_ms_until_deadline(now_ms,
                                                     timing.next_event_time_ms);
     }
@@ -512,10 +534,104 @@ static void mesh_event_propose_clear(void)
 
 static void mesh_event_accept_rx_clear_peer(uint64_t peer_id)
 {
-    if (mesh_event_accept_rx_cache.active &&
+    if (mesh_event_accept_rx_cache.valid &&
         mesh_event_accept_rx_cache.peer_id == peer_id) {
-        app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+        memset(&mesh_event_accept_rx_cache, 0,
+               sizeof(mesh_event_accept_rx_cache));
     }
+}
+
+static void mesh_event_accept_rx_clear(void)
+{
+    memset(&mesh_event_accept_rx_cache, 0,
+           sizeof(mesh_event_accept_rx_cache));
+}
+
+static bool mesh_event_accept_rx_expired(uint32_t now_ms)
+{
+    return mesh_event_accept_rx_cache.valid &&
+           uptime_deadline_reached(now_ms,
+                                   mesh_event_accept_rx_cache.deadline_ms);
+}
+
+static int mesh_event_accept_rx_begin(
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request,
+    uint32_t now_ms,
+    uint32_t deadline_ms,
+    uint32_t event_interval_ms,
+    uint16_t phase_slop_ms)
+{
+    if (peer_id == 0u || request == NULL || request->source_id == 0u ||
+        request->session_id == 0u || request->sequence == 0u ||
+        request->message_type == 0u || event_interval_ms == 0u ||
+        (phase_slop_ms != 0u && phase_slop_ms >= event_interval_ms / 2u) ||
+        uptime_deadline_reached(now_ms, deadline_ms)) {
+        return -EINVAL;
+    }
+    if (mesh_event_accept_rx_cache.valid) {
+        return -EBUSY;
+    }
+    mesh_event_accept_rx_clear();
+    mesh_event_accept_rx_cache.request = *request;
+    mesh_event_accept_rx_cache.peer_id = peer_id;
+    mesh_event_accept_rx_cache.deadline_ms = deadline_ms;
+    mesh_event_accept_rx_cache.valid = true;
+    return 0;
+}
+
+static bool mesh_event_accept_rx_claim_timing_install(void)
+{
+    if (!mesh_event_accept_rx_cache.valid ||
+        mesh_event_accept_rx_cache.timing_installed) {
+        return false;
+    }
+    mesh_event_accept_rx_cache.timing_installed = true;
+    return true;
+}
+
+static enum app_mesh_event_request_match mesh_event_accept_rx_match_identity(
+    const struct mesh_event_accept_rx_cache *cache,
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request)
+{
+    if (cache == NULL || !cache->valid) {
+        return APP_MESH_EVENT_REQUEST_NEW;
+    }
+    if (cache->peer_id != peer_id || request == NULL ||
+        cache->request.source_id != request->source_id ||
+        cache->request.session_id != request->session_id ||
+        cache->request.sequence != request->sequence ||
+        cache->request.message_type != request->message_type) {
+        return APP_MESH_EVENT_REQUEST_BUSY;
+    }
+    if (cache->request.payload_len != request->payload_len ||
+        cache->request.payload_fingerprint != request->payload_fingerprint) {
+        return APP_MESH_EVENT_REQUEST_CONFLICT;
+    }
+    return APP_MESH_EVENT_REQUEST_DUPLICATE;
+}
+
+static enum app_mesh_event_request_match mesh_event_accept_completed_match(
+    const struct mesh_event_accept_completed *entry,
+    uint64_t peer_id,
+    const struct app_mesh_event_request_identity *request,
+    uint32_t now_ms)
+{
+    if (entry == NULL || !entry->response.valid ||
+        uptime_deadline_reached(now_ms, entry->expires_at_ms) ||
+        entry->response.peer_id != peer_id || request == NULL ||
+        entry->request.source_id != request->source_id ||
+        entry->request.session_id != request->session_id ||
+        entry->request.sequence != request->sequence ||
+        entry->request.message_type != request->message_type) {
+        return APP_MESH_EVENT_REQUEST_NEW;
+    }
+    if (entry->request.payload_len != request->payload_len ||
+        entry->request.payload_fingerprint != request->payload_fingerprint) {
+        return APP_MESH_EVENT_REQUEST_CONFLICT;
+    }
+    return APP_MESH_EVENT_REQUEST_DUPLICATE;
 }
 
 static int mesh_event_negotiation_schedule_next(void)
@@ -599,7 +715,7 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id, const cha
         struct app_mesh_rf_retry_key retry_key;
 
         /* A completed ACCEPT belongs only to the proposal that created it. */
-        app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+        mesh_event_accept_rx_clear();
         ret = mesh_prepare_event_control_record(&mesh_event_propose_record,
                                                 peer_id,
                                                 MSG_MESH_EVENT_PROPOSE,
@@ -721,7 +837,8 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id, const cha
             peer_id,
             mesh_event_propose_record.packet.session_id,
             mesh_event_propose_record.packet.seq,
-            false);
+            false,
+            0u);
         if (ret != PROTO_OK) {
             mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
             mesh_event_propose_clear();
@@ -751,9 +868,8 @@ static void mesh_event_accept_completed_prune(uint32_t now_ms)
         struct mesh_event_accept_completed *entry =
             &mesh_event_accept_completed[i];
 
-        if (entry->completion.valid &&
-            uptime_deadline_reached(now_ms,
-                                    entry->completion.expires_at_ms)) {
+        if (entry->response.valid &&
+            uptime_deadline_reached(now_ms, entry->expires_at_ms)) {
             memset(entry, 0, sizeof(*entry));
         }
     }
@@ -765,8 +881,7 @@ static void mesh_event_accept_completed_clear_peer(uint64_t peer_id)
         struct mesh_event_accept_completed *entry =
             &mesh_event_accept_completed[i];
 
-        if (entry->completion.valid &&
-            entry->completion.peer_id == peer_id) {
+        if (entry->response.valid && entry->response.peer_id == peer_id) {
             memset(entry, 0, sizeof(*entry));
         }
     }
@@ -782,7 +897,8 @@ static void mesh_event_accept_completed_store(
 {
     struct mesh_event_accept_completed *selected = NULL;
 
-    if (response == NULL || !response->valid || request == NULL) {
+    if (response == NULL || !response->valid || request == NULL ||
+        response->peer_id != peer_id) {
         return;
     }
     mesh_event_accept_completed_prune(now_ms);
@@ -790,16 +906,13 @@ static void mesh_event_accept_completed_store(
         struct mesh_event_accept_completed *entry =
             &mesh_event_accept_completed[i];
         enum app_mesh_event_request_match match =
-            app_mesh_event_completion_match(&entry->completion,
-                                            peer_id,
-                                            request,
-                                            now_ms);
+            mesh_event_accept_completed_match(entry, peer_id, request, now_ms);
 
         if (match == APP_MESH_EVENT_REQUEST_DUPLICATE) {
             selected = entry;
             break;
         }
-        if (selected == NULL && !entry->completion.valid) {
+        if (selected == NULL && !entry->response.valid) {
             selected = entry;
         }
     }
@@ -812,13 +925,14 @@ static void mesh_event_accept_completed_store(
 
     memset(selected, 0, sizeof(*selected));
     selected->response = *response;
-    if (app_mesh_event_completion_store(&selected->completion,
-                                        peer_id,
-                                        request,
-                                        now_ms,
-                                        expires_at_ms) < 0) {
+    if (request == NULL || request->source_id == 0u ||
+        request->session_id == 0u || request->sequence == 0u ||
+        request->message_type == 0u || peer_id == 0u ||
+        uptime_deadline_reached(now_ms, expires_at_ms)) {
         memset(selected, 0, sizeof(*selected));
     } else {
+        selected->request = *request;
+        selected->expires_at_ms = expires_at_ms;
         selected->retry_round = retry_round;
     }
 }
@@ -834,10 +948,7 @@ static void mesh_event_accept_completed_note_retry_round(
         struct mesh_event_accept_completed *entry =
             &mesh_event_accept_completed[i];
 
-        if (app_mesh_event_completion_match(&entry->completion,
-                                            peer_id,
-                                            request,
-                                            now_ms) ==
+        if (mesh_event_accept_completed_match(entry, peer_id, request, now_ms) ==
             APP_MESH_EVENT_REQUEST_DUPLICATE) {
             entry->retry_round = retry_round;
             return;
@@ -897,7 +1008,8 @@ static int mesh_event_accept_finish_send(
         ret = mesh_event_owner_begin_peer(peer_id,
                                           retry->request.session_id,
                                           retry->request.sequence,
-                                          true);
+                                          true,
+                                          mesh_event_accept_retry.remote_boot_nonce);
         if (ret != PROTO_OK) {
             mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
             retry->timing_installed = false;
@@ -1034,10 +1146,10 @@ static bool mesh_event_accept_duplicate(
         struct mesh_event_accept_completed *entry =
             &mesh_event_accept_completed[i];
 
-        match = app_mesh_event_completion_match(&entry->completion,
-                                                previous_hop_id,
-                                                &request,
-                                                now_ms);
+        match = mesh_event_accept_completed_match(entry,
+                                                  previous_hop_id,
+                                                  &request,
+                                                  now_ms);
         if (match == APP_MESH_EVENT_REQUEST_CONFLICT) {
             status_debug_note("DBG_EVENT_PROPOSE_CONFLICT\n");
             return true;
@@ -1055,10 +1167,10 @@ static bool mesh_event_accept_duplicate(
             ret = app_mesh_event_retry_begin(
                 &mesh_event_accept_retry.retry,
                 previous_hop_id,
-                &entry->completion.request,
+                &entry->request,
                 &retry_key,
                 now_ms,
-                entry->completion.expires_at_ms,
+                entry->expires_at_ms,
                 entry->response.timing.event_interval_ms,
                 MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS / 2u);
             if (ret < 0) {
@@ -1096,13 +1208,12 @@ static enum app_mesh_event_request_match mesh_event_accept_rx_match(
         mesh_event_request_identity(packet, payload, payload_len);
     enum app_mesh_event_request_match match;
 
-    if (app_mesh_event_retry_expired(&mesh_event_accept_rx_cache,
-                                     k_uptime_get_32())) {
-        app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+    if (mesh_event_accept_rx_expired(k_uptime_get_32())) {
+        mesh_event_accept_rx_clear();
     }
-    match = app_mesh_event_retry_match(&mesh_event_accept_rx_cache,
-                                       previous_hop_id,
-                                       &request);
+    match = mesh_event_accept_rx_match_identity(&mesh_event_accept_rx_cache,
+                                                previous_hop_id,
+                                                &request);
     if (match == APP_MESH_EVENT_REQUEST_DUPLICATE) {
         status_debug_note("DBG_EVENT_ACCEPT_DUPLICATE\n");
         return match;
@@ -1205,7 +1316,15 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         struct app_mesh_event_request_identity request;
         struct app_mesh_rf_retry_key retry_key;
         uint32_t now_ms = k_uptime_get_32();
+        uint64_t proposal_boot_nonce = 0u;
         bool had_active_timing;
+
+        ret = mesh_event_owner_proposal_boot_nonce(payload,
+                                                   payload_len,
+                                                   &proposal_boot_nonce);
+        if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+            return true;
+        }
 
         if (mesh_event_accept_duplicate(packet,
                                         payload,
@@ -1285,6 +1404,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             return true;
         }
         mesh_event_accept_retry.reservation_timing = reservation_timing;
+        mesh_event_accept_retry.remote_boot_nonce = proposal_boot_nonce;
         atomic_set(&mesh_rx_response_active_state, 1);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_TO_EVENT_DELAY_MS);
@@ -1294,7 +1414,6 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         return true;
     } else if (packet->msg_type == MSG_MESH_EVENT_ACCEPT) {
         struct app_mesh_event_request_identity request;
-        struct app_mesh_rf_retry_key retry_key;
         enum app_mesh_event_accept_correlation correlation;
         enum app_mesh_event_request_match accept_match;
         uint32_t now_ms = k_uptime_get_32();
@@ -1327,21 +1446,16 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                 status_debug_note("DBG_EVENT_ACCEPT_LEGACY_IDENTITY\n");
             }
             request = mesh_event_request_identity(packet, payload, payload_len);
-            retry_key = mesh_rf_retry_packet_key(
-                packet, APP_MESH_RF_RETRY_OPERATION_EVENT_ACCEPT);
-            ret = app_mesh_event_retry_begin(
-                &mesh_event_accept_rx_cache,
+            ret = mesh_event_accept_rx_begin(
                 previous_hop_id,
                 &request,
-                &retry_key,
                 now_ms,
                 now_ms + MESH_EVENT_DEFAULT_SUPERVISION_MS,
                 timing.event_interval_ms,
                 0u);
             if (ret < 0 ||
-                !app_mesh_event_retry_claim_timing_install(
-                    &mesh_event_accept_rx_cache)) {
-                app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+                !mesh_event_accept_rx_claim_timing_install()) {
+                mesh_event_accept_rx_clear();
                 return true;
             }
         }
@@ -1372,7 +1486,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                 ret);
         if (packet->msg_type == MSG_MESH_EVENT_ACCEPT &&
             !replayed_event_accept) {
-            app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+            mesh_event_accept_rx_clear();
         }
         return true;
     }
@@ -1391,15 +1505,15 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                 previous_hop_id,
                 mesh_event_propose_record.packet.session_id,
                 mesh_event_propose_record.packet.seq,
-                false);
+                false,
+                0u);
             if (ret != PROTO_OK) {
                 mesh_relay_clear_channel9_timing(&mesh_runtime,
                                                  previous_hop_id);
-                app_mesh_event_retry_clear(&mesh_event_accept_rx_cache);
+                mesh_event_accept_rx_clear();
                 mesh_event_propose_clear();
                 return true;
             }
-            app_mesh_event_retry_note_send_success(&mesh_event_accept_rx_cache);
             mesh_event_propose_clear();
         }
     }

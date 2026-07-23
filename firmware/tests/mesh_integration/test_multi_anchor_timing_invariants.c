@@ -241,7 +241,9 @@ static void add_candidate(struct uwb_clicker_session *session,
 
 static void test_multi_anchor_claim_and_range_schedule_invariants(void)
 {
-    for (uint8_t anchor_count = 1u; anchor_count <= 6u; anchor_count++) {
+    for (uint8_t anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS;
+         anchor_count <= 6u;
+         anchor_count++) {
         for (uint8_t permutation = 0u; permutation < anchor_count; permutation++) {
             struct uwb_clicker_session session;
             struct uwb_clicker_config config = {
@@ -249,7 +251,7 @@ static void test_multi_anchor_claim_and_range_schedule_invariants(void)
                 .clicker_id = CLICKER_ID,
                 .click_event_id = UINT32_C(0x12340000) + anchor_count,
                 .nonce = UINT64_C(0xabcdef0000000000) + permutation,
-                .min_anchor_count = 1u,
+                .min_anchor_count = UWB_NORMAL_CLICK_MIN_ANCHORS,
                 .max_anchor_count = UWB_RANGE_SCHEDULE_MAX_ANCHORS,
                 .max_attempts = 1u,
                 .samples_per_anchor = 1u,
@@ -289,10 +291,8 @@ static void test_multi_anchor_claim_and_range_schedule_invariants(void)
             CHECK(schedule.selected_count == anchor_count,
                   "range schedule silently dropped a discovered anchor");
             CHECK(schedule.exchange_stride_us ==
-                      (anchor_count == 1u ?
-                           UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US :
-                           UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US),
-                  "one/multi-anchor spacing path mismatch");
+                      UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+                  "multi-anchor spacing path mismatch");
             for (uint8_t i = 0u; i < schedule.selected_count; i++) {
                 uint8_t index = (uint8_t)(schedule.entries[i].anchor_id -
                                           UINT64_C(0xa700000000000001));

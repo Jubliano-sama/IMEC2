@@ -23,6 +23,50 @@ static bool sequence_is_newer(uint16_t candidate, uint16_t current)
     return delta != 0u && delta < UINT16_C(0x8000);
 }
 
+int mesh_event_owner_proposal_boot_nonce(const uint8_t *payload,
+                                         size_t payload_len,
+                                         uint64_t *boot_nonce)
+{
+    size_t offset = 0u;
+    bool found = false;
+
+    if (boot_nonce == NULL || (payload == NULL && payload_len != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+    *boot_nonce = 0u;
+    while (offset < payload_len) {
+        uint8_t type;
+        uint8_t value_len;
+
+        if (payload_len - offset < PROTO_TLV_HEADER_LEN) {
+            /* The event timing decoder owns complete TLV validation. There
+             * is no boot nonce to extract here, so proposal classification
+             * will reject the payload as missing its required identity. */
+            return found ? PROTO_OK : PROTO_ERR_NOT_FOUND;
+        }
+        type = payload[offset];
+        value_len = payload[offset + 1u];
+        offset += PROTO_TLV_HEADER_LEN;
+        if ((size_t)value_len > payload_len - offset) {
+            return type == TLV_MESH_EVENT_BOOT_NONCE ?
+                       PROTO_ERR_MALFORMED :
+                       (found ? PROTO_OK : PROTO_ERR_NOT_FOUND);
+        }
+        if (type == TLV_MESH_EVENT_BOOT_NONCE) {
+            if (found || value_len != sizeof(uint64_t)) {
+                return PROTO_ERR_MALFORMED;
+            }
+            *boot_nonce = proto_get_u64_le(&payload[offset]);
+            if (*boot_nonce == 0u) {
+                return PROTO_ERR_MALFORMED;
+            }
+            found = true;
+        }
+        offset += value_len;
+    }
+    return found ? PROTO_OK : PROTO_ERR_NOT_FOUND;
+}
+
 bool mesh_event_owner_retains_session(const struct mesh_event_owner *owner,
                                       uint32_t session_id)
 {
@@ -42,17 +86,22 @@ bool mesh_event_owner_retains_session(const struct mesh_event_owner *owner,
 
 static void retire_current_session(struct mesh_event_owner *owner)
 {
+    uint64_t boot_nonce;
+
     if (owner == NULL || owner->generation == 0u || owner->session_id == 0u) {
         return;
     }
+    boot_nonce = owner->proposal_from_peer ? owner->remote_boot_nonce : 0u;
     for (uint8_t i = 0u; i < owner->retired_session_count; i++) {
-        if (owner->retired_session_ids[i] == owner->session_id) {
+        if (owner->retired_session_ids[i] == owner->session_id &&
+            owner->retired_boot_nonces[i] == boot_nonce) {
             return;
         }
     }
 
     owner->retired_session_ids[owner->retired_session_cursor] =
         owner->session_id;
+    owner->retired_boot_nonces[owner->retired_session_cursor] = boot_nonce;
     owner->retired_session_cursor =
         (uint8_t)((owner->retired_session_cursor + 1u) %
                   MESH_EVENT_OWNER_RETIRED_SESSION_CAPACITY);
@@ -62,34 +111,84 @@ static void retire_current_session(struct mesh_event_owner *owner)
     }
 }
 
+static bool retired_boot_nonce(const struct mesh_event_owner *owner,
+                               uint64_t boot_nonce)
+{
+    if (owner == NULL || boot_nonce == 0u) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < owner->retired_session_count; i++) {
+        if (owner->retired_boot_nonces[i] == boot_nonce) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool proposal_is_new_incarnation(const struct mesh_event_owner *owner,
+                                        uint64_t boot_nonce)
+{
+    return owner != NULL && boot_nonce != 0u &&
+           boot_nonce != owner->remote_boot_nonce &&
+           !retired_boot_nonce(owner, boot_nonce);
+}
+
 int mesh_event_owner_begin(struct mesh_event_owner *owner,
                            uint64_t peer_id,
                            uint32_t session_id,
                            uint16_t proposal_sequence,
                            bool proposal_from_peer)
 {
+    return mesh_event_owner_begin_with_boot_nonce(owner,
+                                                  peer_id,
+                                                  session_id,
+                                                  proposal_sequence,
+                                                  proposal_from_peer,
+                                                  0u);
+}
+
+int mesh_event_owner_begin_with_boot_nonce(
+    struct mesh_event_owner *owner,
+    uint64_t peer_id,
+    uint32_t session_id,
+    uint16_t proposal_sequence,
+    bool proposal_from_peer,
+    uint64_t remote_boot_nonce)
+{
     uint32_t generation;
+    bool new_incarnation;
 
     if (owner == NULL || peer_id == 0u || session_id == 0u ||
         proposal_sequence == 0u) {
         return PROTO_ERR_ARG;
     }
 
+    new_incarnation = proposal_from_peer &&
+                      proposal_is_new_incarnation(owner, remote_boot_nonce);
     if (owner->generation != 0u && owner->peer_id == peer_id) {
-        if (mesh_event_owner_retains_session(owner, session_id) ||
-            (proposal_from_peer && owner->active &&
-             owner->remote_proposal_seen &&
-             !sequence_is_newer(proposal_sequence,
-                                owner->remote_proposal_sequence))) {
+        if (proposal_from_peer && remote_boot_nonce != 0u &&
+            remote_boot_nonce != owner->remote_boot_nonce &&
+            retired_boot_nonce(owner, remote_boot_nonce)) {
+            return PROTO_ERR_STALE;
+        }
+        if (!new_incarnation &&
+            (mesh_event_owner_retains_session(owner, session_id) ||
+             (proposal_from_peer && owner->active &&
+              owner->remote_proposal_seen &&
+              !sequence_is_newer(proposal_sequence,
+                                 owner->remote_proposal_sequence)))) {
             return PROTO_ERR_STALE;
         }
         retire_current_session(owner);
     } else {
         memset(owner->retired_session_ids, 0,
                sizeof(owner->retired_session_ids));
+        memset(owner->retired_boot_nonces, 0,
+               sizeof(owner->retired_boot_nonces));
         owner->retired_session_count = 0u;
         owner->retired_session_cursor = 0u;
         owner->remote_proposal_sequence = 0u;
+        owner->remote_boot_nonce = 0u;
         owner->remote_proposal_seen = false;
     }
 
@@ -114,6 +213,7 @@ int mesh_event_owner_begin(struct mesh_event_owner *owner,
     owner->proposal_from_peer = proposal_from_peer;
     if (proposal_from_peer) {
         owner->remote_proposal_sequence = proposal_sequence;
+        owner->remote_boot_nonce = remote_boot_nonce;
         owner->remote_proposal_seen = true;
     }
     owner->local_control_seen = false;
@@ -129,6 +229,9 @@ enum mesh_event_owner_decision mesh_event_owner_classify_proposal(
     const uint8_t *payload,
     size_t payload_len)
 {
+    uint64_t boot_nonce = 0u;
+    int nonce_ret;
+
     if (packet == NULL || local_id == 0u || previous_hop_id == 0u ||
         packet->msg_type != MSG_MESH_EVENT_PROPOSE || packet->seq == 0u ||
         packet->session_id == 0u || packet->src_id != previous_hop_id ||
@@ -136,11 +239,28 @@ enum mesh_event_owner_decision mesh_event_owner_classify_proposal(
         (payload == NULL && payload_len != 0u)) {
         return MESH_EVENT_OWNER_INVALID;
     }
+    nonce_ret = mesh_event_owner_proposal_boot_nonce(payload, payload_len,
+                                                     &boot_nonce);
+    /* EVENT_PROPOSE is incarnation-scoped on the wire.  A missing nonce is
+     * not a legacy zero value: accepting it would let a reset/replay proposal
+     * reach the session and timing replacement path without an owner identity.
+     * Keep this check local to proposal classification so UPDATE/END remain
+     * governed by their independent control-sequence state. */
+    if (nonce_ret != PROTO_OK) {
+        return MESH_EVENT_OWNER_INVALID;
+    }
     if (owner == NULL || owner->generation == 0u) {
         return MESH_EVENT_OWNER_APPLY;
     }
     if (owner->peer_id != previous_hop_id) {
         return MESH_EVENT_OWNER_STALE;
+    }
+    if (boot_nonce != 0u && boot_nonce != owner->remote_boot_nonce &&
+        retired_boot_nonce(owner, boot_nonce)) {
+        return MESH_EVENT_OWNER_STALE;
+    }
+    if (proposal_is_new_incarnation(owner, boot_nonce)) {
+        return MESH_EVENT_OWNER_APPLY;
     }
     if (packet->session_id == owner->session_id) {
         return owner->proposal_from_peer &&

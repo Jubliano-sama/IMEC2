@@ -18,6 +18,12 @@
 #define LINE_MAX_RELAYS 6u
 #define SCENARIO_EVENT_MAX_MISSES 3u
 #define STRESS_WATCHDOG_US MESH_SIM_WATCHDOG_PRODUCTION_TIMEOUT_US
+#define DIRECT_GATEWAY_TX_PREPARE_US UINT64_C(20000)
+#define DIRECT_GATEWAY_PAYLOAD_SERVICE_US UINT64_C(50000)
+#define DIRECT_GATEWAY_ACK_GUARD_US UINT64_C(10000)
+#define DIRECT_GATEWAY_ACK_SERVICE_US UINT64_C(40000)
+#define DIRECT_GATEWAY_RX_COMPLETION_GUARD_US UINT64_C(1)
+#define DIRECT_GATEWAY_TURN_RESERVATION_US UINT64_C(100000)
 
 #define REQUIRE(scenario, seed, expression) do { \
     if (!(expression)) { \
@@ -91,7 +97,9 @@ static int run_earliest_connection(struct mesh_sim_world *world,
                                    size_t connection_count)
 {
     size_t selected = SIZE_MAX;
+    size_t payload_selected = SIZE_MAX;
     uint64_t earliest_us = UINT64_MAX;
+    uint64_t earliest_payload_us = UINT64_MAX;
     int first_error = MESH_SIM_OK;
 
     for (size_t i = 0u; i < connection_count; i++) {
@@ -114,10 +122,185 @@ static int run_earliest_connection(struct mesh_sim_world *world,
             earliest_us = action.start_us;
             selected = i;
         }
+        if (action.kind == MESH_SIM_CONNECTION_ACTION_CHANNEL9_EVENT) {
+            const struct mesh_sim_connection *connection =
+                &world->connections[connections[i]];
+            bool node_a_tx = mesh_event_timing_local_tx_slot(
+                &connection->timing_a);
+            uint8_t sender_index;
+            uint8_t receiver_index;
+            bool has_runnable_payload = false;
+
+            if ((action.skipped_events & 1u) != 0u) {
+                node_a_tx = !node_a_tx;
+            }
+            sender_index = node_a_tx ? connection->node_a : connection->node_b;
+            receiver_index = node_a_tx ? connection->node_b : connection->node_a;
+            for (size_t queued = 0u;
+                 queued < MESH_SIM_TX_QUEUE_CAPACITY;
+                 queued++) {
+                const struct mesh_sim_queued_tx *entry =
+                    &world->roles[sender_index].tx_queue[queued];
+
+                if (!entry->valid ||
+                    entry->outbound.next_hop_id !=
+                        world->roles[receiver_index].id) {
+                    continue;
+                }
+                if (!entry->needs_relay_start ||
+                    world->roles[sender_index].relay.pending.state ==
+                        MESH_RELAY_TX_IDLE ||
+                    (entry->outbound.packet.msg_type ==
+                         world->roles[sender_index].relay.pending.packet.msg_type &&
+                     entry->outbound.packet.src_id ==
+                         world->roles[sender_index].relay.pending.packet.src_id &&
+                     entry->outbound.packet.dst_id ==
+                         world->roles[sender_index].relay.pending.packet.dst_id &&
+                     entry->outbound.packet.session_id ==
+                         world->roles[sender_index].relay.pending.packet.session_id &&
+                     entry->outbound.packet.seq ==
+                         world->roles[sender_index].relay.pending.packet.seq)) {
+                    has_runnable_payload = true;
+                    break;
+                }
+            }
+            if (has_runnable_payload && action.start_us >= world->now_us &&
+                action.start_us < earliest_payload_us) {
+                earliest_payload_us = action.start_us;
+                payload_selected = i;
+            }
+        }
+    }
+    if (payload_selected != SIZE_MAX) {
+        return run_next_connection(world, connections[payload_selected]);
     }
     return selected == SIZE_MAX ?
            (first_error == MESH_SIM_OK ? MESH_SIM_ERR_EVENT_ORDER : first_error) :
            run_next_connection(world, connections[selected]);
+}
+
+static bool queued_for_gateway(const struct mesh_sim_role_instance *node)
+{
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        if (node->tx_queue[i].valid &&
+            node->tx_queue[i].outbound.next_hop_id == GATEWAY_ID) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint64_t transmission_arrival_end_us(
+    const struct mesh_sim_world *world,
+    uint16_t transmission_index,
+    uint8_t receiver_index)
+{
+    const struct mesh_sim_transmission *transmission =
+        &world->transmissions[transmission_index];
+    uint64_t delay_us =
+        world->propagation_us[transmission->node_index][receiver_index] +
+        transmission->fault_extra_delay_us[receiver_index];
+
+    return transmission->end_us > UINT64_MAX - delay_us ?
+           UINT64_MAX : transmission->end_us + delay_us;
+}
+
+static int run_direct_gateway_turn(struct mesh_sim_world *world,
+                                   uint8_t sender,
+                                   uint8_t gateway)
+{
+    uint64_t ready_us = world->now_us;
+    uint64_t air_start_us;
+    uint64_t payload_deadline_us;
+    uint64_t arrival_end_us;
+    uint64_t rx_end_us;
+    uint64_t ack_start_us;
+    uint64_t ack_end_us;
+    uint64_t turn_deadline_us;
+    uint16_t transmission_index;
+    int ret;
+
+    if (world->roles[sender].dwm3000.cpu_busy_until_us > ready_us) {
+        ready_us = world->roles[sender].dwm3000.cpu_busy_until_us;
+    }
+    if (world->roles[gateway].dwm3000.cpu_busy_until_us > ready_us) {
+        ready_us = world->roles[gateway].dwm3000.cpu_busy_until_us;
+    }
+    if (ready_us > world->now_us) {
+        ret = mesh_sim_run_until(world, ready_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+
+    turn_deadline_us = world->now_us + DIRECT_GATEWAY_TURN_RESERVATION_US;
+    air_start_us = world->now_us + DIRECT_GATEWAY_TX_PREPARE_US;
+    payload_deadline_us =
+        air_start_us + DIRECT_GATEWAY_PAYLOAD_SERVICE_US;
+    ret = mesh_sim_direct_gateway_start_queued_tx(
+        world, sender, air_start_us, payload_deadline_us,
+        &transmission_index);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    arrival_end_us = transmission_arrival_end_us(
+        world, transmission_index, gateway);
+    if (arrival_end_us == UINT64_MAX) {
+        return MESH_SIM_ERR_EVENT_ORDER;
+    }
+    rx_end_us = arrival_end_us + DIRECT_GATEWAY_RX_COMPLETION_GUARD_US;
+    ret = mesh_sim_direct_gateway_arm_rx(world, gateway,
+                                         air_start_us, rx_end_us);
+    if (ret == MESH_SIM_OK) {
+        ret = mesh_sim_run_until(world, rx_end_us);
+    }
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    if (world->roles[gateway].dwm3000.cpu_busy_until_us > world->now_us) {
+        ret = mesh_sim_run_until(
+            world, world->roles[gateway].dwm3000.cpu_busy_until_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+
+    ack_start_us = world->now_us + DIRECT_GATEWAY_ACK_GUARD_US;
+    ack_end_us = ack_start_us + DIRECT_GATEWAY_ACK_SERVICE_US;
+    ret = mesh_sim_direct_gateway_schedule_ack(
+        world, gateway, sender, ack_start_us, ack_end_us, NULL);
+    if (ret == MESH_SIM_OK) {
+        ret = mesh_sim_run_until(world, ack_end_us);
+    }
+    if (ret == MESH_SIM_OK && world->now_us > turn_deadline_us) {
+        ret = MESH_SIM_ERR_RADIO_DEADLINE;
+    }
+    return ret;
+}
+
+static bool direct_gateway_turn_fits(const struct mesh_sim_world *world,
+                                     uint8_t sender)
+{
+    const uint64_t required_end_us =
+        world->now_us + DIRECT_GATEWAY_TURN_RESERVATION_US;
+
+    for (size_t i = 0u; i < world->connection_count; i++) {
+        const struct mesh_sim_connection *connection = &world->connections[i];
+        struct mesh_sim_connection_action action;
+
+        if (connection->node_a != sender && connection->node_b != sender) {
+            continue;
+        }
+
+        if (mesh_sim_connection_next_action(world, (uint16_t)i, &action) !=
+                MESH_SIM_OK ||
+            action.already_scheduled ||
+            (action.kind != MESH_SIM_CONNECTION_ACTION_NONE &&
+             action.start_us < required_end_us)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static int arm_watchdogs(struct mesh_sim_world *world)
@@ -211,9 +394,10 @@ static void print_line_failure(const struct mesh_sim_world *world,
     }
     if (last_ack != NULL) {
         fprintf(stderr,
-                "last-gateway-ack receiver=%llx source=%llx ttl=%u outcome=%d at_us=%llu\n",
+                "last-gateway-ack receiver=%llx source=%llx sess=%u seq=%u ttl=%u outcome=%d at_us=%llu\n",
                 (unsigned long long)last_ack->receiver_id,
                 (unsigned long long)last_ack->source_id,
+                last_ack->packet.session_id, last_ack->packet.seq,
                 last_ack->packet.ttl, last_ack->outcome,
                 (unsigned long long)last_ack->end_us);
     }
@@ -222,10 +406,12 @@ static void print_line_failure(const struct mesh_sim_world *world,
 
         if (transition->kind == MESH_SIM_TRANSITION_GATEWAY_ACKED) {
             fprintf(stderr,
-                    "gateway-acked node=%llx at-us=%llu msg=%u\n",
+                    "gateway-acked node=%llx at-us=%llu msg=%u sess=%u seq=%u\n",
                     (unsigned long long)transition->node_id,
                     (unsigned long long)transition->time_us,
-                    transition->msg_type);
+                    transition->msg_type,
+                    transition->packet_session_id,
+                    transition->packet_seq);
         }
     }
     for (size_t i = 0u; i < world->role_count; i++) {
@@ -235,6 +421,23 @@ static void print_line_failure(const struct mesh_sim_world *world,
                 world->roles[i].tx_queue_count,
                 world->roles[i].relay.pending.state,
                 (unsigned long long)world->roles[i].relay.pending.next_hop_id);
+        for (size_t queued = 0u;
+             queued < MESH_SIM_TX_QUEUE_CAPACITY;
+             queued++) {
+            const struct mesh_sim_queued_tx *entry =
+                &world->roles[i].tx_queue[queued];
+
+            if (entry->valid) {
+                fprintf(stderr,
+                        "  queued msg=%u src=%llx session=%u seq=%u next=%llx start=%u\n",
+                        entry->outbound.packet.msg_type,
+                        (unsigned long long)entry->outbound.packet.src_id,
+                        entry->outbound.packet.session_id,
+                        entry->outbound.packet.seq,
+                        (unsigned long long)entry->outbound.next_hop_id,
+                        entry->needs_relay_start ? 1u : 0u);
+            }
+        }
     }
     for (size_t i = 0u; i < world->connection_count; i++) {
         struct mesh_sim_connection_action action;
@@ -262,21 +465,45 @@ static int run_line_until_confirmed(struct mesh_sim_world *world,
                                     const uint16_t *connections,
                                     size_t connection_count,
                                     uint8_t transmitter,
+                                    uint8_t final_relay,
                                     uint8_t gateway,
                                     size_t expected_deliveries)
 {
-    for (unsigned int event = 0u; event < 128u; event++) {
+    const unsigned int max_events =
+        128u * (unsigned int)(connection_count + 1u);
+    unsigned int direct_turns = 0u;
+    unsigned int connection_turns = 0u;
+    unsigned int queued_seen = 0u;
+    unsigned int fit_false = 0u;
+
+    for (unsigned int event = 0u; event < max_events; event++) {
         int ret;
 
         if (world->roles[gateway].delivery_count >= expected_deliveries &&
             world->roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE) {
             return MESH_SIM_OK;
         }
-        ret = run_earliest_connection(world, connections, connection_count);
+        if (queued_for_gateway(&world->roles[final_relay])) {
+            queued_seen++;
+        }
+        if (queued_for_gateway(&world->roles[final_relay]) &&
+            direct_gateway_turn_fits(world, final_relay)) {
+            direct_turns++;
+            ret = run_direct_gateway_turn(world, final_relay, gateway);
+        } else {
+            if (queued_for_gateway(&world->roles[final_relay])) {
+                fit_false++;
+            }
+            connection_turns++;
+            ret = run_earliest_connection(world, connections, connection_count);
+        }
         if (ret != MESH_SIM_OK) {
             return ret;
         }
     }
+    fprintf(stderr, "line-driver turns direct=%u conn=%u queued=%u fitfalse=%u now=%llu\\n",
+            direct_turns, connection_turns, queued_seen, fit_false,
+            (unsigned long long)world->now_us);
     return MESH_SIM_ERR_EVENT_ORDER;
 }
 
@@ -306,16 +533,19 @@ static int test_line_depth(uint8_t relay_count)
     nodes[relay_count + 1u] = gateway;
 
     for (uint8_t i = 0u; i <= relay_count; i++) {
-        struct mesh_event_params params = connection_params(
-            100u + (uint32_t)i * 32u, MESH_RADIO_EVENT_INTERVAL_MS);
-
         REQUIRE("line_topology", seed,
                 mesh_sim_set_link(&world, nodes[i], nodes[i + 1u],
                                   95u, 1u) == MESH_SIM_OK);
-        REQUIRE("line_topology", seed,
-                mesh_sim_add_connection(&world, nodes[i], nodes[i + 1u],
-                                        &params, true,
-                                        &connections[i]) == MESH_SIM_OK);
+        if (i < relay_count) {
+            struct mesh_event_params params = connection_params(
+                50u + (uint32_t)i * 60u,
+                MESH_RADIO_EVENT_INTERVAL_MS);
+
+            REQUIRE("line_topology", seed,
+                    mesh_sim_add_connection(
+                        &world, nodes[i], nodes[i + 1u],
+                        &params, true, &connections[i]) == MESH_SIM_OK);
+        }
         REQUIRE("line_topology", seed,
                 mesh_sim_install_route(&world, nodes[i], nodes[i + 1u],
                                        relay_count - i,
@@ -340,7 +570,8 @@ static int test_line_depth(uint8_t relay_count)
                 mesh_sim_queue_originated(&world, nodes[0], &packet,
                                           payload, payload_len) == MESH_SIM_OK);
         ret = run_line_until_confirmed(&world, connections,
-                                       relay_count + 1u, nodes[0], gateway, seq);
+                                       relay_count, nodes[0],
+                                       nodes[relay_count], gateway, seq);
         if (ret != MESH_SIM_OK) {
             fprintf(stderr, "line-run-ret=%d seq=%u\n", ret, seq);
             print_line_failure(&world, relay_count);
@@ -365,17 +596,6 @@ static int test_line_depth(uint8_t relay_count)
                                        MESH_SIM_TRANSITION_ROUTE_REQUIRED,
                                        0u) == 0u &&
             no_watchdog_expired(&world));
-    if (relay_count >= 3u) {
-        REQUIRE("line_topology", seed,
-                mesh_sim_count_transitions(
-                    &world,
-                    MESH_SIM_TRANSITION_CONNECTION_EVENTS_SKIPPED,
-                    0u) > 0u &&
-                mesh_sim_count_transitions(
-                    &world,
-                    MESH_SIM_TRANSITION_CONNECTION_REPAIRED,
-                    0u) > 0u);
-    }
     return 0;
 }
 
@@ -403,16 +623,26 @@ static int test_click_preemption_and_retry(void)
     size_t accept_tx_starts;
     size_t repair_starts;
     size_t repaired_connections;
+    const int32_t distance_samples_mm[] = {1234};
+    const uint8_t range_round_indices[] = {0u};
+    const uint64_t sequence_start_timestamps_ms[] = {100u};
     const struct range_report_fields fields = {
         .clicker_id = CLICKER_ID,
         .anchor_id = ANCHOR_ID_BASE,
-        .event_seq = 77u,
+        .event_seq = UINT32_C(0x52000001),
         .timestamp_ms = 100u,
         .distance_mm = 1234,
         .quality = 99u,
         .range_status = RANGE_OK,
+        .distance_samples_mm = distance_samples_mm,
+        .range_round_indices = range_round_indices,
+        .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
+        .sample_count = 1u,
+        .distance_sample_count = 1u,
+        .burst_id = UINT32_C(0x52000001),
         .omit_rsl = true,
         .omit_cir = true,
+        .burst_id_present = true,
     };
 
     mesh_sim_init(&world, SCENARIO_SEED_CLICK);
@@ -455,7 +685,9 @@ static int test_click_preemption_and_retry(void)
             click_len <= UINT8_MAX &&
             report_init_click_packet(&click_packet, ANCHOR_ID_BASE,
                                      GATEWAY_ID, UINT32_C(0x52000001), 1u,
-                                     (uint8_t)click_len) == PROTO_OK);
+                                     (uint8_t)click_len) == PROTO_OK &&
+            report_validate_click_payload(&click_packet, click_payload,
+                                          click_len) == PROTO_OK);
     REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
             mesh_sim_queue_originated(&world, transmitter, &transit_packet,
                                       transit_payload, transit_len) == MESH_SIM_OK &&

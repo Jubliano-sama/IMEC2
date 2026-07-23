@@ -107,12 +107,36 @@ static bool connection_action_runnable(
            sender->relay.pending.state == MESH_RELAY_TX_IDLE;
 }
 
+/*
+ * A shared relay owns two independent rhythms.  Selecting only the
+ * chronologically earliest empty event can phase-lock one connection against
+ * the other: the same endpoint's no-op TX slots are skipped forever while an
+ * ACK waits on the opposite endpoint.  Treat any queued work on the pair as
+ * a fairness request, then let the normal physical arbitration skip the
+ * competing connection's overlapping slot.
+ */
+static bool connection_has_queued_work(const struct mesh_sim_world *sim,
+                                       uint16_t connection_index)
+{
+    const struct mesh_sim_connection *connection =
+        &sim->connections[connection_index];
+    const struct mesh_sim_role_instance *node_a =
+        &sim->roles[connection->node_a];
+    const struct mesh_sim_role_instance *node_b =
+        &sim->roles[connection->node_b];
+
+    return best_queued_tx_for_peer(node_a, node_b->id) != NULL ||
+           best_queued_tx_for_peer(node_b, node_a->id) != NULL;
+}
+
 static int run_earliest_connection(struct mesh_sim_world *sim,
                                    const uint16_t *connections,
                                    size_t connection_count)
 {
     size_t selected = SIZE_MAX;
+    size_t queued_selected = SIZE_MAX;
     uint64_t earliest_us = UINT64_MAX;
+    uint64_t earliest_queued_us = UINT64_MAX;
     int first_error = MESH_SIM_OK;
 
     for (size_t i = 0u; i < connection_count; i++) {
@@ -131,6 +155,31 @@ static int run_earliest_connection(struct mesh_sim_world *sim,
             selected = i;
             earliest_us = action.start_us;
         }
+        if (action.kind != MESH_SIM_CONNECTION_ACTION_NONE &&
+            connection_action_runnable(sim, connections[i], &action) &&
+            connection_has_queued_work(sim, connections[i]) &&
+            action.start_us >= sim->now_us &&
+            action.start_us < earliest_queued_us) {
+            queued_selected = i;
+            earliest_queued_us = action.start_us;
+        }
+    }
+    if (queued_selected != SIZE_MAX) {
+        struct mesh_sim_connection_action action;
+        int ret = mesh_sim_connection_next_action(
+            sim, connections[queued_selected], &action);
+
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+        if (!action.already_scheduled) {
+            ret = mesh_sim_schedule_next_connection_event(
+                sim, connections[queued_selected], false);
+            if (ret != MESH_SIM_OK) {
+                return ret;
+            }
+        }
+        return mesh_sim_run_until(sim, action.end_us);
     }
     if (selected == SIZE_MAX) {
         return first_error == MESH_SIM_OK ? MESH_SIM_ERR_EVENT_ORDER : first_error;
