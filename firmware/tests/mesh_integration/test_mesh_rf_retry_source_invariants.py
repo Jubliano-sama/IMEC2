@@ -572,6 +572,93 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(ready_action, generation_publish)
         self.assertLess(generation_publish, handoff)
 
+    def test_click_handoff_precedes_route_listener_cleanup_restart(self):
+        ack_listener = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply_ack"
+        )
+        ack_guard_stop = ack_listener.index("radio_guard_uwb_stop()")
+        ack_click = ack_listener.index("if (click_captured)", ack_guard_stop)
+        ack_clear = ack_listener.index(
+            'mesh_c5_contact_clear("click-preempt")', ack_click
+        )
+        ack_handoff = ack_listener.index(
+            "mesh_handoff_anchor_click_claim", ack_clear
+        )
+        ack_restart = ack_listener.index(
+            "mesh_restart_role_scan()", ack_handoff
+        )
+        self.assertLess(ack_guard_stop, ack_click)
+        self.assertLess(ack_click, ack_clear)
+        self.assertLess(ack_clear, ack_handoff)
+        self.assertLess(ack_handoff, ack_restart)
+        self.assertIn("k_mutex_unlock(&mesh_route_reply_ack_scratch_lock)",
+                      ack_listener[ack_guard_stop:ack_clear])
+        self.assertIn("if (!handled)", ack_listener[ack_handoff:ack_restart])
+
+        listener = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply"
+        )
+        guard_stop = listener.index("radio_guard_uwb_stop()")
+        click = listener.index("if (click_captured)", guard_stop)
+        clear = listener.index(
+            'mesh_c5_contact_clear("click-preempt")', click
+        )
+        handoff = listener.index("mesh_handoff_anchor_click_claim", clear)
+        restart = listener.index("mesh_restart_role_scan()", handoff)
+        pending = listener.index("mesh_submit_work(&mesh_rx_work)", restart)
+        self.assertLess(guard_stop, click)
+        self.assertLess(click, clear)
+        self.assertLess(clear, handoff)
+        self.assertLess(handoff, restart)
+        self.assertLess(restart, pending)
+        self.assertIn("if (!handled)", listener[handoff:restart])
+
+    def test_click_probe_budget_matches_both_phy_reconfigurations(self):
+        helper = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_probe_standard_click_claim"
+        )
+        standard_config = helper.index(
+            "dwm3000_driver_configure_wake_mode()"
+        )
+        receive = helper.index(
+            "dwm3000_driver_receive_frame_continuous_extend_on_activity",
+            standard_config,
+        )
+        control_config = helper.index(
+            "dwm3000_driver_configure_wake_mesh_control_mode()", receive
+        )
+        self.assertLess(standard_config, receive)
+        self.assertLess(receive, control_config)
+        self.assertIn("ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS",
+                      helper[receive:control_config])
+
+        budget = REPORT_UNIT[REPORT_UNIT.index(
+            "#define MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS"
+        ):]
+        self.assertIn("MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS", budget)
+        self.assertIn("ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS", budget)
+        self.assertIn(
+            "MESH_ROUTE_REPLY_CLICK_PROBE_STANDARD_RETUNE_GUARD_MS", budget
+        )
+        self.assertIn(
+            "MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS", budget
+        )
+        guard = REPORT_UNIT.index(
+            "MESH_ROUTE_REPLY_CLICK_PROBE_STANDARD_RETUNE_GUARD_MS"
+        )
+        self.assertIn("MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS",
+                      REPORT_UNIT[guard:guard + 180])
+        control_guard = REPORT_UNIT.index(
+            "MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS"
+        )
+        self.assertIn("MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS",
+                      REPORT_UNIT[control_guard:control_guard + 180])
+        self.assertRegex(
+            REPORT_UNIT,
+            r"BUILD_ASSERT\(MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS\s*<\s*"
+            r"WAKE_ADV_MS,",
+        )
+
     def test_route_ready_poll_slice_precedes_channel9_retry_boundary(self):
         poll_match = re.search(
             r"#define\s+MESH_ROUTE_REPLY_READY_POLL_MS\s+(\d+)u",

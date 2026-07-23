@@ -27,6 +27,16 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
  * the caller can release its guard and hand the claim to the normal click
  * sequence exactly once.
  */
+static void mesh_log_standard_click_probe_done(uint32_t started_ms,
+                                               const char *outcome,
+                                               int ret)
+{
+    status_debug_printf("DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=%u outcome=%s ret=%d\n",
+                        k_uptime_get_32() - started_ms,
+                        outcome == NULL ? "fail" : outcome,
+                        ret);
+}
+
 static int mesh_probe_standard_click_claim(
     uint8_t *frame,
     size_t frame_cap,
@@ -37,6 +47,7 @@ static int mesh_probe_standard_click_claim(
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
     size_t frame_len = 0u;
     uint8_t quality = 0u;
+    uint32_t started_ms;
     int ret;
 
     if (frame == NULL || frame_cap == 0u || click_claim == NULL ||
@@ -44,8 +55,10 @@ static int mesh_probe_standard_click_claim(
         return -EINVAL;
     }
 
+    started_ms = k_uptime_get_32();
     ret = dwm3000_driver_configure_wake_mode();
     if (ret < 0) {
+        mesh_log_standard_click_probe_done(started_ms, "fail", ret);
         return ret;
     }
 
@@ -68,6 +81,7 @@ static int mesh_probe_standard_click_claim(
                             click_claim->click_event_id,
                             click_claim->attempt_index,
                             quality);
+        mesh_log_standard_click_probe_done(started_ms, "capture", 0);
         return 1;
     }
 
@@ -76,13 +90,16 @@ static int mesh_probe_standard_click_claim(
     ret = app_wake_train_politeness_rx_activity(ret, rx_failure) ?
           0 : ret;
     if (ret != 0 && ret != -ETIMEDOUT) {
+        mesh_log_standard_click_probe_done(started_ms, "fail", ret);
         return ret;
     }
 
     ret = dwm3000_driver_configure_wake_mesh_control_mode();
     if (ret < 0) {
+        mesh_log_standard_click_probe_done(started_ms, "fail", ret);
         return ret;
     }
+    mesh_log_standard_click_probe_done(started_ms, "restore", 0);
     return 0;
 }
 
@@ -347,6 +364,22 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
     (void)dwm3000_driver_standby();
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
     radio_guard_uwb_stop();
+
+    if (click_captured) {
+        bool handled;
+
+        k_mutex_unlock(&mesh_route_reply_ack_scratch_lock);
+        mesh_c5_contact_clear("click-preempt");
+        handled = mesh_handoff_anchor_click_claim(&click_claim,
+                                                  click_quality,
+                                                  click_observed_ms);
+        if (!handled) {
+            mesh_restart_role_scan();
+            return -EIO;
+        }
+        return -EAGAIN;
+    }
+
     mesh_restart_role_scan();
 
     if (captured) {
@@ -369,15 +402,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
 
 out_unlock:
     k_mutex_unlock(&mesh_route_reply_ack_scratch_lock);
-    if (click_captured) {
-        bool handled;
-
-        mesh_c5_contact_clear("click-preempt");
-        handled = mesh_handoff_anchor_click_claim(&click_claim,
-                                                  click_quality,
-                                                  click_observed_ms);
-        return handled ? -EAGAIN : -EIO;
-    }
     return ret;
 }
 #endif
@@ -3018,6 +3042,24 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     (void)dwm3000_driver_standby();
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
     radio_guard_uwb_stop();
+
+    if (click_captured) {
+        bool handled;
+
+        mesh_c5_contact_clear("click-preempt");
+        handled = mesh_handoff_anchor_click_claim(&click_claim,
+                                                  click_quality,
+                                                  click_observed_ms);
+        if (!handled) {
+            mesh_restart_role_scan();
+            if (mesh_rx_pending_count() > 0u) {
+                (void)mesh_submit_work(&mesh_rx_work);
+            }
+            return -EIO;
+        }
+        return -EAGAIN;
+    }
+
     mesh_restart_role_scan();
 
     if (mesh_rx_pending_count() > 0u) {
@@ -3045,15 +3087,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     } else {
         mesh_c5_contact_clear(capture_count > 0u ? "reply-listen-done" :
                               "reply-listen-timeout");
-    }
-    if (click_captured) {
-        bool handled;
-
-        mesh_c5_contact_clear("click-preempt");
-        handled = mesh_handoff_anchor_click_claim(&click_claim,
-                                                  click_quality,
-                                                  click_observed_ms);
-        return handled ? -EAGAIN : -EIO;
     }
     if (yielded_to_competing_route_request) {
         return -EAGAIN;
