@@ -365,7 +365,33 @@ class AppModelTests(unittest.TestCase):
             plan.target.timeout_s,
             DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0 + 2.0,
         )
+        self.assertEqual(
+            plan.target.status_text,
+            "Enumerating 5 expected anchors and assigning discovery slots...",
+        )
         self.assertEqual(plan.preflight.timeout_s, 122.0)
+
+    def test_assignment_unknown_roster_explains_full_horizon(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.connected = True
+        gui.gateway_id = 0xAABBCCDDEEFF0011
+        gui.sequence = 0
+        gui._last_command_session_id = 0
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
+        self.set_default_policy_variables(gui)
+        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
+        gui.__dict__["_show_error"] = Mock()
+
+        gui._send_assign_discovery_slots()
+
+        gui._show_error.assert_not_called()
+        plan = gui._submit_gateway_command.call_args.args[0]
+        self.assertEqual(
+            plan.target.status_text,
+            "Enumerating an unknown anchor roster across the full 8-hop "
+            "horizon; set Expected anchors for fast completion...",
+        )
 
     def test_manual_here_i_am_carries_the_current_full_policy(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)

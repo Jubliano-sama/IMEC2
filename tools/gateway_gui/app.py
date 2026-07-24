@@ -450,7 +450,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._labeled_spin(
             refresh,
             3,
-            "Expected anchors (optional)",
+            "Expected anchors (blank = full 8-hop scan)",
             self.assignment_expected_anchors_text,
             1,
             50,
@@ -1059,8 +1059,16 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
                 ),
                 status_text=(
-                    "Writing anchor enumeration and discovery-slot assignment "
-                    "request over BLE..."
+                    (
+                        f"Enumerating {expected_anchor_count} expected "
+                        f"anchor{'s' if expected_anchor_count != 1 else ''} "
+                        "and assigning discovery slots..."
+                    )
+                    if expected_anchor_count is not None
+                    else (
+                        "Enumerating an unknown anchor roster across the full "
+                        "8-hop horizon; set Expected anchors for fast completion..."
+                    )
                 ),
             )
             preflight = self._here_i_am_dispatch(

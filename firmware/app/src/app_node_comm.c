@@ -1339,15 +1339,19 @@ int app_node_comm_service_deliveries(void)
 
     if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) {
         /*
-         * Each retry attempt must wake low-duty relays independently.  The
-         * flood backend still sends only one wake train for that attempt's
-         * four closely spaced copies.
+         * One logical bounded flood owns one wake train followed by four real
+         * RF opportunities.  Re-waking before every opportunity stretches the
+         * channel-5 blackout across response retries and can starve the
+         * gateway's channel-9 receive path.
+         *
+         * A pre-RF deferral does not increment attempt_number, so the first
+         * actual copy still keeps retrying with its required wake train.
          */
         ret = mesh_try_send_c5_flood_view(
             &attempt_view,
             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
             "node-comm-bounded-control-flood",
-            true,
+            lease.attempt_number == 1u,
             &rf_started);
     } else if (attempt_record.profile == NODE_COMM_PROFILE_CONTROL_RESPONSE) {
         ret = mesh_try_send_control_response_view(

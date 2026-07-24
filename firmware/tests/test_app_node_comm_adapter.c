@@ -1129,7 +1129,7 @@ static void test_control_flood_freezes_age_before_wake_work(void)
     assert(last_control_flood.queued_at_ms == 777u);
 }
 
-static void test_delivery_copies_envelope_and_rewakes_each_rf_opportunity(void)
+static void test_delivery_copies_envelope_and_wakes_once_per_flood(void)
 {
     struct mesh_outbound envelope = delivery_envelope(10u);
     const struct mesh_outbound expected = envelope;
@@ -1171,7 +1171,7 @@ static void test_delivery_copies_envelope_and_rewakes_each_rf_opportunity(void)
         assert(memcmp(&try_flood_envelopes[attempt],
                       &expected,
                       sizeof(expected)) == 0);
-        assert(try_flood_wake_train[attempt]);
+        assert(try_flood_wake_train[attempt] == (attempt == 0u));
         if (attempt < 3u) {
             assert(!app_node_comm_take_delivery_event_for(handle, &event));
         }
@@ -1659,11 +1659,14 @@ static void test_delivery_pre_rf_busy_defers_without_consuming_attempts(void)
     atomic_store(&fake_now_ms, first_delay_ms);
     assert(app_node_comm_service_deliveries() == -EAGAIN);
     assert(try_flood_calls == 2u);
+    assert(try_flood_wake_train[0]);
+    assert(try_flood_wake_train[1]);
 
     first_rf_ms = first_delay_ms + second_delay_ms;
     for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)(first_rf_ms + attempt * 40u));
         assert(app_node_comm_service_deliveries() == 0);
+        assert(try_flood_wake_train[2u + attempt] == (attempt == 0u));
     }
     assert(app_node_comm_take_delivery_event_for(handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
@@ -2981,7 +2984,7 @@ int main(void)
     test_stop_completes_while_backend_send_is_blocked();
     test_pause_expiry_preserves_full_64_bit_uptime();
     test_send_stays_closed_until_backend_resume_is_ready();
-    test_delivery_copies_envelope_and_rewakes_each_rf_opportunity();
+    test_delivery_copies_envelope_and_wakes_once_per_flood();
     test_assignment_sized_control_payload_admission();
     if (DEVICE_ROLE == ROLE_GATEWAY) {
         test_gateway_large_control_retries_exact_fifty_anchor_payload();

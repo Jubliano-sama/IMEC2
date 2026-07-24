@@ -948,6 +948,20 @@ add_test(NAME mesh_discovery_scenarios COMMAND test_mesh_discovery_scenarios)
 set_tests_properties(mesh_discovery_scenarios
     PROPERTIES LABELS "mesh_integration;simulator;discovery")
 
+add_executable(test_mesh_assignment_control_timing_scenarios
+    tests/mesh_integration/test_mesh_assignment_control_timing_scenarios.c
+)
+target_link_libraries(test_mesh_assignment_control_timing_scenarios
+    PRIVATE mesh_sim)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_mesh_assignment_control_timing_scenarios
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME mesh_assignment_control_timing_scenarios
+    COMMAND test_mesh_assignment_control_timing_scenarios)
+set_tests_properties(mesh_assignment_control_timing_scenarios PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;assignment;gateway_command;timing")
+
 add_executable(test_mesh_discovery_assignment_adversarial_scenarios
     tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c
 )
