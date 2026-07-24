@@ -1010,6 +1010,14 @@ control may be serviced there, otherwise it is serviced immediately afterward.
 This priority is assigned by gateway origin, not by a command-ID allowlist, and
 therefore includes anchor discovery and future gateway commands.
 
+The gateway's continuous channel 9 receiver must release a pending control
+handoff even when the handoff becomes ready between receive windows. A receive
+start rejected because that handoff now owns the radio is itself a safe
+boundary: the gateway schedules the pending control there and leaves receive
+rearming to the control completion path. Retrying the receive window while the
+handoff gate remains closed would strand both the control and all later host
+commands.
+
 Gateway commands propagate away from the gateway until every reachable anchor
 has received them:
 

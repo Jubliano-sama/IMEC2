@@ -1387,6 +1387,18 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 
             ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX");
             if (ret < 0) {
+                if (ret == -ECANCELED) {
+                    int priority_ret =
+                        app_node_comm_gateway_delivery_safe_boundary();
+
+                    status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_START_HANDOFF ret=%d\n",
+                                        priority_ret);
+                    if (priority_ret < 0) {
+                        LOG_ERR("gateway command safe-boundary scheduling failed before RX start: %d",
+                                priority_ret);
+                    }
+                    return;
+                }
                 status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_GUARD_FAIL ret=%d\n", ret);
                 mesh_schedule_uwb_rx(0u);
                 return;

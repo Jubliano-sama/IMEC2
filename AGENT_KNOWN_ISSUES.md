@@ -487,3 +487,5 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Fixed stack-evidence verification comparing ARM MPU-guarded runtime stack watermarks against raw Kconfig bytes; apply Zephyr's guard reservation and object alignment to system and mesh workqueues before checking exact RTT sizes.
 - Fixed parallel-round survey control dispatch bypassing the response-ACK settle window and launching the next PREPARE, START, or GO within milliseconds; every successful round control now yields the same bounded Channel-9 ACK ownership as the serial driver.
 - Fixed gateway survey fingerprinting consuming a full 1021-byte encoded-frame local on `sysworkq`; incremental canonical packet hashing preserves the exact fingerprint while reducing that call frame to 64 bytes without spending static RAM.
+- This checkout's pyOCD does not support `pyocd list --json`; use the plain `pyocd list` table for live probe enumeration.
+- Fixed continuous gateway RX stranding a scheduled control handoff when scan admission closed between receive windows; a start-time `-ECANCELED` now services the safe boundary instead of attempting an impossible RX rearm.

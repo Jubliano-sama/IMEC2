@@ -49,6 +49,17 @@ def function_body(source: str, name: str) -> str:
     raise AssertionError(f"unterminated function {name}")
 
 
+def braced_block(source: str, start: int) -> str:
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        depth += source[index] == "{"
+        depth -= source[index] == "}"
+        if depth == 0:
+            return source[start : index + 1]
+    raise AssertionError("unterminated source block")
+
+
 def assert_debug_record_fits(
     source: str, marker: str, unsigned_widths: tuple[int, ...]
 ) -> None:
@@ -659,6 +670,35 @@ gateway_rx_worker = function_body(REPORT, "mesh_uwb_rx_work_handler")
 assert gateway_rx_worker.count("mesh_rx_radio_start(") == 2
 assert gateway_rx_worker.count("mesh_rx_radio_stop(") == 2
 assert "mesh_transport_radio_start(" not in gateway_rx_worker
+
+continuous_start = gateway_rx_worker.index(
+    'ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX")'
+)
+continuous_guard_start = gateway_rx_worker.index(
+    "if (ret < 0)", continuous_start
+)
+continuous_guard = braced_block(gateway_rx_worker, continuous_guard_start)
+assert "if (ret == -ECANCELED)" in continuous_guard, (
+    "continuous gateway RX start cancellation must have a dedicated "
+    "safe-boundary handoff branch"
+)
+cancel_start = continuous_guard.index("if (ret == -ECANCELED)")
+cancel_boundary = braced_block(continuous_guard, cancel_start)
+assert cancel_boundary.count(
+    "app_node_comm_gateway_delivery_safe_boundary()"
+) == 1, (
+    "start-time gateway RX cancellation must acknowledge exactly one "
+    "node-communication delivery boundary"
+)
+assert "mesh_schedule_uwb_rx(" not in cancel_boundary, (
+    "start-time cancellation must transfer radio ownership instead of "
+    "trying to rearm RX while the handoff gate is pending"
+)
+assert cancel_boundary.index(
+    "app_node_comm_gateway_delivery_safe_boundary()"
+) < cancel_boundary.index("return;"), (
+    "gateway delivery boundary must be acknowledged before RX worker exits"
+)
 
 rx_schedule = function_body(REPORT, "mesh_schedule_uwb_rx")
 assert "mesh_rx_handoff_scan_rearm_allowed()" in rx_schedule, (
