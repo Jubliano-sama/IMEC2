@@ -503,10 +503,46 @@ static bool gateway_survey_round_note_control_result(
         return true;
     }
     if (control.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR) {
+        const struct survey_pair_round_lane *lane =
+            app_gateway_survey_round_lane(&gateway_survey_round,
+                                          control.lane_index);
+        struct gateway_command_event event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_STAGE_PAIR_START,
+            CMD_SURVEY_START_PAIR,
+            &gateway_survey_host_command,
+            gateway_survey_context.survey_id);
+
         survey_gateway_transaction_pair_complete(
             &gateway_survey_transaction,
             true,
             (uint64_t)k_uptime_get());
+        event.pair_initiator_id = control.pair.initiator_id;
+        event.pair_responder_id = control.pair.responder_id;
+        event.attempt = lane == NULL ?
+            1u : (uint8_t)(lane->reruns_started + 1u);
+        event.progress_count = lane == NULL ?
+            0u : (uint16_t)(lane->plan_pair_index + 1u);
+        event.total_count = (uint16_t)gateway_survey_context.pair_count;
+        ret = app_gateway_survey_observability_submit_boundary(
+            &gateway_survey_observability,
+            &gateway_survey_observability_ops,
+            &event);
+        status_debug_printf("DBG_SURVEY_ROUND_PAIR_START survey=%u round=%u initiator=0x%016llx responder=0x%016llx attempt=%u ret=%d pending=%u\n",
+                            control.pair.survey_id,
+                            gateway_survey_round.runtime.batch_sequence,
+                            (unsigned long long)control.pair.initiator_id,
+                            (unsigned long long)control.pair.responder_id,
+                            event.attempt,
+                            ret,
+                            gateway_survey_observability.boundary_pending ?
+                                1u : 0u);
+        if (ret == -EBUSY) {
+            gateway_survey_auto_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
+        }
     }
     gateway_survey_auto.waiting = false;
     gateway_survey_round_sync_auto();

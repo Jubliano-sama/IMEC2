@@ -128,6 +128,12 @@ partial assignment or survey results into total firmware failure.
   control-plane traffic. They take priority over queued local-origin click
   report delivery, transit payload relay, ACK retries, route maintenance, and
   background maintenance at the first safe radio boundary.
+- Before every direct channel 9 gateway-contact attempt, an anchor samples the
+  channel 5 control lane. If activity is present, the contact attempt yields
+  without leaving channel 5. If a gateway wake train begins during an ACK wait,
+  the next retry boundary must sample channel 5 early enough to overlap that
+  same continuous wake train, so a missing gateway ACK cannot make assignment,
+  survey, or other gateway control permanently undiscoverable.
 - The gateway does not run startup or periodic "Here I Am" maintenance and it
   does not hide route-refresh readiness behind a firmware latch. Ordinary host
   software starts each user-requested complex operation with a separately
@@ -161,7 +167,10 @@ partial assignment or survey results into total firmware failure.
   backoff round but does not consume a transmission opportunity; only an actual
   RF start consumes one. Fixed delays are allowed for non-transmitting service
   polls and protocol-defined spacing after a successful transmission, not for
-  another RF attempt.
+  another RF attempt. A valid deferred gateway-control flood retains a delayed
+  work owner while transport is paused; transport-resume notification is an
+  acceleration path, not the sole liveness owner, because pause and deferred
+  custody publication may race.
 - The gateway does not own a normal channel 9 connection. It is primarily a
   continuous channel 9 receiver, and it originates mesh commands on channel 5.
 - Normal route acquisition does not depend on the gateway receiving channel 5
@@ -243,6 +252,10 @@ partial assignment or survey results into total firmware failure.
   gateway keeps each accepted ACK identity for at least the sender's maximum
   custody lifetime; the shorter route deduplication window cannot expire an ACK
   while the sender may still retry.
+  A direct channel 9 gateway route probe is idempotent contact control rather
+  than accepted data custody. The gateway rebuilds and returns its ACK for each
+  valid probe without consuming the durable ACK-identity store, so a node that
+  cannot hear the response cannot exhaust custody capacity for other anchors.
   A GUI-process restart clears the session cache, and no persistent host
   acknowledgement exists here, so this contract does not claim end-to-end
   exactly-once delivery across host restart. Cache eviction under host memory

@@ -8072,6 +8072,66 @@ static void test_gateway_acceptance_survives_full_origin_batches_and_churn(void)
     assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
 }
 
+static void test_gateway_route_probe_churn_cannot_exhaust_ack_history(void)
+{
+    static struct mesh_gateway_ack_store ack_store;
+    struct mesh_relay gateway;
+    struct mesh_relay_result result;
+    struct proto_packet route_probe = {
+        .msg_type = MSG_GATEWAY_ROUTE_REQ,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_A,
+        .dst_id = GATEWAY,
+        .session_id = UINT32_C(0xb1b2b3b4),
+        .seq = 1u,
+        .ttl = 2u,
+    };
+    struct proto_packet report = {
+        .msg_type = MSG_SELF_TEST_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_B,
+        .dst_id = GATEWAY,
+        .session_id = UINT32_C(0xc1c2c3c4),
+        .seq = 1u,
+        .ttl = 2u,
+    };
+
+    memset(&ack_store, 0, sizeof(ack_store));
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    77u);
+    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) == PROTO_OK);
+
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY + 20u; i++) {
+        route_probe.seq = (uint16_t)(i + 1u);
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &route_probe,
+                                    NULL,
+                                    0u,
+                                    ANCHOR_A,
+                                    90u,
+                                    9000u + i,
+                                    &result) == PROTO_OK);
+        assert(result.status == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    }
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &report,
+                                NULL,
+                                0u,
+                                ANCHOR_B,
+                                90u,
+                                10000u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+}
+
 static void test_gateway_delivery_commit_rejects_invalid_contract(void)
 {
     struct mesh_relay gateway;
@@ -11460,6 +11520,7 @@ int main(void)
     test_gateway_ack_required_without_history_fails_closed();
     test_gateway_shared_history_handles_unbatched_and_batch_churn();
     test_gateway_acceptance_survives_full_origin_batches_and_churn();
+    test_gateway_route_probe_churn_cannot_exhaust_ack_history();
     test_gateway_delivery_commit_rejects_invalid_contract();
     test_generic_gateway_ack_cannot_complete_collection_eack_custody();
     test_gateway_delivers_direct_clicker_self_test_report_and_acks();

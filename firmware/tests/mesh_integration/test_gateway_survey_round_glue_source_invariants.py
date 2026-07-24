@@ -150,6 +150,55 @@ assert "K_NO_WAIT" not in successful_round_control, (
     "round control success must not bypass response-ACK settle with immediate work"
 )
 
+# A successful START_INITIATOR is the causal pair-start boundary for its exact
+# lane. It must enter telemetry custody before ACK settle and before the drive
+# scheduler can expose the common GO or a later rerun.
+pair_start_guard = successful_round_control.index(
+    "if (control.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR)"
+)
+pair_start_open = successful_round_control.index("{", pair_start_guard)
+pair_start_end = block_end(successful_round_control, pair_start_open)
+pair_start_body = successful_round_control[
+    pair_start_guard : pair_start_end + 1
+]
+assert_ordered(
+    pair_start_body,
+    "GATEWAY_COMMAND_EVENT_STAGE_PAIR_START",
+    "CMD_SURVEY_START_PAIR",
+    "event.pair_initiator_id = control.pair.initiator_id",
+    "event.pair_responder_id = control.pair.responder_id",
+    "app_gateway_survey_observability_submit_boundary(",
+)
+after_pair_start = successful_round_control[pair_start_end + 1 :]
+assert_ordered(
+    after_pair_start,
+    "gateway_survey_round_sync_auto()",
+    "survey_gateway_response_ack_settle_note_result(",
+    "gateway_survey_schedule_drive()",
+)
+assert successful_round_control.index(
+    "app_gateway_survey_observability_submit_boundary("
+) < successful_round_control.index(
+    "survey_gateway_response_ack_settle_note_result("
+), "pair-start custody must precede ACK settle and any next-phase scheduling"
+
+# The scheduler treats only immediately executable round phases as runnable.
+# OBSERVING remains represented by pair_observation_active, which selects the
+# bounded poll path and prevents a zero-delay workqueue spin.
+drive_state = function_body(SURVEY, "gateway_survey_drive_state")
+assert_ordered(
+    drive_state,
+    ".pair_observation_active =",
+    "gateway_survey_pair_observation_active",
+    ".round_drive_ready =",
+    "APP_GATEWAY_SURVEY_ROUND_DISPATCHING",
+    "APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED",
+    "APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE",
+)
+assert "APP_GATEWAY_SURVEY_ROUND_OBSERVING" not in drive_state, (
+    "OBSERVING must poll as an external wait rather than busy-spin as runnable"
+)
+
 
 # GO is one broadcast for the complete armed batch, carries that same round
 # identity, and requests no per-anchor responses that could serialize lanes.

@@ -42,7 +42,38 @@ def function_body(source: str, name: str) -> str:
     raise AssertionError(f"unterminated function: {name}")
 
 
+def braced_block_after(source: str, marker: str) -> str:
+    marker_index = source.index(marker)
+    start = source.index("{", marker_index)
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"unterminated block after: {marker}")
+
+
 class MeshRfRetrySourceInvariantTests(unittest.TestCase):
+    def test_direct_gateway_probe_checks_control_lane_before_channel9(self):
+        body = function_body(
+            REPORT, "mesh_send_direct_gateway_probe_and_wait"
+        )
+        control_sniff = body.index("mesh_route_wake_sniff_activity(")
+        channel9_config = body.index(
+            "dwm3000_driver_configure_mesh_payload_mode()"
+        )
+
+        self.assertLess(control_sniff, channel9_config)
+        self.assertIn('if (ret < 0 || c5_activity)', body)
+        self.assertIn('ret = -EBUSY', body)
+        self.assertIn(
+            '"direct-gateway-probe-c5-yield"', body
+        )
+        self.assertIn("mesh_restart_role_scan()", body)
+
     def test_route_request_pre_rf_busy_uses_identity_backoff(self):
         body = function_body(REPORT, "mesh_route_request_defer_rf_busy")
 
@@ -794,6 +825,46 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("mesh_c5_flood_deferred_retry_ms", body)
         self.assertIn("mesh_c5_flood_deferred.retry_count = 1u", body)
         self.assertNotIn("MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS", body)
+
+    def test_paused_transport_keeps_valid_deferred_flood_live_and_bounded(self):
+        body = function_body(REPORT, "mesh_c5_flood_work_handler")
+        paused = braced_block_after(body, "if (mesh_transport_paused())")
+        valid = braced_block_after(
+            paused, "if (mesh_c5_flood_deferred.valid)"
+        )
+
+        self.assertIn("mesh_reschedule_delayable(", valid)
+        self.assertIn("&mesh_c5_flood_work", valid)
+        self.assertNotIn(
+            "mesh_c5_flood_deferred.valid = false", paused,
+            "transport arbitration must retain deferred flood custody",
+        )
+        self.assertNotIn(
+            "mesh_c5_flood_deferred.retry_count++", paused,
+            "a pause is not an RF attempt and must not consume retry budget",
+        )
+
+        retry_guard = body.index(
+            "mesh_c5_flood_deferred.retry_count < "
+            "MESH_C5_DEFERRED_MAX_RETRIES"
+        )
+        retry_increment = body.index(
+            "mesh_c5_flood_deferred.retry_count++", retry_guard
+        )
+        retry_schedule = body.index(
+            "mesh_reschedule_delayable(&mesh_c5_flood_work",
+            retry_increment,
+        )
+        custody_release = body.index(
+            "mesh_c5_flood_deferred.valid = false", retry_schedule
+        )
+        self.assertLess(retry_guard, retry_increment)
+        self.assertLess(retry_increment, retry_schedule)
+        self.assertLess(retry_schedule, custody_release)
+        self.assertRegex(
+            REPORT_UNIT,
+            r"#define\s+MESH_C5_DEFERRED_MAX_RETRIES\s+[1-9][0-9]*u",
+        )
 
     def test_successful_accept_releases_single_retry_slot(self):
         body = function_body(REPORT, "mesh_event_accept_finish_send")

@@ -412,7 +412,8 @@ enum survey_gateway_drive_action survey_gateway_drive_action(
     if (state->auto_waiting || state->pair_observation_active) {
         return SURVEY_GATEWAY_DRIVE_POLL_WAIT;
     }
-    if (state->auto_running && !state->auto_waiting &&
+    if ((state->auto_running || state->round_drive_ready) &&
+        !state->auto_waiting &&
         !state->pair_observation_active) {
         return SURVEY_GATEWAY_DRIVE_RUN_NOW;
     }

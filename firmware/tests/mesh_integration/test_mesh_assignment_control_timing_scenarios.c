@@ -1,6 +1,8 @@
+#include "app_mesh_direct_gateway_retry.h"
 #include "discovery_assignment.h"
 #include "gateway_command.h"
 #include "mesh.h"
+#include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "mesh_sim.h"
 #include "protocol.h"
@@ -21,6 +23,14 @@
 #define RESPONSE_SEQUENCE UINT16_C(2)
 #define FIRST_COMMAND_TX_US UINT64_C(1000)
 #define RX_GUARD_US UINT64_C(100)
+#define DIRECT_ROUTE_TX_TIMEOUT_MS 20u
+#define DIRECT_ROUTE_ATTEMPT_MAX_US \
+    ((uint64_t)(DIRECT_ROUTE_TX_TIMEOUT_MS + \
+                APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS + \
+                APP_MESH_DIRECT_GATEWAY_ACK_RX_MS) * 1000u)
+#define DIRECT_ROUTE_FIRST_BACKOFF_MAX_US \
+    ((uint64_t)(2u * APP_MESH_DIRECT_GATEWAY_ROUTE_BACKOFF_BASE_MS) * 1000u)
+#define DIRECT_ROUTE_RETRY_SNIFF_US MESH_RADIO_WAKE_POLITENESS_CHECK_US
 
 _Static_assert(FLOOD_RELAY_REPEAT_COUNT == 4u,
                "scenario models every bounded control-flood opportunity");
@@ -29,6 +39,11 @@ _Static_assert(DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS >
                DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS <
                    FLOOD_RELAY_REPEAT_MS * 3u,
                "minimum assignment response must fall between bounded copies");
+_Static_assert(DIRECT_ROUTE_ATTEMPT_MAX_US +
+                   DIRECT_ROUTE_FIRST_BACKOFF_MAX_US +
+                   DIRECT_ROUTE_RETRY_SNIFF_US <
+                   (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u,
+               "direct route retry must recheck C5 inside a gateway wake train");
 
 enum response_rx_mode {
     RESPONSE_RX_NONE = 0,
@@ -428,10 +443,103 @@ static int test_gateway_command_yields_for_assignment_claim(void)
     return 0;
 }
 
+static int test_direct_route_retry_reenters_control_lane_inside_wake_train(void)
+{
+    static struct mesh_sim_world world;
+    struct mesh_outbound command;
+    uint8_t frame[PACKET_EXT_MAX_LEN];
+    size_t frame_len = 0u;
+    uint64_t wake_start_us = FIRST_COMMAND_TX_US;
+    uint64_t sniff_start_us = wake_start_us +
+        DIRECT_ROUTE_ATTEMPT_MAX_US + DIRECT_ROUTE_FIRST_BACKOFF_MAX_US;
+    uint64_t sniff_end_us = sniff_start_us + DIRECT_ROUTE_RETRY_SNIFF_US;
+    uint64_t wake_activity_tx_us = sniff_start_us + RX_GUARD_US;
+    uint64_t command_tx_us = wake_start_us +
+        (uint64_t)MESH_RADIO_WAKE_TRAIN_MS * 1000u + RX_GUARD_US;
+    uint64_t command_end_us;
+    uint16_t wake_activity_tx;
+    uint16_t command_tx;
+    uint8_t gateway;
+    uint8_t anchor;
+    int ret;
+
+    mesh_sim_init(&world, UINT32_C(0xA55171C5));
+    ret = mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                            GATEWAY_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                            &gateway);
+    REQUIRE(ret == MESH_SIM_OK, "add preemption gateway ret=%d", ret);
+    ret = mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            ANCHOR_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                            &anchor);
+    REQUIRE(ret == MESH_SIM_OK, "add preemption anchor ret=%d", ret);
+    ret = mesh_sim_set_link(&world, gateway, anchor, 100u, 10u);
+    REQUIRE(ret == MESH_SIM_OK, "set preemption link ret=%d", ret);
+    ret = build_assignment_command(&command);
+    REQUIRE(ret == PROTO_OK, "build preemption command ret=%d", ret);
+    ret = encode_application_packet(&command.packet,
+                                    command.payload,
+                                    command.payload_len,
+                                    frame,
+                                    sizeof(frame),
+                                    &frame_len);
+    REQUIRE(ret == PROTO_OK, "encode preemption command ret=%d", ret);
+
+    /*
+     * Worst phase: the gateway wake train begins immediately after the
+     * anchor's previous C5 sniff, so the first direct route probe waits out
+     * its full TX/ACK attempt and maximum first backoff. The next mandatory
+     * sniff still lands inside the train and observes a complete C5 frame.
+     */
+    ret = mesh_sim_schedule_rx(&world, anchor,
+                               sniff_start_us, sniff_end_us,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_MESH_CONTROL, NULL);
+    REQUIRE(ret == MESH_SIM_OK, "arm retry-boundary sniff ret=%d", ret);
+    ret = mesh_sim_schedule_raw_tx(&world, gateway, wake_activity_tx_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   frame, frame_len, false,
+                                   &wake_activity_tx);
+    REQUIRE(ret == MESH_SIM_OK, "schedule wake activity ret=%d", ret);
+    REQUIRE(world.transmissions[wake_activity_tx].end_us <= sniff_end_us,
+            "wake activity is not fully contained in retry sniff");
+    ret = mesh_sim_run_until(&world, sniff_end_us);
+    REQUIRE(ret == MESH_SIM_OK && world.roles[anchor].decoded_frames == 1u,
+            "retry sniff missed gateway wake activity ret=%d decoded=%" PRIu32,
+            ret, world.roles[anchor].decoded_frames);
+
+    command_end_us = command_tx_us +
+        mesh_sim_frame_duration_us(MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   frame_len) +
+        world.propagation_us[gateway][anchor] + RX_GUARD_US;
+    ret = mesh_sim_schedule_rx(&world, anchor,
+                               sniff_end_us, command_end_us,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_MESH_CONTROL, NULL);
+    REQUIRE(ret == MESH_SIM_OK, "arm post-wake command RX ret=%d", ret);
+    ret = mesh_sim_schedule_raw_tx(&world, gateway, command_tx_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   frame, frame_len, false, &command_tx);
+    REQUIRE(ret == MESH_SIM_OK, "schedule post-wake command ret=%d", ret);
+    ret = mesh_sim_run(&world);
+    REQUIRE(ret == MESH_SIM_OK && world.roles[anchor].decoded_frames == 2u,
+            "gateway command did not survive route-probe preemption ret=%d decoded=%" PRIu32,
+            ret, world.roles[anchor].decoded_frames);
+    REQUIRE(world.transmissions[command_tx].end_us +
+                world.propagation_us[gateway][anchor] <= command_end_us,
+            "gateway command airtime escaped bounded RX window");
+    return 0;
+}
+
 int main(void)
 {
     int ret = test_gateway_command_yields_for_assignment_claim();
 
+    if (ret != 0) {
+        return ret;
+    }
+    ret = test_direct_route_retry_reenters_control_lane_inside_wake_train();
     if (ret != 0) {
         return ret;
     }

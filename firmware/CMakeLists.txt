@@ -951,6 +951,8 @@ set_tests_properties(mesh_discovery_scenarios
 add_executable(test_mesh_assignment_control_timing_scenarios
     tests/mesh_integration/test_mesh_assignment_control_timing_scenarios.c
 )
+target_include_directories(test_mesh_assignment_control_timing_scenarios
+    PRIVATE app/src)
 target_link_libraries(test_mesh_assignment_control_timing_scenarios
     PRIVATE mesh_sim)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

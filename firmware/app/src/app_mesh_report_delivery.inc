@@ -537,6 +537,20 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     if (mesh_transport_paused()) {
+        /*
+         * The transport can pause after a caller decides to defer a flood but
+         * before this worker runs.  Transport resume normally submits the
+         * worker, but it may have completed just before the deferred record was
+         * stored.  Keep an independent delayed owner so that race cannot strand
+         * a gateway command indefinitely.
+         */
+        if (mesh_c5_flood_deferred.valid) {
+            uint32_t retry_ms =
+                mesh_c5_flood_deferred_retry_ms(
+                    &mesh_c5_flood_deferred.outbound);
+
+            (void)mesh_reschedule_delayable(&mesh_c5_flood_work, retry_ms);
+        }
         return;
     }
 

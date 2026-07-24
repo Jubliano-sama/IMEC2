@@ -832,6 +832,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
 {
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
+    bool c5_activity = false;
     bool ack_wait_ran = false;
     int ret;
 
@@ -858,6 +859,33 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
     mesh_stop_role_scan();
     ret = mesh_transport_radio_start("mesh direct gateway route probe");
     if (ret < 0) {
+        mesh_restart_role_scan();
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        return ret;
+    }
+
+    /*
+     * Direct route contact is background maintenance. Check the control lane
+     * at every safe retry boundary before leaving channel 5 so a gateway wake
+     * train that started during the previous ACK wait can preempt the next
+     * channel-9 attempt.
+     */
+    ret = mesh_route_wake_sniff_activity("direct-gateway-pre",
+                                         GATEWAY_ID,
+                                         reason,
+                                         attempt > 0u ? attempt - 1u : 0u,
+                                         &c5_activity);
+    if (ret < 0 || c5_activity) {
+        if (c5_activity) {
+            ret = -EBUSY;
+        }
+        status_debug_printf("DBG_DIRECT_GW_PROBE_C5_YIELD ret=%d activity=%u attempt=%u\n",
+                            ret,
+                            c5_activity ? 1u : 0u,
+                            attempt);
+        mesh_release_radio_after_mesh_turn(true,
+                                           "direct-gateway-probe-c5-yield");
+        radio_guard_uwb_stop();
         mesh_restart_role_scan();
         k_mutex_unlock(&mesh_send_scratch_lock);
         return ret;

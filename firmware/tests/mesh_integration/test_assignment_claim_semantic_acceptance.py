@@ -95,6 +95,23 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertTrue(has_owned_return(validation, "-EPROTO"))
         self.assertTrue(has_owned_return(validation, "-ESTALE"))
 
+    def test_every_assignment_state_gate_is_visible_in_hardware_traces(self):
+        claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
+
+        for reason in (
+            "reason=inactive",
+            "reason=control",
+            "reason=phase",
+            "reason=epoch",
+            "reason=deadline",
+            "reason=rf-start",
+        ):
+            with self.subTest(reason=reason):
+                self.assertIn(
+                    f"DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT {reason}",
+                    claim,
+                )
+
     def test_valid_and_duplicate_claims_and_table_acks_are_distinguished(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
         ack_start = claim.index(

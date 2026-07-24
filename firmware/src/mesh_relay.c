@@ -1778,7 +1778,15 @@ static bool gateway_ack_history_applies(const struct mesh_relay *relay,
 {
     return relay->role == MESH_RELAY_ROLE_GATEWAY &&
            packet->dst_id == relay->local_id &&
-           (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
+           (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+           /*
+            * A direct gateway route probe is idempotent contact control, not
+            * accepted data custody. Remembering every fresh probe identity for
+            * the one-day data-custody horizon lets one disconnected node
+            * exhaust the shared ACK store and block unrelated anchors.
+            * Rebuild its ACK from every valid reception instead.
+            */
+           packet->msg_type != MSG_GATEWAY_ROUTE_REQ;
 }
 
 static bool gateway_ack_identity_valid(

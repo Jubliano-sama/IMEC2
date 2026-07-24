@@ -773,6 +773,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         return (value);                                                      \
     } while (false)
     if (!gateway_discovery_assignment_state.active) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=inactive src=0x%016llx\n",
+                            (unsigned long long)packet->src_id);
         GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
     }
     ret = discovery_assignment_extract_control_tlvs(payload,
@@ -780,24 +782,50 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                                     &phase,
                                                     &epoch);
     if (ret != PROTO_OK) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=control ret=%d src=0x%016llx\n",
+                            ret,
+                            (unsigned long long)packet->src_id);
         GATEWAY_ASSIGNMENT_RETURN(-EBADMSG);
     }
     if (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
         phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=phase phase=%u epoch=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            (unsigned long long)packet->src_id);
         GATEWAY_ASSIGNMENT_RETURN(-EPROTO);
     }
     if (epoch != gateway_discovery_assignment_state.epoch) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=epoch phase=%u received=%u expected=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            gateway_discovery_assignment_state.epoch,
+                            (unsigned long long)packet->src_id);
         GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
     }
     if (app_discovery_assignment_operation_expired(
             (uint64_t)k_uptime_get(),
             gateway_discovery_assignment_state.operation_deadline_ms)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=deadline phase=%u epoch=%u now=%u deadline=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            k_uptime_get_32(),
+                            (uint32_t)gateway_discovery_assignment_state.operation_deadline_ms,
+                            (unsigned long long)packet->src_id);
         GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
     }
     if (!gateway_discovery_assignment_rf_started_locked(
             phase == DISCOVERY_ASSIGNMENT_PHASE_ACK ?
                 GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE :
                 GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=rf-start phase=%u epoch=%u kind=%u handle=%u claim_ok=%u table_ok=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            (unsigned int)gateway_discovery_assignment_state.delivery_kind,
+                            gateway_discovery_assignment_state.delivery_handle,
+                            gateway_discovery_assignment_state.claim_delivery_succeeded ? 1u : 0u,
+                            gateway_discovery_assignment_state.table_delivery_succeeded ? 1u : 0u,
+                            (unsigned long long)packet->src_id);
         GATEWAY_ASSIGNMENT_RETURN(-EAGAIN);
     }
     ret = tlv_find(payload,

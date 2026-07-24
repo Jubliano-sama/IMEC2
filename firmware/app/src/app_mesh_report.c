@@ -140,7 +140,19 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
     ((MESH_GATEWAY_DIRECT_PROBE_ATTEMPTS * MESH_GATEWAY_DIRECT_PROBE_ATTEMPT_MS) + \
      ((MESH_GATEWAY_DIRECT_PROBE_ATTEMPTS - 1u) * \
       MESH_GATEWAY_DIRECT_PROBE_BACKOFF_MAX_MS) + 50u)
-#define MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS 10u
+/*
+ * A gateway wake train that begins immediately after the direct-probe C5
+ * politeness sniff must still be active at the next retry boundary. This
+ * gives gateway control a deterministic preemption point even when the first
+ * channel-9 probe waits out its entire ACK window.
+ */
+BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_ATTEMPT_MS +
+             (2u * APP_MESH_DIRECT_GATEWAY_ROUTE_BACKOFF_BASE_MS) +
+             APP_WAKE_TRAIN_POLITE_SNIFF_MS <
+             MESH_RADIO_WAKE_TRAIN_MS,
+             "direct gateway retry must recheck C5 inside one wake train");
+#define MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS \
+    APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS
 #define MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS \
     (MESH_CH9_TX_CONFIG_GUARD_MS + MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS + \
      MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS)

@@ -47,6 +47,48 @@ static void test_runnable_orphan_is_driven_now(void)
            SURVEY_GATEWAY_DRIVE_RUN_NOW);
 }
 
+static void test_round_drive_ready_does_not_depend_on_serial_auto_owner(void)
+{
+    const struct survey_gateway_drive_state state = {
+        .survey_active = true,
+        .auto_running = false,
+        .auto_waiting = false,
+        .pair_observation_active = false,
+        .round_drive_ready = true,
+        .cleanup_pending = false,
+        .boundary_pending = false,
+        .response_ack_settle_pending = false,
+    };
+
+    /*
+     * A completed parallel batch can queue a rerun while the compatibility
+     * serial owner is idle. The round phase remains the runnable owner.
+     */
+    assert(survey_gateway_drive_action(&state) ==
+           SURVEY_GATEWAY_DRIVE_RUN_NOW);
+}
+
+static void test_observing_round_polls_without_busy_spin(void)
+{
+    const struct survey_gateway_drive_state state = {
+        .survey_active = true,
+        .auto_running = false,
+        .auto_waiting = false,
+        .pair_observation_active = true,
+        .round_drive_ready = false,
+        .cleanup_pending = false,
+        .boundary_pending = false,
+        .response_ack_settle_pending = false,
+    };
+
+    /*
+     * OBSERVING is an external wait, not runnable round work: preserve the
+     * bounded deadline poll and never resubmit the worker at zero delay.
+     */
+    assert(survey_gateway_drive_action(&state) ==
+           SURVEY_GATEWAY_DRIVE_POLL_WAIT);
+}
+
 static void test_response_ack_settle_blocks_next_phase(void)
 {
     assert(decide(true, true, false, false, false, false, true) ==
@@ -188,6 +230,8 @@ int main(void)
     test_cleanup_always_keeps_polling();
     test_boundary_custody_uses_bounded_retry();
     test_runnable_orphan_is_driven_now();
+    test_round_drive_ready_does_not_depend_on_serial_auto_owner();
+    test_observing_round_polls_without_busy_spin();
     test_response_ack_settle_blocks_next_phase();
     test_external_waits_keep_a_bounded_deadline_poll();
     test_response_ack_settle_deadline_boundary();
