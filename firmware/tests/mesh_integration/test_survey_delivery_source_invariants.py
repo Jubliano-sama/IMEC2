@@ -671,6 +671,38 @@ assert gateway_rx_worker.count("mesh_rx_radio_start(") == 2
 assert gateway_rx_worker.count("mesh_rx_radio_stop(") == 2
 assert "mesh_transport_radio_start(" not in gateway_rx_worker
 
+slice_start = gateway_rx_worker.index(
+    "uint32_t gateway_rx_slice_deadline_ms"
+)
+slice_end = gateway_rx_worker.index(
+    "gateway_route_preempt = mesh_gateway_route_test_preempt_active",
+    slice_start,
+)
+continuous_slice = gateway_rx_worker[slice_start:slice_end]
+for required_slice_boundary in (
+    "APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS",
+    "gateway_rx_slice_deadline_ms",
+    "app_mesh_rx_policy_gateway_ch9_work_slice_ms(",
+    "recoverable_errors_in_slice++",
+    "app_mesh_rx_policy_gateway_ch9_should_yield_recovery(",
+    "recovery_yield = true",
+    "mesh_schedule_uwb_rx(recovery_yield ?",
+):
+    assert required_slice_boundary in continuous_slice, (
+        "continuous gateway RX omitted bounded workqueue slice boundary: "
+        f"{required_slice_boundary}"
+    )
+assert continuous_slice.index(
+    "app_mesh_rx_policy_gateway_ch9_work_slice_ms("
+) < continuous_slice.index(
+    'mesh_rx_radio_start("mesh gateway continuous channel9 RX")'
+), "each driver receive must be clipped to the current workqueue slice"
+assert continuous_slice.index(
+    "recoverable_errors_in_slice++"
+) < continuous_slice.index(
+    "app_mesh_rx_policy_gateway_ch9_should_yield_recovery("
+), "immediate recoverable errors must count before the yield decision"
+
 continuous_start = gateway_rx_worker.index(
     'ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX")'
 )

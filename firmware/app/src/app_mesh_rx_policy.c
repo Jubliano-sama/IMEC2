@@ -60,6 +60,20 @@ uint32_t app_mesh_rx_policy_gateway_ch9_window_ms(
     return control_wait_ms > 0u ? control_wait_ms : 1u;
 }
 
+uint32_t app_mesh_rx_policy_gateway_ch9_work_slice_ms(
+    uint32_t remaining_window_ms)
+{
+    return remaining_window_ms < APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS ?
+        remaining_window_ms : APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS;
+}
+
+bool app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
+    uint16_t recoverable_errors_in_slice)
+{
+    return recoverable_errors_in_slice >=
+           APP_MESH_RX_GATEWAY_CH9_MAX_RECOVERABLE_ERRORS_PER_SLICE;
+}
+
 void app_mesh_rx_handoff_reset(struct app_mesh_rx_handoff_state *state)
 {
     if (state != NULL) {

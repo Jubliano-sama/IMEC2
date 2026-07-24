@@ -94,6 +94,45 @@ static void test_gateway_ch9_rx_clips_only_for_control_work(void)
                                                      0u) == 1u);
 }
 
+static void test_gateway_ch9_rx_bounds_one_workqueue_occupancy_slice(void)
+{
+    const uint32_t logical_window_ms = 30000u;
+    uint16_t immediate_error_count = 0u;
+
+    assert(APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS == 100u);
+    assert(APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS < logical_window_ms);
+    assert(app_mesh_rx_policy_gateway_ch9_work_slice_ms(
+               logical_window_ms) ==
+           APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS);
+    assert(app_mesh_rx_policy_gateway_ch9_work_slice_ms(
+               APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS - 1u) ==
+           APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS - 1u);
+    assert(app_mesh_rx_policy_gateway_ch9_work_slice_ms(0u) == 0u);
+
+    assert(APP_MESH_RX_GATEWAY_CH9_MAX_RECOVERABLE_ERRORS_PER_SLICE == 3u);
+    assert(!app_mesh_rx_policy_gateway_ch9_should_yield_recovery(0u));
+    while (!app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
+        immediate_error_count)) {
+        /*
+         * Model a driver that returns immediately without advancing uptime.
+         * The count guard, rather than the 100 ms wall-clock deadline, must
+         * still yield the shared system workqueue after bounded iterations.
+         */
+        assert(app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+            -EIO,
+            (immediate_error_count & 1u) != 0u ?
+                DWM3000_RX_FAILURE_BAD_FRAME :
+                DWM3000_RX_FAILURE_CRC_OR_PHY));
+        immediate_error_count++;
+        assert(immediate_error_count <=
+               APP_MESH_RX_GATEWAY_CH9_MAX_RECOVERABLE_ERRORS_PER_SLICE);
+    }
+    assert(immediate_error_count ==
+           APP_MESH_RX_GATEWAY_CH9_MAX_RECOVERABLE_ERRORS_PER_SLICE);
+    assert(app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
+        immediate_error_count));
+}
+
 static void test_control_handoff_aborts_active_scan_and_blocks_rearm(void)
 {
     struct app_mesh_rx_handoff_state state;
@@ -212,6 +251,7 @@ int main(void)
     test_gateway_ch9_rx_does_not_recover_unknown_eio();
     test_gateway_ch9_rx_keeps_full_continuous_window();
     test_gateway_ch9_rx_clips_only_for_control_work();
+    test_gateway_ch9_rx_bounds_one_workqueue_occupancy_slice();
     test_control_handoff_aborts_active_scan_and_blocks_rearm();
     test_control_handoff_wins_before_scan_acquires_radio();
     test_scheduled_control_idle_gate_blocks_scan_until_delivery_ends();

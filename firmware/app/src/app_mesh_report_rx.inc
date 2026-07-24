@@ -1360,13 +1360,25 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                 app_node_comm_gateway_route_refresh_due_ms());
         }
         uint32_t gateway_rx_deadline_ms = k_uptime_get_32() + window_ms;
+        uint32_t gateway_rx_slice_deadline_ms =
+            k_uptime_get_32() + APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS;
+        uint16_t recoverable_errors_in_slice = 0u;
+        bool recovery_yield = false;
 
         ret = -ETIMEDOUT;
-        while (!uptime_deadline_reached(k_uptime_get_32(), gateway_rx_deadline_ms)) {
+        while (!uptime_deadline_reached(k_uptime_get_32(),
+                                        gateway_rx_deadline_ms) &&
+               !uptime_deadline_reached(k_uptime_get_32(),
+                                        gateway_rx_slice_deadline_ms)) {
             uint32_t remaining_ms =
                 uptime_ms_until_deadline(k_uptime_get_32(), gateway_rx_deadline_ms);
+            uint32_t slice_remaining_ms =
+                uptime_ms_until_deadline(k_uptime_get_32(),
+                                         gateway_rx_slice_deadline_ms);
             uint32_t ack_retry_wait_ms = 0u;
 
+            remaining_ms = app_mesh_rx_policy_gateway_ch9_work_slice_ms(
+                MIN(remaining_ms, slice_remaining_ms));
             if (mesh_gateway_handoff_due_batch_acks(k_uptime_get_32())) {
                 /* Let the node-communication worker run the frozen ACK. */
                 mesh_schedule_uwb_rx(MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS);
@@ -1445,6 +1457,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 if (gateway_ch9_recoverable_rx_errors < UINT16_MAX) {
                     gateway_ch9_recoverable_rx_errors++;
                 }
+                if (recoverable_errors_in_slice < UINT16_MAX) {
+                    recoverable_errors_in_slice++;
+                }
                 /* The driver already forces RX off and clears terminal status. */
                 (void)dwm3000_driver_idle();
             } else {
@@ -1475,6 +1490,14 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                             remaining_ms,
                                             gateway_ch9_recoverable_rx_errors,
                                             channel9_frames_seen);
+                    }
+                    if (app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
+                            recoverable_errors_in_slice)) {
+                        recovery_yield = true;
+                        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=%u frames=%u\n",
+                                            recoverable_errors_in_slice,
+                                            channel9_frames_seen);
+                        break;
                     }
                     continue;
                 }
@@ -1547,7 +1570,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             mesh_schedule_uwb_rx(MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS);
             return;
         }
-        mesh_schedule_uwb_rx(0u);
+        mesh_schedule_uwb_rx(recovery_yield ?
+                             UWB_MESH_GATEWAY_RX_IDLE_MS : 0u);
         return;
     }
 

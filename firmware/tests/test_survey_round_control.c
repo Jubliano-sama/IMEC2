@@ -1,5 +1,6 @@
 #include "survey_round_control.h"
 
+#include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "survey.h"
 
@@ -116,15 +117,39 @@ static void test_go_packet_initializer(void)
                                        0u) == PROTO_ERR_MALFORMED);
 }
 
-static void test_go_execute_delay_scales_only_for_relays(void)
+static void test_go_execute_delay_scales_by_complete_forward_horizon(void)
 {
     assert(survey_round_go_execute_delay_ms(0u) ==
-           SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS);
+           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
     assert(survey_round_go_execute_delay_ms(1u) ==
-           SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS);
+           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
+    assert(survey_round_go_execute_delay_ms(2u) ==
+           2u * SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
     assert(survey_round_go_execute_delay_ms(3u) ==
-           SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS +
-               2u * FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS);
+           3u * SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
+}
+
+static void test_go_execute_delay_covers_first_receiver_forward(void)
+{
+    const uint32_t first_receiver_forward_horizon_ms =
+        FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS +
+        MESH_RADIO_WAKE_TRAIN_MS +
+        FLOOD_RELAY_BURST_MS +
+        FLOOD_POST_ROOT_GUARD_MS;
+
+    /*
+     * Local GO delivery happens after the relay core has synchronously built
+     * and sent the first broadcast forward. Even a directly reached anchor
+     * must therefore retain enough GO delay for that complete worst case.
+     */
+    assert(SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS >=
+           first_receiver_forward_horizon_ms);
+    assert(SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS >=
+           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
+    assert(survey_round_go_execute_delay_ms(0u) >=
+           first_receiver_forward_horizon_ms);
+    assert(survey_round_go_execute_delay_ms(1u) >=
+           first_receiver_forward_horizon_ms);
 }
 
 int main(void)
@@ -132,6 +157,7 @@ int main(void)
     test_round_id_optional_parser_and_encoding();
     test_go_payload_round_trip_and_parser_rejections();
     test_go_packet_initializer();
-    test_go_execute_delay_scales_only_for_relays();
+    test_go_execute_delay_scales_by_complete_forward_horizon();
+    test_go_execute_delay_covers_first_receiver_forward();
     return 0;
 }

@@ -240,6 +240,9 @@ BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS >= MESH_GATEWAY_RX_REARM_GU
              "direct gateway batches must leave time for gateway RX re-arm");
 BUILD_ASSERT(UWB_MESH_GATEWAY_RX_WINDOW_MS < APP_WATCHDOG_PROGRESS_LEASE_MS,
              "gateway continuous RX window must fit the watchdog progress lease");
+BUILD_ASSERT(APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS <
+                 UWB_MESH_GATEWAY_RX_WINDOW_MS,
+             "gateway RX work slice must yield within the logical window");
 BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS >=
              MESH_GATEWAY_RX_REARM_GUARD_MS +
              MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS,

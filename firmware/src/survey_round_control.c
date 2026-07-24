@@ -1,7 +1,16 @@
 #include "survey_round_control.h"
 
+#include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "survey.h"
+
+_Static_assert(
+    SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS >=
+        FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS +
+        MESH_RADIO_WAKE_TRAIN_MS +
+        FLOOD_RELAY_BURST_MS +
+        FLOOD_POST_ROOT_GUARD_MS,
+    "survey GO hop delay must cover synchronous local flood forwarding");
 
 static int required_u16_tlv(const uint8_t *payload,
                             size_t payload_len,
@@ -190,9 +199,9 @@ int survey_round_go_init_packet(struct proto_packet *packet,
 
 uint32_t survey_round_go_execute_delay_ms(uint8_t gateway_hop_count)
 {
-    const uint8_t relay_hops = gateway_hop_count > 1u ?
-        (uint8_t)(gateway_hop_count - 1u) : 0u;
+    const uint8_t bounded_hops = gateway_hop_count > 0u ?
+        gateway_hop_count : 1u;
 
-    return SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS +
-           (uint32_t)relay_hops * FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
+    return (uint32_t)bounded_hops *
+           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS;
 }

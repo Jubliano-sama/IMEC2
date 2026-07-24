@@ -438,13 +438,17 @@ anchor did not receive an earlier ACK.
 
 A synchronized nonzero round instead completes every endpoint's PREPARE and
 START delivery before it sends one common future GO. All armed endpoints derive
-the same execution instant from that GO's age-compensated execute delay. The
-responder receive window starts at that local instant and covers only the
-bounded local execution skew plus the initiator's DS-TWR timeout, including the
-complete RF airtime at the admitted boundary. A frame that extends beyond the
-window is a timeout. Route-depth PREPARE, START, command-result, and report
-delivery deadlines remain independent transport bounds and must never enlarge
-this local UWB receive window.
+the same execution instant from that GO's age-compensated execute delay. That
+delay reserves one complete worst-case synchronous broadcast-forward horizon
+for every RF hop, including randomized relay backoff, the wake train, the relay
+burst, and its guard. Local delivery may follow forwarding on the shared mesh
+worker without making an otherwise valid GO late, including at a forced-hop
+anchor. The responder receive window starts at that local instant and covers
+only the bounded local execution skew plus the initiator's DS-TWR timeout,
+including the complete RF airtime at the admitted boundary. A frame that
+extends beyond the window is a timeout. Route-depth PREPARE, START,
+command-result, and report delivery deadlines remain independent transport
+bounds and must never enlarge this local UWB receive window.
 
 An exact duplicate START command keeps the existing command-result custody. A
 newer START command sequence for the same prepared pair supersedes that custody:
@@ -1017,6 +1021,13 @@ boundary: the gateway schedules the pending control there and leaves receive
 rearming to the control completion path. Retrying the receive window while the
 handoff gate remains closed would strand both the control and all later host
 commands.
+
+The same continuous receiver is a logical 30-second receive horizon, not a
+30-second system-workqueue lease. Each driver receive invocation is capped at a
+bounded work slice and yields after a bounded run of immediate recoverable
+errors. It then rearms the same logical service, allowing survey deadlines,
+control transitions, BLE custody, watchdog progress, and other delayed work to
+run without opening a material Channel 9 listening gap.
 
 Gateway commands propagate away from the gateway until every reachable anchor
 has received them:
@@ -1594,7 +1605,8 @@ Useful tests or guards include:
   response-ACK settle interval, and an exact duplicate restarts it, so one lost
   ACK cannot overlap the next phase's channel-5 flood or GO.
 - A synchronized survey round arms every endpoint before one common future GO.
-  Its responder window covers bounded local execution skew plus the initiator
+  The GO delay covers one complete synchronous forward horizon per RF hop, and
+  its responder window covers bounded local execution skew plus the initiator
   DS-TWR timeout and complete frame airtime; one-hop and maximum-depth command
   timeouts remain independent, and a frame ending beyond the local window does
   not decode.

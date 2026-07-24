@@ -6,6 +6,9 @@
 
 #include "dwm3000_driver.h"
 
+#define APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS 100u
+#define APP_MESH_RX_GATEWAY_CH9_MAX_RECOVERABLE_ERRORS_PER_SLICE 3u
+
 struct app_mesh_rx_handoff_state {
     bool scheduled_control_pending;
     bool control_active;
@@ -25,6 +28,10 @@ uint32_t app_mesh_rx_policy_gateway_ch9_window_ms(
     uint32_t continuous_window_ms,
     bool control_pending,
     uint32_t control_wait_ms);
+uint32_t app_mesh_rx_policy_gateway_ch9_work_slice_ms(
+    uint32_t remaining_window_ms);
+bool app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
+    uint16_t recoverable_errors_in_slice);
 
 void app_mesh_rx_handoff_reset(struct app_mesh_rx_handoff_state *state);
 bool app_mesh_rx_handoff_request_scheduled_control(

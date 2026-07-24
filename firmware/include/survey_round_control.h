@@ -11,7 +11,9 @@ extern "C" {
 #endif
 
 #define SURVEY_LEGACY_ROUND_ID 0u
-#define SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS 2500u
+#define SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS 5500u
+#define SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS \
+    SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS
 
 struct survey_round_go {
     uint32_t survey_id;
@@ -40,8 +42,7 @@ int survey_round_go_init_packet(struct proto_packet *packet,
                                 uint32_t survey_id,
                                 uint16_t seq,
                                 uint16_t payload_len);
-/* One-hop commands use the base; every additional RF hop adds one complete
- * randomized relay-backoff horizon. */
+/* Every RF hop reserves a complete local flood-forward horizon before GO. */
 uint32_t survey_round_go_execute_delay_ms(uint8_t gateway_hop_count);
 
 #ifdef __cplusplus

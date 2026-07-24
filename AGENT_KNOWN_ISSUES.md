@@ -490,3 +490,5 @@ Facade control-flood repeats must not send a full wake train before every succes
 - This checkout's pyOCD does not support `pyocd list --json`; use the plain `pyocd list` table for live probe enumeration.
 - Fixed continuous gateway RX stranding a scheduled control handoff when scan admission closed between receive windows; a start-time `-ECANCELED` now services the safe boundary instead of attempting an impossible RX rearm.
 - `verify_stack_evidence.py` has no `--static-only` option; omit `--hardware-manifest` and `--require-hardware` to run its static build checks.
+- Fixed the gateway's logical 30-second Channel-9 receiver monopolizing `sysworkq` and delaying a two-anchor survey by repeated 30-second intervals; bounded 100 ms receive slices and a three-error recovery yield preserve continuous rearming without starving delayed protocol work.
+- Fixed synchronized survey GO becoming late at every anchor because local command delivery followed a synchronous broadcast forward longer than the advertised delay; the age-compensated GO budget now reserves the complete random-backoff, wake-train, relay-burst, and guard horizon for every RF hop.
