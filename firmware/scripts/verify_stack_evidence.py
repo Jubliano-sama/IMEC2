@@ -979,8 +979,12 @@ def _required_threads(build: BuildEvidence, policy: PresetPolicy) -> dict[str, i
     # integrated controller's HCI TX size is a synchronous call-stack setting,
     # not a live thread. Both remain checked by exact config/compiler evidence.
     required = {
-        "sysworkq": policy.system_workqueue_bytes,
-        "mesh_route": policy.mesh_route_bytes,
+        "sysworkq": _runtime_kernel_stack_size(
+            build, policy.system_workqueue_bytes
+        ),
+        "mesh_route": _runtime_kernel_stack_size(
+            build, policy.mesh_route_bytes
+        ),
     }
     clicker_action_bytes = _owner_capacity(policy, "clicker_action")
     if clicker_action_bytes:

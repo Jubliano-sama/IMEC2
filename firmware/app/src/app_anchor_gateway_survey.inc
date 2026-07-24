@@ -1275,25 +1275,14 @@ static int gateway_survey_outbound_fingerprint(
     const struct mesh_outbound *outbound,
     uint32_t *fingerprint)
 {
-    uint8_t encoded[UWB_MESH_MAX_FRAME_LEN];
-    size_t encoded_len = 0u;
-    int ret;
-
     if (outbound == NULL || fingerprint == NULL ||
         outbound->packet.payload_len != outbound->payload_len) {
         return -EINVAL;
     }
-    ret = proto_packet_encode(&outbound->packet,
-                              outbound->payload,
-                              encoded,
-                              sizeof(encoded),
-                              &encoded_len);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    *fingerprint = node_transaction_fingerprint_bytes(0u,
-                                                       encoded,
-                                                       encoded_len);
+    *fingerprint = node_transaction_fingerprint_packet(
+        &outbound->packet,
+        outbound->payload,
+        outbound->payload_len);
     return *fingerprint == 0u ? -EINVAL : 0;
 }
 

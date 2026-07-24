@@ -429,11 +429,12 @@ next hop still share the anchor's single downstream channel-9 reservation.
 Route-epoch invalidation and explicit route clearing apply to both inline and
 overflow entries, so capacity cannot preserve stale control paths.
 
-For a legacy zero-round survey pair, accepting a PREPARE or START response that
-advances to another control phase keeps channel 9 available for one continuous
-3000 ms response-ACK settle interval before the next channel-5 control flood.
-An exact duplicate response is ACKed and restarts that interval, because the
-duplicate proves the anchor did not receive an earlier ACK.
+For every legacy zero-round or synchronized nonzero-round survey pair,
+accepting a PREPARE or START response that advances to another control phase
+keeps channel 9 available for one continuous 3000 ms response-ACK settle
+interval before the next channel-5 control flood or GO. An exact duplicate
+response is ACKed and restarts that interval, because the duplicate proves the
+anchor did not receive an earlier ACK.
 
 A synchronized nonzero round instead completes every endpoint's PREPARE and
 START delivery before it sends one common future GO. All armed endpoints derive
@@ -1581,9 +1582,9 @@ Useful tests or guards include:
 - An ACK already owed for an accepted protocol response runs before a later
   gateway control flood, so sequential command phases cannot strand the
   responder's single reliable-response owner.
-- Legacy sequential survey controls wait through the continuous response-ACK
-  settle interval, and an exact duplicate restarts it, so one lost ACK cannot
-  overlap the next phase's channel-5 flood.
+- Sequential and synchronized-round survey controls wait through the continuous
+  response-ACK settle interval, and an exact duplicate restarts it, so one lost
+  ACK cannot overlap the next phase's channel-5 flood or GO.
 - A synchronized survey round arms every endpoint before one common future GO.
   Its responder window covers bounded local execution skew plus the initiator
   DS-TWR timeout and complete frame airtime; one-hop and maximum-depth command

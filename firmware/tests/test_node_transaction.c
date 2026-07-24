@@ -1,4 +1,5 @@
 #include "node_transaction.h"
+#include "protocol.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -87,6 +88,58 @@ static void test_fingerprint_is_deterministic_and_incremental(void)
            one_shot);
     assert(one_shot != node_transaction_fingerprint_bytes(
                            0u, bytes, sizeof(bytes) - 1u));
+}
+
+static void test_packet_fingerprint_matches_canonical_encoding(void)
+{
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = UINT64_C(0x1111222233334444),
+        .dst_id = UINT64_C(0xaaaabbbbccccdddd),
+        .session_id = UINT32_C(0x12345678),
+        .seq = UINT16_C(0x3344),
+        .ttl = 4u,
+        .payload_len = 0u,
+        .message_age_ms = UINT32_C(0x55667788),
+    };
+    uint8_t payload[PACKET_EXT_LENGTH_SENTINEL + 1u];
+    uint8_t encoded[PACKET_EXT_HEADER_LEN + sizeof(payload) + PACKET_CRC_LEN];
+    const size_t payload_lengths[] = {
+        0u,
+        PACKET_EXT_LENGTH_SENTINEL - 1u,
+        PACKET_EXT_LENGTH_SENTINEL,
+        sizeof(payload),
+    };
+
+    for (size_t i = 0u; i < sizeof(payload); i++) {
+        payload[i] = (uint8_t)(i ^ (i >> 3));
+    }
+    for (size_t i = 0u;
+         i < sizeof(payload_lengths) / sizeof(payload_lengths[0]);
+         i++) {
+        size_t encoded_len = 0u;
+        size_t payload_len = payload_lengths[i];
+        uint32_t expected;
+
+        packet.payload_len = (uint16_t)payload_len;
+        assert(proto_packet_encode(&packet,
+                                   payload_len == 0u ? NULL : payload,
+                                   encoded,
+                                   sizeof(encoded),
+                                   &encoded_len) == PROTO_OK);
+        expected = node_transaction_fingerprint_bytes(
+            0u, encoded, encoded_len);
+        assert(node_transaction_fingerprint_packet(
+                   &packet,
+                   payload_len == 0u ? NULL : payload,
+                   payload_len) == expected);
+    }
+
+    packet.payload_len = 1u;
+    assert(node_transaction_fingerprint_packet(&packet, NULL, 1u) == 0u);
+    assert(node_transaction_fingerprint_packet(&packet, payload, 0u) == 0u);
+    assert(node_transaction_fingerprint_packet(NULL, payload, 1u) == 0u);
 }
 
 static void test_begin_requires_stable_valid_identity_and_future_deadline(void)
@@ -489,6 +542,7 @@ static void test_randomized_transaction_properties(void)
 int main(void)
 {
     test_fingerprint_is_deterministic_and_incremental();
+    test_packet_fingerprint_matches_canonical_encoding();
     test_begin_requires_stable_valid_identity_and_future_deadline();
     test_matching_result_survives_transport_retries();
     test_exact_deadline_rejects_result_and_requires_cleanup();

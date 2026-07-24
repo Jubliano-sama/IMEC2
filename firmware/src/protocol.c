@@ -4,8 +4,13 @@
 
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len)
 {
-    uint16_t crc = 0xFFFFu;
+    return proto_crc16_ccitt_false_update(UINT16_C(0xFFFF), data, len);
+}
 
+uint16_t proto_crc16_ccitt_false_update(uint16_t crc,
+                                        const uint8_t *data,
+                                        size_t len)
+{
     if (data == NULL && len != 0u) {
         return 0u;
     }

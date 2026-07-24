@@ -1,4 +1,5 @@
 #include "node_transaction.h"
+#include "protocol.h"
 
 #include <errno.h>
 #include <string.h>
@@ -24,6 +25,56 @@ uint32_t node_transaction_fingerprint_bytes(uint32_t seed,
         }
     }
     return fingerprint;
+}
+
+uint32_t node_transaction_fingerprint_packet(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    uint8_t header[PACKET_EXT_HEADER_LEN] = {0};
+    uint8_t encoded_crc[PACKET_CRC_LEN];
+    size_t header_len;
+    uint16_t crc;
+    uint32_t fingerprint;
+
+    if (packet == NULL ||
+        packet->payload_len != payload_len ||
+        payload_len > PACKET_EXT_MAX_PAYLOAD_LEN ||
+        (payload_len != 0u && payload == NULL)) {
+        return 0u;
+    }
+
+    header[0] = PROTO_MAGIC;
+    header[1] = PROTO_VERSION;
+    header[2] = packet->msg_type;
+    header[3] = packet->flags;
+    proto_put_u64_le(&header[4], packet->src_id);
+    proto_put_u64_le(&header[12], packet->dst_id);
+    proto_put_u32_le(&header[20], packet->session_id);
+    proto_put_u16_le(&header[24], packet->seq);
+    header[26] = packet->ttl;
+    if (payload_len < PACKET_EXT_LENGTH_SENTINEL) {
+        header[27] = (uint8_t)payload_len;
+        proto_put_u32_le(&header[28], packet->message_age_ms);
+    } else {
+        header[27] = PACKET_EXT_LENGTH_SENTINEL;
+        proto_put_u16_le(&header[28], (uint16_t)payload_len);
+        proto_put_u32_le(&header[30], packet->message_age_ms);
+    }
+    header_len = proto_packet_header_len((uint16_t)payload_len);
+
+    fingerprint = node_transaction_fingerprint_bytes(
+        0u, header, header_len);
+    fingerprint = node_transaction_fingerprint_bytes(
+        fingerprint, payload, payload_len);
+
+    crc = proto_crc16_ccitt_false_update(
+        UINT16_C(0xFFFF), header, header_len);
+    crc = proto_crc16_ccitt_false_update(crc, payload, payload_len);
+    proto_put_u16_le(encoded_crc, crc);
+    return node_transaction_fingerprint_bytes(
+        fingerprint, encoded_crc, sizeof(encoded_crc));
 }
 
 static bool node_transaction_key_valid(const struct node_transaction_key *key)

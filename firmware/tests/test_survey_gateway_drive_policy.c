@@ -1,4 +1,5 @@
 #include "survey_gateway_transaction.h"
+#include "survey.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -133,6 +134,55 @@ static void test_each_phase_starts_a_fresh_quiet_interval(void)
                                                         second_deadline_ms));
 }
 
+static void test_every_nonterminal_round_control_result_blocks_dispatch(void)
+{
+    static const enum survey_gateway_auto_stage completed_controls[] = {
+        SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR,
+        SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER,
+        SURVEY_GATEWAY_AUTO_START_RESPONDER,
+        SURVEY_GATEWAY_AUTO_START_INITIATOR,
+    };
+
+    for (size_t i = 0u;
+         i < sizeof(completed_controls) / sizeof(completed_controls[0]);
+         i++) {
+        struct survey_gateway_response_ack_settle settle;
+        uint64_t accepted_at_ms = 4000u + (uint64_t)i * 10000u;
+        uint64_t deadline_ms =
+            accepted_at_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+        bool settle_pending;
+
+        assert(completed_controls[i] >=
+                   SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR &&
+               completed_controls[i] <=
+                   SURVEY_GATEWAY_AUTO_START_INITIATOR);
+        survey_gateway_response_ack_settle_init(&settle);
+
+        /* This is the required glue ordering for every successful round
+         * control: advance its owner, arm ACK quiet time, then ask policy
+         * whether the following control or common GO can run. */
+        survey_gateway_response_ack_settle_note_result(&settle,
+                                                       accepted_at_ms);
+        settle_pending = survey_gateway_response_ack_settle_pending(
+            &settle, accepted_at_ms);
+        assert(settle_pending);
+        assert(decide(true, true, false, false, false, false,
+                      settle_pending) == SURVEY_GATEWAY_DRIVE_NONE);
+
+        settle_pending = survey_gateway_response_ack_settle_pending(
+            &settle, deadline_ms - 1u);
+        assert(settle_pending);
+        assert(decide(true, true, false, false, false, false,
+                      settle_pending) == SURVEY_GATEWAY_DRIVE_NONE);
+
+        settle_pending = survey_gateway_response_ack_settle_pending(
+            &settle, deadline_ms);
+        assert(!settle_pending);
+        assert(decide(true, true, false, false, false, false,
+                      settle_pending) == SURVEY_GATEWAY_DRIVE_RUN_NOW);
+    }
+}
+
 int main(void)
 {
     test_cleanup_always_keeps_polling();
@@ -143,6 +193,7 @@ int main(void)
     test_response_ack_settle_deadline_boundary();
     test_exact_duplicate_restarts_quiet_interval();
     test_each_phase_starts_a_fresh_quiet_interval();
+    test_every_nonterminal_round_control_result_blocks_dispatch();
     assert(survey_gateway_drive_action(NULL) == SURVEY_GATEWAY_DRIVE_NONE);
     puts("survey gateway drive policy tests passed");
     return 0;

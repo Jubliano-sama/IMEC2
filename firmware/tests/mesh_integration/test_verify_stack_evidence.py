@@ -618,6 +618,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertNotIn("main", required)
         self.assertNotIn("BT HCI TX", required)
         self.assertNotIn("BT RX", required)
+        self.assertEqual(4288, required["sysworkq"])
+        self.assertEqual(8192, required["mesh_route"])
         self.assertEqual(1088, required["BT RX WQ"])
         self.assertEqual(1344, required["BT LW WQ"])
 

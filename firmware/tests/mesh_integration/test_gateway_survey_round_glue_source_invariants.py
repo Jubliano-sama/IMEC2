@@ -124,6 +124,32 @@ assert_ordered(
     "app_gateway_survey_round_advance_dispatch(round)",
 )
 
+# Every successful round control remains nonterminal until its response ACK
+# has had one complete quiet interval. The glue must arm that boundary before
+# it asks drive policy to expose the next PREPARE, START, or common GO action.
+round_control_result = function_body(
+    GLUE, "gateway_survey_round_note_control_result"
+)
+successful_round_control = round_control_result[
+    round_control_result.index(
+        "ret = app_gateway_survey_round_note_control_success("
+    ) :
+]
+assert successful_round_control.count(
+    "survey_gateway_response_ack_settle_note_result("
+) == 1, "each successful round control must arm one response-ACK settle window"
+assert_ordered(
+    successful_round_control,
+    "app_gateway_survey_round_note_control_success(",
+    "survey_gateway_transaction_phase_complete(",
+    "gateway_survey_round_sync_auto()",
+    "survey_gateway_response_ack_settle_note_result(",
+    "gateway_survey_schedule_drive()",
+)
+assert "K_NO_WAIT" not in successful_round_control, (
+    "round control success must not bypass response-ACK settle with immediate work"
+)
+
 
 # GO is one broadcast for the complete armed batch, carries that same round
 # identity, and requests no per-anchor responses that could serialize lanes.

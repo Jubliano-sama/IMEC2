@@ -18,6 +18,11 @@
 uint32_t node_transaction_fingerprint_bytes(uint32_t seed,
                                             const uint8_t *bytes,
                                             size_t length);
+struct proto_packet;
+uint32_t node_transaction_fingerprint_packet(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
 
 enum node_transaction_state {
     NODE_TRANSACTION_EMPTY = 0,

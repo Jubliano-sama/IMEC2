@@ -464,6 +464,9 @@ struct gateway_collection_eack {
 };
 
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);
+uint16_t proto_crc16_ccitt_false_update(uint16_t crc,
+                                        const uint8_t *data,
+                                        size_t len);
 
 size_t proto_packet_header_len(uint16_t payload_len);
 size_t proto_packet_encoded_len(uint16_t payload_len);

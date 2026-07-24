@@ -510,7 +510,18 @@ static bool gateway_survey_round_note_control_result(
     }
     gateway_survey_auto.waiting = false;
     gateway_survey_round_sync_auto();
-    (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
+    /*
+     * A successful command result is followed by a gateway ACK on Channel 9.
+     * Keep the next PREPARE, START, or GO wake train out of that exchange just
+     * as the serial survey path does. Without this ownership boundary the
+     * parallel-round driver can start the next control a few milliseconds
+     * after the result was decoded, preempting the ACK and leaving the prior
+     * target unable to receive the new control.
+     */
+    survey_gateway_response_ack_settle_note_result(
+        &gateway_survey_response_ack_settle,
+        (uint64_t)k_uptime_get());
+    gateway_survey_schedule_drive();
     return true;
 }
 
