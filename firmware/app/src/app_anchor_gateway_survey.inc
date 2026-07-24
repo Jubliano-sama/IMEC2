@@ -335,13 +335,16 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     uint32_t discovery_duration_ms = 0u;
     uint32_t report_mesh_duration_ms = 0u;
     uint32_t report_custody_ms;
+    uint32_t emission_horizon_delay_ms = 0u;
     uint32_t collection_delay_ms = 0u;
     uint32_t command_budget_ms = SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS;
     uint32_t command_origin_ms;
     uint64_t command_origin_uptime_ms;
     uint32_t flood_delivery_handle = 0u;
     uint16_t sample_count = UWB_SAMPLES_PER_ANCHOR;
+    uint16_t expected_node_count = 0u;
     bool budget_explicit = false;
+    bool expected_node_count_present = false;
     size_t payload_len = 0u;
     uint16_t seq;
     int ret;
@@ -383,6 +386,15 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
                                             host_payload_len,
                                             &survey_id,
                                             &duration_ms);
+    if (ret != PROTO_OK) {
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_MALFORMED_PAYLOAD, (uint8_t)(-ret),
+            GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST,
+            mesh_errno_from_proto(ret));
+    }
+    ret = survey_extract_expected_node_count_tlv(
+        host_payload, host_payload_len, &expected_node_count,
+        &expected_node_count_present);
     if (ret != PROTO_OK) {
         return gateway_reject_survey_request(
             host_packet, COMMAND_MALFORMED_PAYLOAD, (uint8_t)(-ret),
@@ -487,8 +499,9 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
             host_packet, COMMAND_MALFORMED_PAYLOAD, 2u,
             GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
     }
-    collection_delay_ms = config.start_delay_ms + report_mesh_duration_ms +
-                          duration_ms +
+    emission_horizon_delay_ms = config.start_delay_ms +
+                                report_mesh_duration_ms + duration_ms;
+    collection_delay_ms = emission_horizon_delay_ms +
                           report_custody_ms +
                           SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS;
     if (budget_explicit) {
@@ -633,9 +646,14 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     }
     gateway_survey_discovery_delivery_handle = flood_delivery_handle;
     gateway_survey_collection_deadline_ms = 0u;
+    gateway_survey_collection_emission_deadline_ms =
+        command_origin_ms + emission_horizon_delay_ms;
     gateway_survey_collection_duration_ms = collection_delay_ms;
     gateway_survey_collection_window_armed = false;
     gateway_survey_collection_pending = true;
+    gateway_survey_expected_node_count = expected_node_count;
+    gateway_survey_expected_node_count_present =
+        expected_node_count_present;
 
     {
         struct gateway_command_event event = gateway_observability_event(
@@ -654,7 +672,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         &gateway_survey_work,
         K_MSEC(GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS));
     gateway_emit_host_command_result(host_packet, CMD_SURVEY_REACHABILITY, COMMAND_OK, 0u);
-    LOG_INF("gateway survey discovery broadcast: survey=%u start_delay_ms=%u slot_ms=%u slots=%u rounds=%u discovery_ms=%u report_train_end_ms=%u report_grace_ms=%u report_custody_ms=%u samples=%u seq=%u",
+    LOG_INF("gateway survey discovery broadcast: survey=%u start_delay_ms=%u slot_ms=%u slots=%u rounds=%u discovery_ms=%u report_train_end_ms=%u report_grace_ms=%u report_custody_ms=%u expected=%u expected_present=%u samples=%u seq=%u",
             survey_id,
             config.start_delay_ms,
             config.slot_ms,
@@ -664,6 +682,8 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
             report_mesh_duration_ms,
             duration_ms,
             report_custody_ms,
+            expected_node_count,
+            expected_node_count_present ? 1u : 0u,
             sample_count,
             seq);
     return 0;
@@ -1126,8 +1146,11 @@ static void gateway_survey_auto_finish_status(
     }
     gateway_survey_collection_pending = false;
     gateway_survey_collection_deadline_ms = 0u;
+    gateway_survey_collection_emission_deadline_ms = 0u;
     gateway_survey_collection_duration_ms = 0u;
     gateway_survey_collection_window_armed = false;
+    gateway_survey_expected_node_count = 0u;
+    gateway_survey_expected_node_count_present = false;
     gateway_survey_active = false;
     gateway_survey_operation_deadline_ms = 0u;
 #if DEVICE_ROLE == ROLE_GATEWAY

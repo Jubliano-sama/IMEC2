@@ -634,6 +634,57 @@ static void test_discovery_slot_count_tlv_defaults_and_overrides(void)
                                                    &slot_count) == PROTO_ERR_MALFORMED);
 }
 
+static void test_discovery_expected_node_count_is_optional_and_bounded(void)
+{
+    uint8_t payload[8];
+    uint16_t decoded = UINT16_MAX;
+    bool present = true;
+
+    assert(survey_extract_expected_node_count_tlv(
+               payload, 0u, &decoded, &present) == PROTO_OK);
+    assert(!present);
+    assert(decoded == 0u);
+
+    for (uint16_t expected = 1u;
+         expected <= SURVEY_DISCOVERY_MAX_SLOT_COUNT;
+         expected++) {
+        size_t payload_len = 0u;
+
+        assert(tlv_append_u16(payload,
+                              sizeof(payload),
+                              &payload_len,
+                              TLV_EXPECTED_NODE_COUNT,
+                              expected) == PROTO_OK);
+        decoded = 0u;
+        present = false;
+        assert(survey_extract_expected_node_count_tlv(
+                   payload, payload_len, &decoded, &present) == PROTO_OK);
+        assert(present);
+        assert(decoded == expected);
+    }
+
+    for (uint16_t invalid = 0u;
+         invalid <= SURVEY_DISCOVERY_MAX_SLOT_COUNT + 1u;
+         invalid += SURVEY_DISCOVERY_MAX_SLOT_COUNT + 1u) {
+        size_t payload_len = 0u;
+
+        assert(tlv_append_u16(payload,
+                              sizeof(payload),
+                              &payload_len,
+                              TLV_EXPECTED_NODE_COUNT,
+                              invalid) == PROTO_OK);
+        assert(survey_extract_expected_node_count_tlv(
+                   payload, payload_len, &decoded, &present) ==
+               PROTO_ERR_MALFORMED);
+    }
+
+    payload[0] = TLV_EXPECTED_NODE_COUNT;
+    payload[1] = sizeof(uint8_t);
+    payload[2] = 1u;
+    assert(survey_extract_expected_node_count_tlv(
+               payload, 3u, &decoded, &present) == PROTO_ERR_MALFORMED);
+}
+
 static void test_ml_anchor_pair_request_accepts_optional_slots_and_ignores_sample_count(void)
 {
     uint8_t payload[24];
@@ -2527,6 +2578,7 @@ int main(void)
     test_pending_discovery_report_survives_queue_and_route_pressure();
     test_discovery_report_custody_tracks_upstream_hops();
     test_discovery_slot_count_tlv_defaults_and_overrides();
+    test_discovery_expected_node_count_is_optional_and_bounded();
     test_ml_anchor_pair_request_accepts_optional_slots_and_ignores_sample_count();
     test_ml_anchor_pair_request_rejects_invalid_slot_counts();
     test_discovery_timing_uses_packet_age();

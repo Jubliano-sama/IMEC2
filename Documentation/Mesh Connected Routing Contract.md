@@ -450,6 +450,12 @@ extends beyond the window is a timeout. Route-depth PREPARE, START,
 command-result, and report delivery deadlines remain independent transport
 bounds and must never enlarge this local UWB receive window.
 
+The gateway's host-facing survey event stream preserves causal boundaries
+under BLE backpressure. A pending pair-start boundary is retried before the
+survey worker waits for RF completion or emits pair success or failure, so a
+consumer never observes a terminal pair outcome for a pair it was not first
+told had started.
+
 An exact duplicate START command keeps the existing command-result custody. A
 newer START command sequence for the same prepared pair supersedes that custody:
 the anchor installs the new START identity and detaches the old delivery handle
@@ -1024,10 +1030,12 @@ commands.
 
 The same continuous receiver is a logical 30-second receive horizon, not a
 30-second system-workqueue lease. Each driver receive invocation is capped at a
-bounded work slice and yields after a bounded run of immediate recoverable
-errors. It then rearms the same logical service, allowing survey deadlines,
-control transitions, BLE custody, watchdog progress, and other delayed work to
-run without opening a material Channel 9 listening gap.
+bounded work slice. Every completed slice rearms through a short cooperative
+delay, and a bounded run of immediate recoverable errors exits the slice
+without consuming the remainder of its time budget. This preserves the same
+logical service while allowing survey deadlines, control transitions, BLE
+custody, watchdog progress, and other delayed work to run without opening a
+material Channel 9 listening gap.
 
 Gateway commands propagate away from the gateway until every reachable anchor
 has received them:
@@ -1138,6 +1146,13 @@ respectively after their eligible transmit time. Missing or invalid route depth
 uses the conservative four-hop value. The gateway collection tail must cover
 that maximum at build time, so a report cannot expire locally after a late
 multihop RF opportunity while the gateway has already stopped accepting it.
+An optional expected-node count lets the gateway close collection sooner, but
+only after the complete configured report-emission horizon has elapsed and the
+number of unique accepted reports exactly matches that count. A shortfall keeps
+the full custody safety window and then fails explicitly; an over-count fails
+explicitly after the emission horizon rather than truncating the roster. When
+the count is absent, the gateway preserves the full conservative collection
+tail, so older hosts cannot accidentally weaken late multihop delivery safety.
 
 If the first journal write is temporarily unavailable, the exact encoded report
 and peer list remain the active generation's staging candidate in RAM. The

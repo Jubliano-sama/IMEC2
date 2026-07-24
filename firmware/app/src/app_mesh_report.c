@@ -243,6 +243,11 @@ BUILD_ASSERT(UWB_MESH_GATEWAY_RX_WINDOW_MS < APP_WATCHDOG_PROGRESS_LEASE_MS,
 BUILD_ASSERT(APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS <
                  UWB_MESH_GATEWAY_RX_WINDOW_MS,
              "gateway RX work slice must yield within the logical window");
+BUILD_ASSERT(APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS > 0u,
+             "gateway RX slices must yield the system workqueue");
+BUILD_ASSERT(APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS <
+                 APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS,
+             "gateway RX cooperative yield must remain shorter than a slice");
 BUILD_ASSERT(MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS >=
              MESH_GATEWAY_RX_REARM_GUARD_MS +
              MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS,

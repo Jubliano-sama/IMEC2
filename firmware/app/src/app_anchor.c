@@ -231,13 +231,16 @@ static bool gateway_survey_active;
 static uint32_t gateway_survey_operation_deadline_ms;
 static uint32_t gateway_survey_discovery_delivery_handle;
 static uint32_t gateway_survey_collection_deadline_ms;
+static uint32_t gateway_survey_collection_emission_deadline_ms;
 static uint32_t gateway_survey_collection_duration_ms;
+static uint16_t gateway_survey_expected_node_count;
 static uint8_t gateway_survey_max_pair_reruns =
     OPERATION_POLICY_PAIR_DEFAULT_MAX_RERUNS;
 static uint8_t gateway_survey_max_parallel_pairs =
     OPERATION_POLICY_PAIR_DEFAULT_MAX_PARALLEL_PAIRS;
 static bool gateway_survey_collection_window_armed;
 static bool gateway_survey_collection_pending;
+static bool gateway_survey_expected_node_count_present;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
 static struct proto_packet gateway_survey_pending_command;

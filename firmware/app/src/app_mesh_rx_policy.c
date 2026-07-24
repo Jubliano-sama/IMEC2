@@ -67,6 +67,11 @@ uint32_t app_mesh_rx_policy_gateway_ch9_work_slice_ms(
         remaining_window_ms : APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS;
 }
 
+uint32_t app_mesh_rx_policy_gateway_ch9_rearm_delay_ms(void)
+{
+    return APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS;
+}
+
 bool app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
     uint16_t recoverable_errors_in_slice)
 {

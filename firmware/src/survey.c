@@ -60,6 +60,65 @@ uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count)
             SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS);
 }
 
+int survey_extract_expected_node_count_tlv(const uint8_t *payload,
+                                           size_t payload_len,
+                                           uint16_t *expected_count,
+                                           bool *present)
+{
+    const uint8_t *value;
+    uint8_t value_len;
+    int ret;
+
+    if (payload == NULL || expected_count == NULL || present == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
+                   &value, &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *expected_count = 0u;
+        *present = false;
+        return PROTO_OK;
+    }
+    if (ret != PROTO_OK || value_len != sizeof(uint16_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *expected_count = proto_get_u16_le(value);
+    if (*expected_count == 0u ||
+        *expected_count > SURVEY_GATEWAY_MAX_REPORTS) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *present = true;
+    return PROTO_OK;
+}
+
+enum survey_gateway_collection_decision survey_gateway_collection_decide(
+    bool emission_horizon_elapsed,
+    bool safety_deadline_elapsed,
+    size_t report_count,
+    uint16_t expected_count,
+    bool expected_present)
+{
+    if (!emission_horizon_elapsed) {
+        return SURVEY_GATEWAY_COLLECTION_WAIT;
+    }
+    if (!expected_present) {
+        return safety_deadline_elapsed ?
+            SURVEY_GATEWAY_COLLECTION_CLOSE :
+            SURVEY_GATEWAY_COLLECTION_WAIT;
+    }
+    if (report_count > expected_count) {
+        return SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH;
+    }
+    if (report_count == expected_count) {
+        return SURVEY_GATEWAY_COLLECTION_CLOSE;
+    }
+    return safety_deadline_elapsed ?
+        SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH :
+        SURVEY_GATEWAY_COLLECTION_WAIT;
+}
+
 static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
 {
     return src_id != 0u && dst_id != 0u && src_id != dst_id;

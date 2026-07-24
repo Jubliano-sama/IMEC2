@@ -1365,6 +1365,7 @@ def build_anchor_discovery_command(
     duration_ms: int,
     discovery_slot_count: int = 6,
     sample_count: int = 1,
+    expected_anchor_count: int | None = None,
     command_budget_ms: int | None = None,
     operation_policy: OperationPolicyProfile | None = None,
 ) -> CommandFrame:
@@ -1382,6 +1383,10 @@ def build_anchor_discovery_command(
         raise ValueError("discovery slot count must be in 1..50")
     if not 1 <= sample_count <= 1000:
         raise ValueError("sample count must be in 1..1000")
+    if expected_anchor_count is not None and not (
+        1 <= expected_anchor_count <= 50
+    ):
+        raise ValueError("expected anchor count must be in 1..50")
     if command_budget_ms is not None and not (
         GATEWAY_COMMAND_BUDGET_MIN_MS
         <= command_budget_ms
@@ -1412,6 +1417,12 @@ def build_anchor_discovery_command(
     append_tlv(payload, TLV_DURATION_MS, duration_ms.to_bytes(4, "little"))
     append_tlv(payload, TLV_SAMPLE_COUNT, sample_count.to_bytes(2, "little"))
     append_tlv(payload, TLV_DISCOVERY_SLOT_COUNT, bytes((discovery_slot_count,)))
+    if expected_anchor_count is not None:
+        append_tlv(
+            payload,
+            TLV_EXPECTED_NODE_COUNT,
+            expected_anchor_count.to_bytes(2, "little"),
+        )
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     if operation_policy is not None:

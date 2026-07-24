@@ -507,6 +507,58 @@ static void test_survey_progress_reconstructs_50_reports_and_gates_boundaries(vo
     assert(fixture.count == SURVEY_GATEWAY_MAX_REPORTS + 3u);
 }
 
+static void test_backpressured_pair_start_precedes_pair_success(void)
+{
+    struct app_gateway_survey_observability_state state;
+    struct survey_emit_fixture fixture = {0};
+    const struct app_gateway_survey_observability_ops ops = {
+        .emit_if_available = survey_emit,
+        .ctx = &fixture,
+    };
+    struct gateway_command_event pair_start = {
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        .stage = GATEWAY_COMMAND_EVENT_STAGE_PAIR_START,
+        .command_id = CMD_SURVEY_START_PAIR,
+        .gateway_sequence = 78u,
+        .pair_initiator_id = 1u,
+        .pair_responder_id = 2u,
+        .total_count = 3u,
+    };
+    struct gateway_command_event pair_success = pair_start;
+
+    pair_success.stage = GATEWAY_COMMAND_EVENT_STAGE_PAIR_SUCCESS;
+    pair_success.progress_count = pair_start.total_count;
+    pair_success.success_count = 1u;
+
+    app_gateway_survey_observability_reset(&state);
+    fixture.blocked = true;
+    assert(app_gateway_survey_observability_submit_boundary(
+        &state, &ops, &pair_start) == -EAGAIN);
+    assert(state.boundary_pending);
+    assert(fixture.count == 0u);
+
+    /*
+     * The survey worker must retry this boundary before either its waiting
+     * early-exit or pair finalization.  Once BLE custody is available, the
+     * exact pair-start record must therefore precede the direct pair result.
+     */
+    fixture.blocked = false;
+    assert(app_gateway_survey_observability_flush_boundary(
+        &state, &ops) == 1);
+    assert(!state.boundary_pending);
+    assert(survey_emit(&pair_success, false, &fixture) == 0);
+
+    assert(fixture.count == 2u);
+    assert(fixture.events[0].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_PAIR_START);
+    assert(fixture.events[1].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_PAIR_SUCCESS);
+    assert(fixture.events[0].pair_initiator_id ==
+           fixture.events[1].pair_initiator_id);
+    assert(fixture.events[0].pair_responder_id ==
+           fixture.events[1].pair_responder_id);
+}
+
 int main(void)
 {
     test_enumeration_success_and_duplicate_deduplication();
@@ -518,6 +570,7 @@ int main(void)
     test_progress_backpressure_coalesces_without_irreversible_loss();
     test_50_anchor_1225_pair_flow_control_sweep();
     test_survey_progress_reconstructs_50_reports_and_gates_boundaries();
+    test_backpressured_pair_start_precedes_pair_success();
     puts("gateway command observability integration scenarios passed");
     return 0;
 }

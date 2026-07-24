@@ -1363,7 +1363,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         uint32_t gateway_rx_slice_deadline_ms =
             k_uptime_get_32() + APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS;
         uint16_t recoverable_errors_in_slice = 0u;
-        bool recovery_yield = false;
 
         ret = -ETIMEDOUT;
         while (!uptime_deadline_reached(k_uptime_get_32(),
@@ -1493,7 +1492,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     }
                     if (app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
                             recoverable_errors_in_slice)) {
-                        recovery_yield = true;
                         status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=%u frames=%u\n",
                                             recoverable_errors_in_slice,
                                             channel9_frames_seen);
@@ -1570,8 +1568,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             mesh_schedule_uwb_rx(MESH_GATEWAY_ROUTE_PREEMPT_YIELD_MS);
             return;
         }
-        mesh_schedule_uwb_rx(recovery_yield ?
-                             UWB_MESH_GATEWAY_RX_IDLE_MS : 0u);
+        mesh_schedule_uwb_rx(
+            app_mesh_rx_policy_gateway_ch9_rearm_delay_ms());
         return;
     }
 

@@ -100,6 +100,10 @@ static void test_gateway_ch9_rx_bounds_one_workqueue_occupancy_slice(void)
     uint16_t immediate_error_count = 0u;
 
     assert(APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS == 100u);
+    assert(APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS == 2u);
+    assert(APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS > 0u);
+    assert(app_mesh_rx_policy_gateway_ch9_rearm_delay_ms() ==
+           APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS);
     assert(APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS < logical_window_ms);
     assert(app_mesh_rx_policy_gateway_ch9_work_slice_ms(
                logical_window_ms) ==

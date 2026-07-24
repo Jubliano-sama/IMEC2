@@ -685,8 +685,7 @@ for required_slice_boundary in (
     "app_mesh_rx_policy_gateway_ch9_work_slice_ms(",
     "recoverable_errors_in_slice++",
     "app_mesh_rx_policy_gateway_ch9_should_yield_recovery(",
-    "recovery_yield = true",
-    "mesh_schedule_uwb_rx(recovery_yield ?",
+    "app_mesh_rx_policy_gateway_ch9_rearm_delay_ms()",
 ):
     assert required_slice_boundary in continuous_slice, (
         "continuous gateway RX omitted bounded workqueue slice boundary: "
@@ -702,6 +701,20 @@ assert continuous_slice.index(
 ) < continuous_slice.index(
     "app_mesh_rx_policy_gateway_ch9_should_yield_recovery("
 ), "immediate recoverable errors must count before the yield decision"
+post_slice_done = continuous_slice[
+    continuous_slice.index("DBG_GATEWAY_CH9_RX_CONT_DONE") :
+]
+assert re.search(
+    r"mesh_schedule_uwb_rx\s*\(\s*"
+    r"app_mesh_rx_policy_gateway_ch9_rearm_delay_ms\s*\(\s*\)\s*\)",
+    post_slice_done,
+), (
+    "clean timeout and immediate-error threshold exits must share one "
+    "positive cooperative post-slice rearm"
+)
+assert "recovery_yield ?" not in post_slice_done, (
+    "clean continuous-RX slices must not bypass cooperative workqueue yield"
+)
 
 continuous_start = gateway_rx_worker.index(
     'ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX")'

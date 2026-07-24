@@ -352,6 +352,23 @@ int survey_gateway_reverse_hint_for_target(
 uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl);
 uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count);
 uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count);
+int survey_extract_expected_node_count_tlv(const uint8_t *payload,
+                                           size_t payload_len,
+                                           uint16_t *expected_count,
+                                           bool *present);
+
+enum survey_gateway_collection_decision {
+    SURVEY_GATEWAY_COLLECTION_WAIT = 0,
+    SURVEY_GATEWAY_COLLECTION_CLOSE,
+    SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH,
+};
+
+enum survey_gateway_collection_decision survey_gateway_collection_decide(
+    bool emission_horizon_elapsed,
+    bool safety_deadline_elapsed,
+    size_t report_count,
+    uint16_t expected_count,
+    bool expected_present);
 int survey_gateway_plan_pairs(struct survey_gateway_context *context);
 /*
  * Packs the existing pair plan into deterministic concurrent rounds without

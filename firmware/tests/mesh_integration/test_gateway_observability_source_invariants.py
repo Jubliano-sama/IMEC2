@@ -32,10 +32,41 @@ assert "k_msgq_get" not in admit
 assert admit.index("gateway_observe_host_acceptance") < admit.index("k_msgq_put")
 
 survey_work = function_body(ANCHOR, "gateway_survey_work_handler")
-assert survey_work.index("gateway_survey_flush_boundary_event") < survey_work.index(
-    "survey_gateway_auto_next_action"
+boundary_gate = survey_work.index(
+    "if (!gateway_survey_flush_boundary_event())"
 )
-assert survey_work.index("gateway_survey_finalize_pair_observation") < survey_work.index(
+boundary_flush = survey_work.index(
+    "gateway_survey_flush_boundary_event", boundary_gate
+)
+active_gate = survey_work.index("if (!gateway_survey_active)")
+deadline_gate = survey_work.index("if (uptime_deadline_reached")
+deadline_exit = survey_work.index("goto out;", deadline_gate)
+deadline_close = survey_work.index("}", deadline_exit) + 1
+pair_finalize = survey_work.index("gateway_survey_finalize_pair_observation")
+assert active_gate < deadline_gate < boundary_flush, (
+    "pending boundaries must flush at the first safe point after the active "
+    "survey and operation-deadline checks"
+)
+assert not survey_work[deadline_close:boundary_gate].strip(), (
+    "the boundary flush must immediately follow the operation-deadline gate"
+)
+for external_wait_gate in (
+    "gateway_survey_wait_for_discovery_collection()",
+    "gateway_survey_cleanup_pending()",
+    "survey_gateway_response_ack_settle_pending(",
+    "if (gateway_survey_auto.waiting)",
+    "gateway_survey_round_drive()",
+):
+    assert boundary_flush < survey_work.index(external_wait_gate), (
+        "a backpressured pair-start boundary must be flushed before external "
+        f"wait gate {external_wait_gate}"
+    )
+assert boundary_flush < pair_finalize, (
+    "a pair result must not be finalized before its pending pair-start "
+    "boundary has custody"
+)
+assert boundary_flush < survey_work.index("survey_gateway_auto_next_action")
+assert pair_finalize < survey_work.index(
     "survey_gateway_auto_next_action"
 )
 

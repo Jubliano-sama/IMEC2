@@ -1507,8 +1507,13 @@ static void gateway_survey_service_active_delivery(void)
 static bool gateway_survey_wait_for_discovery_collection(void)
 {
     struct node_comm_terminal_event event;
+    enum survey_gateway_collection_decision decision;
     enum gateway_command_event_reason failure_reason;
     uint32_t now_ms;
+    uint32_t operation_wait_ms;
+    uint32_t wait_ms;
+    bool emission_horizon_elapsed;
+    bool safety_deadline_elapsed;
 
     if (!gateway_survey_collection_pending) {
         return false;
@@ -1558,18 +1563,55 @@ static bool gateway_survey_wait_for_discovery_collection(void)
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
-    if (!uptime_deadline_reached(
-            now_ms, gateway_survey_collection_deadline_ms)) {
+    emission_horizon_elapsed = uptime_deadline_reached(
+        now_ms, gateway_survey_collection_emission_deadline_ms);
+    safety_deadline_elapsed = uptime_deadline_reached(
+        now_ms, gateway_survey_collection_deadline_ms);
+    decision = survey_gateway_collection_decide(
+        emission_horizon_elapsed,
+        safety_deadline_elapsed,
+        gateway_survey_context.report_count,
+        gateway_survey_expected_node_count,
+        gateway_survey_expected_node_count_present);
+    if (decision == SURVEY_GATEWAY_COLLECTION_WAIT) {
+        wait_ms = uptime_ms_until_deadline(
+            now_ms,
+            emission_horizon_elapsed ?
+                gateway_survey_collection_deadline_ms :
+                gateway_survey_collection_emission_deadline_ms);
+        operation_wait_ms = uptime_ms_until_deadline(
+            now_ms, gateway_survey_operation_deadline_ms);
+        if (operation_wait_ms < wait_ms) {
+            wait_ms = operation_wait_ms;
+        }
         (void)k_work_reschedule(
             &gateway_survey_work,
-            K_MSEC(uptime_ms_until_deadline(
-                now_ms, gateway_survey_collection_deadline_ms)));
+            K_MSEC(wait_ms));
         return true;
     }
     gateway_survey_collection_pending = false;
     gateway_survey_collection_deadline_ms = 0u;
+    gateway_survey_collection_emission_deadline_ms = 0u;
     gateway_survey_collection_duration_ms = 0u;
     gateway_survey_collection_window_armed = false;
+    if (decision == SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH) {
+        bool missing = gateway_survey_context.report_count <
+                       gateway_survey_expected_node_count;
+
+        status_debug_printf(
+            "DBG_SURVEY_COLLECTION_COUNT_MISMATCH expected=%u observed=%u missing=%u\n",
+            gateway_survey_expected_node_count,
+            (unsigned int)gateway_survey_context.report_count,
+            missing ? 1u : 0u);
+        gateway_survey_auto_finish_status(
+            missing ? COMMAND_TIMEOUT : COMMAND_INVALID_STATE,
+            gateway_survey_context.report_count == 0u ?
+                GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS :
+            missing ?
+                GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
+                GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
+        return true;
+    }
     return false;
 }
 #endif
@@ -1609,6 +1651,9 @@ static void gateway_survey_work_handler(struct k_work *work)
             COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
         goto out;
     }
+    if (!gateway_survey_flush_boundary_event()) {
+        goto out;
+    }
     if (gateway_survey_wait_for_discovery_collection()) {
         return;
     }
@@ -1625,9 +1670,6 @@ static void gateway_survey_work_handler(struct k_work *work)
     }
 #endif
     if (gateway_survey_auto.waiting) {
-        goto out;
-    }
-    if (!gateway_survey_flush_boundary_event()) {
         goto out;
     }
 #if DEVICE_ROLE == ROLE_GATEWAY

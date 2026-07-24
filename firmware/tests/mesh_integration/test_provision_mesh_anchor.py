@@ -772,6 +772,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0x778899AA, qualification.survey_id)
         self.assertEqual(0x778899AA, command_args["survey_id"])
         self.assertEqual(0x12345, command_args["session_id"])
+        self.assertEqual(3, command_args["expected_anchor_count"])
         self.assertEqual(3, len(qualification.pair_successes))
 
     async def test_default_mode_keeps_notify_before_command_write(self) -> None:

@@ -782,6 +782,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         duration_ms=args.survey_duration_ms,
                         discovery_slot_count=args.discovery_slots,
                         sample_count=args.samples,
+                        expected_anchor_count=(
+                            args.expected_anchors
+                            if args.require_survey_success
+                            else None
+                        ),
                     )
                     if args.require_survey_success:
                         qualification = SurveyQualification(

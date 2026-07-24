@@ -542,11 +542,15 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertIn("gateway_survey_pair_observation_active", worker)
         self.assertIn("survey_gateway_auto_no_unstarted_pairs(", worker)
         self.assertLess(
-            worker.index("survey_gateway_auto_no_unstarted_pairs("),
             worker.index("gateway_survey_flush_boundary_event()"),
+            worker.index("gateway_survey_cleanup_pending()"),
         )
         self.assertLess(
             worker.index("gateway_survey_flush_boundary_event()"),
+            worker.index("survey_gateway_auto_next_action("),
+        )
+        self.assertLess(
+            worker.index("survey_gateway_auto_no_unstarted_pairs("),
             worker.index("survey_gateway_auto_next_action("),
         )
         self.assertLess(
