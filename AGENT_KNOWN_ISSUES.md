@@ -489,3 +489,4 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Fixed gateway survey fingerprinting consuming a full 1021-byte encoded-frame local on `sysworkq`; incremental canonical packet hashing preserves the exact fingerprint while reducing that call frame to 64 bytes without spending static RAM.
 - This checkout's pyOCD does not support `pyocd list --json`; use the plain `pyocd list` table for live probe enumeration.
 - Fixed continuous gateway RX stranding a scheduled control handoff when scan admission closed between receive windows; a start-time `-ECANCELED` now services the safe boundary instead of attempting an impossible RX rearm.
+- `verify_stack_evidence.py` has no `--static-only` option; omit `--hardware-manifest` and `--require-hardware` to run its static build checks.
