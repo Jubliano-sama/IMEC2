@@ -1603,8 +1603,7 @@ static void gateway_survey_work_handler(struct k_work *work)
     if (!gateway_survey_active) {
         goto out;
     }
-    if (gateway_survey_budget_explicit &&
-        uptime_deadline_reached(k_uptime_get_32(),
+    if (uptime_deadline_reached(k_uptime_get_32(),
                                 gateway_survey_operation_deadline_ms)) {
         gateway_survey_auto_finish_status(
             COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
@@ -1688,7 +1687,7 @@ static void gateway_survey_work_handler(struct k_work *work)
                 (unsigned int)action.command_id,
                 (unsigned long long)action.target_id,
                 ret);
-        if (ret == -ETIMEDOUT && gateway_survey_budget_explicit) {
+        if (ret == -ETIMEDOUT) {
             gateway_survey_auto_finish_status(
                 COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
             goto out;
@@ -2169,11 +2168,23 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
         if (ret == PROTO_OK && gateway_command_uses_survey_mesh(command_id)) {
             return gateway_route_survey_command(packet, payload, payload_len, command_id);
         }
-        if (ret == PROTO_OK && command_id == CMD_SURVEY_ABORT && gateway_survey_active) {
-            LOG_INF("gateway survey orchestration aborted by host: survey=%u",
-                    gateway_survey_context.survey_id);
-            gateway_survey_auto_finish_status(
-                COMMAND_DENIED, GATEWAY_COMMAND_EVENT_REASON_ABORTED);
+        if (ret == PROTO_OK &&
+            command_id == CMD_SURVEY_ABORT &&
+            packet->dst_id == DEVICE_ID) {
+            if (gateway_survey_active) {
+                LOG_INF("gateway survey orchestration aborted by host: survey=%u",
+                        gateway_survey_context.survey_id);
+                gateway_survey_auto_finish_status(
+                    COMMAND_DENIED, GATEWAY_COMMAND_EVENT_REASON_ABORTED);
+            }
+            gateway_emit_host_command_result(
+                packet, command_id, COMMAND_OK, 0u);
+            gateway_observe_host_terminal(
+                packet,
+                command_id,
+                COMMAND_OK,
+                GATEWAY_COMMAND_EVENT_REASON_NONE);
+            return 0;
         }
     }
 

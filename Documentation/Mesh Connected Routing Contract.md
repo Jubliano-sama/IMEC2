@@ -384,6 +384,11 @@ only when DS-TWR actually begins, so a permanently busy radio cannot strand the
 anchor between control acceptance and execution. The coordinator cannot skip a
 pair while leaving an anchor prepared indefinitely.
 
+A command-ID-only `SURVEY_ABORT` addressed to the gateway is an idempotent
+local recovery command. It terminates an active survey, leaves bounded remote
+cleanup owned by the survey worker, emits one successful abort terminal, and
+never enters mesh routing as a command to the gateway itself.
+
 The communication service owns whether an RF attempt actually started.
 Deferral before RF begins does not consume an opportunity; once RF begins, the
 attempt is counted even if it collides or times out. Every accepted datagram
@@ -1050,6 +1055,14 @@ hand the complete follow-up exchange to the control listener instead of
 continuing a short gap scan. Route-solicitation wakes deliberately omit it so a
 maintenance request cannot steal an imminent channel 9 slot; event-timing
 proposals include it so the receiver can return the matching ACCEPT.
+After the final standard-PHR control wake claim, the sender leaves the
+configured inter-PHY turnaround before transmitting the extended-PHR control
+frame. This bound lets every listening anchor restore the control PHY, including
+an off-target anchor already inside another control exchange. Once a non-click
+control wake has transferred ownership to that bounded listener, repeated
+standard-PHR claims from the same train do not trigger click probes or pull the
+receiver away from the announced extended-PHR frame; ordinary route listeners
+retain click preemption.
 
 Survey reachability uses the same control-followup receive eligibility as
 anchor enumeration. After the `SURVEY_DISCOVERY_START` flood, each participating

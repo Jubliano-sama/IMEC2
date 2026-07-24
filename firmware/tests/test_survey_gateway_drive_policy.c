@@ -52,12 +52,12 @@ static void test_response_ack_settle_blocks_next_phase(void)
            SURVEY_GATEWAY_DRIVE_NONE);
 }
 
-static void test_external_waits_do_not_spin(void)
+static void test_external_waits_keep_a_bounded_deadline_poll(void)
 {
     assert(decide(true, true, true, false, false, false, false) ==
-           SURVEY_GATEWAY_DRIVE_NONE);
+           SURVEY_GATEWAY_DRIVE_POLL_WAIT);
     assert(decide(true, true, false, true, false, false, false) ==
-           SURVEY_GATEWAY_DRIVE_NONE);
+           SURVEY_GATEWAY_DRIVE_POLL_WAIT);
     assert(decide(true, false, false, false, false, false, false) ==
            SURVEY_GATEWAY_DRIVE_NONE);
     assert(decide(false, true, false, false, false, false, false) ==
@@ -139,7 +139,7 @@ int main(void)
     test_boundary_custody_uses_bounded_retry();
     test_runnable_orphan_is_driven_now();
     test_response_ack_settle_blocks_next_phase();
-    test_external_waits_do_not_spin();
+    test_external_waits_keep_a_bounded_deadline_poll();
     test_response_ack_settle_deadline_boundary();
     test_exact_duplicate_restarts_quiet_interval();
     test_each_phase_starts_a_fresh_quiet_interval();

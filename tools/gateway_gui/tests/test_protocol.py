@@ -67,6 +67,7 @@ from tools.gateway_gui.protocol import (
     DecodeError,
     append_tlv,
     build_anchor_discovery_command,
+    build_survey_abort_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
     click_samples,
@@ -561,6 +562,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(command.packet.dst_id, gateway_id)
         self.assertEqual(command.packet.value(TLV_COMMAND_ID), CMD_FORCE_REDISCOVERY)
         self.assertEqual([value.type_id for value in command.packet.tlvs], [TLV_COMMAND_ID])
+
+    def test_survey_abort_targets_local_gateway_with_only_command_id(self) -> None:
+        gateway_id = 0xAABBCCDDEEFF0011
+        command = build_survey_abort_command(
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=gateway_id,
+            session_id=0x55667789,
+            seq=12,
+        )
+
+        self.assertEqual(command.command_id, 0x0103)
+        self.assertEqual(command.packet.dst_id, gateway_id)
+        self.assertEqual(command.packet.value(TLV_COMMAND_ID), 0x0103)
+        self.assertEqual(
+            [value.type_id for value in command.packet.tlvs],
+            [TLV_COMMAND_ID],
+        )
 
     def test_assign_discovery_slots_command_targets_local_gateway_with_only_command_id(self) -> None:
         gateway_id = 0xAABBCCDDEEFF0011

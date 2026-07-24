@@ -61,6 +61,7 @@ DETECTION_SOURCE_UWB_WAKE_CLAIM = 1
 
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
+CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_SURVEY_GO = 0x0105
 
@@ -1418,6 +1419,33 @@ def build_anchor_discovery_command(
     return _build_command_frame(
         label="Anchor survey discovery",
         command_id=CMD_SURVEY_REACHABILITY,
+        host_id=host_id,
+        dst_id=gateway_id,
+        session_id=session_id,
+        seq=seq,
+        payload=bytes(payload),
+    )
+
+
+def build_survey_abort_command(
+    *,
+    host_id: int,
+    gateway_id: int,
+    session_id: int,
+    seq: int,
+) -> CommandFrame:
+    if host_id == 0:
+        raise ValueError("host ID must be non-zero")
+    if gateway_id == 0:
+        raise ValueError("gateway ID must be non-zero")
+    if gateway_id == host_id:
+        raise ValueError("gateway ID must differ from host ID")
+
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_ABORT.to_bytes(2, "little"))
+    return _build_command_frame(
+        label="Abort active anchor survey",
+        command_id=CMD_SURVEY_ABORT,
         host_id=host_id,
         dst_id=gateway_id,
         session_id=session_id,

@@ -21,6 +21,9 @@ REPORT_DELIVERY = (
 REPORT_TRANSPORT = (
     ROOT / "app" / "src" / "app_mesh_report_transport.inc"
 ).read_text(encoding="utf-8")
+APP_CONFIG = (ROOT / "app" / "src" / "app_config.h").read_text(
+    encoding="utf-8"
+)
 
 
 def function_body(source: str, name: str) -> str:
@@ -658,6 +661,61 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             r"BUILD_ASSERT\(MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS\s*<\s*"
             r"WAKE_ADV_MS,",
         )
+
+    def test_accepted_control_followup_holds_extended_phr(self):
+        listener = function_body(REPORT, "mesh_listen_for_route_reply")
+        activity = listener.index(
+            "app_wake_train_politeness_rx_activity(ret, rx_failure)"
+        )
+        control_gate = listener.index(
+            "C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD", activity
+        )
+        probe = listener.index("mesh_probe_standard_click_claim(", activity)
+        hold = listener.index(
+            "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED", probe
+        )
+
+        self.assertLess(activity, control_gate)
+        self.assertLess(control_gate, probe)
+        self.assertLess(probe, hold)
+        self.assertIn(
+            "contact_purpose !=",
+            listener[activity:probe],
+        )
+        self.assertIn(
+            "contact_purpose ==",
+            listener[probe:hold],
+        )
+
+    def test_control_followup_waits_after_every_central_wake_path(self):
+        helper = function_body(
+            REPORT, "mesh_wait_for_c5_control_followup_turnaround"
+        )
+
+        self.assertRegex(
+            APP_CONFIG,
+            r"#define\s+MESH_CONTROL_FOLLOWUP_TURNAROUND_MS\s*\\\s*"
+            r"MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS",
+        )
+        self.assertIn("MESH_CONTROL_FOLLOWUP_TURNAROUND_MS", helper)
+        self.assertIn("k_msleep(", helper)
+        self.assertRegex(
+            REPORT_UNIT,
+            r"BUILD_ASSERT\(MESH_CONTROL_FOLLOWUP_TURNAROUND_MS\s*>=\s*"
+            r"MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS,",
+        )
+
+        for name in (
+            "mesh_send_c5_control_attempt",
+            "mesh_send_c5_flood_now",
+            "mesh_try_send_c5_flood_resume",
+        ):
+            body = function_body(REPORT, name)
+            wake = body.index("mesh_send_route_wake_train(")
+            turnaround = body.index(
+                "mesh_wait_for_c5_control_followup_turnaround", wake
+            )
+            self.assertLess(wake, turnaround, name)
 
     def test_route_ready_poll_slice_precedes_channel9_retry_boundary(self):
         poll_match = re.search(

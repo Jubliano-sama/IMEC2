@@ -29,6 +29,7 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
+    build_survey_abort_command,
     decode_gateway_identity,
 )
 from tools.gateway_gui.command_telemetry import (  # noqa: E402
@@ -756,6 +757,9 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 }
                 if args.command == "here-i-am":
                     command = build_here_i_am_command(**command_args)
+                elif args.command == "abort-survey":
+                    command_args.pop("command_budget_ms")
+                    command = build_survey_abort_command(**command_args)
                 elif args.command == "assign-slots":
                     command = build_assign_discovery_slots_command(
                         **command_args,
@@ -840,6 +844,7 @@ def main() -> None:
             "assign-slots",
             "qualify-reachability",
             "survey",
+            "abort-survey",
             "monitor",
         ),
         required=True,

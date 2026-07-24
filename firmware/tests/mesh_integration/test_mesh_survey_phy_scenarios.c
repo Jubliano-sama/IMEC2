@@ -24,6 +24,13 @@
 #define TX_START_US UINT64_C(10000)
 #define CHANNEL5_STANDARD_FRAME_MAX_LEN 125u
 #define PHY_HOP_GAP_US UINT64_C(1000)
+#define MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS 40u
+#define MODELED_CONTROL_PHY_RETUNE_US UINT64_C(30000)
+#define MODELED_WAKE_REPEAT_GAP_US UINT64_C(1000)
+
+_Static_assert(MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS * 1000u >
+                   MODELED_CONTROL_PHY_RETUNE_US,
+               "control follow-up turnaround must cover the PHY retune");
 
 static unsigned int failures;
 
@@ -514,7 +521,7 @@ static int build_pair_prepare_control(struct mesh_outbound *control,
                                       uint16_t seq)
 {
     const struct survey_pair pair = {
-        .initiator_id = target_id,
+        .initiator_id = ANCHOR_ID,
         .responder_id = ANCHOR_2_ID,
         .survey_id = SURVEY_ID,
         .sample_count = 3u,
@@ -522,7 +529,8 @@ static int build_pair_prepare_control(struct mesh_outbound *control,
     size_t payload_len = 0u;
     int ret;
 
-    if (control == NULL) {
+    if (control == NULL ||
+        (target_id != pair.initiator_id && target_id != pair.responder_id)) {
         return PROTO_ERR_ARG;
     }
     memset(control, 0, sizeof(*control));
@@ -782,6 +790,379 @@ static void test_pair_prepare_phr_and_complete_airtime_sweep(void)
             }
         }
     }
+}
+
+struct followup_opportunity_result {
+    size_t trigger_mismatches[2];
+    size_t control_wakes_decoded[2];
+    size_t controls_decoded[2];
+    size_t controls_rejected[2];
+};
+
+static int build_pair_start_control(struct mesh_outbound *control,
+                                    uint64_t target_id,
+                                    uint16_t seq)
+{
+    const struct survey_pair pair = {
+        .initiator_id = ANCHOR_ID,
+        .responder_id = ANCHOR_2_ID,
+        .survey_id = SURVEY_ID,
+        .sample_count = 3u,
+    };
+    size_t payload_len = 0u;
+    int ret;
+
+    if (control == NULL ||
+        (target_id != pair.initiator_id && target_id != pair.responder_id)) {
+        return PROTO_ERR_ARG;
+    }
+    memset(control, 0, sizeof(*control));
+    ret = mesh_append_command_id(control->payload,
+                                 sizeof(control->payload),
+                                 &payload_len,
+                                 CMD_SURVEY_START_PAIR);
+    if (ret == PROTO_OK) {
+        ret = survey_append_pair_tlvs(control->payload,
+                                      sizeof(control->payload),
+                                      &payload_len,
+                                      &pair);
+    }
+    if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+    }
+    control->packet = (struct proto_packet) {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID,
+        .dst_id = target_id,
+        .session_id = SURVEY_ID,
+        .seq = seq,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = (uint16_t)payload_len,
+    };
+    control->payload_len = (uint16_t)payload_len;
+    control->next_hop_id = target_id;
+    control->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    return PROTO_OK;
+}
+
+static bool encode_control_followup_wake(uint16_t sequence,
+                                         uint8_t *frame,
+                                         size_t frame_cap,
+                                         size_t *frame_len)
+{
+    const uint8_t flags =
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    const struct uwb_wake_claim_frame claim = {
+        .network_id = UINT32_C(0x494d4543),
+        .clicker_id = GATEWAY_ID,
+        .click_event_id = sequence,
+        .attempt_index = 1u,
+        .priority_id = GATEWAY_ID,
+        .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .wake_train_ends_in_ms = 5u,
+        .discovery_starts_in_ms = 5u,
+        .claimed_duration_ms = 20u,
+        .min_anchor_count = 1u,
+        .max_anchor_count = 1u,
+        .nonce = UINT64_C(0x0102030405060708),
+        .flags = flags,
+    };
+
+    CHECK(app_mesh_c5_wake_followup_is_control(flags),
+          "modeled wake is not a CONTROL_FOLLOWUP");
+    CHECK(!app_mesh_c5_wake_claim_preempts_mesh(flags),
+          "modeled non-click CONTROL_FOLLOWUP acquired click priority");
+    CHECK(app_mesh_c5_wake_followup_uses_extended_phr(flags),
+          "modeled control wake does not select an extended-PHR follower");
+    return uwb_encode_wake_claim(&claim, frame, frame_cap, frame_len) ==
+           PROTO_OK;
+}
+
+static bool model_two_anchor_control_opportunity(
+    struct mesh_sim_world *world,
+    uint8_t gateway,
+    const uint8_t anchors[2],
+    uint64_t *at_us,
+    const struct mesh_outbound *control,
+    uint32_t turnaround_ms,
+    bool control_listener_holds_extended,
+    bool truncate_initiator_control,
+    struct followup_opportunity_result *result)
+{
+    uint8_t wake_frame[UWB_WAKE_CLAIM_LEN] = {0};
+    uint8_t control_frame[PACKET_EXT_MAX_LEN] = {0};
+    size_t wake_frame_len = 0u;
+    size_t control_frame_len = 0u;
+    size_t receptions_before;
+    uint16_t trigger_tx = UINT16_MAX;
+    uint16_t probe_tx = UINT16_MAX;
+    uint16_t control_tx = UINT16_MAX;
+    uint64_t trigger_start_us;
+    uint64_t trigger_end_us;
+    uint64_t probe_start_us;
+    uint64_t probe_end_us;
+    uint64_t control_start_us;
+    uint64_t control_end_us;
+    enum mesh_sim_phy control_rx_phy;
+
+    if (world == NULL || anchors == NULL || at_us == NULL ||
+        control == NULL || result == NULL ||
+        !encode_control_followup_wake(control->packet.seq,
+                                      wake_frame,
+                                      sizeof(wake_frame),
+                                      &wake_frame_len) ||
+        proto_packet_encode(&control->packet,
+                            control->payload,
+                            control_frame,
+                            sizeof(control_frame),
+                            &control_frame_len) != PROTO_OK) {
+        CHECK(false, "control opportunity encoding failed");
+        return false;
+    }
+    CHECK(app_mesh_c5_control_uses_extended_phr(
+              control->packet.msg_type,
+              control_frame_len,
+              CHANNEL5_STANDARD_FRAME_MAX_LEN),
+          "survey control copy did not select extended PHR");
+    CHECK(!mesh_sim_phy_decode_compatible(
+              MESH_SIM_PHY_CHANNEL5_WAKE,
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL),
+          "standard and extended Channel 5 PHRs became decode-compatible");
+
+    receptions_before = world->reception_count;
+    trigger_start_us = *at_us;
+    CHECK(mesh_sim_schedule_raw_tx(world,
+                                   gateway,
+                                   trigger_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   wake_frame,
+                                   wake_frame_len,
+                                   false,
+                                   &trigger_tx) == MESH_SIM_OK,
+          "control wake trigger scheduling failed");
+    trigger_end_us = world->transmissions[trigger_tx].end_us;
+    for (uint8_t receiver = 0u; receiver < 2u; receiver++) {
+        CHECK(mesh_sim_schedule_rx(world,
+                                   anchors[receiver],
+                                   trigger_start_us,
+                                   trigger_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   NULL) == MESH_SIM_OK,
+              "extended listener trigger scheduling failed");
+    }
+
+    probe_start_us = trigger_end_us + MODELED_WAKE_REPEAT_GAP_US;
+    CHECK(mesh_sim_schedule_raw_tx(world,
+                                   gateway,
+                                   probe_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   wake_frame,
+                                   wake_frame_len,
+                                   false,
+                                   &probe_tx) == MESH_SIM_OK,
+          "control wake probe scheduling failed");
+    probe_end_us = world->transmissions[probe_tx].end_us;
+    for (uint8_t receiver = 0u; receiver < 2u; receiver++) {
+        CHECK(mesh_sim_schedule_rx(world,
+                                   anchors[receiver],
+                                   probe_start_us,
+                                   probe_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   NULL) == MESH_SIM_OK,
+              "standard control-wake probe scheduling failed");
+    }
+
+    control_start_us = probe_end_us + (uint64_t)turnaround_ms * 1000u;
+    CHECK(mesh_sim_schedule_raw_tx(world,
+                                   gateway,
+                                   control_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   control_frame,
+                                   control_frame_len,
+                                   false,
+                                   &control_tx) == MESH_SIM_OK,
+          "extended survey control scheduling failed");
+    world->transmissions[control_tx].protocol_msg_type =
+        control->packet.msg_type;
+    control_end_us = world->transmissions[control_tx].end_us;
+    control_rx_phy = control_listener_holds_extended ||
+                         turnaround_ms * 1000u >=
+                             MODELED_CONTROL_PHY_RETUNE_US ?
+                     MESH_SIM_PHY_CHANNEL5_MESH_CONTROL :
+                     MESH_SIM_PHY_CHANNEL5_WAKE;
+    for (uint8_t receiver = 0u; receiver < 2u; receiver++) {
+        uint64_t rx_end_us = control_end_us;
+
+        if (truncate_initiator_control && receiver == 0u) {
+            rx_end_us--;
+        }
+        CHECK(mesh_sim_schedule_rx(world,
+                                   anchors[receiver],
+                                   control_start_us,
+                                   rx_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   control_rx_phy,
+                                   NULL) == MESH_SIM_OK,
+              "survey control receive scheduling failed");
+    }
+    CHECK(mesh_sim_run_until(world, control_end_us + 1u) == MESH_SIM_OK,
+          "two-anchor control opportunity simulation failed");
+
+    memset(result, 0, sizeof(*result));
+    for (size_t i = receptions_before; i < world->reception_count; i++) {
+        const struct mesh_sim_reception *reception = &world->receptions[i];
+        uint8_t receiver;
+
+        if (reception->receiver_id == ANCHOR_ID) {
+            receiver = 0u;
+        } else if (reception->receiver_id == ANCHOR_2_ID) {
+            receiver = 1u;
+        } else {
+            continue;
+        }
+        if (reception->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
+            if (reception->outcome == MESH_SIM_RX_DECODED) {
+                result->control_wakes_decoded[receiver]++;
+            } else {
+                result->trigger_mismatches[receiver]++;
+            }
+        } else if (reception->phy ==
+                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) {
+            if (reception->outcome == MESH_SIM_RX_DECODED) {
+                result->controls_decoded[receiver]++;
+            } else {
+                result->controls_rejected[receiver]++;
+            }
+        }
+    }
+    for (uint8_t receiver = 0u; receiver < 2u; receiver++) {
+        bool expect_control_decode =
+            control_rx_phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+            !(truncate_initiator_control && receiver == 0u);
+
+        CHECK(result->trigger_mismatches[receiver] == 1u,
+              "extended listener did not record one standard-PHR trigger mismatch");
+        CHECK(result->control_wakes_decoded[receiver] == 1u,
+              "standard probe did not decode one non-click control wake");
+        CHECK(result->controls_decoded[receiver] +
+                  result->controls_rejected[receiver] == 1u,
+              "extended control did not produce one physical receive outcome");
+        CHECK((result->controls_decoded[receiver] == 1u) ==
+                  expect_control_decode,
+              expect_control_decode ?
+                  "guarded complete-airtime control copy did not decode" :
+                  "wrong-PHR or partial-airtime control copy falsely decoded");
+    }
+    *at_us = control_end_us + FLOOD_RELAY_REPEAT_MS * 1000u;
+    return true;
+}
+
+static void run_two_anchor_followup_turnaround_case(
+    uint32_t turnaround_ms,
+    bool sender_guarded,
+    bool control_listener_holds_extended)
+{
+    static struct mesh_sim_world world;
+    struct mesh_outbound prepare_initiator;
+    struct mesh_outbound prepare_responder;
+    struct mesh_outbound start_responder;
+    struct mesh_outbound start_initiator;
+    struct followup_opportunity_result opportunity;
+    uint8_t anchors[2] = {UINT8_MAX, UINT8_MAX};
+    uint8_t gateway = UINT8_MAX;
+    uint64_t at_us = TX_START_US;
+    size_t initiator_start_decoded = 0u;
+    size_t initiator_start_rejected = 0u;
+
+    mesh_sim_init(&world, UINT32_C(0xc5f01100) ^ turnaround_ms);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK,
+          "turnaround gateway setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &anchors[0]) == MESH_SIM_OK,
+          "turnaround initiator setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_2_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &anchors[1]) == MESH_SIM_OK,
+          "turnaround responder setup failed");
+    CHECK(mesh_sim_set_link(&world, gateway, anchors[0], 100u, 0u) ==
+              MESH_SIM_OK &&
+              mesh_sim_set_link(&world, gateway, anchors[1], 100u, 0u) ==
+              MESH_SIM_OK,
+          "turnaround gateway-anchor links failed");
+    CHECK(build_pair_prepare_control(&prepare_initiator,
+                                     ANCHOR_ID,
+                                     ANCHOR_ID,
+                                     101u) == PROTO_OK &&
+              build_pair_prepare_control(&prepare_responder,
+                                         ANCHOR_2_ID,
+                                         ANCHOR_2_ID,
+                                         102u) == PROTO_OK &&
+              build_pair_start_control(&start_responder,
+                                       ANCHOR_2_ID,
+                                       103u) == PROTO_OK &&
+              build_pair_start_control(&start_initiator,
+                                       ANCHOR_ID,
+                                       104u) == PROTO_OK,
+          "turnaround pair-control setup failed");
+
+    if (!model_two_anchor_control_opportunity(
+            &world, gateway, anchors, &at_us, &prepare_initiator,
+            MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS, false, false,
+            &opportunity) ||
+        !model_two_anchor_control_opportunity(
+            &world, gateway, anchors, &at_us, &prepare_responder,
+            MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS, false, false,
+            &opportunity) ||
+        !model_two_anchor_control_opportunity(
+            &world, gateway, anchors, &at_us, &start_responder,
+            MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS, false, false,
+            &opportunity)) {
+        return;
+    }
+    CHECK(opportunity.controls_decoded[0] == 1u &&
+              opportunity.controls_decoded[1] == 1u,
+          "both anchors did not physically decode responder START traffic");
+
+    for (uint8_t copy = 0u; copy < FLOOD_RELAY_REPEAT_COUNT; copy++) {
+        bool truncate_first_guarded =
+            (sender_guarded || control_listener_holds_extended) &&
+            copy == 0u;
+
+        if (!model_two_anchor_control_opportunity(
+                &world, gateway, anchors, &at_us, &start_initiator,
+                turnaround_ms, control_listener_holds_extended,
+                truncate_first_guarded, &opportunity)) {
+            return;
+        }
+        initiator_start_decoded += opportunity.controls_decoded[0];
+        initiator_start_rejected += opportunity.controls_rejected[0];
+    }
+
+    if (sender_guarded || control_listener_holds_extended) {
+        CHECK(initiator_start_decoded >= 1u,
+              "guarded listener schedule did not contain any complete initiator START copy");
+        CHECK(initiator_start_rejected >= 1u,
+              "one-microsecond-short START window was falsely decoded");
+    } else {
+        CHECK(initiator_start_decoded == 0u &&
+                  initiator_start_rejected == FLOOD_RELAY_REPEAT_COUNT,
+              "zero-turnaround schedule did not miss all four extended-PHR START copies");
+    }
+}
+
+static void test_two_anchor_control_followup_turnaround(void)
+{
+    run_two_anchor_followup_turnaround_case(0u, false, false);
+    run_two_anchor_followup_turnaround_case(
+        MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS, true, false);
+    run_two_anchor_followup_turnaround_case(0u, false, true);
 }
 
 static bool range_header_matches(const struct uwb_range_header *actual,
@@ -1436,6 +1817,7 @@ int main(void)
     run_survey_start_phy_case(true, 0u, false, true);
     test_pair_start_skew_is_local_and_route_depth_independent();
     test_pair_prepare_phr_and_complete_airtime_sweep();
+    test_two_anchor_control_followup_turnaround();
     test_two_anchor_survey_lifecycle();
 
     if (failures != 0u) {

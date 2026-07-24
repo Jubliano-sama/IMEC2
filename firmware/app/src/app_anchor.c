@@ -229,7 +229,6 @@ static bool anchor_scan_recovery_gap_requested;
 static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static uint32_t gateway_survey_operation_deadline_ms;
-static bool gateway_survey_budget_explicit;
 static uint32_t gateway_survey_discovery_delivery_handle;
 static uint32_t gateway_survey_collection_deadline_ms;
 static uint32_t gateway_survey_collection_duration_ms;

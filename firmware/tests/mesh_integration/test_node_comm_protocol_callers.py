@@ -626,7 +626,8 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             self.anchor, "gateway_survey_auto_finish_status"
         )
         deadline = re.search(
-            r"gateway_survey_budget_explicit\s*&&.*?"
+            r"uptime_deadline_reached\s*\([^;]*?"
+            r"gateway_survey_operation_deadline_ms\s*\).*?"
             r"gateway_survey_auto_finish_status\s*\(\s*COMMAND_TIMEOUT\s*,\s*"
             r"GATEWAY_COMMAND_EVENT_REASON_TIMEOUT\s*\)",
             worker,
@@ -653,6 +654,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertIn("survey_gateway_drive_action(", scheduler)
         self.assertIn("gateway_survey_drive_state()", scheduler)
         self.assertIn("SURVEY_GATEWAY_DRIVE_POLL_CLEANUP", scheduler)
+        self.assertIn("SURVEY_GATEWAY_DRIVE_POLL_WAIT", scheduler)
         self.assertIn("GATEWAY_SURVEY_TRANSACTION_POLL_MS", scheduler)
         self.assertIn("SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY", scheduler)
         self.assertIn("GATEWAY_BLE_TX_RETRY_MS", scheduler)

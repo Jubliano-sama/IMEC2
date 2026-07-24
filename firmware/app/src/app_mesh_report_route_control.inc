@@ -2562,7 +2562,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             }
             if (ret < 0) {
                 if (DEVICE_ROLE == ROLE_ANCHOR &&
-                    app_wake_train_politeness_rx_activity(ret, rx_failure)) {
+                    app_wake_train_politeness_rx_activity(ret, rx_failure) &&
+                    contact_purpose !=
+                        C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
                     int probe_ret = mesh_probe_standard_click_claim(
                         frame,
                         UWB_MESH_MAX_FRAME_LEN,
@@ -2582,6 +2584,20 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                             probe_ret);
                         break;
                     }
+                } else if (DEVICE_ROLE == ROLE_ANCHOR &&
+                           app_wake_train_politeness_rx_activity(
+                               ret, rx_failure) &&
+                           contact_purpose ==
+                               C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
+                    /*
+                     * The decoded CONTROL_FOLLOWUP wake already transferred
+                     * this bounded exchange to the gateway-control listener.
+                     * Repeated standard-PHR claims belong to that same wake
+                     * train; stay on extended PHR so a zero-turnaround older
+                     * sender cannot make the following control frame partial.
+                     */
+                    status_debug_note(
+                        "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED\n");
                 }
                 if (!rx_failure_diagnostic_logged &&
                     IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {

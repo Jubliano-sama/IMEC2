@@ -1087,6 +1087,22 @@ static int mesh_send_outbound_keep_channel9_awake(const struct mesh_outbound *ou
                                            rf_started_out);
 }
 
+static void mesh_wait_for_c5_control_followup_turnaround(
+    uint8_t msg_type,
+    const char *reason)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+
+    status_debug_printf(
+        "DBG_C5_CONTROL_FOLLOWUP_TURNAROUND delay=%u msg=%02x reason=%s\n",
+        MESH_CONTROL_FOLLOWUP_TURNAROUND_MS,
+        msg_type,
+        reason == NULL ? "c5-control" : reason);
+    k_msleep(MESH_CONTROL_FOLLOWUP_TURNAROUND_MS);
+}
+
 static int mesh_send_c5_control_attempt(
     const struct mesh_outbound *out,
     uint8_t purpose,
@@ -1146,6 +1162,8 @@ static int mesh_send_c5_control_attempt(
                     reason == NULL ? "c5-control" : reason);
             goto out_unlock;
         }
+        mesh_wait_for_c5_control_followup_turnaround(tx->packet.msg_type,
+                                                     reason);
     }
 
     if (peer_id != 0u) {
@@ -1508,6 +1526,8 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                         log_reason);
                 return ret;
             }
+            mesh_wait_for_c5_control_followup_turnaround(tx.packet.msg_type,
+                                                         log_reason);
         }
 
         ret = single_opportunity ?
@@ -1633,6 +1653,9 @@ int mesh_try_send_c5_flood_resume(
         mesh_restart_role_scan();
         return ret;
     }
+    mesh_wait_for_c5_control_followup_turnaround(
+        tx.packet.msg_type,
+        reason == NULL ? "c5-flood-resume" : reason);
     ret = app_mesh_flood_send_bounded_resume(&tx, &ops, progress, result);
     if (ret == 0 &&
         (!progress->complete ||

@@ -409,6 +409,9 @@ enum survey_gateway_drive_action survey_gateway_drive_action(
     if (state->response_ack_settle_pending) {
         return SURVEY_GATEWAY_DRIVE_NONE;
     }
+    if (state->auto_waiting || state->pair_observation_active) {
+        return SURVEY_GATEWAY_DRIVE_POLL_WAIT;
+    }
     if (state->auto_running && !state->auto_waiting &&
         !state->pair_observation_active) {
         return SURVEY_GATEWAY_DRIVE_RUN_NOW;

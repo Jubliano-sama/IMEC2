@@ -585,7 +585,6 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
 #endif
     gateway_survey_active = true;
     gateway_survey_operation_deadline_ms = command_origin_ms + command_budget_ms;
-    gateway_survey_budget_explicit = budget_explicit;
     gateway_survey_host_command = *host_packet;
     gateway_survey_duplicate_count = 0u;
     gateway_survey_pair_success_count = 0u;
@@ -1130,7 +1129,6 @@ static void gateway_survey_auto_finish_status(
     gateway_survey_collection_duration_ms = 0u;
     gateway_survey_collection_window_armed = false;
     gateway_survey_active = false;
-    gateway_survey_budget_explicit = false;
     gateway_survey_operation_deadline_ms = 0u;
 #if DEVICE_ROLE == ROLE_GATEWAY
     gateway_survey_round_reset();
@@ -1259,17 +1257,12 @@ static uint32_t gateway_survey_control_timeout_ms(uint64_t target_id)
 {
     uint32_t natural_timeout_ms =
         gateway_survey_natural_control_timeout_ms(target_id);
-    uint32_t remaining_ms;
-
-    if (!gateway_survey_budget_explicit) {
-        return natural_timeout_ms;
-    }
-    remaining_ms = uptime_ms_until_deadline(
+    uint32_t remaining_ms = uptime_ms_until_deadline(
         k_uptime_get_32(), gateway_survey_operation_deadline_ms);
     /*
-     * The host budget is one absolute operation deadline.  A control result
-     * that arrives before it must not become late merely because other pairs
-     * were assigned an equal share of the remaining time.
+     * The stored default or host-selected budget is one absolute operation
+     * deadline. A control result that arrives before it must not become late
+     * merely because future phases exist.
      */
     return gateway_command_budget_window_ms(
         true,
@@ -1740,6 +1733,9 @@ static void gateway_survey_schedule_drive(void)
         survey_gateway_drive_action(&state);
 
     if (action == SURVEY_GATEWAY_DRIVE_POLL_CLEANUP) {
+        (void)k_work_reschedule(&gateway_survey_work,
+                                K_MSEC(GATEWAY_SURVEY_TRANSACTION_POLL_MS));
+    } else if (action == SURVEY_GATEWAY_DRIVE_POLL_WAIT) {
         (void)k_work_reschedule(&gateway_survey_work,
                                 K_MSEC(GATEWAY_SURVEY_TRANSACTION_POLL_MS));
     } else if (action == SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY) {

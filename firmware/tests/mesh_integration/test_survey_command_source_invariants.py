@@ -82,6 +82,9 @@ assert re.search(
     r"natural_timeout_ms\s*\)",
     control_timeout,
 ), "each survey control must use the natural timeout clipped by the global deadline"
+assert "gateway_survey_budget_explicit" not in ANCHOR, (
+    "the default operation deadline must be enforced as strongly as an explicit budget"
+)
 
 report_accept = function_body(ANCHOR, "gateway_handle_survey_discovery_report")
 assert "survey_gateway_hop_count_from_report_ttl(packet->ttl)" in report_accept
@@ -112,20 +115,37 @@ assert re.search(
     worker,
 ), "worker must not synthesize a second reachability terminal"
 
+host_route = function_body(ANCHOR, "gateway_route_host_packet")
+abort_branch = host_route[host_route.index("command_id == CMD_SURVEY_ABORT") :]
+assert "packet->dst_id == DEVICE_ID" in abort_branch
+assert "gateway_survey_auto_finish_status(" in abort_branch
+assert re.search(
+    r"gateway_emit_host_command_result\s*\(\s*packet\s*,\s*command_id\s*,\s*"
+    r"COMMAND_OK\s*,\s*0u\s*\)",
+    abort_branch,
+), "a gateway-local survey abort must emit an explicit successful result"
+assert re.search(
+    r"gateway_observe_host_terminal\s*\(\s*packet\s*,\s*command_id\s*,\s*"
+    r"COMMAND_OK\s*,\s*GATEWAY_COMMAND_EVENT_REASON_NONE\s*\)",
+    abort_branch,
+), "a gateway-local survey abort must have one successful terminal owner"
+assert abort_branch.index("return 0;") < abort_branch.index(
+    "return gateway_route_mesh_host_packet("
+), "a gateway-local survey abort must not fall through into mesh routing"
+
 survey_worker = function_body(ANCHOR, "gateway_survey_work_handler")
 deadline_check = survey_worker.index("gateway_survey_operation_deadline_ms")
 pair_planning = survey_worker.index("survey_gateway_plan_pairs(")
 assert deadline_check < pair_planning, (
-    "an explicit operation deadline must win before collection can be closed "
+    "the stored operation deadline must win before collection can be closed "
     "or pairs planned"
 )
 assert re.search(
-    r"if\s*\(\s*ret\s*==\s*-ETIMEDOUT\s*&&\s*"
-    r"gateway_survey_budget_explicit\s*\)\s*\{.*?"
+    r"if\s*\(\s*ret\s*==\s*-ETIMEDOUT\s*\)\s*\{.*?"
     r"gateway_survey_auto_finish_status\s*\(\s*COMMAND_TIMEOUT\s*,\s*"
     r"GATEWAY_COMMAND_EVENT_REASON_TIMEOUT\s*\)",
     survey_worker,
     re.DOTALL,
-), "an exhausted global budget must terminate the survey as a global timeout"
+), "an exhausted stored operation budget must terminate the survey as a global timeout"
 
 print("survey command source invariants passed")

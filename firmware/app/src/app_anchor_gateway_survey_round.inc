@@ -201,8 +201,7 @@ static int gateway_survey_round_submit_go(void)
 
     required_ms = execute_delay_ms + longest_run_ms +
                   SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS;
-    if (gateway_survey_budget_explicit &&
-        uptime_ms_until_deadline(now_ms,
+    if (uptime_ms_until_deadline(now_ms,
                                  gateway_survey_operation_deadline_ms) <
             required_ms) {
         return -ETIMEDOUT;

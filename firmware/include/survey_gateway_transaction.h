@@ -24,6 +24,7 @@ enum survey_gateway_transaction_result {
 enum survey_gateway_drive_action {
     SURVEY_GATEWAY_DRIVE_NONE = 0,
     SURVEY_GATEWAY_DRIVE_POLL_CLEANUP,
+    SURVEY_GATEWAY_DRIVE_POLL_WAIT,
     SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY,
     SURVEY_GATEWAY_DRIVE_RUN_NOW,
 };

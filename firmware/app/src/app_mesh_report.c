@@ -257,6 +257,9 @@ BUILD_ASSERT(MESH_ROUTE_WAKE_CLICK_RX_MAX_GAP_MS < WAKE_ADV_MS,
              "route wake TX gaps must leave a click receive opportunity inside one wake train");
 BUILD_ASSERT(MESH_ROUTE_REPLY_CLICK_PROBE_BUDGET_MS < WAKE_ADV_MS,
              "route reply PHY probe must fit inside the repeated click wake train");
+BUILD_ASSERT(MESH_CONTROL_FOLLOWUP_TURNAROUND_MS >=
+             MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS,
+             "control follow-up must leave time to restore the extended-PHR PHY");
 BUILD_ASSERT(MESH_ROUTE_REPLY_LISTEN_WORST_CASE_MS <
              APP_WATCHDOG_PROGRESS_LEASE_MS,
              "worst-case route reply listen must fit inside the watchdog progress lease");
