@@ -27,7 +27,7 @@ through textual `.inc` composition:
 | Translation unit | Composed lines | Responsibilities mixed together |
 |---|---:|---|
 | `app_mesh_report.c` | 18,699 | routing, transport, event timing, delivery, RX, gateway contact |
-| `app_anchor.c` | 10,887 | commands, survey, gateway control, radio, initialization |
+| `app_anchor.c` | 10,921 | commands, survey, gateway control, radio, initialization |
 | `mesh_relay.c` | 9,245 | routes, RX, delivery, exact custody |
 | `dwm3000_driver.c` | 4,863 | radio lifecycle, frames, I/O, DS-TWR |
 

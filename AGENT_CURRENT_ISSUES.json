@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "ledger_guard": {
-    "prefix_lines": 524,
-    "sha256": "46a5aeac56e184f1b41087fe77abe72685e0c57a0f5511a0c63ce3871f77e8c1"
+    "prefix_lines": 552,
+    "sha256": "7983ecbd9da3fad9a8b7c86e062cc3a2e97659eb829c6d707f1fde9c3cfa0748"
   },
   "history_policy": "Ledger matches are non-authoritative historical context. Fixed and explicitly superseded entries are hidden unless requested.",
   "global_rules": [

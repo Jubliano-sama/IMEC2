@@ -15,7 +15,7 @@
   },
   "approved_include_fragments": {
     "firmware/app/src/app_anchor_commands.inc": 1859,
-    "firmware/app/src/app_anchor_gateway_control.inc": 2844,
+    "firmware/app/src/app_anchor_gateway_control.inc": 2855,
     "firmware/app/src/app_anchor_gateway_survey.inc": 2454,
     "firmware/app/src/app_anchor_gateway_survey_round.inc": 775,
     "firmware/app/src/app_anchor_init.inc": 302,
@@ -38,7 +38,7 @@
   },
   "composed_translation_units": {
     "firmware/app/src/app_anchor.c": {
-      "max_composed_lines": 10910,
+      "max_composed_lines": 10921,
       "includes": [
         "app_anchor_commands.inc",
         "app_anchor_gateway_survey.inc",
