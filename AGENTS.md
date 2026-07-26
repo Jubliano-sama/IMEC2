@@ -154,6 +154,18 @@ bounded regression task when an agent is available, and prefer a broad
 invariant or adversarial scenario over one trace-shaped assertion. Keep code,
 tests, contract, comments, and documentation aligned in the same change.
 
+When repeated defects in one subsystem share a phase, token, deadline, retry,
+cleanup, or terminal boundary, stop adding leaf-level patches. Map every writer
+and wake edge, choose the smallest complete operation slice, move that slice
+behind one pure state owner, and delete or delegate the retired state in the
+same stage. Preserve wire, timing, power, role, and telemetry behavior unless a
+separate decision explicitly changes them.
+
+Source-shape tests may enforce static boundaries that the compiler cannot, such
+as forbidding Zephyr or direct radio calls in a pure module. They must not make
+function names, private fields, or statement ordering the primary proof of
+runtime behavior when a native transition test can express the invariant.
+
 For difficult DWM3000 bring-up, audit slow/fast SPI transitions and retained
 sleep configuration before blaming RF or protocol behavior.
 
