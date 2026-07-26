@@ -174,7 +174,7 @@ def _run_exact_roles(build_root: Path, jobs: int) -> None:
                 "--",
                 f"-DIMEC_BUILD_PRESET={preset}",
             ],
-            env={**os.environ, "CMAKE_BUILD_PARALLEL_LEVEL": str(jobs)},
+            env={**os.environ, "CCACHE_DISABLE": "1", "CMAKE_BUILD_PARALLEL_LEVEL": str(jobs)},
         )
         _run(
             f"verify static stack policy for {preset}",
@@ -218,7 +218,7 @@ def _run_compatibility_builds(build_root: Path, jobs: int) -> None:
         raise RuntimeError(
             "west is missing; create the repository Python environment first"
         )
-    environment = {**os.environ, "CMAKE_BUILD_PARALLEL_LEVEL": str(jobs)}
+    environment = {**os.environ, "CCACHE_DISABLE": "1", "CMAKE_BUILD_PARALLEL_LEVEL": str(jobs)}
     for preset in COMPATIBILITY_PRESETS:
         _run(
             f"build compatibility preset {preset}",
