@@ -170,4 +170,28 @@ assert cleanup_complete < inprogress < pair_complete, (
     "cleanup completion must preserve the pair while request delivery is nonterminal"
 )
 
+cleanup_service = function_body(ANCHOR, "gateway_survey_service_cleanup")
+submitted = cleanup_service.index("if (cleanup->submitted)")
+take_terminal = cleanup_service.index(
+    "app_node_comm_take_delivery_event_for(cleanup->handle, &event)",
+    submitted,
+)
+deadline_gate = cleanup_service.index(
+    "if (now_ms < cleanup->absolute_deadline_ms)", take_terminal
+)
+abandon = cleanup_service.index(
+    "app_node_comm_abandon_delivery(cleanup->handle)", deadline_gate
+)
+completion_ready = cleanup_service.index(
+    "cleanup->completion_ready = true", abandon
+)
+reschedule = cleanup_service.index("k_work_reschedule(", completion_ready)
+assert (
+    submitted < take_terminal < deadline_gate < abandon <
+    completion_ready < reschedule
+), (
+    "a submitted cleanup with a missing terminal must abandon its exact "
+    "delivery handle and advance after the absolute deadline"
+)
+
 print("survey pair-control lifecycle source invariants passed")

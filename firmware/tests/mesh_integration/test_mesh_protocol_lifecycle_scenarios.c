@@ -955,6 +955,7 @@ static bool run_survey_transaction_phase(void)
     uint32_t old_result_fingerprint;
     uint32_t new_request_fingerprint;
     uint32_t new_result_fingerprint;
+    uint8_t cleanup_mask;
     const uint32_t old_handle = 101u, old_token = 1001u;
     const uint32_t new_handle = 102u, new_token = 1002u;
 
@@ -996,8 +997,26 @@ static bool run_survey_transaction_phase(void)
               transaction, old_handle, old_token,
               fixture->world.now_us / 1000u) == 0,
           "survey control transaction did not terminalize");
+
+    /*
+     * Model the gateway cleanup delivery reaching its absolute deadline
+     * without a terminal event. Cleanup is best-effort after that bounded
+     * point: the communication handle is abandoned by the Zephyr adapter and
+     * the transaction must retire so operation N+1 can be admitted.
+     */
+    survey_gateway_transaction_require_cleanup(
+        transaction, false, fixture->world.now_us / 1000u);
+    cleanup_mask = survey_gateway_transaction_cleanup_mask(transaction);
+    CHECK(cleanup_mask != 0u &&
+          survey_gateway_transaction_note_cleanup_started(
+              transaction, cleanup_mask) == 0 &&
+          survey_gateway_transaction_note_cleanup_complete(
+              transaction, cleanup_mask,
+              (fixture->world.now_us / 1000u) + 30001u) == 0 &&
+          !survey_gateway_transaction_cleanup_pending(transaction),
+          "missing cleanup terminal kept operation N busy past its deadline");
     survey_gateway_transaction_pair_complete(
-        transaction, true, fixture->world.now_us / 1000u);
+        transaction, true, (fixture->world.now_us / 1000u) + 30001u);
 
     pair2.survey_id = SURVEY_ID_2;
     CHECK(survey_gateway_transaction_load_pair(transaction, &pair2) == 0 &&

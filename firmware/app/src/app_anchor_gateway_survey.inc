@@ -1882,6 +1882,17 @@ static void gateway_survey_service_cleanup(void)
     }
     if (cleanup->submitted) {
         if (!app_node_comm_take_delivery_event_for(cleanup->handle, &event)) {
+            if (now_ms < cleanup->absolute_deadline_ms) {
+                return;
+            }
+            ret = app_node_comm_abandon_delivery(cleanup->handle);
+            status_debug_printf(
+                "DBG_SURVEY_CLEANUP_DEADLINE dst=0x%016llx handle=%u ret=%d\n",
+                (unsigned long long)cleanup->target_id,
+                cleanup->handle,
+                ret);
+            cleanup->completion_ready = true;
+            (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
             return;
         }
         status_debug_printf("DBG_SURVEY_CLEANUP_TERMINAL dst=0x%016llx handle=%u reason=%u attempts=%u\n",
