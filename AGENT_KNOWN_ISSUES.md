@@ -547,3 +547,4 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Fixed the architecture ceiling accepting a baseline object retained only by an unrelated ref; the pinned policy commit must now be an ancestor of HEAD.
 - Fixed executable guidance duplicating the architecture baseline hash independently of the checker and omitting its own negative self-test from checks-only verification.
 - Fixed live west metadata allowing special-file or unbounded-read stalls before its guard could report mutation, and preserved the original matrix error when cleanup validation also fails.
+- Fixed wiki freshness missing a changed survey-control glue fragment because page 7 mapped only the pure round state machine; the TOC now maps the composed owner and focused regressions, and the page cites final-lane terminal retirement.
