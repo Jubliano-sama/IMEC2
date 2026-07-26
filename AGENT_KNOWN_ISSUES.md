@@ -512,3 +512,5 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Fixed failed survey-lane cleanup leaving `BATCH_COMPLETE` runnable without advancing the rerun or terminal batch; cleanup-driven completion now uses the same batch transition as observation finalization.
 - A valid close-range anchor survey can report `RANGE_OK` below 50 mm; treating that arbitrary floor as unusable causes needless full-pair reruns and a false terminal failure, so the shared firmware and GUI boundary must accept every positive `RANGE_OK` distance.
 - An explicit `git add` can report already tracked `tools/gateway_gui/*` files as ignored in this checkout; `git add -u` stages the tracked modifications without forcing ignored untracked files.
+- Gateway BLE host tools must notify on `PACKET_TX_UUID` and write commands to `PACKET_RX_UUID`; reversing the device-perspective names makes BlueZ reject notification setup as unsupported.
+- pyOCD commander's `read32 <address> <length>` takes a byte length, not a word count; use length 8 to read the two 32-bit nRF FICR device-ID words.
