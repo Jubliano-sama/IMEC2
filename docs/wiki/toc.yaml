@@ -2,7 +2,7 @@ project:
   name: "IMEC2"
   description: "A robust UWB-first experience-sampling system that turns participant clicks into timestamped, spatially contextual research data through clickers, anchors, a connected-routing mesh, and a BLE gateway."
   repo_base_url: "https://github.com/Jubliano-sama/IMEC2/blob"
-  ref_commit_hash: "e04a0a7cfccd21c8821f2975119fcafc85705e4c"
+  ref_commit_hash: "af15a7eb59b1ca8f75464506ffa97f980ffbfef7"
   updated_at: "2026-07-26"
 
 pages:
@@ -335,7 +335,10 @@ pages:
       - "firmware/src/survey.c"
       - "firmware/src/survey_gateway_transaction.c"
       - "firmware/src/survey_pair_lease.c"
+      - "firmware/app/src/app_anchor.c"
+      - "firmware/app/src/app_gateway_survey_round.c"
       - "firmware/app/src/app_anchor_survey_runtime.c"
+      - "firmware/app/src/app_anchor_gateway_survey_round.inc"
       - "firmware/app/src/app_mesh_gateway_command_flow.c"
       - "tools/gateway_gui/anchor_geometry.py"
     sections:
@@ -591,8 +594,10 @@ pages:
       - "firmware/tests/mesh_integration/test_mesh_production_scenarios.c"
       - "firmware/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c"
       - "firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c"
+      - "firmware/tests/mesh_integration/test_gateway_survey_round_glue_source_invariants.py"
       - "firmware/tests/mesh_integration/test_gateway_ble_transport_model.c"
       - "firmware/tests/mesh_integration/test_dwm3000_models.c"
+      - "firmware/tests/test_app_gateway_survey_round.c"
       - "Documentation/Mesh Integration Coverage Matrix 2026-07-12.md"
       - "Documentation/Mesh Integration Simulator Adversarial Review 2026-07-11.md"
     sections:

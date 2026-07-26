@@ -1,9 +1,9 @@
 # Wiki Documentation Summary
 
-Generated: 2026-07-26 13:07:36
+Generated: 2026-07-26 13:34:47
 Repository: IMEC2
-Commit: `e04a0a7cfccd21c8821f2975119fcafc85705e4c`
-Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6402cf`
+Commit: `af15a7eb59b1ca8f75464506ffa97f980ffbfef7`
+Wiki state SHA-256: `9518e5100f2995b4031f21ab8419eba438c3885b2a32e8650dbb5ea664b79e54`
 
 ## Generation Status
 
@@ -13,7 +13,7 @@ Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6
 |--------|----------|--------|--------|
 | Pages | 14 | 14 | ✅ |
 | Sections | 56 | 56 | ✅ |
-| Citations | - | 988 | ✅ |
+| Citations | - | 991 | ✅ |
 | Diagrams | 9 | 9 valid | ✅ |
 
 ## Page Details
@@ -27,7 +27,7 @@ Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6
 | 04_protocol-packets-and-data-contracts.md | Protocol, Packets, and Data Contracts | 4/4 | 125 | 0 | ✅ |
 | 05_connected-routing-and-reliable-delivery.md | Connected Routing, Priority, and Reliable Delivery | 4/4 | 53 | 2 | ✅ |
 | 06_anchor-identity-discovery-and-assignment.md | Anchor Identity, Discovery, and Assignment | 4/4 | 65 | 0 | ✅ |
-| 07_anchor-self-setup-survey-and-geometry.md | Anchor Self-Setup: Survey and Geometry | 4/4 | 73 | 1 | ✅ |
+| 07_anchor-self-setup-survey-and-geometry.md | Anchor Self-Setup: Survey and Geometry | 4/4 | 76 | 1 | ✅ |
 | 08_data-custody-persistence-and-recovery.md | Data Custody, Persistence, and Recovery | 4/4 | 75 | 1 | ✅ |
 | 09_gateway-host-tools-and-observability.md | Gateway, Host Tools, and Observability | 4/4 | 95 | 0 | ✅ |
 | 10_build-presets-and-configuration.md | Build Presets, Configuration, and Repository Boundaries | 4/4 | 83 | 0 | ✅ |
@@ -72,6 +72,7 @@ Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6
 - `firmware/app/prj-gateway.conf` - cited in 10_build-presets-and-configuration.md
 - `firmware/app/prj.conf` - cited in 10_build-presets-and-configuration.md
 - `firmware/app/src/app_anchor.c` - cited in 02_one-click-end-to-end.md
+- `firmware/app/src/app_anchor_gateway_survey_round.inc` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_anchor_low_power_policy.h` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/app/src/app_anchor_survey_runtime.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_clicker.c` - cited in 02_one-click-end-to-end.md
@@ -81,6 +82,7 @@ Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6
 - `firmware/app/src/app_gateway_ble.c` - cited in 02_one-click-end-to-end.md, 08_data-custody-persistence-and-recovery.md, 09_gateway-host-tools-and-observability.md
 - `firmware/app/src/app_gateway_ble_stream.c` - cited in 02_one-click-end-to-end.md, 08_data-custody-persistence-and-recovery.md, 09_gateway-host-tools-and-observability.md
 - `firmware/app/src/app_gateway_command_observability.c` - cited in 09_gateway-host-tools-and-observability.md
+- `firmware/app/src/app_gateway_survey_round.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_mesh_gateway_command_flow.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_mesh_persistence.c` - cited in 08_data-custody-persistence-and-recovery.md
 - `firmware/app/src/app_mesh_report.c` - cited in 02_one-click-end-to-end.md
@@ -137,6 +139,7 @@ Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6
 - `firmware/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_production_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
+- `firmware/tests/test_app_gateway_survey_round.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/west_projects.lock.json` - cited in 10_build-presets-and-configuration.md
 - `tools/gateway_gui/README.md` - cited in 01_product-roles-and-firmware-lines.md, 06_anchor-identity-discovery-and-assignment.md, 07_anchor-self-setup-survey-and-geometry.md, 09_gateway-host-tools-and-observability.md, 12_testing-simulation-and-release-evidence.md, 13_hardware-bring-up-and-troubleshooting.md, README.md
 - `tools/gateway_gui/anchor_geometry.py` - cited in 07_anchor-self-setup-survey-and-geometry.md
@@ -174,6 +177,7 @@ Wiki state SHA-256: `1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6
 - `firmware/src/mesh_relay.c`
 - `firmware/src/route.c`
 - `firmware/src/status.c`
+- `firmware/tests/mesh_integration/test_gateway_survey_round_glue_source_invariants.py`
 - `manifest/west.yml`
 
 ## Issues
@@ -184,4 +188,4 @@ None
 
 ### Recommendations
 
-- Add citations for 26 uncovered source files
+- Add citations for 27 uncovered source files
