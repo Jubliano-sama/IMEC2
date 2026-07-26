@@ -492,7 +492,10 @@ still match, so delayed delivery work from attempt N cannot release or abort
 attempt N+1.
 
 A survey sample is usable geometry only when its range status is `RANGE_OK`
-and its distance is greater than 50 mm. An unusable report remains ACK-eligible
+and its distance is positive. The DS-TWR driver already rejects a negative
+time of flight before assigning `RANGE_OK`, so an additional 50 mm policy floor
+would discard valid close-range exchanges and needlessly rerun the pair. Zero
+and negative distances remain unusable. An unusable report remains ACK-eligible
 but does not consume the sample index, so the other pair participant may still
 supply a usable result before the continuous observation window ends. If both
 participants report the same sample, a usable result outranks an unusable one

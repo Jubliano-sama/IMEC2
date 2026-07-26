@@ -13,7 +13,7 @@ extern "C" {
 
 #define SURVEY_MIN_SAMPLE_COUNT 1u
 #define SURVEY_MAX_SAMPLE_COUNT 1000u
-#define SURVEY_MIN_USABLE_DISTANCE_MM 50
+#define SURVEY_MIN_USABLE_DISTANCE_MM 0
 #define SURVEY_GATEWAY_PAIR_MAX_RERUNS 2u
 /*
  * The wire format permits larger surveys, but the connected mesh runtime can

@@ -30,6 +30,7 @@ from .protocol import (
 TLV_INITIATOR_ID = 0x1F
 TLV_RESPONDER_ID = 0x20
 MSG_SURVEY_PAIR_RESULT = 0x53
+SURVEY_MIN_USABLE_DISTANCE_MM = 0
 
 WAKE_NORMAL = "normal"
 WAKE_LATE = "unexplained_late"
@@ -198,7 +199,11 @@ class SurveyGeometryModel:
         before = (self.pairs.get(pair), pair in self.failures,
                   pair in self.observed_opportunities)
         distance_mm = packet.value(TLV_DISTANCE_MM)
-        success = packet.value(TLV_RANGE_STATUS) == 0 and isinstance(distance_mm, int) and distance_mm > 50
+        success = (
+            packet.value(TLV_RANGE_STATUS) == 0
+            and isinstance(distance_mm, int)
+            and distance_mm > SURVEY_MIN_USABLE_DISTANCE_MM
+        )
         sample_count = packet.value(TLV_SAMPLE_COUNT)
         sample_index = packet.value(TLV_SAMPLE_INDEX)
         if (
@@ -684,7 +689,11 @@ class ClickLocationModel:
             self.state = ClickDiagnosticState("invalid", f"Duplicate range from {anchor_id}.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
             return self.state
         distance_mm = packet.value(TLV_DISTANCE_MM)
-        if packet.value(TLV_RANGE_STATUS) != 0 or not isinstance(distance_mm, int) or distance_mm <= 50:
+        if (
+            packet.value(TLV_RANGE_STATUS) != 0
+            or not isinstance(distance_mm, int)
+            or distance_mm <= SURVEY_MIN_USABLE_DISTANCE_MM
+        ):
             self.state = ClickDiagnosticState("invalid", f"Invalid range from {anchor_id}.", key, self.geometry_generation, dict(self.ranges_m), wake=wake)
             return self.state
         self.ranges_m[anchor_id] = distance_mm / 1000.0

@@ -204,6 +204,27 @@ class SurveyAndClickTests(unittest.TestCase):
             )
             self.assertEqual(model.failures, set())
 
+    def test_positive_short_range_is_usable_but_zero_is_not(self):
+        for distance in (1, 12, 50):
+            model = SurveyGeometryModel()
+            observation = model.observe_pair_packet(
+                pair_result(1, 2, distance, 0, 1)
+            )
+
+            self.assertIsNotNone(observation)
+            self.assertTrue(observation.successful)
+            self.assertAlmostEqual(
+                next(iter(model.pairs.values())).distance_m,
+                distance / 1000.0,
+            )
+
+        model = SurveyGeometryModel()
+        observation = model.observe_pair_packet(pair_result(1, 2, 0, 0, 1))
+        self.assertIsNotNone(observation)
+        self.assertFalse(observation.successful)
+        self.assertEqual(model.pairs, {})
+        self.assertEqual(len(model.failures), 1)
+
     def test_pair_mutation_invalidates_existing_solution_generation(self):
         model = SurveyGeometryModel()
         model.begin_survey(40, host_session_id=1, host_sequence=2)

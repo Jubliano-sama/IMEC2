@@ -77,10 +77,10 @@ static void test_sample_distance_usability(void)
     value.distance_mm = 0;
     assert(!survey_sample_distance_usable(&value));
 
-    value.distance_mm = SURVEY_MIN_USABLE_DISTANCE_MM;
-    assert(!survey_sample_distance_usable(&value));
-
     value.distance_mm = SURVEY_MIN_USABLE_DISTANCE_MM + 1;
+    assert(survey_sample_distance_usable(&value));
+
+    value.distance_mm = 50;
     assert(survey_sample_distance_usable(&value));
 
     value.range_status = RANGE_RX_TIMEOUT;

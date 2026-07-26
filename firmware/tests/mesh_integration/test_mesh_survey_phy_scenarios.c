@@ -1404,7 +1404,8 @@ static void test_planned_pair_runs_full_bounded_exchange(
             };
             struct uwb_report_frame report = {
                 .header = identity,
-                .distance_mm = 3200 + (int32_t)sample_index * 10,
+                .distance_mm = sample_index == 0u ?
+                    1 : 3200 + (int32_t)sample_index * 10,
                 .quality = (uint8_t)(92u - sample_index),
                 .status = RANGE_OK,
                 .rsl_dbm = -54,
@@ -1505,6 +1506,8 @@ static void test_planned_pair_runs_full_bounded_exchange(
                 .quality = decoded_report.quality,
                 .range_status = decoded_report.status,
             };
+            CHECK(survey_sample_distance_usable(&sample),
+                  "positive short-range survey sample was rejected");
             CHECK(survey_pair_round_runtime_note_sample(
                       &round_runtime, planned_pair->initiator_id, &sample,
                       &lane_index, &accepted_new) == PROTO_OK &&
