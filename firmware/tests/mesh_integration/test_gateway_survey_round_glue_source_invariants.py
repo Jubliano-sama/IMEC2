@@ -218,10 +218,21 @@ assert "outbound->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL" in build_go
 submit_go = function_body(GLUE, "gateway_survey_round_submit_go")
 assert_ordered(
     submit_go,
+    "execute_delay_ms = survey_round_go_execute_delay_ms(",
+    "now_ms = k_uptime_get_32()",
+    "command_seq = gateway_next_command_seq()",
+    "uptime_ms_until_deadline(now_ms",
+    "gateway_survey_operation_deadline_ms",
     "gateway_survey_round_build_go(",
     "app_node_comm_submit_delivery(",
     "NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD",
+    "gateway_survey_round_observation_deadline_ms = now_ms + required_ms",
 )
+assert submit_go.index(
+    "uptime_ms_until_deadline(now_ms"
+) < submit_go.index(
+    "app_node_comm_submit_delivery("
+), "every regenerated GO must be bounded by the live survey operation deadline"
 
 
 # A failed control owns only its lane. It may queue that lane for cleanup or a
@@ -298,6 +309,75 @@ assert_ordered(
     "attempts_started == 0u",
     "app_gateway_survey_round_mark_observing_after_go(",
 )
+
+# GO remains live through transient facade admission pressure. A retryable
+# submission cannot enter the terminal survey branch, and the delayed retry
+# must rebuild against a later current time and fresh command sequence.
+go_branch_start = drive.index(
+    "if (app_gateway_survey_round_go_needed(&gateway_survey_round))"
+)
+go_branch_open = drive.index("{", go_branch_start)
+go_branch_end = block_end(drive, go_branch_open)
+go_branch = drive[go_branch_start : go_branch_end + 1]
+submit_failure_start = go_branch.index("if (ret < 0)")
+submit_failure_open = go_branch.index("{", submit_failure_start)
+submit_failure_end = block_end(go_branch, submit_failure_open)
+submit_failure = go_branch[
+    submit_failure_start : submit_failure_end + 1
+]
+submit_retry_start = submit_failure.index(
+    "if (app_gateway_survey_round_go_submit_retryable(ret))"
+)
+submit_retry_open = submit_failure.index("{", submit_retry_start)
+submit_retry_end = block_end(submit_failure, submit_retry_open)
+submit_retry = submit_failure[
+    submit_retry_start : submit_retry_end + 1
+]
+assert_ordered(
+    submit_retry,
+    "app_gateway_survey_round_go_submit_retryable(ret)",
+    "k_work_reschedule(",
+    "GATEWAY_SURVEY_TRANSACTION_POLL_MS",
+)
+assert "gateway_survey_auto_finish_status(" not in submit_retry, (
+    "transient GO admission pressure must retain the active round"
+)
+assert submit_retry_end < submit_failure.index(
+    "gateway_survey_auto_finish_status("
+), "only nonretryable GO submission failures may terminalize the survey"
+
+# Taking the terminal event releases node-communication custody. If no RF
+# attempt started for a retryable reason, retire the local handle and schedule
+# another drive without marking the round observing or emitting a terminal.
+zero_rf_retry_start = go_branch.index(
+    "if (app_gateway_survey_round_go_terminal_retryable("
+)
+zero_rf_retry_open = go_branch.index("{", zero_rf_retry_start)
+zero_rf_retry_end = block_end(go_branch, zero_rf_retry_open)
+zero_rf_retry = go_branch[
+    zero_rf_retry_start : zero_rf_retry_end + 1
+]
+assert go_branch.index(
+    "app_node_comm_take_delivery_event_for("
+) < zero_rf_retry_start, (
+    "zero-RF retry may release its local handle only after taking the exact "
+    "terminal event"
+)
+assert_ordered(
+    zero_rf_retry,
+    "app_gateway_survey_round_go_terminal_retryable(",
+    "event.reason",
+    "event.attempts_started",
+    "gateway_survey_round_go_delivery_handle = 0u",
+    "k_work_reschedule(",
+    "GATEWAY_SURVEY_TRANSACTION_POLL_MS",
+    "return true;",
+)
+assert "gateway_survey_auto_finish_status(" not in zero_rf_retry
+assert "app_gateway_survey_round_mark_observing_after_go(" not in zero_rf_retry
+assert zero_rf_retry_end < go_branch.index(
+    "if (event.attempts_started == 0u)"
+), "retryable zero-RF terminals must be regenerated before terminal fallback"
 
 delivery_gate = function_body(ANCHOR_RUNTIME, "pair_start_delivery_ready")
 assert "delivery_confirmed &&" in delivery_gate

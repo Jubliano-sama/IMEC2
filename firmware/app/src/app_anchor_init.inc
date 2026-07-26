@@ -60,6 +60,9 @@ int app_anchor_init(void)
     if (gateway_host_command_msgq.max_msgs != GATEWAY_HOST_COMMAND_QUEUE_DEPTH) {
         return -EINVAL;
     }
+    if (gateway_host_abort_msgq.max_msgs != GATEWAY_HOST_ABORT_QUEUE_DEPTH) {
+        return -EINVAL;
+    }
     ret = app_gateway_command_lifecycle_init(&gateway_host_command_lifecycle,
                                              GATEWAY_HOST_COMMAND_QUEUE_DEPTH);
     if (ret < 0) {
@@ -69,6 +72,7 @@ int app_anchor_init(void)
                           gateway_host_command_work_handler);
     k_work_init_delayable(&gateway_host_command_retry_work,
                           gateway_host_command_retry_work_handler);
+    k_work_init(&gateway_host_abort_work, gateway_host_abort_work_handler);
     app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
         gateway_host_command_schedule_failed, NULL);
 #endif

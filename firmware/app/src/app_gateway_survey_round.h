@@ -1,6 +1,7 @@
 #ifndef APP_GATEWAY_SURVEY_ROUND_H
 #define APP_GATEWAY_SURVEY_ROUND_H
 
+#include "node_comm.h"
 #include "survey_pair_round_runtime.h"
 
 #include <stdbool.h>
@@ -75,6 +76,10 @@ bool app_gateway_survey_round_go_needed(
     const struct app_gateway_survey_round *round);
 int app_gateway_survey_round_mark_observing_after_go(
     struct app_gateway_survey_round *round);
+bool app_gateway_survey_round_go_submit_retryable(int error);
+bool app_gateway_survey_round_go_terminal_retryable(
+    enum node_comm_terminal_reason reason,
+    uint8_t attempts_started);
 
 int app_gateway_survey_round_note_sample(
     struct app_gateway_survey_round *round,

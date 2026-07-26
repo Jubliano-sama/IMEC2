@@ -28,6 +28,12 @@ struct app_gateway_command_identity {
 
 struct app_gateway_command_ingress_ops {
     bool gateway_role;
+    bool (*is_preemptive)(
+        void *ctx,
+        const struct app_gateway_command_ingress_item *item);
+    int (*submit_preemptive)(
+        void *ctx,
+        const struct app_gateway_command_ingress_item *item);
     int (*admit)(void *ctx, struct app_gateway_command_ingress_item *item);
     int (*submit_priority)(void *ctx);
     int (*cancel_admitted)(void *ctx,

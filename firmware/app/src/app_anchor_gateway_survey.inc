@@ -1110,6 +1110,14 @@ static void gateway_survey_auto_finish_status(
             (unsigned int)gateway_survey_context.pair_count);
     finalize_result = gateway_survey_finalize_pair_observation();
     if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_RETRY) {
+#if DEVICE_ROLE == ROLE_GATEWAY
+        gateway_survey_finish_pending_status = status;
+        gateway_survey_finish_pending_reason = reason;
+        gateway_survey_finish_pending = true;
+#endif
+        (void)k_work_reschedule(
+            &gateway_survey_work,
+            K_MSEC(GATEWAY_BLE_TX_RETRY_MS));
         return;
     }
 #if DEVICE_ROLE == ROLE_GATEWAY

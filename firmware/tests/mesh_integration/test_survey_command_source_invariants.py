@@ -133,6 +133,57 @@ assert abort_branch.index("return 0;") < abort_branch.index(
     "return gateway_route_mesh_host_packet("
 ), "a gateway-local survey abort must not fall through into mesh routing"
 
+preemptive_predicate = function_body(
+    ANCHOR, "gateway_host_command_is_preemptive"
+)
+assert "item->command_id == CMD_SURVEY_ABORT" in preemptive_predicate
+assert "item->packet.dst_id == DEVICE_ID" in preemptive_predicate, (
+    "only a gateway-local survey abort may bypass serialized command dispatch"
+)
+
+preemptive_submit = function_body(
+    ANCHOR, "gateway_host_command_submit_preemptive"
+)
+assert "gateway_host_abort_msgq" in preemptive_submit
+assert "gateway_host_abort_work" in preemptive_submit
+assert preemptive_submit.index("gateway_host_abort_msgq") < (
+    preemptive_submit.index("gateway_host_abort_work")
+), "the exact abort must enter dedicated custody before its worker is submitted"
+
+cancel_pending = function_body(
+    ANCHOR, "gateway_host_command_cancel_pending_surveys"
+)
+assert "gateway_host_command_msgq" in cancel_pending
+assert "gateway_command_uses_survey_mesh(" in cancel_pending, (
+    "abort must remove every pending survey phase from normal command custody"
+)
+assert "app_gateway_command_lifecycle_" in cancel_pending, (
+    "removing queued survey bytes must also terminalize their lifecycle owners"
+)
+
+abort_worker = function_body(ANCHOR, "gateway_host_abort_work_handler")
+cancel_index = abort_worker.index(
+    "gateway_host_command_cancel_pending_surveys("
+)
+dispatch_index = abort_worker.index("gateway_route_host_packet(")
+assert cancel_index < dispatch_index, (
+    "a host abort must cancel pending serialized survey work before ending "
+    "the active survey"
+)
+assert "gateway_host_abort_msgq" in abort_worker, (
+    "the abort worker must consume the exact command held by its dedicated queue"
+)
+
+ble_ingress = function_body(ANCHOR, "gateway_handle_ble_frame")
+assert re.search(
+    r"\.is_preemptive\s*=\s*gateway_host_command_is_preemptive",
+    ble_ingress,
+)
+assert re.search(
+    r"\.submit_preemptive\s*=\s*gateway_host_command_submit_preemptive",
+    ble_ingress,
+), "BLE abort ingress must bypass the safe-boundary command submitter"
+
 survey_worker = function_body(ANCHOR, "gateway_survey_work_handler")
 deadline_check = survey_worker.index("gateway_survey_operation_deadline_ms")
 pair_planning = survey_worker.index("survey_gateway_plan_pairs(")

@@ -39,6 +39,16 @@ def function_body(source: str, name: str) -> str:
     raise AssertionError(f"unterminated function {name}")
 
 
+def block_end(source: str, opening_brace: int) -> int:
+    depth = 0
+    for index in range(opening_brace, len(source)):
+        depth += source[index] == "{"
+        depth -= source[index] == "}"
+        if depth == 0:
+            return index
+    raise AssertionError("unterminated source block")
+
+
 preflight = function_body(ANCHOR, "gateway_survey_auto_preflight_result")
 decode = preflight.index("app_mesh_gateway_command_flow_decode_result(")
 decode_reject = preflight.index("if (ret != PROTO_OK)", decode)
@@ -80,6 +90,31 @@ assert "memset(&gateway_survey_result_preflight" not in accepted_result[
 ], "the accepted latch must survive an active backend cancel/take race"
 
 finish = function_body(ANCHOR, "gateway_survey_auto_finish_status")
+finalize_call = finish.index("gateway_survey_finalize_pair_observation()")
+finalize_retry = finish.index(
+    "if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_RETRY)",
+    finalize_call,
+)
+finalize_retry_open = finish.index("{", finalize_retry)
+finalize_retry_end = block_end(finish, finalize_retry_open)
+finalize_retry_body = finish[finalize_retry : finalize_retry_end + 1]
+retry_status = finalize_retry_body.index(
+    "gateway_survey_finish_pending_status = status"
+)
+retry_reason = finalize_retry_body.index(
+    "gateway_survey_finish_pending_reason = reason"
+)
+retry_pending = finalize_retry_body.index(
+    "gateway_survey_finish_pending = true"
+)
+retry_schedule = finalize_retry_body.index("k_work_reschedule(")
+retry_return = finalize_retry_body.index("return;", retry_schedule)
+assert (
+    retry_status < retry_reason < retry_pending < retry_schedule < retry_return
+), "pair-finalize backpressure must retain the caller's exact outcome"
+assert "gateway_observe_survey_terminal(" not in finalize_retry_body
+assert "gateway_survey_begin_cleanup(" not in finalize_retry_body
+
 cancel_take = finish.index("gateway_survey_cancel_take_active_delivery(")
 cancel_error = finish.index("if (ret < 0)", cancel_take)
 pending = finish.index("gateway_survey_finish_pending = true", cancel_error)
@@ -96,9 +131,29 @@ worker = function_body(ANCHOR, "gateway_survey_work_handler")
 service = worker.index("gateway_survey_service_active_delivery()")
 resume = worker.index("if (gateway_survey_finish_pending", service)
 terminal_gate = worker.index("request_delivery_terminal", resume)
-resume_finish = worker.index("gateway_survey_auto_finish_status(", terminal_gate)
-assert service < resume < terminal_gate < resume_finish, (
+resume_status = worker.index(
+    "gateway_survey_finish_pending_status", terminal_gate
+)
+resume_reason = worker.index(
+    "gateway_survey_finish_pending_reason", resume_status
+)
+resume_clear = worker.index(
+    "gateway_survey_finish_pending = false", resume_reason
+)
+resume_finish = worker.index(
+    "gateway_survey_auto_finish_status(finish_status, finish_reason)",
+    resume_clear,
+)
+resume_return = worker.index("return;", resume_finish)
+assert (
+    service < resume < terminal_gate < resume_status < resume_reason <
+    resume_clear < resume_finish < resume_return
+), (
     "deferred finish must resume only after polling the exact request delivery"
+)
+cleanup_service = worker.index("gateway_survey_service_cleanup()", resume)
+assert resume_return < cleanup_service, (
+    "the exact deferred terminal outcome must replay before normal survey work"
 )
 
 finish_cleanup = function_body(

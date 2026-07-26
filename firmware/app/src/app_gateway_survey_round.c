@@ -1,11 +1,30 @@
 #include "app_gateway_survey_round.h"
 
+#include <errno.h>
 #include <string.h>
 
 _Static_assert(SURVEY_GATEWAY_MAX_PAIRS == 150u,
                "gateway round wrapper must retain the complete pair map");
 _Static_assert(SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 25u,
                "gateway round wrapper must retain the runtime lane cap");
+
+bool app_gateway_survey_round_go_submit_retryable(int error)
+{
+    return error == -EAGAIN || error == -EBUSY ||
+           error == -ENOSPC || error == -ESHUTDOWN;
+}
+
+bool app_gateway_survey_round_go_terminal_retryable(
+    enum node_comm_terminal_reason reason,
+    uint8_t attempts_started)
+{
+    if (attempts_started != 0u) {
+        return false;
+    }
+    return reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ||
+           reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ||
+           reason == NODE_COMM_TERMINAL_CANCELLED;
+}
 
 static int app_gateway_survey_round_stage_details(
     const struct survey_pair_round_lane *lane,

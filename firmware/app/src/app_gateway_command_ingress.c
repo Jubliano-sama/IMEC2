@@ -80,6 +80,18 @@ int app_gateway_command_ingress_handle_frame(
         command_id = CMD_VENDOR_BASE;
     }
     item_out->command_id = command_id;
+    if (ops->is_preemptive != NULL &&
+        ops->is_preemptive(ops->ctx, item_out)) {
+        if (ops->submit_preemptive == NULL) {
+            return -EINVAL;
+        }
+        ret = ops->submit_preemptive(ops->ctx, item_out);
+        if (ret < 0) {
+            ops->emit_result(ops->ctx, &item_out->packet, command_id,
+                             COMMAND_BUSY, (uint8_t)(-ret));
+        }
+        return ret;
+    }
     ret = ops->admit(ops->ctx, item_out);
     if (ret < 0) {
         ops->emit_result(ops->ctx, &item_out->packet, command_id,

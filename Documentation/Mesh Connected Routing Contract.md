@@ -398,9 +398,12 @@ anchor between control acceptance and execution. The coordinator cannot skip a
 pair while leaving an anchor prepared indefinitely.
 
 A command-ID-only `SURVEY_ABORT` addressed to the gateway is an idempotent
-local recovery command. It terminates an active survey, leaves bounded remote
-cleanup owned by the survey worker, emits one successful abort terminal, and
-never enters mesh routing as a command to the gateway itself.
+local recovery command. It bypasses the ordinary safe-radio-boundary command
+queue, cancels any queued survey starts before they can become active,
+terminates the active survey, leaves bounded remote cleanup owned by the survey
+worker, emits one successful abort terminal, and never enters mesh routing as a
+command to the gateway itself. An operation cannot block the recovery command
+that cancels it.
 
 The communication service owns whether an RF attempt actually started.
 Deferral before RF begins does not consume an opportunity; once RF begins, the
@@ -1637,7 +1640,10 @@ Useful tests or guards include:
   its responder window covers bounded local execution skew plus the initiator
   DS-TWR timeout and complete frame airtime; one-hop and maximum-depth command
   timeouts remain independent, and a frame ending beyond the local window does
-  not decode.
+  not decode. Temporary communication-service capacity or a terminal outcome
+  with zero RF attempts regenerates GO with a fresh future execution window;
+  retries remain bounded by the survey operation deadline, while a permanent
+  pre-RF failure terminates the survey.
 - The gateway BLE packet stream accepts a complete maximum-size click report;
   it must not reject a protocol-valid click payload as oversize. Under queue
   pressure, click records may displace lower-priority diagnostic or status

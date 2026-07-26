@@ -61,12 +61,16 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 
 #define ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS 1000u
 #define GATEWAY_HOST_COMMAND_QUEUE_DEPTH 2u
+#define GATEWAY_HOST_ABORT_QUEUE_DEPTH 2u
 #define GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS 8u
 #define DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S 120u
 #define GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS
 #define GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS 5u
 #define GATEWAY_SURVEY_TRANSACTION_POLL_MS 50u
 
+BUILD_ASSERT(GATEWAY_SURVEY_TRANSACTION_POLL_MS <
+             SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS,
+             "survey GO admission retries must fit before a fresh execution horizon");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
              "gateway enumeration must cover the connected anchor maximum");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
@@ -297,6 +301,11 @@ K_MSGQ_DEFINE(gateway_host_command_msgq,
               sizeof(struct app_gateway_command_ingress_item),
               GATEWAY_HOST_COMMAND_QUEUE_DEPTH,
               4);
+K_MSGQ_DEFINE(gateway_host_abort_msgq,
+              sizeof(struct app_gateway_command_ingress_item),
+              GATEWAY_HOST_ABORT_QUEUE_DEPTH,
+              4);
+static struct k_work gateway_host_abort_work;
 static struct k_work_delayable gateway_host_command_work;
 static struct k_work_delayable gateway_host_command_retry_work;
 static uint8_t gateway_host_command_retry_round;

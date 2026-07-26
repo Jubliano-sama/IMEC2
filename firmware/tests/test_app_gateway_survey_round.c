@@ -1,6 +1,7 @@
 #include "app_gateway_survey_round.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -250,8 +251,46 @@ static void test_control_failure_skips_only_one_lane_before_go(void)
            SURVEY_PAIR_ROUND_LANE_OBSERVING);
 }
 
+static void test_go_submission_retry_policy_covers_transient_admission(void)
+{
+    for (int error = -4096; error <= 4096; error++) {
+        const bool expected =
+            error == -EAGAIN || error == -EBUSY ||
+            error == -ENOSPC || error == -ESHUTDOWN;
+
+        assert(app_gateway_survey_round_go_submit_retryable(error) ==
+               expected);
+    }
+}
+
+static void test_go_terminal_retry_requires_zero_rf_attempts(void)
+{
+    for (enum node_comm_terminal_reason reason =
+             NODE_COMM_TERMINAL_DELIVERED;
+         reason <= NODE_COMM_TERMINAL_CANCELLED;
+         reason++) {
+        const bool retryable_reason =
+            reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ||
+            reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ||
+            reason == NODE_COMM_TERMINAL_CANCELLED;
+
+        assert(app_gateway_survey_round_go_terminal_retryable(reason, 0u) ==
+               retryable_reason);
+        assert(!app_gateway_survey_round_go_terminal_retryable(reason, 1u));
+        assert(!app_gateway_survey_round_go_terminal_retryable(
+            reason, UINT8_MAX));
+    }
+    assert(!app_gateway_survey_round_go_terminal_retryable(
+        (enum node_comm_terminal_reason)-1, 0u));
+    assert(!app_gateway_survey_round_go_terminal_retryable(
+        (enum node_comm_terminal_reason)(NODE_COMM_TERMINAL_CANCELLED + 1),
+        0u));
+}
+
 int main(void)
 {
+    test_go_submission_retry_policy_covers_transient_admission();
+    test_go_terminal_retry_requires_zero_rf_attempts();
     test_maximum_25_lane_batch_arms_before_one_go();
     test_one_lane_failure_rerun_does_not_disturb_peer();
     test_control_failure_skips_only_one_lane_before_go();

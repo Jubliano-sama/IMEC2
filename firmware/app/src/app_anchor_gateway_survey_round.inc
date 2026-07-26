@@ -650,12 +650,23 @@ static bool gateway_survey_round_drive(void)
         if (gateway_survey_round_go_delivery_handle == 0u) {
             ret = gateway_survey_round_submit_go();
             if (ret < 0) {
-                gateway_survey_auto_finish_status(
-                    ret == -ETIMEDOUT ? COMMAND_TIMEOUT :
-                                        COMMAND_RADIO_ERROR,
-                    ret == -ETIMEDOUT ?
-                        GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
-                        GATEWAY_COMMAND_EVENT_REASON_RADIO);
+                if (app_gateway_survey_round_go_submit_retryable(ret)) {
+                    status_debug_printf(
+                        "DBG_SURVEY_ROUND_GO_ADMISSION_RETRY survey=%u round=%u ret=%d\n",
+                        gateway_survey_context.survey_id,
+                        gateway_survey_round.runtime.batch_sequence,
+                        ret);
+                    (void)k_work_reschedule(
+                        &gateway_survey_work,
+                        K_MSEC(GATEWAY_SURVEY_TRANSACTION_POLL_MS));
+                } else {
+                    gateway_survey_auto_finish_status(
+                        ret == -ETIMEDOUT ? COMMAND_TIMEOUT :
+                                            COMMAND_RADIO_ERROR,
+                        ret == -ETIMEDOUT ?
+                            GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
+                            GATEWAY_COMMAND_EVENT_REASON_RADIO);
+                }
             } else {
                 (void)k_work_reschedule(
                     &gateway_survey_work,
@@ -677,6 +688,19 @@ static bool gateway_survey_round_drive(void)
                 gateway_survey_round.runtime.batch_sequence,
                 (unsigned int)event.reason,
                 event.attempts_started);
+        if (app_gateway_survey_round_go_terminal_retryable(
+                event.reason, event.attempts_started)) {
+            gateway_survey_round_go_delivery_handle = 0u;
+            status_debug_printf(
+                "DBG_SURVEY_ROUND_GO_ZERO_ATTEMPT_RETRY survey=%u round=%u reason=%u\n",
+                gateway_survey_context.survey_id,
+                gateway_survey_round.runtime.batch_sequence,
+                (unsigned int)event.reason);
+            (void)k_work_reschedule(
+                &gateway_survey_work,
+                K_MSEC(GATEWAY_SURVEY_TRANSACTION_POLL_MS));
+            return true;
+        }
         if (event.attempts_started == 0u) {
             gateway_survey_round_go_delivery_handle = 0u;
             gateway_survey_auto_finish_status(

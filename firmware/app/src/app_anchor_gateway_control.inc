@@ -2312,6 +2312,51 @@ static int gateway_host_command_submit_priority(void *ctx)
     return mesh_gateway_command_priority_submit(&gateway_host_command_work);
 }
 
+static bool gateway_host_command_is_preemptive(
+    void *ctx,
+    const struct app_gateway_command_ingress_item *item)
+{
+    ARG_UNUSED(ctx);
+
+    return item != NULL &&
+           item->command_id == CMD_SURVEY_ABORT &&
+           item->packet.dst_id == DEVICE_ID;
+}
+
+static int gateway_host_command_submit_preemptive(
+    void *ctx,
+    const struct app_gateway_command_ingress_item *item)
+{
+    int ret;
+
+    ARG_UNUSED(ctx);
+    if (!gateway_host_command_is_preemptive(NULL, item)) {
+        return -EINVAL;
+    }
+    if (k_msgq_num_free_get(&gateway_host_abort_msgq) == 0u) {
+        return -ENOSPC;
+    }
+    ret = k_msgq_put(&gateway_host_abort_msgq, item, K_NO_WAIT);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gateway_observe_host_acceptance(&item->packet, item->command_id);
+    if (ret < 0) {
+        struct app_gateway_command_ingress_item abandoned;
+
+        (void)k_msgq_get(&gateway_host_abort_msgq, &abandoned, K_NO_WAIT);
+        return ret;
+    }
+    ret = k_work_submit(&gateway_host_abort_work);
+    if (ret < 0) {
+        struct app_gateway_command_ingress_item abandoned;
+
+        (void)k_msgq_get(&gateway_host_abort_msgq, &abandoned, K_NO_WAIT);
+        return ret;
+    }
+    return 0;
+}
+
 static int gateway_host_command_cancel_admitted(
     void *ctx,
     const struct app_gateway_command_identity *identity)
@@ -2427,6 +2472,89 @@ static void gateway_host_command_submit_next_queued(void)
     if (ret < 0) {
         gateway_host_command_schedule_failed(NULL, ret);
     }
+}
+
+static size_t gateway_host_command_cancel_pending_surveys(void)
+{
+    size_t queued = k_msgq_num_used_get(&gateway_host_command_msgq);
+    size_t cancelled = 0u;
+
+    for (size_t i = 0u; i < queued; i++) {
+        struct app_gateway_command_ingress_item item;
+
+        if (k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT) != 0) {
+            break;
+        }
+        if (!gateway_command_uses_survey_mesh(item.command_id)) {
+            if (k_msgq_put(&gateway_host_command_msgq,
+                           &item,
+                           K_NO_WAIT) != 0) {
+                gateway_emit_host_command_result(
+                    &item.packet,
+                    item.command_id,
+                    COMMAND_INTERNAL_ERROR,
+                    ENOSPC);
+                gateway_observe_host_terminal(
+                    &item.packet,
+                    item.command_id,
+                    COMMAND_INTERNAL_ERROR,
+                    GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+                (void)app_gateway_command_lifecycle_discard(
+                    &gateway_host_command_lifecycle, &item);
+            }
+            continue;
+        }
+        (void)app_gateway_command_lifecycle_discard(
+            &gateway_host_command_lifecycle, &item);
+        gateway_emit_host_command_result(
+            &item.packet,
+            item.command_id,
+            COMMAND_DENIED,
+            GATEWAY_COMMAND_EVENT_REASON_ABORTED);
+        gateway_observe_host_terminal(
+            &item.packet,
+            item.command_id,
+            COMMAND_DENIED,
+            GATEWAY_COMMAND_EVENT_REASON_ABORTED);
+        cancelled++;
+    }
+    if (cancelled > 0u) {
+        (void)k_work_cancel_delayable(&gateway_host_command_retry_work);
+        gateway_host_command_retry_pending = false;
+        gateway_host_command_retry_round = 0u;
+        gateway_host_command_retry_started_ms = 0u;
+    }
+    return cancelled;
+}
+
+static void gateway_host_abort_work_handler(struct k_work *work)
+{
+    struct app_gateway_command_ingress_item item;
+
+    ARG_UNUSED(work);
+    while (k_msgq_get(&gateway_host_abort_msgq, &item, K_NO_WAIT) == 0) {
+        int ret;
+
+        gateway_observe_host_stage(&item.packet,
+                                   item.command_id,
+                                   GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING);
+        (void)gateway_host_command_cancel_pending_surveys();
+        ret = gateway_route_host_packet(
+            &item.packet, item.payload, item.payload_len);
+        if (ret < 0) {
+            gateway_emit_host_command_result(
+                &item.packet,
+                item.command_id,
+                COMMAND_INTERNAL_ERROR,
+                (uint8_t)(-ret));
+            gateway_observe_host_terminal(
+                &item.packet,
+                item.command_id,
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        }
+    }
+    gateway_host_command_submit_next_queued();
 }
 
 static void gateway_host_command_work_handler(struct k_work *work)
@@ -2639,6 +2767,8 @@ void gateway_handle_ble_frame(const uint8_t *frame, size_t frame_len)
         mesh_gateway_command_orchestrator_context();
     const struct app_gateway_command_ingress_ops ingress_ops = {
         .gateway_role = true,
+        .is_preemptive = gateway_host_command_is_preemptive,
+        .submit_preemptive = gateway_host_command_submit_preemptive,
         .admit = gateway_host_command_admit,
         .submit_priority = gateway_host_command_submit_priority,
         .cancel_admitted = gateway_host_command_cancel_admitted,
