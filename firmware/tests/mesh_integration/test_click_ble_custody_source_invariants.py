@@ -132,6 +132,23 @@ class ClickBleCustodySourceInvariantTests(unittest.TestCase):
         self.assertLess(stream_init, restore)
         self.assertLess(restore, bt_enable)
 
+    def test_gateway_ble_startup_preprocessor_gates_gateway_journal_state(self):
+        init = function_body(GATEWAY_BLE, "gateway_ble_init")
+        gate = init.index("#if DEVICE_ROLE == ROLE_GATEWAY")
+        end = init.index("#endif", gate)
+
+        for gateway_only_symbol in (
+            "gateway_ble_stream_initialized",
+            "gateway_click_journal_restored",
+            "gateway_click_journal_restore_pending",
+            "gateway_restore_click_journal_runtime",
+            "gateway_schedule_persistence_retry",
+        ):
+            symbol = init.index(gateway_only_symbol)
+            self.assertLess(gate, symbol)
+            self.assertLess(symbol, end)
+        self.assertNotIn("if (DEVICE_ROLE == ROLE_GATEWAY)", init)
+
     def test_click_journal_restore_reserves_a_free_stream_slot_before_borrowing_staging(self):
         restore = function_body(GATEWAY_BLE, "gateway_restore_click_journal_runtime")
 

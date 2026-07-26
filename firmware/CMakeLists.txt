@@ -308,6 +308,11 @@ add_test(NAME click_ble_custody_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_ble_custody_source_invariants.py)
 set_tests_properties(click_ble_custody_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway;click;ble;static_analysis")
+add_test(NAME ml_preset_boundaries
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_ml_preset_boundaries.py)
+set_tests_properties(ml_preset_boundaries PROPERTIES
+    LABELS "hardware_models;configuration;static_analysis")
 add_test(NAME stage1_click_spam_preset_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_stage1_click_spam_preset.py)

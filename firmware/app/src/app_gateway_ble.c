@@ -3217,15 +3217,15 @@ int gateway_ble_init(void)
     k_work_init_delayable(&gateway_ble_recovery_work,
                           gateway_ble_recovery_work_handler);
     gateway_ble_stream_init(&gateway_ble_stream_state);
+#if DEVICE_ROLE == ROLE_GATEWAY
     gateway_ble_stream_initialized = true;
-    if (DEVICE_ROLE == ROLE_GATEWAY) {
-        gateway_click_journal_restored = false;
-        gateway_click_journal_restore_pending = true;
-        ret = gateway_restore_click_journal_runtime();
-        if (ret < 0) {
-            gateway_schedule_persistence_retry("click-restore-init");
-        }
+    gateway_click_journal_restored = false;
+    gateway_click_journal_restore_pending = true;
+    ret = gateway_restore_click_journal_runtime();
+    if (ret < 0) {
+        gateway_schedule_persistence_retry("click-restore-init");
     }
+#endif
     gateway_command_observability_init(&gateway_command_observability_state);
     gateway_ble_tx_reset_locked();
     gateway_ble_rx_len = 0u;

@@ -21,7 +21,9 @@ generators. The forced-hop image is the only valid source for an anchor-relay
 qualification because the generic transmitter may select the gateway directly.
 `ml_clicker` and `ml_anchor_1` through `ml_anchor_8` are data-collection images.
 Every `ml_anchor_<1-8>` preset has a distinct deterministic device identity and
-discovery slot; never substitute one slot's artifact for another board.
+discovery slot; never substitute one slot's artifact for another board. The ML
+clicker owns the BLE PC link, while ML anchors exchange collection traffic over
+UWB and do not carry the removed BLE debug-log service.
 Generic `FIRMWARE_ROLE=clicker|anchor|gateway`, staged high-debug, and other
 bring-up presets are compatibility or diagnostic images, not production truth.
 

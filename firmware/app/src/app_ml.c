@@ -2640,15 +2640,10 @@ int app_ml_init(void)
 #endif
 #if defined(CONFIG_IMEC_ML_ANCHOR)
     if (DEVICE_ROLE == ROLE_ANCHOR) {
-        int ret;
-
         k_work_init_delayable(&ml_anchor_battery_led_work,
                               ml_anchor_battery_led_work_handler);
         (void)k_work_schedule(&ml_anchor_battery_led_work, K_NO_WAIT);
-        ret = gateway_ble_init();
-        if (ret < 0) {
-            LOG_ERR("ML anchor BLE debug log link unavailable: %d", ret);
-        }
+        LOG_INF("ML anchor ready; UWB collection enabled");
     }
 #endif
     return 0;
