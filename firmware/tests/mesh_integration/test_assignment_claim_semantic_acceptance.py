@@ -56,31 +56,48 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         wrong_command = claim.index(
             "command_id != CMD_ASSIGN_DISCOVERY_SLOTS", parse
         )
-        inactive = claim.index(
-            "!gateway_discovery_assignment_state.active", wrong_command
+        decode = claim.index(
+            "discovery_assignment_extract_control_tlvs", wrong_command
         )
-        decode = claim.index("discovery_assignment_extract_control_tlvs", inactive)
+        status = claim.index("TLV_COMMAND_STATUS", decode)
+        claim_hash = claim.index(
+            "discovery_assignment_extract_claim_hash", status
+        )
+        hop = claim.index("TLV_HOP_COUNT", claim_hash)
+        lock = claim.index(
+            "k_mutex_lock(&gateway_discovery_assignment_mutex", hop
+        )
+        inactive = claim.index(
+            "!gateway_discovery_assignment_state.active", lock
+        )
 
         self.assertLess(parse, wrong_command)
-        self.assertLess(wrong_command, inactive)
-        self.assertLess(inactive, decode)
+        self.assertLess(wrong_command, decode)
+        self.assertLess(decode, status)
+        self.assertLess(status, claim_hash)
+        self.assertLess(claim_hash, hop)
+        self.assertLess(hop, lock)
+        self.assertLess(lock, inactive)
         self.assertIn("return -ENOENT;", claim[:parse])
         self.assertIn("return -EBADMSG;", claim[parse:wrong_command])
-        self.assertIn("return -ENOENT;", claim[wrong_command:inactive])
-        self.assertTrue(has_owned_return(claim[inactive:decode], "-ESTALE"))
-        self.assertIn("k_mutex_lock(&gateway_discovery_assignment_mutex", claim)
+        self.assertIn("return -ENOENT;", claim[wrong_command:decode])
+        self.assertTrue(has_owned_return(
+            claim[inactive:],
+            "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE",
+        ))
         self.assertIn("k_mutex_unlock(&gateway_discovery_assignment_mutex)", claim)
 
-    def test_malformed_and_stale_claims_are_never_accepted(self):
+    def test_malformed_replies_fail_before_retired_results_are_accepted(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
         decode = claim.index("discovery_assignment_extract_control_tlvs")
-        lookup = claim.index("for (size_t i = 0u", decode)
-        validation = claim[decode:lookup]
+        lock = claim.index(
+            "k_mutex_lock(&gateway_discovery_assignment_mutex", decode
+        )
+        validation = claim[decode:lock]
 
         for required in (
             "DISCOVERY_ASSIGNMENT_PHASE_CLAIM",
             "DISCOVERY_ASSIGNMENT_PHASE_ACK",
-            "gateway_discovery_assignment_state.epoch",
             "TLV_COMMAND_STATUS",
             "COMMAND_OK",
             "discovery_assignment_extract_claim_hash",
@@ -93,22 +110,48 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
                 self.assertIn(required, validation)
         self.assertTrue(has_owned_return(validation, "-EBADMSG"))
         self.assertTrue(has_owned_return(validation, "-EPROTO"))
-        self.assertTrue(has_owned_return(validation, "-ESTALE"))
+
+        lookup = claim.index("for (size_t i = 0u", lock)
+        retired = claim[lock:lookup]
+        for required in (
+            "!gateway_discovery_assignment_state.active",
+            "epoch != gateway_discovery_assignment_state.epoch",
+            "app_discovery_assignment_operation_expired(",
+        ):
+            with self.subTest(retired_gate=required):
+                gate = retired.index(required)
+                next_gate = retired.find("if (", gate + len(required))
+                branch = retired[
+                    gate : next_gate if next_gate >= 0 else len(retired)
+                ]
+                self.assertTrue(has_owned_return(
+                    branch,
+                    "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE",
+                ))
+        self.assertNotIn("APP_GATEWAY_SEMANTIC_ACCEPT", validation)
 
     def test_every_assignment_state_gate_is_visible_in_hardware_traces(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
 
         for reason in (
-            "reason=inactive",
             "reason=control",
             "reason=phase",
-            "reason=epoch",
-            "reason=deadline",
             "reason=rf-start",
         ):
             with self.subTest(reason=reason):
                 self.assertIn(
                     f"DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT {reason}",
+                    claim,
+                )
+        for reason in (
+            "reason=inactive",
+            "reason=epoch",
+            "reason=deadline",
+            "reason=ack-state",
+        ):
+            with self.subTest(retired_reason=reason):
+                self.assertIn(
+                    f"DBG_DISCOVERY_SLOT_RESULT_RETIRED {reason}",
                     claim,
                 )
 
@@ -136,7 +179,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         ):
             with self.subTest(ack_required=required):
                 self.assertIn(required, ack)
-        self.assertTrue(has_owned_return(ack, "-ESTALE"))
+        self.assertIn("APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE", ack)
         self.assertIn("ack_mask &", ack)
         self.assertIn("duplicate_count", duplicate)
         self.assertTrue(has_owned_return(

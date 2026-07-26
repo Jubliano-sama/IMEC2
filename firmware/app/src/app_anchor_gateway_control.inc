@@ -767,16 +767,6 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     if (command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
         return -ENOENT;
     }
-    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
-#define GATEWAY_ASSIGNMENT_RETURN(value) do {                                \
-        k_mutex_unlock(&gateway_discovery_assignment_mutex);                 \
-        return (value);                                                      \
-    } while (false)
-    if (!gateway_discovery_assignment_state.active) {
-        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=inactive src=0x%016llx\n",
-                            (unsigned long long)packet->src_id);
-        GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
-    }
     ret = discovery_assignment_extract_control_tlvs(payload,
                                                     payload_len,
                                                     &phase,
@@ -785,7 +775,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=control ret=%d src=0x%016llx\n",
                             ret,
                             (unsigned long long)packet->src_id);
-        GATEWAY_ASSIGNMENT_RETURN(-EBADMSG);
+        return -EBADMSG;
     }
     if (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
         phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
@@ -793,40 +783,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                             (unsigned int)phase,
                             epoch,
                             (unsigned long long)packet->src_id);
-        GATEWAY_ASSIGNMENT_RETURN(-EPROTO);
-    }
-    if (epoch != gateway_discovery_assignment_state.epoch) {
-        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=epoch phase=%u received=%u expected=%u src=0x%016llx\n",
-                            (unsigned int)phase,
-                            epoch,
-                            gateway_discovery_assignment_state.epoch,
-                            (unsigned long long)packet->src_id);
-        GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
-    }
-    if (app_discovery_assignment_operation_expired(
-            (uint64_t)k_uptime_get(),
-            gateway_discovery_assignment_state.operation_deadline_ms)) {
-        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=deadline phase=%u epoch=%u now=%u deadline=%u src=0x%016llx\n",
-                            (unsigned int)phase,
-                            epoch,
-                            k_uptime_get_32(),
-                            (uint32_t)gateway_discovery_assignment_state.operation_deadline_ms,
-                            (unsigned long long)packet->src_id);
-        GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
-    }
-    if (!gateway_discovery_assignment_rf_started_locked(
-            phase == DISCOVERY_ASSIGNMENT_PHASE_ACK ?
-                GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE :
-                GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM)) {
-        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=rf-start phase=%u epoch=%u kind=%u handle=%u claim_ok=%u table_ok=%u src=0x%016llx\n",
-                            (unsigned int)phase,
-                            epoch,
-                            (unsigned int)gateway_discovery_assignment_state.delivery_kind,
-                            gateway_discovery_assignment_state.delivery_handle,
-                            gateway_discovery_assignment_state.claim_delivery_succeeded ? 1u : 0u,
-                            gateway_discovery_assignment_state.table_delivery_succeeded ? 1u : 0u,
-                            (unsigned long long)packet->src_id);
-        GATEWAY_ASSIGNMENT_RETURN(-EAGAIN);
+        return -EPROTO;
     }
     ret = tlv_find(payload,
                    payload_len,
@@ -844,19 +801,72 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                             (unsigned long long)packet->src_id,
                             epoch,
                             ret);
-        GATEWAY_ASSIGNMENT_RETURN(-EBADMSG);
+        return -EBADMSG;
     }
     ret = tlv_find(payload, payload_len, TLV_HOP_COUNT, &hop_raw, &hop_len);
     if (ret == PROTO_OK) {
         if (hop_len != sizeof(uint8_t)) {
-            GATEWAY_ASSIGNMENT_RETURN(-EBADMSG);
+            return -EBADMSG;
         }
         hop_count = hop_raw[0];
-        if (hop_count > gateway_discovery_assignment_state.max_hop_count) {
-            gateway_discovery_assignment_state.max_hop_count = hop_count;
-        }
     } else if (ret != PROTO_ERR_NOT_FOUND) {
-        GATEWAY_ASSIGNMENT_RETURN(-EBADMSG);
+        return -EBADMSG;
+    }
+
+    /*
+     * A valid result that arrives after its assignment transaction has
+     * become terminal must still receive the transport ACK.  Otherwise every
+     * relay retains that obsolete result in custody forever and it can block
+     * the next assignment operation.  Validation stays ahead of this branch
+     * so malformed or forged identities remain unacknowledged and retryable.
+     */
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+#define GATEWAY_ASSIGNMENT_RETURN(value) do {                                \
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);                 \
+        return (value);                                                      \
+    } while (false)
+    if (!gateway_discovery_assignment_state.active) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_RESULT_RETIRED reason=inactive phase=%u epoch=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            (unsigned long long)packet->src_id);
+        GATEWAY_ASSIGNMENT_RETURN(APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE);
+    }
+    if (epoch != gateway_discovery_assignment_state.epoch) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_RESULT_RETIRED reason=epoch phase=%u received=%u expected=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            gateway_discovery_assignment_state.epoch,
+                            (unsigned long long)packet->src_id);
+        GATEWAY_ASSIGNMENT_RETURN(APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE);
+    }
+    if (app_discovery_assignment_operation_expired(
+            (uint64_t)k_uptime_get(),
+            gateway_discovery_assignment_state.operation_deadline_ms)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_RESULT_RETIRED reason=deadline phase=%u epoch=%u now=%u deadline=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            k_uptime_get_32(),
+                            (uint32_t)gateway_discovery_assignment_state.operation_deadline_ms,
+                            (unsigned long long)packet->src_id);
+        GATEWAY_ASSIGNMENT_RETURN(APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE);
+    }
+    if (!gateway_discovery_assignment_rf_started_locked(
+            phase == DISCOVERY_ASSIGNMENT_PHASE_ACK ?
+                GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE :
+                GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM)) {
+        status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT reason=rf-start phase=%u epoch=%u kind=%u handle=%u claim_ok=%u table_ok=%u src=0x%016llx\n",
+                            (unsigned int)phase,
+                            epoch,
+                            (unsigned int)gateway_discovery_assignment_state.delivery_kind,
+                            gateway_discovery_assignment_state.delivery_handle,
+                            gateway_discovery_assignment_state.claim_delivery_succeeded ? 1u : 0u,
+                            gateway_discovery_assignment_state.table_delivery_succeeded ? 1u : 0u,
+                            (unsigned long long)packet->src_id);
+        GATEWAY_ASSIGNMENT_RETURN(-EAGAIN);
+    }
+    if (hop_count > gateway_discovery_assignment_state.max_hop_count) {
+        gateway_discovery_assignment_state.max_hop_count = hop_count;
     }
     for (size_t i = 0u;
          i < gateway_discovery_assignment_state.claim_count;
@@ -873,13 +883,14 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
             packet->session_id !=
                 gateway_discovery_assignment_state.table_command_seq ||
             anchor_index == SIZE_MAX) {
-            status_debug_printf("DBG_DISCOVERY_SLOT_ACK_REJECT src=0x%016llx epoch=%u session=%u expected=%u index=%d\n",
+            status_debug_printf("DBG_DISCOVERY_SLOT_RESULT_RETIRED reason=ack-state src=0x%016llx epoch=%u session=%u expected=%u index=%d\n",
                                 (unsigned long long)packet->src_id,
                                 epoch,
                                 packet->session_id,
                                 gateway_discovery_assignment_state.table_command_seq,
                                 anchor_index == SIZE_MAX ? -1 : (int)anchor_index);
-            GATEWAY_ASSIGNMENT_RETURN(-ESTALE);
+            GATEWAY_ASSIGNMENT_RETURN(
+                APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE);
         }
         duplicate_ack = (gateway_discovery_assignment_state.ack_mask &
                          (UINT64_C(1) << anchor_index)) != 0u;
