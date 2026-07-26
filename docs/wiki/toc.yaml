@@ -99,7 +99,7 @@ pages:
     description: "Trace one participant button press through wake, discovery, ranging, report custody, mesh delivery, gateway streaming, and research ingestion."
     source_files:
       - "Documentation/From Click to Ranging, Developing a Robust UWB Gated Wake up Strategy.md"
-      - "Documentation/UWB+BLE Architecture 0.6.6.md"
+      - "Documentation/UWB+BLE Architecture 0.6.6.1.md"
       - "firmware/app/src/app_clicker.c"
       - "firmware/app/src/app_anchor.c"
       - "firmware/app/src/app_mesh_report.c"
@@ -142,7 +142,7 @@ pages:
     filename: "03_uwb-wake-ranging-and-power.md"
     description: "Understand the channel-5 timing model, DS-TWR exchange, DWM3000 constraints, and retained low-duty behavior behind a click."
     source_files:
-      - "Documentation/UWB+BLE Architecture 0.6.6.md"
+      - "Documentation/UWB+BLE Architecture 0.6.6.1.md"
       - "firmware/include/uwb.h"
       - "firmware/include/uwb_session.h"
       - "firmware/include/dwm3000_runtime.h"
@@ -188,7 +188,7 @@ pages:
     filename: "04_protocol-packets-and-data-contracts.md"
     description: "Read the shared packet envelope, message types, TLVs, framing, identities, statuses, and cross-role capacity rules."
     source_files:
-      - "Documentation/UWB+BLE Protocols and Strategies 0.3.12.2.md"
+      - "Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md"
       - "firmware/include/protocol.h"
       - "firmware/include/report.h"
       - "firmware/include/status.h"
@@ -328,7 +328,7 @@ pages:
     source_files:
       - "README.md"
       - "Documentation/narrative(user story).md"
-      - "Documentation/UWB+BLE Protocols and Strategies 0.3.12.2.md"
+      - "Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md"
       - "firmware/include/survey.h"
       - "firmware/include/survey_gateway_transaction.h"
       - "firmware/include/survey_pair_lease.h"

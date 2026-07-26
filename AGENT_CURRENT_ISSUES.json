@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "global_rules": [
+    {
+      "id": "RULE-ROBUSTNESS-001",
+      "severity": "critical",
+      "current_rule": "Fail closed: never report success, release custody, or add a fallback unless the modeled or real boundary actually completed."
+    },
+    {
+      "id": "RULE-DEPLOYMENT-001",
+      "severity": "critical",
+      "current_rule": "Production mesh deployment is transactional: verified stage-only, exact-artifact qualification capture, then promotion with that capture."
+    },
+    {
+      "id": "RULE-CONCURRENCY-001",
+      "severity": "critical",
+      "current_rule": "One serialized owner controls each radio, operation, queue record, and terminal transition; asynchronous callbacks must carry a generation and bounded deadline."
+    }
+  ],
+  "issues": [
+    {
+      "id": "KI-RESET-001",
+      "state": "unqualified",
+      "severity": "critical",
+      "topics": [
+        "routing",
+        "persistence",
+        "testing"
+      ],
+      "path_globs": [
+        "firmware/sim/*",
+        "firmware/src/mesh_event_owner.c",
+        "firmware/src/mesh_runtime.c"
+      ],
+      "operations": [
+        "reset",
+        "stress"
+      ],
+      "current_rule": "Do not claim established-event reset recovery: a relay reset after event ownership is established can still terminate repair as stale.",
+      "source_fingerprint": "Mid-operation busy-line resets remain unqualified:"
+    },
+    {
+      "id": "KI-TELEMETRY-001",
+      "state": "active",
+      "severity": "high",
+      "topics": [
+        "routing",
+        "testing"
+      ],
+      "path_globs": [
+        "firmware/sim/*",
+        "firmware/scripts/run_mesh_stress.py"
+      ],
+      "operations": [
+        "stress"
+      ],
+      "current_rule": "Do not use a long lossy campaign as liveness proof if any fixed telemetry ring truncated.",
+      "source_fingerprint": "Long lossy busy-line campaigns can deliver every transaction"
+    },
+    {
+      "id": "KI-STAGE1-HIL-001",
+      "state": "unqualified",
+      "severity": "high",
+      "topics": [
+        "dwm3000",
+        "deployment",
+        "testing"
+      ],
+      "path_globs": [
+        "firmware/app/src/app_clicker.c",
+        "firmware/app/src/app_anchor*",
+        "firmware/app/src/dwm3000*"
+      ],
+      "operations": [
+        "flash",
+        "rtt",
+        "hil"
+      ],
+      "current_rule": "Stage 1 paired HIL still needs raw DS-TWR geometry and plausible RANGE_OK evidence before qualification.",
+      "source_fingerprint": "paired HIL still lacks raw DS-TWR geometry"
+    },
+    {
+      "id": "KI-TSAN-001",
+      "state": "environment",
+      "severity": "medium",
+      "topics": [
+        "testing"
+      ],
+      "path_globs": [
+        "firmware/tests/*",
+        "firmware/tests/mesh_integration/*"
+      ],
+      "operations": [
+        "sanitizer"
+      ],
+      "current_rule": "ThreadSanitizer cannot run in this host environment; use deterministic interleavings plus ASan and UBSan and do not claim TSan evidence.",
+      "source_fingerprint": "ThreadSanitizer binaries compile on this host but abort before `main`"
+    },
+    {
+      "id": "KI-NATIVE-SIM-001",
+      "state": "environment",
+      "severity": "medium",
+      "topics": [
+        "testing",
+        "persistence"
+      ],
+      "path_globs": [
+        "firmware/app/tests/mesh_persistence/*"
+      ],
+      "operations": [
+        "native_sim"
+      ],
+      "current_rule": "Use native_sim/native/64 for the persistence fixture because this host lacks 32-bit libc headers.",
+      "source_fingerprint": "mesh-persistence native fixture must use `native_sim/native/64`"
+    },
+    {
+      "id": "KI-PYOCD-001",
+      "state": "environment",
+      "severity": "medium",
+      "topics": [
+        "deployment"
+      ],
+      "path_globs": [
+        "firmware/scripts/*",
+        "Documentation/HARDWARE_BRINGUP_DEBUG.md"
+      ],
+      "operations": [
+        "flash",
+        "rtt",
+        "probe"
+      ],
+      "current_rule": "This pyOCD has no list --json support; parse the plain probe table and match the full probe ID.",
+      "source_fingerprint": "This host's pyOCD `list` command does not support `--json`"
+    },
+    {
+      "id": "KI-RTT-RESET-001",
+      "state": "environment",
+      "severity": "high",
+      "topics": [
+        "deployment",
+        "dwm3000"
+      ],
+      "path_globs": [
+        "firmware/scripts/capture_stack_evidence.py",
+        "Documentation/HARDWARE_BRINGUP_DEBUG.md"
+      ],
+      "operations": [
+        "rtt",
+        "reset"
+      ],
+      "current_rule": "pyOCD pre-reset selects connection behavior but does not reset an already-running target; perform and verify an explicit reset when fresh boot identity is required.",
+      "source_fingerprint": "`pyocd rtt -M pre-reset` selects the connection sequence"
+    },
+    {
+      "id": "KI-GATEWAY-ORPHAN-001",
+      "state": "mitigated",
+      "severity": "medium",
+      "topics": [
+        "survey",
+        "deployment"
+      ],
+      "path_globs": [
+        "firmware/scripts/provision_mesh_anchor.py",
+        "firmware/app/src/app_gateway*"
+      ],
+      "operations": [
+        "survey",
+        "recover"
+      ],
+      "current_rule": "A gateway running pre-fix firmware may retain an orphaned survey; recover it with the provisioning abort-survey command.",
+      "source_fingerprint": "unprobed gateway can retain a pre-fix orphaned survey indefinitely"
+    },
+    {
+      "id": "KI-LEDGER-OUTPUT-001",
+      "state": "environment",
+      "severity": "low",
+      "topics": [
+        "tooling"
+      ],
+      "path_globs": [
+        "AGENT_KNOWN_ISSUES.md",
+        "firmware/scripts/agent_preflight.py"
+      ],
+      "operations": [
+        "preflight"
+      ],
+      "current_rule": "Use indexed preflight or bounded chunks; a single large tool output can omit the middle of the issue ledger.",
+      "source_fingerprint": "Concatenating hundreds of issue-ledger lines into one tool call"
+    },
+    {
+      "id": "KI-DOC-FLATTEN-001",
+      "state": "active",
+      "severity": "high",
+      "topics": [
+        "documentation",
+        "survey",
+        "routing"
+      ],
+      "path_globs": [
+        "Documentation/UWB+BLE Architecture *",
+        "Documentation/UWB+BLE Protocols and Strategies *"
+      ],
+      "operations": [
+        "documentation",
+        "architecture"
+      ],
+      "current_rule": "Treat each current changelog plus the Mesh Contract as present truth until inherited contradictory body sections are flattened in a dedicated documentation stage.",
+      "source_fingerprint": "current architecture and protocol documents still retain inherited body text"
+    }
+  ]
+}

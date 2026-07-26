@@ -1,0 +1,67 @@
+name: Firmware Verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: native
+            sanitizer_args: ""
+          - name: asan-ubsan
+            sanitizer_args: "--sanitizers"
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native Python test dependencies
+        run: python3 -m pip install -r firmware/tests/requirements-native.txt
+      - name: Run fresh native verification
+        run: >-
+          python3 firmware/scripts/verify_changes.py
+          ${{ matrix.sanitizer_args }}
+          --jobs 4
+          --stress-failure-dir
+          logs/mesh-stress-failures/${{ matrix.name }}
+      - name: Upload deterministic replay artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-stress-${{ matrix.name }}
+          path: logs/mesh-stress-failures/${{ matrix.name }}
+          if-no-files-found: ignore
+
+  exact-roles:
+    name: exact Zephyr roles and persistence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set up nRF Connect SDK v2.9 workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          base-path: app
+          app-path: manifest
+          toolchains: arm-zephyr-eabi
+          sdk-version: 0.16.8
+      - name: Install host verification dependencies
+        working-directory: app
+        run: python3 -m pip install -r firmware/tests/requirements-native.txt
+      - name: Build and statically verify exact roles
+        working-directory: app
+        run: >-
+          python3 firmware/scripts/verify_changes.py
+          --checks-only
+          --exact-roles
+          --jobs 4

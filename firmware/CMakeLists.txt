@@ -8,6 +8,22 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+option(IMEC_ENABLE_SANITIZERS
+    "Build native tests with AddressSanitizer and UndefinedBehaviorSanitizer"
+    OFF)
+if(IMEC_ENABLE_SANITIZERS)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR
+            "IMEC_ENABLE_SANITIZERS requires a GCC- or Clang-compatible compiler")
+    endif()
+    add_compile_options(
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer)
+    add_link_options(
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer)
+endif()
+
 add_library(core
     src/debug_log.c
     src/device_identity.c
@@ -1387,6 +1403,42 @@ add_test(NAME mesh_ble_route_monitor
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_ble_route_monitor.py)
 set_tests_properties(mesh_ble_route_monitor
     PROPERTIES LABELS "mesh_integration;host_tools;observability")
+
+add_test(NAME repository_truth
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_repository_truth.py)
+set_tests_properties(repository_truth
+    PROPERTIES LABELS "repository;static_analysis;deployment")
+
+add_test(NAME repository_truth_self_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_repository_truth.py)
+set_tests_properties(repository_truth_self_test
+    PROPERTIES LABELS "repository;static_analysis")
+
+add_test(NAME architecture_boundaries
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_architecture_boundaries.py)
+set_tests_properties(architecture_boundaries
+    PROPERTIES LABELS "repository;static_analysis;architecture")
+
+add_test(NAME architecture_boundaries_self_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_architecture_boundaries.py)
+set_tests_properties(architecture_boundaries_self_test
+    PROPERTIES LABELS "repository;static_analysis;architecture")
+
+add_test(NAME agent_preflight_self_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_agent_preflight.py)
+set_tests_properties(agent_preflight_self_test
+    PROPERTIES LABELS "repository;static_analysis;agent_guidance")
+
+add_test(NAME agent_guidance
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_agent_guidance.py)
+set_tests_properties(agent_guidance
+    PROPERTIES LABELS "repository;static_analysis;agent_guidance")
 
 # The focused protocol gate spans click wake/ranging/report delivery, direct
 # probing and route advertisement, connection ownership, assignment, survey

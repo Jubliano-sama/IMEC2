@@ -695,7 +695,7 @@ A relay that forwards one of these floods keeps the existing deterministic base 
 
 Route rediscovery is bounded per target: at most five `ROUTE_REQ` attempts are emitted without a successful route-ready event. Attempts use exponential 250/500/1000/2000/4000 ms backoff plus jitter. A route reply, successful gateway ACK, or command-installed route resets the budget. A previously invalidated candidate can become selected again if rediscovery advertises it with the current route epoch and it wins the normal route-cost comparison.
 
-The operational route flow is shown in [[Firmware State Machines 0.2.3]].
+The operational route flow is shown in [[Mesh Connected Routing Walkthrough]].
 
 ### Downlink Directory
 
@@ -756,6 +756,6 @@ Direct RF reachability does not allocate a negotiated channel-9 connection at th
 
 Pair measurements report `SURVEY_ID`, `INITIATOR_ID`, `RESPONDER_ID`, `SAMPLE_INDEX`, `SAMPLE_COUNT`, `TIMESTAMP_MS`, `DISTANCE_MM`, `QUALITY`, and `RANGE_STATUS`. The timestamp marks when that individual DS-TWR ranging sequence started on the sender's local uptime. The firmware only measures and reports; solving anchor positions from this distance network is off-site software.
 
-Survey pair runs are long-running local work, not system command work. Anchors must continue to process mesh receive and commands while samples are being taken. `CMD_SURVEY_START_PAIR` is accepted only when all pair fields match a prior `CMD_SURVEY_PREPARE_PAIR`. If a gateway reachability request omits `SAMPLE_COUNT`, the gateway uses the current bounded runtime queue capacity. `CMD_SURVEY_ABORT` must be accepted, must stop the gateway's local pair orchestrator, and must stop the active anchor pair at the next sample boundary or bounded responder-listen check. The runtime handling is shown in [[Firmware State Machines 0.2.3]].
+Survey pair runs are long-running local work, not system command work. Anchors must continue to process mesh receive and commands while samples are being taken. `CMD_SURVEY_START_PAIR` is accepted only when all pair fields match a prior `CMD_SURVEY_PREPARE_PAIR`. If a gateway reachability request omits `SAMPLE_COUNT`, the gateway uses the current bounded runtime queue capacity. `CMD_SURVEY_ABORT` must be accepted, must stop the gateway's local pair orchestrator, and must stop the active anchor pair at the next sample boundary or bounded responder-listen check. The runtime ownership and delivery flow is shown in [[Mesh Connected Routing Walkthrough]] and constrained by [[Mesh Connected Routing Contract]].
 
 Each survey DS-TWR sample uses `FLAG_DIAGNOSTIC`, the survey ID as the DS-TWR session ID, and a session nonce derived from `(survey_id, initiator_id, responder_id, sample_index)`. This keeps the full DS-TWR identity unique across the survey even though the compact 8-bit DS-TWR sequence value wraps in surveys longer than 255 samples.

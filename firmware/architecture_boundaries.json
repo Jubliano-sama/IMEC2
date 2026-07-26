@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "source_roots": [
+    "firmware/src",
+    "firmware/app/src",
+    "firmware/sim"
+  ],
+  "default_c_max_lines": 2500,
+  "frozen_oversize_sources": {
+    "firmware/app/src/app_clicker.c": 3401,
+    "firmware/app/src/app_gateway_ble.c": 3538,
+    "firmware/app/src/app_mesh_persistence.c": 2757,
+    "firmware/app/src/app_ml.c": 2655,
+    "firmware/src/mesh_relay.c": 2804
+  },
+  "approved_include_fragments": {
+    "firmware/app/src/app_anchor_commands.inc": 1859,
+    "firmware/app/src/app_anchor_gateway_control.inc": 2844,
+    "firmware/app/src/app_anchor_gateway_survey.inc": 2443,
+    "firmware/app/src/app_anchor_gateway_survey_round.inc": 752,
+    "firmware/app/src/app_anchor_init.inc": 302,
+    "firmware/app/src/app_anchor_radio.inc": 2249,
+    "firmware/app/src/app_mesh_report_coordination.inc": 2987,
+    "firmware/app/src/app_mesh_report_delivery.inc": 2863,
+    "firmware/app/src/app_mesh_report_direct_gateway.inc": 1528,
+    "firmware/app/src/app_mesh_report_event_tx.inc": 3028,
+    "firmware/app/src/app_mesh_report_route_control.inc": 3111,
+    "firmware/app/src/app_mesh_report_rx.inc": 2334,
+    "firmware/app/src/app_mesh_report_transport.inc": 1960,
+    "firmware/app/src/dwm3000_driver_ds_twr.inc": 1033,
+    "firmware/app/src/dwm3000_driver_io.inc": 849,
+    "firmware/app/src/dwm3000_driver_radio.inc": 1510,
+    "firmware/app/src/dwm3000_driver_ranging_frames.inc": 979,
+    "firmware/src/mesh_relay_custody.inc": 2319,
+    "firmware/src/mesh_relay_delivery.inc": 1469,
+    "firmware/src/mesh_relay_route_rx.inc": 1282,
+    "firmware/src/mesh_relay_routes.inc": 1371
+  },
+  "composed_translation_units": {
+    "firmware/app/src/app_anchor.c": {
+      "max_composed_lines": 10876,
+      "includes": [
+        "app_anchor_commands.inc",
+        "app_anchor_gateway_survey.inc",
+        "app_anchor_gateway_survey_round.inc",
+        "app_anchor_gateway_control.inc",
+        "app_anchor_radio.inc",
+        "app_anchor_init.inc"
+      ]
+    },
+    "firmware/app/src/app_mesh_report.c": {
+      "max_composed_lines": 18668,
+      "includes": [
+        "app_mesh_report_coordination.inc",
+        "app_mesh_report_transport.inc",
+        "app_mesh_report_route_control.inc",
+        "app_mesh_report_direct_gateway.inc",
+        "app_mesh_report_event_tx.inc",
+        "app_mesh_report_delivery.inc",
+        "app_mesh_report_rx.inc"
+      ]
+    },
+    "firmware/app/src/dwm3000_driver.c": {
+      "max_composed_lines": 4863,
+      "includes": [
+        "dwm3000_driver_radio.inc",
+        "dwm3000_driver_ranging_frames.inc",
+        "dwm3000_driver_io.inc",
+        "dwm3000_driver_ds_twr.inc"
+      ]
+    },
+    "firmware/src/mesh_relay.c": {
+      "max_composed_lines": 9245,
+      "includes": [
+        "mesh_relay_custody.inc",
+        "mesh_relay_route_rx.inc",
+        "mesh_relay_routes.inc",
+        "mesh_relay_delivery.inc"
+      ]
+    }
+  }
+}

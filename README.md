@@ -31,12 +31,14 @@ The design is **UWB-first**. Channel 5 handles wake, discovery, and click/rangin
 
 ## Quick Links (Start Here)
 
-- **[AGENTS.md](AGENTS.md)** — Authoritative repository guidelines, build commands, role semantics, testing requirements, and agent-specific rules. **Read this first for any code change.** All agents must also read `AGENT_KNOWN_ISSUES.md` before making changes.
+- **[AGENTS.md](AGENTS.md)** — Concise repository safety, ownership, and verification rules. **Read this first for any code change**, then run its indexed issue preflight for the planned paths and operations.
 - **[CODEMAP.md](CODEMAP.md)** — Detailed navigation guide for the codebase (this is the map you're looking for).
 - **[firmware/README.md](firmware/README.md)** — Long-form technical description of the firmware implementation, hardware assumptions, and bring-up checklist.
 - **[Documentation/Mesh Connected Routing Contract.md](Documentation/Mesh Connected Routing Contract.md)** — The high-level behavioral contract. Changes that contradict it require explicit permission.
-- **[Documentation/UWB+BLE Architecture 0.6.6.md](Documentation/UWB+BLE Architecture 0.6.6.md)** — Current system architecture; superseded versions remain available in Git history.
-- **[Documentation/UWB+BLE Protocols and Strategies 0.3.12.2.md](Documentation/UWB+BLE Protocols and Strategies 0.3.12.2.md)** — Current protocol details.
+- **[Documentation/UWB+BLE Architecture 0.6.6.1.md](Documentation/UWB+BLE Architecture 0.6.6.1.md)** — Current system architecture.
+- **[Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md](Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md)** — Current protocol details.
+- **[Documentation/Development and Deployment Guide.md](Documentation/Development and Deployment Guide.md)** — Executable build, verification, flashing, and RTT workflow.
+- **[Documentation/Architecture Reset Plan.md](Documentation/Architecture Reset Plan.md)** — Accepted staged orchestration replacement and simplification decision.
 
 ## Important Notes on Current State
 
@@ -54,8 +56,8 @@ Typical first steps for an agent or contributor:
 
 1. Read `AGENTS.md`.
 2. Consult `CODEMAP.md` for where specific behavior lives.
-3. Run native tests: `cmake -S firmware -B firmware/build && cmake --build firmware/build && ctest --test-dir firmware/build --output-on-failure`.
-4. For hardware-related work, also build the three main mesh presets and review the Mesh Contract.
+3. Run the fresh repository gate: `python3 firmware/scripts/verify_changes.py`.
+4. For Zephyr-facing work, add `--exact-roles` and review the Mesh Contract.
 
 ## License & Status
 

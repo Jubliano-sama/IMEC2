@@ -177,7 +177,7 @@ Older changes are in [[UWB+BLE Architecture 0.5.47]].
 
 ## Reader Map
 
-This document explains the whole clicker-anchor-gateway system: hardware, radio behavior, routing, power, and the tradeoff against the older BLE-gated concept. Exact packet fields are in [[UWB+BLE Protocols and Strategies 0.3.3]]. Runtime flow charts are in [[Firmware State Machines 0.2.3]].
+This document explains the whole clicker-anchor-gateway system: hardware, radio behavior, routing, power, and the tradeoff against the older BLE-gated concept. Exact packet fields are in [[UWB+BLE Protocols and Strategies 0.3.12.3]]. Current runtime flow is in [[Mesh Connected Routing Walkthrough]].
 
 Read it in this order:
 
@@ -791,4 +791,4 @@ Normal click acceptance requires three unique anchors. With more anchors in rang
 
 Both clicker and anchor firmware run on the same ANNA-B402-00B plus DWM3000 hardware. The configured role decides whether the device behaves as a clicker, anchor, or gateway. Firmware uses Zephyr through nRF Connect SDK.
 
-Keep hardware-independent behavior in `firmware/src` and role/runtime code in `firmware/app`. Protocol field definitions belong in [[UWB+BLE Protocols and Strategies 0.3.3]], and detailed runtime diagrams belong in [[Firmware State Machines 0.2.3]].
+Keep hardware-independent behavior in `firmware/src` and role/runtime code in `firmware/app`. Protocol field definitions belong in [[UWB+BLE Protocols and Strategies 0.3.12.3]], and current runtime flow belongs in [[Mesh Connected Routing Walkthrough]].

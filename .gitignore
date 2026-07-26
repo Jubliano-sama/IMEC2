@@ -12,7 +12,9 @@ test/
 tools/*
 !tools/
 !tools/mesh_ble_route_monitor.py
-zephyr/
+/zephyr/
+__pycache__/
+*.py[cod]
 
 # Build outputs
 build/

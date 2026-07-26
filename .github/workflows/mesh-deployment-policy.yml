@@ -11,7 +11,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Reject production deployment bypasses
-        run: python3 firmware/scripts/check_mesh_deployment_policy.py
-      - name: Run policy negative suite
-        run: python3 firmware/tests/mesh_integration/test_mesh_deployment_policy.py
+      - name: Run repository source and policy gates
+        run: python3 firmware/scripts/verify_changes.py --checks-only
