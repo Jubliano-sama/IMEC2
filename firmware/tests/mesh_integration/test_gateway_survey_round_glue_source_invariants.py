@@ -262,6 +262,9 @@ assert_ordered(
 )
 
 finalize = function_body(GLUE, "gateway_survey_round_finalize_observation")
+advance_completed = function_body(
+    GLUE, "gateway_survey_round_advance_completed_batch"
+)
 assert finalize.count("app_gateway_survey_round_finalize_lane(") == 2, (
     "success and failure must each finalize only the current lane"
 )
@@ -269,16 +272,22 @@ assert_ordered(
     finalize,
     "for (size_t i = 0u; i < lane_count; i++)",
     "app_gateway_survey_round_finalize_lane(",
-    "if (!app_gateway_survey_round_batch_complete(&gateway_survey_round))",
-    "app_gateway_survey_round_advance_batch(",
+    "gateway_survey_round_advance_completed_batch()",
 )
 assert_ordered(
-    finalize,
+    advance_completed,
+    "app_gateway_survey_round_batch_complete(&gateway_survey_round)",
     "app_gateway_survey_round_advance_batch(",
     "gateway_survey_round_release_go_delivery()",
+    "gateway_survey_round_sync_auto()",
 )
 assert "gateway_survey_round_go_delivery_handle = 0u" not in finalize, (
     "batch advance must release rather than silently erase an unreaped GO handle"
+)
+assert_ordered(
+    drive,
+    "APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE",
+    "gateway_survey_round_advance_completed_batch()",
 )
 
 release_go = function_body(GLUE, "gateway_survey_round_release_go_delivery")

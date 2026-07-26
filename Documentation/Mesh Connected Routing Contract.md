@@ -472,6 +472,11 @@ terminal event. `GO_REQUIRED` remains the round phase during this pre-RF wait,
 but it is not immediately runnable work and must never replace the custody poll
 with a zero-delay survey-worker loop.
 
+If lane cleanup, rather than observation finalization, makes a synchronized
+batch complete, the same survey worker advances or terminates that batch
+immediately. Cleanup completion cannot leave `BATCH_COMPLETE` as a runnable
+phase with no state transition.
+
 The gateway's host-facing survey event stream preserves causal boundaries
 under BLE backpressure. A pending pair-start boundary is retried before the
 survey worker waits for RF completion or emits pair success or failure, so a

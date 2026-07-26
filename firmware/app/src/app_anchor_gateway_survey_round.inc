@@ -348,6 +348,33 @@ static bool gateway_survey_round_emit_lane_terminal(
     return true;
 }
 
+static bool gateway_survey_round_advance_completed_batch(void)
+{
+    bool complete = false;
+    int ret;
+
+    if (!app_gateway_survey_round_batch_complete(&gateway_survey_round)) {
+        return false;
+    }
+    ret = app_gateway_survey_round_advance_batch(&gateway_survey_round,
+                                                 &complete);
+    gateway_survey_round_release_go_delivery();
+    gateway_survey_round_observation_deadline_ms = 0u;
+    if (ret != PROTO_OK) {
+        gateway_survey_auto_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return true;
+    }
+    if (complete) {
+        gateway_survey_auto_finish();
+        return true;
+    }
+    gateway_survey_round_sync_auto();
+    (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
+    return true;
+}
+
 static bool gateway_survey_round_finalize_observation(void)
 {
     const bool deadline = uptime_deadline_reached(
@@ -393,31 +420,7 @@ static bool gateway_survey_round_finalize_observation(void)
                                                      0u,
                                                      outcome);
     }
-    if (!app_gateway_survey_round_batch_complete(&gateway_survey_round)) {
-        return false;
-    }
-    {
-        bool complete = false;
-        int ret = app_gateway_survey_round_advance_batch(
-            &gateway_survey_round,
-            &complete);
-
-        gateway_survey_round_release_go_delivery();
-        gateway_survey_round_observation_deadline_ms = 0u;
-        if (ret != PROTO_OK) {
-            gateway_survey_auto_finish_status(
-                COMMAND_INTERNAL_ERROR,
-                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-            return true;
-        }
-        if (complete) {
-            gateway_survey_auto_finish();
-            return true;
-        }
-    }
-    gateway_survey_round_sync_auto();
-    (void)k_work_reschedule(&gateway_survey_work, K_NO_WAIT);
-    return true;
+    return gateway_survey_round_advance_completed_batch();
 }
 
 static void gateway_survey_round_fail_current_control(
@@ -738,6 +741,10 @@ static bool gateway_survey_round_drive(void)
             &gateway_survey_work,
             K_MSEC(remaining_ms));
         return true;
+    }
+    if (gateway_survey_round.phase ==
+            APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE) {
+        return gateway_survey_round_advance_completed_batch();
     }
     return true;
 }

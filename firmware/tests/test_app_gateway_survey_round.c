@@ -251,6 +251,49 @@ static void test_control_failure_skips_only_one_lane_before_go(void)
            SURVEY_PAIR_ROUND_LANE_OBSERVING);
 }
 
+static void test_cleanup_completed_batch_advance_stress(void)
+{
+    for (uint32_t cycle = 0u; cycle < 512u; cycle++) {
+        struct survey_gateway_context context;
+        struct app_gateway_survey_round round;
+        struct app_gateway_survey_round_control control;
+        size_t failed_lane = SIZE_MAX;
+        bool complete = true;
+
+        context_init(&context, 1u, 1u);
+        assert(app_gateway_survey_round_begin(&round, &context, 1u, 1u) ==
+               PROTO_OK);
+        assert(app_gateway_survey_round_current_control(&round, &control) ==
+               PROTO_OK);
+        assert(app_gateway_survey_round_note_control_failure(
+                   &round,
+                   control.command_id,
+                   control.target_id,
+                   control.pair.survey_id,
+                   SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
+                   SURVEY_PAIR_ROUND_CLEANUP_RETRY,
+                   &failed_lane) == PROTO_OK);
+        assert(failed_lane == 0u);
+        assert(app_gateway_survey_round_note_cleanup_complete(
+                   &round,
+                   failed_lane,
+                   SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+        assert(!app_gateway_survey_round_batch_complete(&round));
+        assert(app_gateway_survey_round_note_cleanup_complete(
+                   &round,
+                   failed_lane,
+                   SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
+        assert(app_gateway_survey_round_batch_complete(&round));
+        assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
+               PROTO_OK);
+        assert(!complete);
+        assert(round.phase == APP_GATEWAY_SURVEY_ROUND_DISPATCHING);
+        assert(app_gateway_survey_round_lane_count(&round) == 1u);
+        assert(app_gateway_survey_round_lane(&round, 0u)->reruns_started ==
+               1u);
+    }
+}
+
 static void test_go_submission_retry_policy_covers_transient_admission(void)
 {
     for (int error = -4096; error <= 4096; error++) {
@@ -294,6 +337,7 @@ int main(void)
     test_maximum_25_lane_batch_arms_before_one_go();
     test_one_lane_failure_rerun_does_not_disturb_peer();
     test_control_failure_skips_only_one_lane_before_go();
+    test_cleanup_completed_batch_advance_stress();
     puts("app gateway survey round tests passed");
     return 0;
 }
