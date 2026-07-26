@@ -15,10 +15,18 @@ tools/*
 !tools/gateway_gui/
 !tools/gateway_gui/**
 /zephyr/
+/archive/old-dw1000-impl/
 __pycache__/
 *.py[cod]
+docs/wiki/.obsidian/
 
 # Build outputs
 build/
 firmware/build/
+firmware/build-*/
+firmware/build-*.log
 firmware/app/build/
+/artifacts/
+/logs/
+/flash.bin
+/typescript

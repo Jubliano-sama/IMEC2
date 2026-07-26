@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
       - name: Install native Python test dependencies
         run: python3 -m pip install -r firmware/tests/requirements-native.txt
       - name: Run fresh native verification
@@ -45,6 +48,7 @@ jobs:
         with:
           path: app
           submodules: recursive
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

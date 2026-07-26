@@ -210,6 +210,72 @@
       "recheck": "Compare one full-ledger tool read with bounded line-counted chunks and verify no middle content is omitted.",
       "current_rule": "Use indexed preflight or bounded chunks; a single large tool output can omit the middle of the issue ledger.",
       "source_fingerprint": "Concatenating hundreds of issue-ledger lines into one tool call"
+    },
+    {
+      "id": "KI-ZEPHYR-DIRTY-001",
+      "state": "environment",
+      "severity": "high",
+      "topics": [
+        "testing",
+        "tooling"
+      ],
+      "path_globs": [
+        "firmware/scripts/verify_changes.py",
+        "firmware/scripts/verification_inputs.py",
+        "firmware/west_projects.lock.json",
+        "zephyr/scripts/kconfig/kconfig.py"
+      ],
+      "operations": [
+        "build"
+      ],
+      "match_topics": false,
+      "applies_to": "The west workspace rooted at /home/tommie/Projects/IMEC2 on 2026-07-26",
+      "verified_at": "2026-07-26",
+      "recheck": "Run git -C zephyr status --short and verify_changes.py --checks-only --exact-roles against the repository-owned project lock.",
+      "current_rule": "Do not use this workspace for exact firmware evidence while Zephyr is locally patched; verification must reject it and use a clean checkout matching firmware/west_projects.lock.json.",
+      "source_fingerprint": "current host west workspace has a local `zephyr/scripts/kconfig/kconfig.py` patch"
+    },
+    {
+      "id": "KI-TOOLCHAIN-LOCK-001",
+      "state": "unqualified",
+      "severity": "medium",
+      "topics": [
+        "testing",
+        "tooling"
+      ],
+      "path_globs": [
+        ".github/workflows/firmware-verification.yml",
+        "firmware/scripts/verify_changes.py",
+        "firmware/scripts/verification_inputs.py",
+        "firmware/west_projects.lock.json"
+      ],
+      "operations": [
+        "build"
+      ],
+      "match_topics": false,
+      "current_rule": "Verification attests repository and dependency state, not PATH-selected host binaries or the host CMake package registry; use a locked toolchain or container before claiming build-environment content attestation.",
+      "source_fingerprint": "PATH-selected host tools and CMake package registries remain outside content attestation"
+    },
+    {
+      "id": "KI-CMAKE-FILEAPI-001",
+      "state": "unqualified",
+      "severity": "medium",
+      "topics": [
+        "testing",
+        "tooling"
+      ],
+      "path_globs": [
+        "firmware/app/CMakeLists.txt",
+        "firmware/scripts/check_architecture_boundaries.py",
+        "firmware/tests/mesh_integration/test_architecture_boundaries.py"
+      ],
+      "operations": [
+        "architecture",
+        "build"
+      ],
+      "match_topics": false,
+      "current_rule": "The architecture gate covers declared CMake mechanisms statically; any new source/include mechanism needs a negative regression, and configured build-input attestation is still required before claiming exhaustive CMake coverage.",
+      "source_fingerprint": "Architecture source ownership uses conservative static CMake parsing"
     }
   ]
 }

@@ -96,7 +96,19 @@ python3 firmware/scripts/verify_changes.py \
 That builds fresh `mesh_clicker`, `mesh_anchor`, and `mesh_gateway` artifacts,
 runs their static stack gates, executes the real Zephyr NVS persistence test on
 `native_sim/native/64`, and compiles the supported legacy, bench-traffic, and
-representative first/last ML collection lines. During focused iteration,
+representative first/last ML collection lines. The Zephyr matrix requires a
+tracked-clean checkout with no untracked files in its build-input directories,
+so embedded Git identity remains truthful; unrelated local logs and artifacts
+do not block it. Verification executes from an immutable temporary snapshot of
+the application tree; symlink escapes and any source write, including an
+ignored or restored write, invalidate the run. Every active west dependency
+must match `firmware/west_projects.lock.json`, be clean at the locked commit,
+use no concealing Git index flag, contain no unapproved ignored input or
+symlink outside the guarded project set, and remain write-guarded with the
+pinned `.west/config` for the matrix. Ambient Zephyr, CMake, module, toolchain,
+and compiler-search overrides are forbidden. The default Zephyr build root is
+temporary; pass an explicit exclusive root only when its artifacts must be
+retained. During focused iteration,
 routing, scheduling, click priority, retries, BLE, watchdog, radio sleep/wake,
 SPI, airtime, or stack changes must run the relevant test plus both
 `mesh_integration` and `hardware_models`; the complete final entrypoint remains
@@ -156,7 +168,9 @@ file mixing policy, persistence, transport, and coordination requires a
 concrete extraction proposal. Name the target `.c/.h` modules and ownership
 boundary. Do not perform a structural refactor without explicit permission in
 the current conversation. `firmware/architecture_boundaries.json` is a
-no-growth debt ceiling, not approval for the existing monoliths.
+no-growth debt ceiling, not approval for the existing monoliths. Do not bypass
+it with implementation-bearing headers, source inclusion, symlinks, alternate
+fragment extensions, or production C files outside the declared roots.
 
 ## Documentation and delivery discipline
 
@@ -173,8 +187,10 @@ continue or restart a time window.
 
 Commit bug fixes even when partial and state the remaining gap. Use imperative
 subjects. A PR or handoff names affected roles, commands run, hardware
-assumptions, and missing evidence. Subagents use the default service tier unless
-the user explicitly requests otherwise.
+assumptions, and missing evidence. A wiki synchronization commit pins its
+immediate source commit; preserve that source commit in published history, or
+regenerate and repin the wiki after any squash. Subagents use the default
+service tier unless the user explicitly requests otherwise.
 
 Write to the user like a senior engineer in chat: lead with the verdict, keep
 causal reasoning together, use lists only for genuinely parallel facts or a

@@ -40,8 +40,18 @@ busy checkout could look green while a fresh clone did not even compile.
 
 `firmware/architecture_boundaries.json` now freezes every existing include
 fragment, every oversized source, and the composed totals at their current
-ceilings. The gate rejects new include fragments and oversized new C files.
-This records debt; it does not approve the architecture.
+ceilings. The checker compares that mutable inventory with an immutable Git
+baseline, so the same change cannot add an exception or raise a ceiling. The
+gate rejects new include fragments, source-like textual includes, oversized
+headers, out-of-root production sources, and oversized new C files. This
+records debt; it does not approve the architecture.
+
+The CMake ownership gate is a conservative static parser. It rejects the
+source-discovery, variable, language, vendor-root, and include-root mechanisms
+currently supported by this repository, but it is not configured CMake
+file-api attestation. A new custom source or compile-option include mechanism
+must first gain a failing architecture regression; configured input attestation
+remains a separate hardening stage.
 
 ## Contract invariants preserved throughout
 
@@ -103,11 +113,26 @@ The first extraction boundaries are:
 These names are targets, not permission to create parallel owners. A new module
 must remove or delegate the corresponding legacy owner in the same stage.
 
+The physical files `app_gateway_ble.c` and `app_clicker.c` also exceed 3,000
+lines. After the three ownership machines above establish the pattern, split
+gateway host admission and collection state into
+`app_gateway_host_admission.c/.h` and `app_gateway_collection_owner.c/.h`;
+split click-session policy, button/power transitions, and BLE courtesy into
+`app_clicker_session.c/.h`, `app_clicker_power.c/.h`, and
+`app_clicker_ble_courtesy.c/.h`. These are secondary migrations with the same
+one-owner-and-deletion rule, not mechanical file moves.
+
 ## Migration stages
 
 1. **Make truth executable.** Keep `verify_changes.py`, fresh-clone native and
    sanitizer CI, deterministic stress, document registry, issue overlay, and
-   architecture-growth gates green. This stage is complete only when a clean
+   architecture-growth gates green. Verification runs from an immutable source
+   snapshot with write-and-restore detection, requires every west dependency to
+   match the repository-owned `firmware/west_projects.lock.json`, rejects
+   hidden index flags and unapproved ignored dependency inputs, pins west
+   configuration, rejects ambient build overrides, and write-guards those
+   inputs through each Zephyr matrix. Temporary, exclusive build roots prevent
+   concurrent pruning and stale reuse. This stage is complete only when a clean
    worktree reproduces the same result as a developer checkout.
 2. **Characterize ownership.** Add contract-level tests for every survey
    terminal, cancellation, stale generation, zero-RF deadline, BLE pressure,

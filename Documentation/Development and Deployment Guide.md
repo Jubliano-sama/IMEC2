@@ -60,6 +60,37 @@ production roles as well:
   --exact-roles --compatibility-builds
 ```
 
+The Zephyr matrix refuses tracked changes or untracked files inside its firmware
+build-input directories because every artifact embeds the Git identity it
+claims to represent. Commit intentional source changes first; unrelated local
+logs and artifacts do not block the matrix. The entrypoint captures HEAD,
+tracked changes, and nonignored untracked content into an immutable temporary
+application snapshot; commands never consume a live checkout that another
+editor can change and restore between checks. The invocation still fails at
+completion if its original checkout moved, so a passing result names the exact
+snapshot it verified. An inotify guard also rejects transient or ignored writes
+inside the snapshot, including Git-identity changes that are restored before a
+command exits. Source symlinks must stay inside that snapshot; west dependency
+symlinks must resolve inside the guarded project set.
+
+Exact Zephyr matrices also resolve every active west project against
+`firmware/west_projects.lock.json`, require each dependency to be clean at its
+locked SHA, reject concealing index flags and unapproved ignored dependency
+inputs, pin `.west/config`, reject ambient root/module/toolchain/CMake/compiler
+search overrides, and write-watch those inputs for the complete matrix. Moving
+both a local branch and `manifest-rev`, adding an ignored generated header,
+restoring a modified file, redirecting Zephyr through the environment, or
+carrying a local SDK patch therefore invalidates the evidence instead of
+silently changing the artifact. The default Zephyr build root is an exclusive
+temporary directory and is removed after the run. `--zephyr-build-root` may
+name an explicit retained root, but a concurrent user of that root fails before
+either run can prune it.
+
+This freezes repository and dependency inputs, not the host toolchain. Programs
+selected through `PATH` and the host CMake package registry are not
+content-attested; use a separately locked toolchain or container before
+claiming byte-for-byte build-environment reproducibility.
+
 The compatibility gate compiles generic clicker/anchor/gateway roles, both mesh
 traffic generators, `ml_clicker`, and the first and last deterministic ML
 anchor slots. These builds remain regression and collection safeguards; passing
