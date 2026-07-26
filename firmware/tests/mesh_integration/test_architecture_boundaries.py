@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -68,6 +69,64 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_accepts_frozen_composition(self) -> None:
         self.assertEqual(self._check(), [])
+
+    def test_missing_immutable_history_fails_with_rebaseline_procedure(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "Do not squash, rebase, prune, or reconstruct.*two separately reviewed",
+        ):
+            check_architecture_boundaries._load_immutable_baseline(self.root)
+
+    def test_rejects_present_baseline_outside_head_history(self) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Architecture Test"],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "architecture@example.invalid"],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "Baseline"],
+            cwd=self.root,
+            check=True,
+        )
+        baseline = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root,
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "checkout", "-q", "--orphan", "unrelated"],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "--allow-empty", "-m", "Unrelated"],
+            cwd=self.root,
+            check=True,
+        )
+        original = check_architecture_boundaries.IMMUTABLE_BASELINE_COMMIT
+        check_architecture_boundaries.IMMUTABLE_BASELINE_COMMIT = baseline
+        try:
+            for loader in (
+                check_architecture_boundaries._load_immutable_baseline,
+                check_architecture_boundaries._load_immutable_sources,
+            ):
+                with self.subTest(loader=loader.__name__):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "present but is not an ancestor of HEAD",
+                    ):
+                        loader(self.root)
+        finally:
+            check_architecture_boundaries.IMMUTABLE_BASELINE_COMMIT = original
 
     def test_rejects_growth_in_existing_fragment(self) -> None:
         (self.root / "firmware/src/legacy.inc").write_text(

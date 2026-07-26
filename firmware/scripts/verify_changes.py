@@ -15,6 +15,7 @@ from typing import Iterator
 
 from verification_inputs import (
     LinuxInotifyWriteGuard,
+    WEST_MANIFEST_RELATIVE,
     WestWorkspace,
     active_west_projects,
     discover_west_workspace,
@@ -49,6 +50,10 @@ SOURCE_CHECKS = (
         "firmware/tests/mesh_integration/test_agent_preflight.py",
     ),
     (
+        "agent guidance self-test",
+        "firmware/tests/mesh_integration/test_agent_guidance.py",
+    ),
+    (
         "verification entrypoint self-test",
         "firmware/tests/mesh_integration/test_verify_changes.py",
     ),
@@ -72,6 +77,7 @@ COMPATIBILITY_PRESETS = (
 LEGACY_ROLES = ("clicker", "anchor", "gateway")
 WEST_PROJECT_LOCK = Path("firmware/west_projects.lock.json")
 EXACT_BUILD_INPUTS = (
+    str(WEST_MANIFEST_RELATIVE),
     "firmware/app",
     "firmware/include",
     "firmware/scripts",
@@ -538,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
                     projects = active_west_projects(
                         workspace,
                         _VERIFICATION_ROOT / WEST_PROJECT_LOCK,
+                        _VERIFICATION_ROOT / WEST_MANIFEST_RELATIVE,
                     )
                     if args.zephyr_build_root is not None:
                         requested_root = args.zephyr_build_root
@@ -549,7 +556,11 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     with frozen_west_dependencies(
                         projects,
-                        workspace_root=workspace.root,
+                        workspace=workspace,
+                        lock_path=_VERIFICATION_ROOT / WEST_PROJECT_LOCK,
+                        frozen_manifest_path=(
+                            _VERIFICATION_ROOT / WEST_MANIFEST_RELATIVE
+                        ),
                     ) as dependency_guard:
                         _ACTIVE_DEPENDENCY_GUARD = dependency_guard
                         try:

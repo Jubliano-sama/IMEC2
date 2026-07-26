@@ -37,6 +37,12 @@ class VerificationEntrypointTests(unittest.TestCase):
         app_input = self.root / "firmware/app/tracked.c"
         app_input.parent.mkdir(parents=True)
         app_input.write_text("int tracked;\n", encoding="utf-8")
+        manifest = self.root / "manifest/west.yml"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            "manifest:\n  projects: []\n",
+            encoding="utf-8",
+        )
         subprocess.run(["git", "add", "."], cwd=self.root, check=True)
         subprocess.run(
             ["git", "commit", "-q", "-m", "baseline"],
@@ -154,6 +160,35 @@ class VerificationEntrypointTests(unittest.TestCase):
         build_input.write_text("input\n", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "untracked build inputs"):
             verify_changes._require_clean_repository()
+
+    def test_exact_artifacts_reject_dirty_west_manifest(self) -> None:
+        verify_changes.REPO_ROOT = self.root
+        (self.root / "manifest/west.yml").write_text(
+            "manifest:\n  projects:\n    - name: injected\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "embedded Git identity"):
+            verify_changes._require_clean_repository()
+
+    def test_checks_only_source_set_runs_agent_guidance_self_test(self) -> None:
+        verify_changes._VERIFICATION_ROOT = self.root
+        with mock.patch.object(verify_changes, "_run") as run:
+            verify_changes._source_checks()
+        calls = {
+            call.args[0]: call.args[1]
+            for call in run.call_args_list
+        }
+        self.assertIn("agent guidance self-test", calls)
+        self.assertEqual(
+            calls["agent guidance self-test"],
+            [
+                str(verify_changes.PYTHON),
+                str(
+                    self.root
+                    / "firmware/tests/mesh_integration/test_agent_guidance.py"
+                ),
+            ],
+        )
 
     def test_zephyr_builds_disable_ccache_and_isolate_flash_state(self) -> None:
         verify_changes._VERIFICATION_ROOT = self.root

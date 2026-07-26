@@ -1445,6 +1445,12 @@ add_test(NAME agent_guidance
 set_tests_properties(agent_guidance
     PROPERTIES LABELS "repository;static_analysis;agent_guidance")
 
+add_test(NAME agent_guidance_self_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_agent_guidance.py)
+set_tests_properties(agent_guidance_self_test
+    PROPERTIES LABELS "repository;static_analysis;agent_guidance")
+
 # The focused protocol gate spans click wake/ranging/report delivery, direct
 # probing and route advertisement, connection ownership, assignment, survey
 # discovery/pair execution, result custody, persistence, fault/reset

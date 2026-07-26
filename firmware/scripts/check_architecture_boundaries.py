@@ -863,7 +863,42 @@ def _load_manifest(repo_root: Path, manifest_path: Path) -> dict[str, Any]:
     return value
 
 
+def _require_immutable_baseline_ancestor(repo_root: Path) -> None:
+    result = subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            IMMUTABLE_BASELINE_COMMIT,
+            "HEAD",
+        ],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    if result.returncode == 1:
+        raise ValueError(
+            f"immutable architecture baseline {IMMUTABLE_BASELINE_COMMIT} is "
+            "present but is not an ancestor of HEAD; published history must "
+            "retain the exact policy commit. Do not squash, rebase, prune, or "
+            "reconstruct it"
+        )
+    detail = result.stderr.strip()
+    raise ValueError(
+        f"cannot prove immutable architecture baseline "
+        f"{IMMUTABLE_BASELINE_COMMIT} is an ancestor of HEAD. Do not squash, "
+        "rebase, prune, or reconstruct this policy object; an intentional "
+        "rebaseline requires two separately reviewed, preserved commits: "
+        f"{detail}"
+    )
+
+
 def _load_immutable_baseline(repo_root: Path) -> dict[str, Any]:
+    _require_immutable_baseline_ancestor(repo_root)
     reference = f"{IMMUTABLE_BASELINE_COMMIT}:{DEFAULT_MANIFEST.as_posix()}"
     result = subprocess.run(
         ["git", "show", reference],
@@ -877,7 +912,10 @@ def _load_immutable_baseline(repo_root: Path) -> dict[str, Any]:
         detail = result.stderr.strip()
         raise ValueError(
             f"cannot load immutable architecture baseline {reference}; "
-            f"the checkout must contain the pinned history: {detail}"
+            "the checkout must contain the pinned history. Do not squash, "
+            "rebase, prune, or reconstruct this policy object; an intentional "
+            "rebaseline requires two separately reviewed, preserved commits: "
+            f"{detail}"
         )
     try:
         value = json.loads(result.stdout)
@@ -893,6 +931,7 @@ def _load_immutable_baseline(repo_root: Path) -> dict[str, Any]:
 
 
 def _load_immutable_sources(repo_root: Path) -> dict[Path, str]:
+    _require_immutable_baseline_ancestor(repo_root)
     result = subprocess.run(
         [
             "git",
@@ -910,7 +949,10 @@ def _load_immutable_sources(repo_root: Path) -> dict[Path, str]:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ValueError(
             f"cannot load source tree from immutable "
-            f"{IMMUTABLE_BASELINE_COMMIT} baseline: {detail}"
+            f"{IMMUTABLE_BASELINE_COMMIT} baseline; do not squash, rebase, "
+            "prune, or reconstruct this policy object. An intentional "
+            "rebaseline requires two separately reviewed, preserved commits: "
+            f"{detail}"
         )
     sources: dict[Path, str] = {}
     try:

@@ -541,3 +541,9 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Verification now freezes repository, west-project, and configuration inputs, but PATH-selected host tools and CMake package registries remain outside content attestation; do not claim container-grade toolchain reproducibility.
 - Architecture source ownership uses conservative static CMake parsing rather than configured file-api output; novel custom source commands or compile-option header injection remain unqualified until compiled-input attestation exists.
 - The wiki validator scripts are not executable in this installation; invoke them through the repository Python interpreter instead of executing their paths directly.
+- Fixed the immutable architecture ceiling depending on an undocumented historical object by making baseline retention, no-squash publication, and the two-commit rebaseline procedure executable repository guidance.
+- Fixed exact-role verification resolving projects from the mutable live west manifest outside the frozen source proof; the manifest is now an exact clean input, byte-bound and write-guarded through post-matrix project re-resolution.
+- Fixed regenerated wiki pages retaining stale green reports and generation contexts by binding every AUTOGEN citation and tracked evidence artifact to one preserved source commit and a TOC-plus-pages state digest.
+- Fixed the architecture ceiling accepting a baseline object retained only by an unrelated ref; the pinned policy commit must now be an ancestor of HEAD.
+- Fixed executable guidance duplicating the architecture baseline hash independently of the checker and omitting its own negative self-test from checks-only verification.
+- Fixed live west metadata allowing special-file or unbounded-read stalls before its guard could report mutation, and preserved the original matrix error when cleanup validation also fails.

@@ -105,7 +105,10 @@ ignored or restored write, invalidate the run. Every active west dependency
 must match `firmware/west_projects.lock.json`, be clean at the locked commit,
 use no concealing Git index flag, contain no unapproved ignored input or
 symlink outside the guarded project set, and remain write-guarded with the
-pinned `.west/config` for the matrix. Ambient Zephyr, CMake, module, toolchain,
+pinned `.west/config` for the matrix. The live `manifest/west.yml` must be
+byte-identical to the frozen source snapshot and remain write-guarded from
+project resolution through the matrix, and the locked project set is resolved
+again before verification succeeds. Ambient Zephyr, CMake, module, toolchain,
 and compiler-search overrides are forbidden. The default Zephyr build root is
 temporary; pass an explicit exclusive root only when its artifacts must be
 retained. During focused iteration,
@@ -172,6 +175,15 @@ no-growth debt ceiling, not approval for the existing monoliths. Do not bypass
 it with implementation-bearing headers, source inclusion, symlinks, alternate
 fragment extensions, or production C files outside the declared roots.
 
+The immutable architecture debt baseline is commit
+`4b4a8febe3935123389b96df7304f2dd1f0f8eb1`, and published history must
+retain that exact policy object. Do not squash, rebase, or prune it from a
+release branch; a missing object is a verification failure, not permission to
+weaken or reconstruct the baseline from the mutable checkout. An intentional
+rebaseline is a two-commit review: first create and preserve the standalone
+approved source/manifest baseline commit, then update the checker pin and its
+guidance/tests in a separate commit. Preserve both commits in the merge.
+
 ## Documentation and delivery discipline
 
 `Documentation/CURRENT.json` is the machine-readable current-document source.
@@ -188,9 +200,11 @@ continue or restart a time window.
 Commit bug fixes even when partial and state the remaining gap. Use imperative
 subjects. A PR or handoff names affected roles, commands run, hardware
 assumptions, and missing evidence. A wiki synchronization commit pins its
-immediate source commit; preserve that source commit in published history, or
-regenerate and repin the wiki after any squash. Subagents use the default
-service tier unless the user explicitly requests otherwise.
+immediate source commit; generated citations, validation reports, and context
+files bind to that pin and the current wiki-state digest. Preserve the source
+commit in published history, or regenerate and repin the wiki after any
+squash. Subagents use the default service tier unless the user explicitly
+requests otherwise.
 
 Write to the user like a senior engineer in chat: lead with the verdict, keep
 causal reasoning together, use lists only for genuinely parallel facts or a

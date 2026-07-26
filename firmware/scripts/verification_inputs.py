@@ -11,6 +11,7 @@ import json
 import os
 import posixpath
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -33,6 +34,11 @@ PINNED_WEST_CONFIG = {
         "base": "zephyr",
     },
 }
+WEST_MANIFEST_RELATIVE = Path(
+    PINNED_WEST_CONFIG["manifest"]["path"]
+) / PINNED_WEST_CONFIG["manifest"]["file"]
+WEST_METADATA_MAX_BYTES = 1024 * 1024
+_SAFE_FILE_READ_CHUNK_BYTES = 64 * 1024
 _AMBIENT_BUILD_OVERRIDE_NAMES = frozenset(
     {
         "ARCH_ROOT",
@@ -571,6 +577,35 @@ class WestProject:
     expected_sha: str
 
 
+class VerificationMatrixFailure(RuntimeError):
+    """Preserve a matrix failure together with every cleanup failure."""
+
+    def __init__(
+        self,
+        primary_error: BaseException | None,
+        cleanup_errors: Sequence[Exception],
+    ):
+        self.primary_error = primary_error
+        self.cleanup_errors = tuple(cleanup_errors)
+        cleanup_detail = "; ".join(
+            f"{type(error).__name__}: {error}"
+            for error in self.cleanup_errors
+        )
+        if primary_error is None:
+            message = (
+                "west dependency cleanup validation failed: "
+                + cleanup_detail
+            )
+        else:
+            message = (
+                "exact build matrix failed with "
+                f"{type(primary_error).__name__}: {primary_error}; "
+                "west dependency cleanup also failed: "
+                + cleanup_detail
+            )
+        super().__init__(message)
+
+
 def _load_west_lock(lock_path: Path) -> dict[str, tuple[Path, str, str]]:
     try:
         value = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -638,18 +673,16 @@ def validate_west_workspace_config(
 
     config_path = workspace_root / ".west/config"
     try:
-        metadata = config_path.lstat()
-        payload = config_path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError, UnicodeError) as exc:
+        payload = _read_regular_file_bytes(
+            config_path,
+            subject="west workspace configuration",
+            phase=phase,
+        ).decode("utf-8")
+    except (RuntimeError, UnicodeError) as exc:
         raise RuntimeError(
             f"west workspace configuration is unavailable {phase}: "
             f"{config_path}: {exc}"
         ) from exc
-    if config_path.is_symlink() or not config_path.is_file():
-        raise RuntimeError(
-            f"west workspace configuration must be a regular local file "
-            f"{phase}: {config_path} (mode {metadata.st_mode:o})"
-        )
 
     parser = configparser.ConfigParser(interpolation=None, strict=True)
     try:
@@ -667,6 +700,186 @@ def validate_west_workspace_config(
             "west workspace configuration differs from the pinned local "
             f"configuration {phase}: {config_path}; expected "
             "[manifest] path=manifest, file=west.yml and [zephyr] base=zephyr"
+        )
+
+
+def _read_regular_file_bytes(
+    path: Path,
+    *,
+    subject: str,
+    phase: str,
+    max_bytes: int = WEST_METADATA_MAX_BYTES,
+) -> bytes:
+    """Read bounded regular-file bytes without following a raced replacement."""
+
+    if max_bytes <= 0:
+        raise RuntimeError(
+            f"{subject} has an invalid non-positive read limit {phase}: "
+            f"{max_bytes}"
+        )
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(
+            f"{subject} is unavailable {phase}: {path}: {exc}"
+        ) from exc
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(
+            f"{subject} must be a regular non-symlink file {phase}: "
+            f"{path} (mode {before.st_mode:o})"
+        )
+    if before.st_size > max_bytes:
+        raise RuntimeError(
+            f"{subject} exceeds the {max_bytes}-byte verification limit "
+            f"{phase}: {path} ({before.st_size} bytes)"
+        )
+
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(
+            f"{subject} cannot be opened safely {phase}: {path}: {exc}"
+        ) from exc
+    try:
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise RuntimeError(
+                    f"{subject} became a non-regular file while it was opened "
+                    f"{phase}: {path}"
+                )
+            if opened.st_size > max_bytes:
+                raise RuntimeError(
+                    f"{subject} exceeds the {max_bytes}-byte verification "
+                    f"limit after open {phase}: {path} "
+                    f"({opened.st_size} bytes)"
+                )
+            before_identity = (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            opened_identity = (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_mode,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            if opened_identity != before_identity:
+                raise RuntimeError(
+                    f"{subject} changed identity while it was opened "
+                    f"{phase}: {path}"
+                )
+            payload = bytearray()
+            while True:
+                request_bytes = min(
+                    _SAFE_FILE_READ_CHUNK_BYTES,
+                    max_bytes + 1 - len(payload),
+                )
+                chunk = os.read(descriptor, request_bytes)
+                if not isinstance(chunk, bytes):
+                    raise RuntimeError(
+                        f"{subject} returned a non-bytes read {phase}: {path}"
+                    )
+                if len(chunk) > request_bytes:
+                    raise RuntimeError(
+                        f"{subject} returned more bytes than requested "
+                        f"{phase}: {path}"
+                    )
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                if len(payload) > max_bytes:
+                    raise RuntimeError(
+                        f"{subject} exceeded the {max_bytes}-byte "
+                        f"verification limit while reading {phase}: {path}"
+                    )
+            after_opened = os.fstat(descriptor)
+        except OSError as exc:
+            raise RuntimeError(
+                f"{subject} cannot be read safely {phase}: {path}: {exc}"
+            ) from exc
+    finally:
+        os.close(descriptor)
+
+    try:
+        after = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(
+            f"{subject} disappeared while it was read {phase}: {path}: {exc}"
+        ) from exc
+    identity_after_opened = (
+        after_opened.st_dev,
+        after_opened.st_ino,
+        after_opened.st_mode,
+        after_opened.st_size,
+        after_opened.st_mtime_ns,
+        after_opened.st_ctime_ns,
+    )
+    identity_after_path = (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if (
+        identity_after_opened != before_identity
+        or identity_after_path != before_identity
+    ):
+        raise RuntimeError(
+            f"{subject} changed while it was read {phase}: {path}"
+        )
+    return bytes(payload)
+
+
+def validate_west_manifest_identity(
+    workspace_root: Path,
+    frozen_manifest_path: Path,
+    *,
+    phase: str,
+) -> None:
+    """Bind the live west manifest to the immutable source snapshot."""
+
+    frozen_payload = _read_regular_file_bytes(
+        frozen_manifest_path,
+        subject="frozen source manifest",
+        phase=phase,
+    )
+    live_manifest = workspace_root / WEST_MANIFEST_RELATIVE
+    live_directory = live_manifest.parent
+    try:
+        directory_metadata = live_directory.lstat()
+    except OSError as exc:
+        raise RuntimeError(
+            f"live west manifest directory is unavailable {phase}: "
+            f"{live_directory}: {exc}"
+        ) from exc
+    if not stat.S_ISDIR(directory_metadata.st_mode):
+        raise RuntimeError(
+            f"live west manifest directory must be a real directory {phase}: "
+            f"{live_directory} (mode {directory_metadata.st_mode:o})"
+        )
+
+    live_payload = _read_regular_file_bytes(
+        live_manifest,
+        subject="live west manifest",
+        phase=phase,
+    )
+    if live_payload != frozen_payload:
+        live_hash = hashlib.sha256(live_payload).hexdigest()
+        frozen_hash = hashlib.sha256(frozen_payload).hexdigest()
+        raise RuntimeError(
+            "live west manifest differs from the immutable source snapshot "
+            f"{phase}: {live_manifest} sha256={live_hash}; "
+            f"{frozen_manifest_path} sha256={frozen_hash}"
         )
 
 
@@ -713,6 +926,13 @@ def discover_west_workspace(repo_root: Path) -> WestWorkspace:
                 failures.append(f"{candidate}: {exc}")
                 continue
             try:
+                config_guard.assert_stable(
+                    "after west discovery guard installation"
+                )
+                validate_west_workspace_config(
+                    candidate,
+                    phase="after west discovery guard installation",
+                )
                 config_guard.assert_stable("before west topdir")
                 result = subprocess.run(
                     [executable, "topdir"],
@@ -764,6 +984,7 @@ def discover_west_workspace(repo_root: Path) -> WestWorkspace:
 def active_west_projects(
     workspace: WestWorkspace,
     lock_path: Path,
+    frozen_manifest_path: Path,
 ) -> tuple[WestProject, ...]:
     """Resolve active projects against the repository-owned immutable lock."""
 
@@ -773,10 +994,23 @@ def active_west_projects(
         phase="before active project resolution",
     )
     config_guard = LinuxInotifyWriteGuard(
-        [workspace.root / ".west"],
-        subject=".west configuration",
+        [
+            workspace.root / ".west",
+            workspace.root / WEST_MANIFEST_RELATIVE.parent,
+        ],
+        subject=".west configuration or live west manifest",
     )
     try:
+        config_guard.assert_stable("after west metadata guard installation")
+        validate_west_workspace_config(
+            workspace.root,
+            phase="after west metadata guard installation",
+        )
+        validate_west_manifest_identity(
+            workspace.root,
+            frozen_manifest_path,
+            phase="after west metadata guard installation",
+        )
         config_guard.assert_stable("before west list")
         output = _run_capture(
             [
@@ -793,6 +1027,12 @@ def active_west_projects(
             workspace.root,
             phase="after active project resolution",
         )
+        validate_west_manifest_identity(
+            workspace.root,
+            frozen_manifest_path,
+            phase="after active project resolution",
+        )
+        config_guard.assert_stable("after active project validation")
     finally:
         config_guard.close()
     projects: list[WestProject] = []
@@ -1130,61 +1370,122 @@ class LinuxInotifyWriteGuard:
 def frozen_west_dependencies(
     projects: Sequence[WestProject],
     *,
-    workspace_root: Path,
+    workspace: WestWorkspace,
+    lock_path: Path,
+    frozen_manifest_path: Path,
 ) -> Iterator[LinuxInotifyWriteGuard]:
-    """Freeze active projects and local west configuration for one matrix."""
+    """Freeze active projects and west metadata for one exact build matrix."""
 
     validate_west_workspace_config(
-        workspace_root,
+        workspace.root,
+        phase="before matrix",
+    )
+    validate_west_manifest_identity(
+        workspace.root,
+        frozen_manifest_path,
         phase="before matrix",
     )
     validate_west_projects(projects, phase="before matrix")
     guard = LinuxInotifyWriteGuard(
         [
             *(project.path for project in projects),
-            workspace_root / ".west",
+            workspace.root / ".west",
+            workspace.root / WEST_MANIFEST_RELATIVE.parent,
         ],
-        subject="west dependency worktree or .west configuration",
+        subject=(
+            "west dependency worktree, .west configuration, or live west "
+            "manifest"
+        ),
     )
+    primary_error: BaseException | None = None
     try:
-        guard.assert_stable("after guard installation")
-        validate_west_workspace_config(
-            workspace_root,
-            phase="after guard installation",
-        )
-        validate_west_projects(projects, phase="after guard installation")
-        guard.assert_stable("after project revalidation")
-        yield guard
-    finally:
-        guard_error: RuntimeError | None = None
-        state_error: RuntimeError | None = None
         try:
-            guard.assert_stable("matrix completion")
-        except RuntimeError as exc:
-            guard_error = exc
-        finally:
-            guard.close()
-        try:
-            validate_west_projects(projects, phase="after matrix")
-        except RuntimeError as exc:
-            state_error = exc
-        try:
+            guard.assert_stable("after guard installation")
             validate_west_workspace_config(
-                workspace_root,
-                phase="after matrix",
+                workspace.root,
+                phase="after guard installation",
             )
-        except RuntimeError as exc:
-            if state_error is None:
-                state_error = exc
-            else:
-                state_error = RuntimeError(f"{state_error}; {exc}")
-        if guard_error or state_error:
-            details = "; ".join(
-                str(error)
-                for error in (guard_error, state_error)
-                if error is not None
+            validate_west_manifest_identity(
+                workspace.root,
+                frozen_manifest_path,
+                phase="after guard installation",
             )
-            raise RuntimeError(details)
+            validate_west_projects(projects, phase="after guard installation")
+            resolved_projects = active_west_projects(
+                workspace,
+                lock_path,
+                frozen_manifest_path,
+            )
+            if tuple(resolved_projects) != tuple(projects):
+                raise RuntimeError(
+                    "active west project set changed before the exact build "
+                    "matrix"
+                )
+            guard.assert_stable("after project revalidation")
+            yield guard
+        except BaseException as exc:
+            primary_error = exc
+    finally:
+        cleanup_errors: list[Exception] = []
+        try:
+            try:
+                guard.assert_stable("matrix completion")
+            except Exception as exc:
+                cleanup_errors.append(exc)
+            try:
+                validate_west_projects(projects, phase="after matrix")
+            except Exception as exc:
+                cleanup_errors.append(exc)
+            try:
+                validate_west_workspace_config(
+                    workspace.root,
+                    phase="after matrix",
+                )
+            except Exception as exc:
+                cleanup_errors.append(exc)
+            try:
+                validate_west_manifest_identity(
+                    workspace.root,
+                    frozen_manifest_path,
+                    phase="after matrix",
+                )
+            except Exception as exc:
+                cleanup_errors.append(exc)
+            try:
+                resolved_projects = active_west_projects(
+                    workspace,
+                    lock_path,
+                    frozen_manifest_path,
+                )
+                if tuple(resolved_projects) != tuple(projects):
+                    raise RuntimeError(
+                        "active west project set changed across the exact "
+                        "build matrix"
+                    )
+            except Exception as exc:
+                cleanup_errors.append(exc)
+            try:
+                guard.assert_stable("after matrix project resolution")
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        finally:
+            try:
+                guard.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+    if primary_error is not None:
+        if cleanup_errors:
+            combined = VerificationMatrixFailure(
+                primary_error,
+                cleanup_errors,
+            )
+            if isinstance(primary_error, Exception):
+                raise combined from primary_error
+            raise primary_error from combined
+        raise primary_error
+    if cleanup_errors:
+        combined = VerificationMatrixFailure(None, cleanup_errors)
+        raise combined from cleanup_errors[0]
 
 
 def require_build_root_outside_projects(

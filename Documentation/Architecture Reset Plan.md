@@ -46,6 +46,16 @@ gate rejects new include fragments, source-like textual includes, oversized
 headers, out-of-root production sources, and oversized new C files. This
 records debt; it does not approve the architecture.
 
+The immutable policy object is commit
+`4b4a8febe3935123389b96df7304f2dd1f0f8eb1`. Release branches and verification
+clones must retain that exact commit; squash, rebase, or history pruning that
+drops it fails closed because the checker can no longer prove that the mutable
+inventory did not relax its original ceilings. An intentional rebaseline uses
+two preserved commits: the first is the separately reviewed source/manifest
+baseline, and the second updates the checker pin plus its guidance and tests.
+Reconstructing a baseline from the candidate checkout would let the same change
+approve its own debt growth and is forbidden.
+
 The CMake ownership gate is a conservative static parser. It rejects the
 source-discovery, variable, language, vendor-root, and include-root mechanisms
 currently supported by this repository, but it is not configured CMake
@@ -130,9 +140,13 @@ one-owner-and-deletion rule, not mechanical file moves.
    snapshot with write-and-restore detection, requires every west dependency to
    match the repository-owned `firmware/west_projects.lock.json`, rejects
    hidden index flags and unapproved ignored dependency inputs, pins west
-   configuration, rejects ambient build overrides, and write-guards those
-   inputs through each Zephyr matrix. Temporary, exclusive build roots prevent
-   concurrent pruning and stale reuse. This stage is complete only when a clean
+   configuration, binds the live west manifest byte-for-byte to the immutable
+   source snapshot, rejects ambient build overrides, and write-guards those
+   inputs through each Zephyr matrix. The active locked project set is resolved
+   again after the matrix. Temporary, exclusive build roots prevent concurrent
+   pruning and stale reuse. Source-backed wiki sections, their citations, and
+   tracked validation/context artifacts bind to one preserved source commit
+   and one TOC-plus-pages digest. This stage is complete only when a clean
    worktree reproduces the same result as a developer checkout.
 2. **Characterize ownership.** Add contract-level tests for every survey
    terminal, cancellation, stale generation, zero-RF deadline, BLE pressure,

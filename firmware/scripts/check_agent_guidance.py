@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import Mapping
 
 import agent_preflight
+import check_architecture_boundaries
 
 
 REQUIRED_GUIDANCE_SECTIONS = (
@@ -25,6 +27,51 @@ REQUIRED_REFERENCES = (
     "Documentation/Architecture Reset Plan.md",
     "firmware/architecture_boundaries.json",
 )
+REQUIRED_GUIDANCE_TEXT = (
+    "Do not squash, rebase, or prune it from a release branch",
+    "An intentional rebaseline is a two-commit review",
+    "Preserve both commits in the merge",
+    "generated citations, validation reports, and context files bind to that pin",
+    "The live `manifest/west.yml` must be byte-identical to the frozen source snapshot",
+)
+BASELINE_GUIDANCE_PATH = "Documentation/Architecture Reset Plan.md"
+
+
+def baseline_pin_errors(
+    documents: Mapping[str, str],
+    expected_baseline: str | None = None,
+) -> list[str]:
+    baseline = (
+        check_architecture_boundaries.IMMUTABLE_BASELINE_COMMIT
+        if expected_baseline is None
+        else expected_baseline
+    )
+    return [
+        f"{path} must name immutable architecture baseline {baseline}"
+        for path, text in documents.items()
+        if baseline not in text
+    ]
+
+
+def guidance_contract_errors(
+    guidance: str,
+    expected_baseline: str | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    normalized = " ".join(guidance.split())
+    for section in REQUIRED_GUIDANCE_SECTIONS:
+        if section not in guidance:
+            errors.append(f"AGENTS.md is missing required section {section!r}")
+    for text in REQUIRED_GUIDANCE_TEXT:
+        if " ".join(text.split()) not in normalized:
+            errors.append(f"AGENTS.md is missing required guidance text {text!r}")
+    errors.extend(
+        baseline_pin_errors(
+            {"AGENTS.md": guidance},
+            expected_baseline,
+        )
+    )
+    return errors
 
 
 def _tracked_project_sources() -> tuple[list[str], list[str]]:
@@ -73,9 +120,20 @@ def main() -> int:
     except OSError as exc:
         errors.append(f"cannot read {guidance_path}: {exc}")
         guidance = ""
-    for section in REQUIRED_GUIDANCE_SECTIONS:
-        if section not in guidance:
-            errors.append(f"AGENTS.md is missing required section {section!r}")
+    errors.extend(guidance_contract_errors(guidance))
+    baseline_guidance_path = (
+        agent_preflight.REPO_ROOT / BASELINE_GUIDANCE_PATH
+    )
+    try:
+        baseline_guidance = baseline_guidance_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot read {baseline_guidance_path}: {exc}")
+        baseline_guidance = ""
+    errors.extend(
+        baseline_pin_errors(
+            {BASELINE_GUIDANCE_PATH: baseline_guidance},
+        )
+    )
     for rule_id in sorted(agent_preflight.REQUIRED_RULE_IDS):
         if rule_id not in guidance:
             errors.append(f"AGENTS.md is missing direct rule id {rule_id}")
