@@ -194,6 +194,8 @@ assert_ordered(
     "APP_GATEWAY_SURVEY_ROUND_DISPATCHING",
     "APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED",
     "APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE",
+    ".round_go_delivery_pending =",
+    "gateway_survey_round_go_delivery_handle != 0u",
 )
 assert "APP_GATEWAY_SURVEY_ROUND_OBSERVING" not in drive_state, (
     "OBSERVING must poll as an external wait rather than busy-spin as runnable"

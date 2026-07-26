@@ -89,6 +89,49 @@ static void test_observing_round_polls_without_busy_spin(void)
            SURVEY_GATEWAY_DRIVE_POLL_WAIT);
 }
 
+static void test_submitted_go_polls_without_busy_spin(void)
+{
+    const struct survey_gateway_drive_state state = {
+        .survey_active = true,
+        .auto_running = false,
+        .auto_waiting = false,
+        .pair_observation_active = false,
+        .round_drive_ready = true,
+        .round_go_delivery_pending = true,
+        .cleanup_pending = false,
+        .boundary_pending = false,
+        .response_ack_settle_pending = false,
+    };
+
+    /*
+     * GO_REQUIRED stays true until the scheduler records an RF attempt.
+     * Once the exact GO has custody, only its bounded terminal/attempt poll
+     * may run; zero-delay redispatch cannot make custody progress.
+     */
+    assert(survey_gateway_drive_action(&state) ==
+           SURVEY_GATEWAY_DRIVE_POLL_WAIT);
+}
+
+static void test_submitted_go_wait_stress_never_runs_now(void)
+{
+    for (uint32_t cycle = 0u; cycle < 512u; cycle++) {
+        const struct survey_gateway_drive_state state = {
+            .survey_active = true,
+            .auto_running = (cycle & 1u) != 0u,
+            .auto_waiting = false,
+            .pair_observation_active = false,
+            .round_drive_ready = true,
+            .round_go_delivery_pending = true,
+            .cleanup_pending = false,
+            .boundary_pending = false,
+            .response_ack_settle_pending = false,
+        };
+
+        assert(survey_gateway_drive_action(&state) ==
+               SURVEY_GATEWAY_DRIVE_POLL_WAIT);
+    }
+}
+
 static void test_response_ack_settle_blocks_next_phase(void)
 {
     assert(decide(true, true, false, false, false, false, true) ==
@@ -232,6 +275,8 @@ int main(void)
     test_runnable_orphan_is_driven_now();
     test_round_drive_ready_does_not_depend_on_serial_auto_owner();
     test_observing_round_polls_without_busy_spin();
+    test_submitted_go_polls_without_busy_spin();
+    test_submitted_go_wait_stress_never_runs_now();
     test_response_ack_settle_blocks_next_phase();
     test_external_waits_keep_a_bounded_deadline_poll();
     test_response_ack_settle_deadline_boundary();

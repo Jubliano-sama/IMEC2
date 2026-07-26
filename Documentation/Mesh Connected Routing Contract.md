@@ -466,6 +466,12 @@ extends beyond the window is a timeout. Route-depth PREPARE, START,
 command-result, and report delivery deadlines remain independent transport
 bounds and must never enlarge this local UWB receive window.
 
+Once the gateway submits that common GO to communication-service custody, it
+polls the exact delivery at a bounded interval until the first RF attempt or a
+terminal event. `GO_REQUIRED` remains the round phase during this pre-RF wait,
+but it is not immediately runnable work and must never replace the custody poll
+with a zero-delay survey-worker loop.
+
 The gateway's host-facing survey event stream preserves causal boundaries
 under BLE backpressure. A pending pair-start boundary is retried before the
 survey worker waits for RF completion or emits pair success or failure, so a

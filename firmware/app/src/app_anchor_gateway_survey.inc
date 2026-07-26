@@ -1747,6 +1747,10 @@ static struct survey_gateway_drive_state gateway_survey_drive_state(void)
                 APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED ||
             gateway_survey_round.phase ==
                 APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE,
+        .round_go_delivery_pending =
+            gateway_survey_round.phase ==
+                APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED &&
+            gateway_survey_round_go_delivery_handle != 0u,
         .cleanup_pending = gateway_survey_cleanup_pending(),
         .boundary_pending = gateway_survey_observability.boundary_pending,
         .response_ack_settle_pending = response_ack_settle_pending,
