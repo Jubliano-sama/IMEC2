@@ -335,6 +335,35 @@ static bool test_wrong_target_timing_and_fcs(void)
     return true;
 }
 
+static bool test_hardware_negative_tof_trace(void)
+{
+    /*
+     * Raw timestamps from a real two-anchor survey where the antennas were
+     * close enough for the calibrated exchange to produce a negative ToF.
+     * Keep this exact trace at the production driver boundary: it must never
+     * be rounded or clamped into RANGE_OK with a zero distance.
+     */
+    struct uwb_final_frame final = {
+        .poll_tx_ts_32 = UINT32_C(0x1e9af801),
+        .resp_rx_ts_32 = UINT32_C(0x3d13459b),
+        .final_tx_ts_32 = UINT32_C(0x5b8b9201),
+    };
+    int32_t distance_mm = INT32_C(12345);
+    int ret;
+
+    ret = dwm3000_driver_compute_distance_mm(
+        &final,
+        UINT32_C(0x7888c019),
+        UINT32_C(0x97010c01),
+        UINT32_C(0xb5795695),
+        &distance_mm);
+    CHECK(ret == -ERANGE && distance_mm == INT32_C(12345),
+          "negative-ToF hardware trace became a usable distance ret=%d distance=%d",
+          ret,
+          distance_mm);
+    return true;
+}
+
 int main(void)
 {
     bool ok = true;
@@ -342,6 +371,7 @@ int main(void)
     ok = test_valid_exchange_and_header_contract() && ok;
     ok = test_timeout_and_malformed_frames() && ok;
     ok = test_wrong_target_timing_and_fcs() && ok;
+    ok = test_hardware_negative_tof_trace() && ok;
     if (!ok || failures != 0u) {
         fprintf(stderr, "DS-TWR production semantic contract: %u failure(s)\n",
                 failures);
