@@ -176,7 +176,7 @@ it with implementation-bearing headers, source inclusion, symlinks, alternate
 fragment extensions, or production C files outside the declared roots.
 
 The immutable architecture debt baseline is commit
-`4b4a8febe3935123389b96df7304f2dd1f0f8eb1`, and published history must
+`e7f21bd58157351a328457c5b2d4fbea52285c49`, and published history must
 retain that exact policy object. Do not squash, rebase, or prune it from a
 release branch; a missing object is a verification failure, not permission to
 weaken or reconstruct the baseline from the mutable checkout. An intentional

@@ -47,7 +47,7 @@ headers, out-of-root production sources, and oversized new C files. This
 records debt; it does not approve the architecture.
 
 The immutable policy object is commit
-`4b4a8febe3935123389b96df7304f2dd1f0f8eb1`. Release branches and verification
+`e7f21bd58157351a328457c5b2d4fbea52285c49`. Release branches and verification
 clones must retain that exact commit; squash, rebase, or history pruning that
 drops it fails closed because the checker can no longer prove that the mutable
 inventory did not relax its original ceilings. An intentional rebaseline uses
