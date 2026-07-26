@@ -548,3 +548,4 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Fixed executable guidance duplicating the architecture baseline hash independently of the checker and omitting its own negative self-test from checks-only verification.
 - Fixed live west metadata allowing special-file or unbounded-read stalls before its guard could report mutation, and preserved the original matrix error when cleanup validation also fails.
 - Fixed wiki freshness missing a changed survey-control glue fragment because page 7 mapped only the pure round state machine; the TOC now maps the composed owner and focused regressions, and the page cites final-lane terminal retirement.
+- Fixed a late assignment CLAIM or table ACK being semantically rejected without a gateway transport ACK after the operation ended; well-formed stale results now retire relay custody without mutating assignment state, while malformed identities remain unacknowledged.

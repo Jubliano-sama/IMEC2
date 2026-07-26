@@ -1,4 +1,5 @@
 #include "app_discovery_assignment_policy.h"
+#include "app_mesh_report.h"
 #include "discovery_assignment.h"
 #include "gateway_command.h"
 #include "mesh.h"
@@ -59,6 +60,7 @@ struct gateway_model {
     size_t claim_count;
     uint16_t duplicate_claims;
     uint16_t duplicate_acks;
+    bool active;
 };
 
 static int failures;
@@ -153,9 +155,12 @@ static int gateway_accept_result(struct gateway_model *gateway,
         phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
         return -EPROTO;
     }
+    if (!gateway->active) {
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+    }
     if (phase != expected_phase || epoch != expected_epoch ||
         packet->session_id != expected_session) {
-        return -ESTALE;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
 
     for (size_t i = 0u; i < gateway->claim_count; i++) {
@@ -325,7 +330,7 @@ static bool compare_deterministic_order(const struct gateway_model *gateway,
 static bool run_workflow(size_t anchor_count)
 {
     struct anchor_model anchors[MAX_ANCHORS];
-    struct gateway_model gateway = {0};
+    struct gateway_model gateway = {.active = true};
     struct discovery_assignment_entry entries[MAX_ANCHORS];
     uint8_t table_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
     size_t table_payload_len = 0u;
@@ -421,8 +426,10 @@ static bool run_workflow(size_t anchor_count)
         CHECK(gateway_accept_result(
                   &gateway, &stale_packet, stale_payload, stale_len,
                   DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-                  ASSIGNMENT_EPOCH, CLAIM_SESSION) == -ESTALE,
-              "stale claim accepted count=%zu", anchor_count);
+                  ASSIGNMENT_EPOCH, CLAIM_SESSION) ==
+                      APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+              "stale claim did not release transport custody count=%zu",
+              anchor_count);
         stale_payload[stale_len - 1u] ^= 1u;
         CHECK(gateway_accept_result(
                   &gateway, &stale_packet, stale_payload, stale_len,
@@ -461,14 +468,18 @@ static bool run_workflow(size_t anchor_count)
         CHECK(gateway_accept_result(
                   &gateway, &wrong_ack, wrong_payload, wrong_len,
                   DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                  ASSIGNMENT_EPOCH, TABLE_SESSION) == -ESTALE,
-              "wrong-epoch ACK accepted count=%zu", anchor_count);
+                  ASSIGNMENT_EPOCH, TABLE_SESSION) ==
+                      APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+              "wrong-epoch ACK did not release transport custody count=%zu",
+              anchor_count);
         wrong_ack.session_id = TABLE_SESSION - 1u;
         CHECK(gateway_accept_result(
                   &gateway, &wrong_ack, wrong_payload, wrong_len,
                   DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                  ASSIGNMENT_EPOCH - 1u, TABLE_SESSION) == -ESTALE,
-              "wrong-session ACK accepted count=%zu", anchor_count);
+                  ASSIGNMENT_EPOCH - 1u, TABLE_SESSION) ==
+                      APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+              "wrong-session ACK did not release transport custody count=%zu",
+              anchor_count);
     }
 
     for (uint8_t round = 0u;
@@ -653,7 +664,7 @@ static bool test_conflicts_capacity_and_late_claim(void)
 
 static bool test_gateway_semantic_acceptance_categories(void)
 {
-    struct gateway_model gateway = {0};
+    struct gateway_model gateway = {.active = true};
     struct proto_packet packet;
     const uint8_t *command_raw = NULL;
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
@@ -731,8 +742,9 @@ static bool test_gateway_semantic_acceptance_categories(void)
                                 payload_len,
                                 DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
                                 ASSIGNMENT_EPOCH,
-                                CLAIM_SESSION) == -ESTALE,
-          "wrong-epoch claim was not classified as stale");
+                                CLAIM_SESSION) ==
+              APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+          "wrong-epoch claim did not release transport custody");
 
     CHECK(build_result(ANCHOR_BASE,
                        DISCOVERY_ASSIGNMENT_PHASE_ACK,
@@ -766,8 +778,9 @@ static bool test_gateway_semantic_acceptance_categories(void)
                                 payload_len,
                                 DISCOVERY_ASSIGNMENT_PHASE_ACK,
                                 ASSIGNMENT_EPOCH,
-                                TABLE_SESSION) == -ESTALE,
-          "wrong-session table ACK was not classified as stale");
+                                TABLE_SESSION) ==
+              APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+          "wrong-session table ACK did not release transport custody");
 
     gateway.claim_count = MAX_ANCHORS;
     for (size_t i = 0u; i < MAX_ANCHORS; i++) {
@@ -789,6 +802,87 @@ static bool test_gateway_semantic_acceptance_categories(void)
                                 ASSIGNMENT_EPOCH,
                                 CLAIM_SESSION) == -ENOSPC,
           "over-capacity claim was not rejected");
+    return true;
+}
+
+static bool test_retired_valid_results_release_transport_custody(void)
+{
+    struct gateway_model gateway = {.active = false};
+    struct proto_packet packet;
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    CHECK(build_result(ANCHOR_BASE,
+                       DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                       ASSIGNMENT_EPOCH,
+                       CLAIM_SESSION,
+                       &packet,
+                       payload,
+                       &payload_len),
+          "retired valid claim build failed");
+    CHECK(gateway_accept_result(
+              &gateway,
+              &packet,
+              payload,
+              payload_len,
+              DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+              ASSIGNMENT_EPOCH,
+              CLAIM_SESSION) == APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+          "retired valid claim did not release transport custody");
+    CHECK(gateway.claim_count == 0u,
+          "retired valid claim mutated the inactive roster");
+
+    CHECK(gateway_accept_result(
+              &gateway,
+              &packet,
+              payload,
+              payload_len - 1u,
+              DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+              ASSIGNMENT_EPOCH,
+              CLAIM_SESSION) == -EBADMSG,
+          "retired malformed claim reached transport acceptance");
+    payload[payload_len - 1u] ^= 1u;
+    CHECK(gateway_accept_result(
+              &gateway,
+              &packet,
+              payload,
+              payload_len,
+              DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+              ASSIGNMENT_EPOCH,
+              CLAIM_SESSION) == -EBADMSG,
+          "retired wrong-hash claim reached transport acceptance");
+    payload[payload_len - 1u] ^= 1u;
+
+    CHECK(build_result(ANCHOR_BASE,
+                       DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                       ASSIGNMENT_EPOCH,
+                       TABLE_SESSION,
+                       &packet,
+                       payload,
+                       &payload_len),
+          "retired valid table ACK build failed");
+    CHECK(gateway_accept_result(
+              &gateway,
+              &packet,
+              payload,
+              payload_len,
+              DISCOVERY_ASSIGNMENT_PHASE_ACK,
+              ASSIGNMENT_EPOCH,
+              TABLE_SESSION) == APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+          "retired valid table ACK did not release transport custody");
+    CHECK(gateway.ack_mask == 0u,
+          "retired valid table ACK mutated the inactive ACK roster");
+
+    payload[payload_len - 1u] ^= 1u;
+    CHECK(gateway_accept_result(
+              &gateway,
+              &packet,
+              payload,
+              payload_len,
+              DISCOVERY_ASSIGNMENT_PHASE_ACK,
+              ASSIGNMENT_EPOCH,
+              TABLE_SESSION) == -EBADMSG,
+          "retired wrong-hash table ACK reached transport acceptance");
     return true;
 }
 
@@ -1019,6 +1113,9 @@ int main(void)
         return EXIT_FAILURE;
     }
     if (!test_gateway_semantic_acceptance_categories()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_retired_valid_results_release_transport_custody()) {
         return EXIT_FAILURE;
     }
     if (!test_explicit_budget_clips_current_window_without_division()) {
