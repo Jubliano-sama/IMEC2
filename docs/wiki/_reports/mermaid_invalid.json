@@ -1,4 +1,8 @@
 {
+  "metadata": {
+    "ref_commit_hash": "e04a0a7cfccd21c8821f2975119fcafc85705e4c",
+    "wiki_state_sha256": "1b895148ceb67571072c1082d7eed39b7d9b69ba91e0033aad6b7c773d6402cf"
+  },
   "invalid_blocks": [],
   "total_invalid": 0,
   "total_scanned": 9,
