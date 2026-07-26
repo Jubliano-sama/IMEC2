@@ -2,7 +2,7 @@
   "schema": 1,
   "documents": {
     "contract": "Documentation/Mesh Connected Routing Contract.md",
-    "architecture": "Documentation/UWB+BLE Architecture 0.6.6.2.md",
+    "architecture": "Documentation/UWB+BLE Architecture 0.6.6.3.md",
     "protocol": "Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md",
     "runtime_flow": "Documentation/Mesh Connected Routing Walkthrough.md",
     "development": "Documentation/Development and Deployment Guide.md",

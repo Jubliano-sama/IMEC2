@@ -1,9 +1,10 @@
 # Architecture Reset Plan
 
-Status: Accepted for staged implementation  
+Status: In progress; gateway survey ownership stage implemented
 Date: 2026-07-26  
-Behavioral effect of this decision: None until a migration stage passes its
-defined equivalence and hardware gates.
+Behavioral effect of the completed stage: Internal ownership and scheduling
+only. Wire format, role behavior, radio timing, retry policy, LEDs, and power
+policy are unchanged.
 
 ## Decision
 
@@ -109,10 +110,16 @@ generation and token. Work handlers do not contain policy, start nested retry
 machines, or mutate another owner's state. No blocking radio operation runs on
 the system workqueue.
 
-The first extraction boundaries are:
+The extraction boundaries are:
 
 - `firmware/src/gateway_survey_machine.c/.h`: plan, dispatch, observe, rerun,
   abort, and terminal survey transitions without Zephyr work primitives.
+  This boundary is implemented; the retired `app_gateway_survey_round` owner
+  and its spelling-based tests are deleted.
+- `firmware/app/src/app_mesh_route_owner_queue.c/.h`: the existing
+  `mesh_route` actor boundary used by survey polling, host retry, result
+  timeout, and abort cleanup. This is implemented without adding a workqueue or
+  stack.
 - `firmware/app/src/app_mesh_radio_owner.c/.h`: the sole application boundary
   for radio admission, safe-boundary preemption, and completion handoff.
 - `firmware/src/mesh_delivery_custody.c/.h`: exact packet custody, RF-start
@@ -150,13 +157,19 @@ one-owner-and-deletion rule, not mechanical file moves.
    worktree reproduces the same result as a developer checkout.
 2. **Characterize ownership.** Add contract-level tests for every survey
    terminal, cancellation, stale generation, zero-RF deadline, BLE pressure,
-   reset boundary, and radio-owner handoff. Record existing behavior without
-   adding another retry or fallback.
+   reset boundary, and radio-owner handoff. Survey lifecycle, queue, deadline,
+   stale-generation, cleanup, rerun, and terminal cases are covered; broader
+   radio-owner and reset qualification remains open.
 3. **Extract the gateway survey machine.** Route one survey operation through
    the pure machine while the legacy coordinator remains an adapter. Prove
    event/action trace equivalence across success, rerun, abort, capacity,
    route-loss, reset, and deadline cases, then delete the retired coordinator
-   state and work handlers.
+   state and work handlers. **Implemented in source:** one pure machine now
+   owns discovery and pair-round lifecycle, all lifecycle work runs on the
+   `mesh_route` actor, and the old round owner is deleted. Native, sanitizer,
+   mesh-integration, hardware-model, and exact-role compile gates pass.
+   Multi-board RF, stack, reset, and power qualification remains required
+   before deployment.
 4. **Centralize radio ownership.** Move admission and safe-boundary handoff
    behind `app_mesh_radio_owner`. Preserve click priority, the connected
    Channel 5/9 rhythm, bounded continuous gateway RX slices, and watchdog
@@ -211,3 +224,8 @@ translation units, no project C file exceeds the agreed ceiling without an
 explicit debt record, all long-running operations expose one owner and terminal
 state, clean CI runs the complete native and stress gates, and exact-role plus
 hardware evidence passes without legacy fallback paths.
+
+The completed survey stage demonstrates the intended pattern but does not
+complete the reset. Gateway survey policy has one owner; radio admission,
+general delivery custody, and the remaining composed translation units still
+need their own staged deletions.

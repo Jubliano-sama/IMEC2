@@ -71,7 +71,7 @@ IMEC2/                          # West workspace root
 │   └── README.md
 ├── Documentation/              # Architecture, contracts, audits
 │   ├── Mesh Connected Routing Contract.md   # ← Authoritative behavioral contract
-│   ├── UWB+BLE Architecture 0.6.6.2.md      # Current architecture
+│   ├── UWB+BLE Architecture 0.6.6.3.md      # Current architecture
 │   ├── UWB+BLE Protocols and Strategies 0.3.12.4.md
 │   ├── HARDWARE_BRINGUP_DEBUG.md
 │   ├── ... (various notes & requirements)
@@ -164,7 +164,7 @@ ctest --test-dir firmware/build -L hardware_models --output-on-failure
 
 ### Documentation Hierarchy (Current Versions Only)
 - Contract (highest authority for mesh behavior): `Mesh Connected Routing Contract.md`
-- Architecture: [UWB+BLE Architecture 0.6.6.2.md](<Documentation/UWB+BLE Architecture 0.6.6.2.md>)
+- Architecture: [UWB+BLE Architecture 0.6.6.3.md](<Documentation/UWB+BLE Architecture 0.6.6.3.md>)
 - Protocols: [UWB+BLE Protocols and Strategies 0.3.12.4.md](<Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md>)
 - Machine-readable current set: `Documentation/CURRENT.json`
 - Bring-up: `HARDWARE_BRINGUP_DEBUG.md`
@@ -190,7 +190,7 @@ ctest --test-dir firmware/build -L hardware_models --output-on-failure
 → The test file itself + `firmware/sim/mesh_sim.c`. The simulator drives the real core modules directly.
 
 **Understand power / duty cycle assumptions**
-→ [Architecture 0.6.6.2](<Documentation/UWB+BLE Architecture 0.6.6.2.md>) + `firmware/README.md` (the big table) + `app_radio_low_power_policy.h`.
+→ [Architecture 0.6.6.3](<Documentation/UWB+BLE Architecture 0.6.6.3.md>) + `firmware/README.md` (the big table) + `app_radio_low_power_policy.h`.
 
 ---
 

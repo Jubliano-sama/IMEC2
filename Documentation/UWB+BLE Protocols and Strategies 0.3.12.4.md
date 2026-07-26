@@ -13,7 +13,7 @@ this prose disagrees with either authority, the header controls wire encoding
 and the routing contract controls runtime behavior.
 
 The compact system view is
-[UWB+BLE Architecture 0.6.6.2](<UWB+BLE Architecture 0.6.6.2.md>), and the
+[UWB+BLE Architecture 0.6.6.3](<UWB+BLE Architecture 0.6.6.3.md>), and the
 same behavior is traced end to end in the
 [Mesh Connected Routing Walkthrough](<Mesh Connected Routing Walkthrough.md>).
 

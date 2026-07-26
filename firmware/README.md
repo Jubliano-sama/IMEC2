@@ -132,7 +132,7 @@ Clicker idle paths:
 - Default: retained System ON (`CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE`).
 - Fallback: System OFF with RAM retention.
 
-Detailed power budget calculations, scan duty guards, and awake-time accounting are in [UWB+BLE Architecture 0.6.6.2](<../Documentation/UWB+BLE Architecture 0.6.6.2.md>); current wire behavior is in [UWB+BLE Protocols and Strategies 0.3.12.4](<../Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md>).
+The current radio and power architecture is summarized in [UWB+BLE Architecture 0.6.6.3](<../Documentation/UWB+BLE Architecture 0.6.6.3.md>); compiled scan-duty guards and awake-time accounting remain source-owned, and current wire behavior is in [UWB+BLE Protocols and Strategies 0.3.12.4](<../Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md>).
 
 The app enforces build-time and runtime guards so that anchor scan duty stays inside the calibrated budget (currently 13,000 µs/s) unless an explicit debug override is enabled.
 
