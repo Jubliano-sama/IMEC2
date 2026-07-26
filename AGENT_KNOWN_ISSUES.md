@@ -540,3 +540,4 @@ Facade control-flood repeats must not send a full wake train before every succes
 - Fixed architecture debt escaping through alternate-language translation units, dynamic CMake source discovery, mutable source roots, redirected vendor/include paths, and line-spliced or alternative-token includes.
 - Verification now freezes repository, west-project, and configuration inputs, but PATH-selected host tools and CMake package registries remain outside content attestation; do not claim container-grade toolchain reproducibility.
 - Architecture source ownership uses conservative static CMake parsing rather than configured file-api output; novel custom source commands or compile-option header injection remain unqualified until compiled-input attestation exists.
+- The wiki validator scripts are not executable in this installation; invoke them through the repository Python interpreter instead of executing their paths directly.

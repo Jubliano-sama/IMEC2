@@ -7,7 +7,8 @@
 
 The following files were used as context for generating this wiki page:
 
-- [AGENTS.md:118-198](../../AGENTS.md#L118-L198)
+- [AGENTS.md:49-115](../../AGENTS.md#L49-L115)
+- [AGENTS.md:188-193](../../AGENTS.md#L188-L193)
 - [stack_budget.h:12-56](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/include/stack_budget.h#L12-L56)
 - [verify_stack_evidence.py:24-51](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L24-L51)
 - [capture_stack_evidence.py:61-129](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L61-L129)
@@ -28,13 +29,20 @@ The participant story depends on firmware that keeps a click correlated and reco
 <!-- BEGIN:AUTOGEN imec2-11-verified-deployment-eligibility-gate -->
 ## What Makes an Artifact Eligible
 
-Only `mesh_clicker`, `mesh_anchor`, and `mesh_gateway` are deployable verified-flash targets. The verifier defines that set directly, and the capture and flash entrypoints reject any build whose generated preset is outside it ([verify_stack_evidence.py:24-51](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L24-L51), [capture_stack_evidence.py:81-89](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L81-L89), [flash_verified_mesh.py:390-416](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/flash_verified_mesh.py#L390-L416)). This keeps the production [clicker, anchor, and gateway roles](01_product-roles-and-firmware-lines.md) separate from traffic generators, ML collection, debug, and legacy images.
+Only `mesh_clicker`, `mesh_anchor`, and `mesh_gateway` are deployable verified-flash targets. The stack verifier defines that closed set, and both capture and staging reject a build outside it ([verify_stack_evidence.py:34-51](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L34-L51), [capture_stack_evidence.py:81-89](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/capture_stack_evidence.py#L81-L89), [flash_verified_mesh.py:474-500](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L474-L500)). Bench traffic, ML collection, high-debug, and generic legacy artifacts remain separate even when their compatibility builds pass.
 
-Eligibility is tied to the policy header in this checkout. That header fixes role-specific stack sizes and minimum static RAM headroom, requires stack initialization, hardware stack protection, MPU guards, and thread information, and sets minimum free-stack and maximum-local-frame rules ([stack_budget.h:12-40](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/include/stack_budget.h#L12-L40)). The verifier parses those machine-readable rows, checks that they cover exactly the three deployable presets, and compares them with each exact Zephyr build ([verify_stack_evidence.py:146-185](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L146-L185)). A linked artifact can therefore fail deployment even after a normal role build succeeds, because static RAM headroom, compiler stack attribution, generated configuration, or a large synchronous frame still violates the deployment policy.
+Eligibility combines four kinds of evidence:
 
-Hardware evidence is role-specific rather than synthetic one-size-fits-all evidence. The clicker must complete real click activity, the anchor must complete an anchor survey report, and the gateway must complete report ingress, priority control, and BLE-backpressure workloads under their named execution owners ([stack_budget.h:42-56](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/include/stack_budget.h#L42-L56)). Each successful run must carry at least one correlated stack sample; marker-only text is rejected rather than accepted as a runtime watermark ([verify_stack_evidence.py:1179-1205](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1179-L1205)).
+| Gate | What must agree |
+|---|---|
+| Exact artifact identity | The generated preset, ELF, HEX, embedded build identity, and build directory must describe the same pristine artifact. |
+| Generated capacity | Role-specific stacks, MPU/thread features, and minimum static RAM headroom must match the machine-readable policy. The current minimum headroom is 24,576 bytes for clicker, 10,240 for anchor, and 6,000 for gateway ([stack_budget.h:12-29](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/include/stack_budget.h#L12-L29)). |
+| Compiler ownership | Linked functions need attributable IPA call paths and stack-usage records; unrooted or ambiguous work fails rather than being charged to an assumed largest stack ([stack_budget.h:60-70](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/include/stack_budget.h#L60-L70)). |
+| Runtime workload | The clicker completes `click_activity`, the anchor completes `anchor_survey_report`, and the gateway completes report ingress, priority control, and BLE backpressure under their specified thread owners ([stack_budget.h:44-58](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/include/stack_budget.h#L44-L58)). |
 
-Sources: [verify_stack_evidence.py:24-51](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L24-L51), [stack_budget.h:12-56](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/include/stack_budget.h#L12-L56), [verify_stack_evidence.py:146-224](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L146-L224)
+The build verifier also requires a clean build graph, checks generated Kconfig against the policy, computes linker RAM use and headroom, hashes the ELF and HEX, extracts the target build identity, and consumes compiler evidence ([verify_stack_evidence.py:862-905](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L862-L905)). A successful Zephyr link is therefore necessary but insufficient: a capacity, attribution, or runtime-evidence defect still blocks deployment.
+
+Sources: [verify_stack_evidence.py:34-51](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L34-L51), [stack_budget.h:12-70](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/include/stack_budget.h#L12-L70), [verify_stack_evidence.py:862-905](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L862-L905)
 <!-- END:AUTOGEN imec2-11-verified-deployment-eligibility-gate -->
 
 ---
@@ -42,17 +50,19 @@ Sources: [verify_stack_evidence.py:24-51](https://github.com/Jubliano-sama/IMEC2
 <!-- BEGIN:AUTOGEN imec2-11-verified-deployment-qualification-capture -->
 ## Qualification Capture
 
-The standalone capture tool observes an eligible artifact that is already running on the selected target; it never programs hardware. It verifies the exact build first, confirms the full probe ID is visible, and then runs `pyocd rtt -t nrf52833 -M pre-reset -u <probe-id> --up-channel-id 0` under `script` and a bounded foreground timeout ([capture_stack_evidence.py:1-7](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L1-L7), [capture_stack_evidence.py:31-78](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L31-L78)). The TTY wrapper matters because `pyocd rtt` is interactive, while `pre-reset` selects the reset-time connection sequence needed by the qualification contract. Hardware capture also needs direct USB access; a sandbox may list the probe yet leave RTT waiting, which is a tooling-access failure rather than firmware evidence ([AGENTS.md:189-198](../../AGENTS.md#L189-L198)).
+The capture tool observes the exact staged artifact already running on the selected target; it never programs hardware ([capture_stack_evidence.py:1-7](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/capture_stack_evidence.py#L1-L7)). It first verifies the build, confirms the full probe ID, then runs `pyocd rtt -t nrf52833 -M pre-reset -u <probe-id> --up-channel-id 0` under `script` with a bounded foreground timeout and rejects an empty transcript ([capture_stack_evidence.py:31-94](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/capture_stack_evidence.py#L31-L94)).
 
-A successful schema-3 manifest binds all of the evidence that must remain identical:
+A successful schema-3 capture binds:
 
-- The generated preset, full probe ID, exact ELF SHA-256, exact HEX SHA-256, and target-reported build identity bind the logical role and artifact to the physical qualification path ([capture_stack_evidence.py:98-120](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L98-L120)).
-- The transcript path and SHA-256, capture-tool SHA-256, fixed RTT command, `script` wrapper, and UTC start/end times bind how and when the evidence was collected ([capture_stack_evidence.py:98-123](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L98-L123)).
-- Typed `RUN_BEGIN`, `SAMPLE_BEGIN`, stack rows, `SAMPLE_END`, and `RUN_END` records must share run identity, workload kind, owner, packet identity, and queue/custody state. ISR data records configured size only; it does not substitute for a measured thread stack watermark ([verify_stack_evidence.py:1094-1168](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1094-L1168)).
+- The generated preset, full probe ID, exact ELF and HEX SHA-256 hashes, and target-reported preset/build identity.
+- The transcript path and hash, capture-tool hash, fixed RTT command, TTY wrapper, and UTC capture bounds.
+- A derived capture ID over artifact hashes, transcript hash, preset, probe, and capture bounds ([capture_stack_evidence.py:98-123](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/capture_stack_evidence.py#L98-L123), [verify_stack_evidence.py:1225-1228](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L1225-L1228)).
 
-The verifier recalculates the capture ID from the artifact hashes, transcript hash, preset, probe, and wall-clock bounds. It also rejects the wrong preset or target identity, a modified capture tool, the wrong RTT command, a capture longer than 15 minutes, evidence older than 24 hours, and a transcript hash mismatch ([verify_stack_evidence.py:1208-1267](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1208-L1267)).
+Typed `DBG_STACK_RUN_BEGIN`, sample boundaries, per-thread rows, and `DBG_STACK_RUN_END` must retain one boot epoch, run identity, workload kind, execution owner, packet identity, and queue/custody state. ISR output is checked as configured size, while the measured thread rows provide runtime watermarks; marker-only or uncorrelated text is rejected ([verify_stack_evidence.py:1090-1185](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L1090-L1185)). Each required workload must end successfully with at least one correlated sample ([verify_stack_evidence.py:1188-1207](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L1188-L1207)).
 
-Sources: [capture_stack_evidence.py:31-129](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/capture_stack_evidence.py#L31-L129), [verify_stack_evidence.py:1094-1205](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1094-L1205), [verify_stack_evidence.py:1208-1267](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1208-L1267)
+The manifest loader recalculates all of that provenance, rejects a modified capture tool or command, limits the capture to 15 minutes and an age of 24 hours, and verifies the transcript hash before parsing runtime evidence ([verify_stack_evidence.py:1240-1285](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L1240-L1285)). `pre-reset` is the prescribed connection mode, but it does not itself guarantee that an already-running target was reset; use the transaction's explicit reset when a fresh boot identity is required ([Development and Deployment Guide.md:188-202](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L188-L202)).
+
+Sources: [capture_stack_evidence.py:1-128](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/capture_stack_evidence.py#L1-L128), [verify_stack_evidence.py:1090-1207](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L1090-L1207), [verify_stack_evidence.py:1225-1285](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_stack_evidence.py#L1225-L1285)
 <!-- END:AUTOGEN imec2-11-verified-deployment-qualification-capture -->
 
 ---
@@ -60,7 +70,7 @@ Sources: [capture_stack_evidence.py:31-129](https://github.com/Jubliano-sama/IME
 <!-- BEGIN:AUTOGEN imec2-11-verified-deployment-verified-flash -->
 ## Verified Flash Workflow
 
-The deployment entrypoint uses one durable transaction with separate staging and promotion phases. Staging is the only phase that programs the target; qualification can then run repeatedly against the exact staged image, and promotion only verifies current code sectors and records the accepted evidence. A mesh-anchor transaction therefore starts with:
+Production deployment is one stage/capture/promote transaction. Staging is the only target-programming step; capture observes that exact running candidate; promotion validates current code sectors and records the accepted evidence without flashing again ([Development and Deployment Guide.md:125-161](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L125-L161)).
 
 ```sh
 .venv/bin/python firmware/scripts/flash_verified_mesh.py \
@@ -69,19 +79,18 @@ The deployment entrypoint uses one durable transaction with separate staging and
   --stage-only
 ```
 
-The wrapper fixes both west and pyOCD to the repository environment and fixes programming frequency at 4 MHz. It backs up the complete 512 KiB target image, overlays the candidate HEX onto the sectors it touches, journals the expected result and exact artifact hashes, stages through west with `--no-reset`, and confirms a full-flash readback before resetting the candidate. The durable journal then remains in `awaiting_qualification`, which blocks another stage on that probe.
+The wrapper fixes repository-local west and pyOCD at 4 MHz. It reads the complete target image, computes the expected candidate overlay and code-sector hashes, journals the exact build/probe/artifact identity, stages with `--no-reset`, verifies a complete 512 KiB readback, persists `awaiting_qualification`, and then resets into the candidate ([flash_verified_mesh.py:529-608](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L529-L608)). A second staging request on the same probe is blocked while that candidate awaits qualification ([flash_verified_mesh.py:739-764](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L739-L764)).
 
-Collect evidence and run the real workload in separate terminals. The capture tool does not program the device, so a failed scenario can be diagnosed and the same image can be exercised again without reflashing:
+Run the capture and role-specific workload against that staged artifact:
 
 ```sh
 .venv/bin/python firmware/scripts/capture_stack_evidence.py \
   --build-dir build/mesh-anchor \
   --probe-id E46070D247233537 \
-  --output-dir logs/stack-evidence \
-  --duration-seconds 300
+  --output-dir logs/stack-evidence
 ```
 
-Promote one successful exact-artifact capture with:
+Promote one accepted exact-artifact capture:
 
 ```sh
 .venv/bin/python firmware/scripts/flash_verified_mesh.py \
@@ -94,22 +103,22 @@ The complete bounded flow is:
 
 ```mermaid
 graph TD
-    A["Verify exact build and probe"] --> B["Back up and stage candidate once"]
-    B --> C{"Full readback matches?"}
-    C -->|"No"| D["Reset and fail explicitly"]
-    C -->|"Yes"| E["Reset into staged candidate"]
-    E --> F["Run bounded qualification workloads"]
-    F --> G{"Evidence accepted?"}
-    G -->|"No"| H["Keep staged candidate and retry"]
-    G -->|"Yes"| I["Read and verify current code sectors"]
-    I --> J{"Code still matches?"}
-    J -->|"No"| H
-    J -->|"Yes"| K["Consume capture and commit"]
+    A["Verify build and probe"] --> B["Journal target and candidate identity"]
+    B --> C["Stage candidate once"]
+    C --> D{"Full readback matches?"}
+    D -->|"No"| E["Reset and fail explicitly"]
+    D -->|"Yes"| F["Persist awaiting qualification"]
+    F --> G["Run typed workloads and capture RTT"]
+    G --> H{"Capture accepted?"}
+    H -->|"No"| I["Keep candidate for diagnosis"]
+    H -->|"Yes"| J{"Current code sectors match?"}
+    J -->|"No"| I
+    J -->|"Yes"| K["Consume capture and commit ledger"]
 ```
 
-Promotion validates the manifest, build, probe, and durable staging journal before touching target state. Its readback compares the code-sector hash map recorded at staging, so ordinary NVS changes caused by qualification are allowed while any code drift fails closed. A mismatch, stale manifest, malformed evidence, or failure before the deployment record becomes durable preserves the staged image and returns the journal to `awaiting_qualification`; an ambiguous or malformed ledger fails closed with the transaction intact for diagnosis. An exact capture is consumed once only after the deployment record is durable. Promotion never invokes west or writes firmware.
+Promotion requires the same build directory, preset, ELF and HEX hashes, probe, verified stage readback, and trusted capture ([flash_verified_mesh.py:626-642](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L626-L642)). It rereads the target and compares only candidate code sectors, so ordinary NVS evolution during qualification is allowed while code drift fails closed. The capture is consumed only after the deployment record is durable; an earlier promotion failure restores the transaction to `awaiting_qualification` for diagnosis ([flash_verified_mesh.py:662-721](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L662-L721)). The parser enforces mutually exclusive `--stage-only` and promotion modes, and promotion performs no west flash ([flash_verified_mesh.py:725-788](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L725-L788)).
 
-Sources: [flash_verified_mesh.py](../../firmware/scripts/flash_verified_mesh.py), [capture_stack_evidence.py](../../firmware/scripts/capture_stack_evidence.py), [test_flash_verified_mesh.py](../../firmware/tests/mesh_integration/test_flash_verified_mesh.py)
+Sources: [Development and Deployment Guide.md:125-170](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L125-L170), [flash_verified_mesh.py:529-608](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L529-L608), [flash_verified_mesh.py:626-788](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/flash_verified_mesh.py#L626-L788)
 <!-- END:AUTOGEN imec2-11-verified-deployment-verified-flash -->
 
 ---
@@ -117,13 +126,13 @@ Sources: [flash_verified_mesh.py](../../firmware/scripts/flash_verified_mesh.py)
 <!-- BEGIN:AUTOGEN imec2-11-verified-deployment-trust-boundary -->
 ## Trust Boundary and Bench Exceptions
 
-This workflow provides strong local provenance, not cryptographic probe attestation. A person who can rewrite the checkout, artifact, capture tool, transcript, and local ledger can fabricate the local state, and a host owner can always invoke a programmer outside repository policy. The gate's enforceable claim is narrower: repository-owned release and deployment automation fails when the supported evidence chain is missing or inconsistent ([verify_stack_evidence.py:1-8](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1-L8), [check_mesh_deployment_policy.py:1-8](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/check_mesh_deployment_policy.py#L1-L8)).
+The verified workflow establishes strong local provenance, not cryptographic probe or remote attestation. A host owner can replace the checkout, tools, artifacts, transcript, or ledger and can invoke a programmer outside repository policy. The enforceable claim is that repository-owned scripts, workflows, and supported documentation fail when the local evidence chain is missing or inconsistent ([check_mesh_deployment_policy.py:1-8](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/check_mesh_deployment_policy.py#L1-L8), [Development and Deployment Guide.md:163-170](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L163-L170)).
 
-Direct west or pyOCD flashing is reserved for explicitly named nondeployment images. The policy scanner permits bench traffic generators, ML clicker/anchor images, legacy clicker/anchor/gateway builds, staged high-debug presets, the gateway BLE connectivity test, and the power clicker sleep preset; any other direct flash command in supported scripts, workflows, or documentation is a policy failure ([check_mesh_deployment_policy.py:18-38](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/check_mesh_deployment_policy.py#L18-L38), [check_mesh_deployment_policy.py:76-99](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/check_mesh_deployment_policy.py#L76-L99)). CI runs that scanner and its negative suite on pull requests and pushes to `master`, so a documented bypass becomes a release-policy failure rather than an informal warning ([mesh-deployment-policy.yml:1-17](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/.github/workflows/mesh-deployment-policy.yml#L1-L17)).
+The policy scanner walks repository guidance, documentation, scripts, and workflows for direct `west flash` or pyOCD programming. It allows only explicit nonproduction names—bench transmitters, ML slots, legacy roles, staged high-debug images, the BLE connectivity test, and named power/bench cases—and rejects every other direct command ([check_mesh_deployment_policy.py:18-38](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/check_mesh_deployment_policy.py#L18-L38), [check_mesh_deployment_policy.py:80-102](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/check_mesh_deployment_policy.py#L80-L102)). Pull requests and pushes to `master` run that policy through `verify_changes.py --checks-only` ([mesh-deployment-policy.yml:1-18](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/.github/workflows/mesh-deployment-policy.yml#L1-L18)).
 
-For a bench-only direct west flash, keep the preset distinction visible, select the probe after west's runner separator with `--dev-id`, and keep the proven 4 MHz rate. The direct pyOCD `-u` form belongs to RTT and commander commands, not west flash ([AGENTS.md:159-189](../../AGENTS.md#L159-L189)). A forced-hop relay test can therefore program `build/mesh-transmitter-forcedhop` directly, but that permission never extends to `mesh_clicker`, `mesh_anchor`, or `mesh_gateway`.
+For an allowed bench, legacy, or ML image, west receives the probe as `-- --dev-id <probe-id>` and retains the proven 4 MHz rate. Direct pyOCD uses `-u <probe-id>` instead ([Development and Deployment Guide.md:172-186](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L172-L186)). That exception can program `mesh_transmitter_forcedhop` for a relay bench, but it never extends to `mesh_clicker`, `mesh_anchor`, or `mesh_gateway`.
 
-Sources: [verify_stack_evidence.py:1-8](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/verify_stack_evidence.py#L1-L8), [check_mesh_deployment_policy.py:18-99](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/scripts/check_mesh_deployment_policy.py#L18-L99), [mesh-deployment-policy.yml:1-17](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/.github/workflows/mesh-deployment-policy.yml#L1-L17), [AGENTS.md:159-198](../../AGENTS.md#L159-L198)
+Sources: [check_mesh_deployment_policy.py:1-102](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/check_mesh_deployment_policy.py#L1-L102), [mesh-deployment-policy.yml:1-18](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/.github/workflows/mesh-deployment-policy.yml#L1-L18), [Development and Deployment Guide.md:163-186](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L163-L186)
 <!-- END:AUTOGEN imec2-11-verified-deployment-trust-boundary -->
 
 ---

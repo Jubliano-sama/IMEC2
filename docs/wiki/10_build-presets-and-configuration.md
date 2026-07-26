@@ -7,7 +7,7 @@
 
 The following files were used as context for generating this wiki page:
 
-- [AGENTS.md:3-122](../../AGENTS.md#L3-L122)
+- [AGENTS.md:3-123](../../AGENTS.md#L3-L123)
 - [CODEMAP.md:62-116](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/CODEMAP.md#L62-L116)
 - [CMakeLists.txt:1-77](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/CMakeLists.txt#L1-L77)
 - [CMakeLists.txt:1-364](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L1-L364)
@@ -33,20 +33,22 @@ The participant's click becomes trustworthy research data only when each board r
 <!-- BEGIN:AUTOGEN imec2-10-build-and-configuration-workspace-boundaries -->
 ## Workspace and Dependency Boundaries
 
-IMEC2 is a west workspace, but the product-owned implementation is concentrated under `firmware/`. Shared, hardware-independent interfaces and logic live in `firmware/include/` and `firmware/src/`; Zephyr integration, GPIO, BLE, the DWM3000 port, board configuration, and role orchestration live in `firmware/app/` ([AGENTS.md:5-12](../../AGENTS.md#L5-L12), [CODEMAP.md:79-114](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/CODEMAP.md#L79-L114)). That boundary lets the same protocol, routing, timing, persistence, and survey logic run in native tests before it is linked into a board image.
+The repository has one product-owned firmware tree inside a larger west workspace. Portable protocols and state live in `firmware/include/` and `firmware/src/`; native tests live in `firmware/tests/`; and Zephyr, GPIO, BLE, settings, SPI, DWM3000, and role orchestration stay in `firmware/app/` ([AGENTS.md:36-47](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/AGENTS.md#L36-L47), [CODEMAP.md:79-115](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/CODEMAP.md#L79-L115)). That split is the test boundary: portable behavior can run under host CMake before the hardware adapter is linked.
 
-| Area | Ownership | Working rule |
+| Area | Repository rule | Consequence |
 |---|---|---|
-| `firmware/include/`, `firmware/src/`, `firmware/tests/` | IMEC2 | Put portable behavior here and exercise it with native CMake/CTest. |
-| `firmware/app/` | IMEC2 | Keep Zephyr, device-tree, GPIO, BLE, SPI, DWM3000, and role orchestration here. |
-| `Documentation/` | IMEC2 | Keep architecture and behavioral contracts aligned with intentional behavior changes. |
-| `zephyr/`, `nrf/`, `nrfxlib/`, `modules/`, `bootloader/` | Imported west dependencies | Do not edit unless a task explicitly targets an imported dependency. |
-| `dwm3000 examples and sdk/` | External DWM3000 reference | Treat it as external; the app points `DWM3000_SDK_DIR` at this tree rather than taking ownership of it ([CMakeLists.txt:97-100](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L97-L100)). |
-| `archive/old-dw1000-impl/` | Historical reference | Read if useful, but do not modify it. |
+| `firmware/include/`, `firmware/src/`, `firmware/tests/` | Own portable contracts, state, and native evidence. | Hardware-independent behavior should not depend on Zephyr headers or devices. |
+| `firmware/app/` | Own Zephyr and board integration. | GPIO, BLE, settings, SPI, DWM3000, workqueues, and role adapters stay here. |
+| `firmware/scripts/`, `.github/workflows/` | Own executable repository and release gates. | A prose rule is incomplete until the corresponding check fails closed. |
+| `Documentation/` | Own current contracts and operator procedures. | Intentional behavior changes update code, tests, and the relevant contract together. |
+| `zephyr/`, `nrf/`, `modules/`, `nrfxlib/`, `bootloader/`, the DWM3000 vendor tree | Imported dependencies. | Do not edit them unless the task explicitly targets that dependency; the app references the vendor SDK through `DWM3000_SDK_DIR` ([CMakeLists.txt:104-106](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L104-L106)). |
+| `archive/old-dw1000-impl/` | Historical reference. | It may explain history but is not current behavior and must not be modified. |
 
-The board contract is also repository-owned: `app.overlay` removes the development-kit aliases and assigns the click button, two RGB status LEDs, DWM3000 control lines, and battery signals to the project hardware ([app.overlay:6-43](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/app.overlay#L6-L43), [app.overlay:45-90](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/app.overlay#L45-L90)).
+Before work changes any of these surfaces, `agent_preflight.py` receives the planned paths and operations and returns the applicable current rules and references; the append-only issue ledger is context, while `AGENT_CURRENT_ISSUES.json` is the curated present-tense overlay ([AGENTS.md:9-34](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/AGENTS.md#L9-L34)). This avoids treating an old fix as an active constraint.
 
-Sources: [AGENTS.md:3-12](../../AGENTS.md#L3-L12), [CODEMAP.md:62-116](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/CODEMAP.md#L62-L116), [CMakeLists.txt:97-100](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L97-L100), [app.overlay:6-90](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/app.overlay#L6-L90)
+The current oversized translation units are also executable debt boundaries. New C files default to 2,500 lines, existing oversized files and include fragments are frozen at recorded ceilings, and the composed `app_anchor.c`, `app_mesh_report.c`, `dwm3000_driver.c`, and `mesh_relay.c` totals may not grow ([architecture_boundaries.json:8-15](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/architecture_boundaries.json#L8-L15), [architecture_boundaries.json:39-80](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/architecture_boundaries.json#L39-L80)). These are no-growth limits, not approval of the current architecture.
+
+Sources: [AGENTS.md:9-47](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/AGENTS.md#L9-L47), [CODEMAP.md:62-115](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/CODEMAP.md#L62-L115), [architecture_boundaries.json:8-80](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/architecture_boundaries.json#L8-L80)
 <!-- END:AUTOGEN imec2-10-build-and-configuration-workspace-boundaries -->
 
 ---
@@ -54,26 +56,29 @@ Sources: [AGENTS.md:3-12](../../AGENTS.md#L3-L12), [CODEMAP.md:62-116](https://g
 <!-- BEGIN:AUTOGEN imec2-10-build-and-configuration-native-build -->
 ## Native Core Build
 
-Create the repository-local Python environment before invoking west or the Zephyr scripts. The documented setup deliberately uses a workspace-local uv cache and installs both Zephyr and nRF requirements into `.venv` ([AGENTS.md:14-21](../../AGENTS.md#L14-L21)).
+Create the repository-local Python environment when it is absent. It includes the Zephyr, nRF, and native-test requirements used by the one verification entrypoint ([Development and Deployment Guide.md:30-39](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L30-L39)).
 
 ```sh
 UV_CACHE_DIR=$PWD/.uv-cache uv venv --clear .venv
 UV_CACHE_DIR=$PWD/.uv-cache uv pip install --python .venv/bin/python \
   -r zephyr/scripts/requirements.txt \
-  -r nrf/scripts/requirements.txt
+  -r nrf/scripts/requirements.txt \
+  -r firmware/tests/requirements-native.txt
 ```
 
-The native build is the shortest path from a behavior change to evidence:
+Use the repository verifier for final native evidence:
 
 ```sh
-cmake -S firmware -B firmware/build
-cmake --build firmware/build
-ctest --test-dir firmware/build --output-on-failure
+.venv/bin/python firmware/scripts/verify_changes.py
 ```
 
-The root firmware CMake project fixes C11 without compiler extensions, builds the platform-independent modules into `core`, exposes `firmware/include/`, enables warnings as errors for GCC and Clang, and registers its executables with CTest ([CMakeLists.txt:1-55](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/CMakeLists.txt#L1-L55)). This build validates portable behavior; it does not compile the device tree, Zephyr drivers, or role-specific board runtime.
+It first runs repository-truth, architecture-boundary, agent-guidance, deployment-policy, and negative self-tests. It then configures a fresh Debug build, builds it, runs the complete CTest suite, and executes the deterministic 500-seed busy-line stress gate ([verify_changes.py:34-63](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L34-L63), [verify_changes.py:198-268](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L198-L268)). `--sanitizers` enables ASan and UBSan in a separate build, while `--checks-only` is the fast documentation/source-policy path and is not firmware-behavior qualification ([verify_changes.py:406-468](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L406-L468), [verify_changes.py:470-535](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L470-L535)).
 
-Sources: [AGENTS.md:14-29](../../AGENTS.md#L14-L29), [CMakeLists.txt:1-55](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/CMakeLists.txt#L1-L55)
+Every run fingerprints committed, dirty, and nonignored untracked source state, then executes from a no-hardlink Git snapshot guarded against writes. Zephyr matrices additionally require the exact locked west project set, clean dependency trees without concealing index flags or influential ignored files, a pinned `.west/config`, and no ambient module, toolchain, CMake, or compiler-search overrides ([verification_inputs.py:195-265](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verification_inputs.py#L195-L265), [verification_inputs.py:470-552](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verification_inputs.py#L470-L552), [verification_inputs.py:946-999](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verification_inputs.py#L946-L999), [verification_inputs.py:1130-1170](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verification_inputs.py#L1130-L1170)). This makes a green result belong to one stable application and dependency graph instead of whichever files happened to be visible during the run.
+
+The native project itself fixes C11 without extensions, enables ASan/UBSan only through its explicit option, builds the portable modules into `core`, and treats GCC/Clang warnings as errors ([CMakeLists.txt:1-25](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/CMakeLists.txt#L1-L25), [CMakeLists.txt:27-70](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/CMakeLists.txt#L27-L70)). CI runs both the normal and sanitizer verifier paths from fresh checkouts and retains deterministic replay artifacts when either fails ([firmware-verification.yml:9-38](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/.github/workflows/firmware-verification.yml#L9-L38)).
+
+Sources: [Development and Deployment Guide.md:30-70](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L30-L70), [verify_changes.py:34-268](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L34-L268), [verification_inputs.py:195-552](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verification_inputs.py#L195-L552), [verification_inputs.py:946-1170](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verification_inputs.py#L946-L1170), [firmware-verification.yml:9-38](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/.github/workflows/firmware-verification.yml#L9-L38)
 <!-- END:AUTOGEN imec2-10-build-and-configuration-native-build -->
 
 ---
@@ -81,38 +86,35 @@ Sources: [AGENTS.md:14-29](../../AGENTS.md#L14-L29), [CMakeLists.txt:1-55](https
 <!-- BEGIN:AUTOGEN imec2-10-build-and-configuration-exact-role-presets -->
 ## Exact Zephyr Role Presets
 
-Build the production-candidate line by exact preset name. These three presets are the source of truth for current product behavior: the sleeping participant clicker, the common hardware-identified anchor, and the mesh-root gateway with its PC BLE edge ([AGENTS.md:31-47](../../AGENTS.md#L31-L47)).
+Build the production-candidate line by exact preset name. The three current product artifacts are `mesh_clicker`, `mesh_anchor`, and `mesh_gateway`; generic role labels are insufficient because other presets intentionally compile different behavior ([AGENTS.md:49-60](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/AGENTS.md#L49-L60)).
 
 ```sh
-.venv/bin/west build --no-sysbuild -s firmware/app \
+.venv/bin/west build --pristine=always --no-sysbuild -s firmware/app \
   -b nrf52833dk/nrf52833 --build-dir build/mesh-clicker \
   -- -DIMEC_BUILD_PRESET=mesh_clicker
 
-.venv/bin/west build --no-sysbuild -s firmware/app \
+.venv/bin/west build --pristine=always --no-sysbuild -s firmware/app \
   -b nrf52833dk/nrf52833 --build-dir build/mesh-anchor \
   -- -DIMEC_BUILD_PRESET=mesh_anchor
 
-.venv/bin/west build --no-sysbuild -s firmware/app \
+.venv/bin/west build --pristine=always --no-sysbuild -s firmware/app \
   -b nrf52833dk/nrf52833 --build-dir build/mesh-gateway \
   -- -DIMEC_BUILD_PRESET=mesh_gateway
 ```
 
-Those commands are the repository's documented exact builds ([AGENTS.md:62-72](../../AGENTS.md#L62-L72)). The preset is more than a label: `firmware/app/CMakeLists.txt` maps it to a role, optional variant flags, identity policy, role fragment, and stack diagnostics; an unknown preset fails configuration ([CMakeLists.txt:149-215](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L149-L215)).
-
-Configuration composes in layers, so change the owner of a setting instead of adding a late override in an unrelated file:
+These are the documented direct-iteration commands; the final Zephyr-facing gate should normally invoke `verify_changes.py --exact-roles --compatibility-builds` so it starts pristine, runs each exact role's static stack verifier, and executes the real Zephyr NVS persistence binary on `native_sim/native/64` ([Development and Deployment Guide.md:72-87](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L72-L87), [verify_changes.py:284-352](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L284-L352)).
 
 | Layer | What it owns |
 |---|---|
-| CMake preset | Selects `FIRMWARE_ROLE`, variant flags, identity behavior, and the preset-specific `.conf` fragment. |
-| Base Kconfig fragment | `prj.conf` owns the shared peripheral, logging, workqueue, watchdog, power-management, and no-UART baseline; gateway uses `prj-gateway.conf`, while clicker adds `prj-clicker.conf` ([CMakeLists.txt:223-228](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L223-L228), [prj.conf:1-32](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/prj.conf#L1-L32)). |
-| Role and preset fragments | Clicker enables its courtesy BLE and retained idle policy; gateway enables connected BLE GATT; `mesh-clicker.conf` limits timing-sensitive logging and enables its communication queue; `mesh-anchor.conf` reserves the measured main-stack margin ([prj-clicker.conf:1-12](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/prj-clicker.conf#L1-L12), [prj-gateway.conf:22-43](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/prj-gateway.conf#L22-L43), [mesh-clicker.conf:1-8](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/conf/mesh-clicker.conf#L1-L8), [mesh-anchor.conf:1-4](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/conf/mesh-anchor.conf#L1-L4)). |
-| Generated fragments | Anchor and gateway builds receive flash/NVS settings; route-test names and stack diagnostics are generated or appended before Zephyr configuration begins ([CMakeLists.txt:230-243](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L230-L243), [CMakeLists.txt:293-343](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L293-L343)). |
-| Device tree | `app.overlay` owns physical pins and hardware aliases. |
-| App-local compile-time contract | `app_config.h` maps numeric roles, device and gateway identity, network ID, and build metadata into the application ([app_config.h:20-102](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/src/app_config.h#L20-L102)). It also fixes gateway BLE queue and retry pacing, including a 2 ms base retry and a 128 ms maximum delay ([app_config.h:123-130](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/src/app_config.h#L123-L130)); the application refuses a build if that cap is lower than the base delay ([main.c:153-158](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/src/main.c#L153-L158)). |
+| CMake preset mapping | Selects role, variant flags, identity policy, preset `.conf`, stack diagnostics, and whether the artifact is deployable. Unknown presets fail configuration ([CMakeLists.txt:161-235](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L161-L235)). |
+| Base and role Kconfig | `prj.conf` owns the common runtime; clicker appends `prj-clicker.conf`; gateway replaces the base with `prj-gateway.conf`; anchor and gateway builds receive generated flash/NVS configuration ([CMakeLists.txt:241-261](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L241-L261)). |
+| Preset fragments | `mesh-clicker.conf` bounds timing-sensitive logs and enables its communication queue, while `mesh-anchor.conf` reserves the compiler-measured main-stack margin ([mesh-clicker.conf:1-8](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/conf/mesh-clicker.conf#L1-L8), [mesh-anchor.conf:1-4](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/conf/mesh-anchor.conf#L1-L4)). |
+| Compile-time app contract | CMake emits numeric `DEVICE_ROLE`; `app_config.h` maps role, device identity, network identity, build metadata, and bounded queue/timing constants into the application ([CMakeLists.txt:393-403](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L393-L403), [app_config.h:21-103](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/src/app_config.h#L21-L103)). |
+| Build identity and stack evidence | The artifact embeds preset, git, timestamp, board, and stack build identity, and every app object emits stack-usage and IPA call-graph evidence ([CMakeLists.txt:539-559](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L539-L559)). |
 
-The `mesh_anchor` preset deliberately clears any fixed `DEVICE_ID` and enables the hardware-derived anchor identity, so every production anchor can run the same artifact while retaining a stable physical identity ([CMakeLists.txt:198-213](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L198-L213)).
+`mesh_anchor` clears any fixed device ID and enables FICR-derived hardware identity, so one exact artifact can serve every production anchor while logical order remains assigned data ([CMakeLists.txt:212-230](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L212-L230)).
 
-Sources: [AGENTS.md:31-72](../../AGENTS.md#L31-L72), [CMakeLists.txt:149-243](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L149-L243), [CMakeLists.txt:293-364](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L293-L364), [app_config.h:20-102](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/src/app_config.h#L20-L102), [app_config.h:123-130](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/src/app_config.h#L123-L130), [main.c:153-158](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/src/main.c#L153-L158)
+Sources: [Development and Deployment Guide.md:72-92](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L72-L92), [CMakeLists.txt:161-261](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L161-L261), [verify_changes.py:284-352](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L284-L352)
 <!-- END:AUTOGEN imec2-10-build-and-configuration-exact-role-presets -->
 
 ---
@@ -120,20 +122,20 @@ Sources: [AGENTS.md:31-72](../../AGENTS.md#L31-L72), [CMakeLists.txt:149-243](ht
 <!-- BEGIN:AUTOGEN imec2-10-build-and-configuration-nonproduction-configuration -->
 ## Nonproduction Configuration
 
-The remaining presets answer narrower engineering questions; they do not redefine the product story.
+The compatibility matrix keeps supported test, collection, and legacy surfaces compiling without promoting them into production.
 
-| Line | Use it for | Do not treat it as |
+| Line | Current purpose | Required distinction |
 |---|---|---|
-| `mesh_transmitter` | Synthetic route, retry, and load traffic that may choose a direct gateway hop. | A production anchor. |
-| `mesh_transmitter_forcedhop` | Relay regression where a forced intermediate hop is the behavior under test. | Proof from the generic transmitter; that preset may deliver directly ([AGENTS.md:74-83](../../AGENTS.md#L74-L83)). |
-| `ml_clicker`, `ml_anchor_1` through `ml_anchor_8` | Distance-offset training and validation capture; each ML anchor preset receives a deterministic ID and slot ([AGENTS.md:108-116](../../AGENTS.md#L108-L116), [CMakeLists.txt:149-169](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L149-L169)). | Production clicker or anchor behavior. |
-| `gateway_ble_connectivity_test` | An isolated gateway BLE connectivity smoke image, optionally configured as a passive range scanner. | The mesh gateway's complete UWB-to-host path ([CMakeLists.txt:145-148](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L145-L148), [CMakeLists.txt:245-260](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L245-L260)). |
-| `tag_stage*`, `anchor_stage*`, `gateway_stage3_highdebug` | Staged hardware bring-up with stage and role fragments layered over `high-debug.conf`. | A production candidate; high-debug changes runtime observability and staged behavior ([CMakeLists.txt:108-145](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L108-L145), [CMakeLists.txt:268-291](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L268-L291)). |
-| `FIRMWARE_ROLE=clicker|anchor|gateway` | Legacy compatibility and bounded regression builds. | The current connected-routing runtime contract ([AGENTS.md:85-106](../../AGENTS.md#L85-L106)). |
+| `mesh_transmitter` | Powered synthetic route and load traffic. | It may choose a direct gateway path, so it cannot qualify anchor relay behavior. |
+| `mesh_transmitter_forcedhop` | Powered traffic source for forced-relay retry, ACK, and preemption work. | This is the required relay qualification source, but it is still not deployed anchor firmware ([AGENTS.md:49-56](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/AGENTS.md#L49-L56)). |
+| `ml_clicker` | BLE-controlled range-offset collection clicker. | It owns the collection PC link and bounds its one-notification-in-flight transport to four ACL TX buffers and a 2 KiB log ring ([ml-clicker.conf:1-21](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/conf/ml-clicker.conf#L1-L21)). |
+| `ml_anchor_1` through `ml_anchor_8` | Deterministic UWB collection anchors with distinct IDs and discovery slots. | ML anchors do not carry the removed BLE debug service; their collection path is UWB ([CMakeLists.txt:172-182](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L172-L182), [ml-anchor.conf:1-7](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/conf/ml-anchor.conf#L1-L7)). |
+| `gateway_ble_connectivity_test` and staged high-debug presets | Isolated BLE checks or bounded hardware bring-up. | They deliberately alter or omit product runtime surfaces and do not define production behavior ([CMakeLists.txt:115-160](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/app/CMakeLists.txt#L115-L160)). |
+| `FIRMWARE_ROLE=clicker|anchor|gateway` | Legacy compatibility regression. | These builds must remain compilable, but they are not the connected-routing contract ([Development and Deployment Guide.md:19-28](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L19-L28)). |
 
-Always record the exact preset and build directory in test evidence. A label such as “anchor build” is ambiguous because it could mean the production `mesh_anchor`, an ML collector, a forced-hop traffic source, a high-debug stage, or the legacy direct role; those images make different promises and require different interpretation.
+`verify_changes.py --compatibility-builds` compiles both transmitters, `ml_clicker`, the first and last ML anchor slots, and all three generic legacy roles from pristine build directories ([verify_changes.py:64-72](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L64-L72), [verify_changes.py:355-404](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L355-L404)). CI runs that matrix beside exact-role and Zephyr persistence builds, which catches role-gating and RAM regressions that native seams cannot compile ([firmware-verification.yml:40-68](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/.github/workflows/firmware-verification.yml#L40-L68)). Passing it preserves compatibility only; production eligibility remains limited to the three exact mesh presets.
 
-Sources: [AGENTS.md:49-116](../../AGENTS.md#L49-L116), [CMakeLists.txt:108-215](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L108-L215), [CMakeLists.txt:245-291](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/firmware/app/CMakeLists.txt#L245-L291)
+Sources: [Development and Deployment Guide.md:19-28](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/Documentation/Development%20and%20Deployment%20Guide.md#L19-L28), [verify_changes.py:64-72](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L64-L72), [verify_changes.py:355-404](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/firmware/scripts/verify_changes.py#L355-L404), [firmware-verification.yml:40-68](https://github.com/Jubliano-sama/IMEC2/blob/c9e8e2fe4a450a8d65f697ce026f8524c81b105f/.github/workflows/firmware-verification.yml#L40-L68)
 <!-- END:AUTOGEN imec2-10-build-and-configuration-nonproduction-configuration -->
 
 ---
