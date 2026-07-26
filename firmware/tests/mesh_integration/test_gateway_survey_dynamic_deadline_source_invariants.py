@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SURVEY = (ROOT / "app/src/app_anchor_gateway_survey.inc").read_text()
-CONTROL = (ROOT / "app/src/app_anchor_gateway_control.inc").read_text()
+MACHINE = (ROOT / "src/gateway_survey_machine.c").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -51,34 +51,39 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
 
     def test_expected_count_is_bound_to_the_gateway_collection_policy(self) -> None:
         route = function_body(SURVEY, "gateway_route_survey_reachability")
-        wait = function_body(
-            CONTROL, "gateway_survey_wait_for_discovery_collection"
+        drive = function_body(
+            MACHINE, "gateway_survey_machine_collection_drive"
         )
 
         self.assertIn("survey_extract_expected_node_count_tlv(", route)
-        self.assertIn(
-            "gateway_survey_collection_emission_deadline_ms", route
-        )
-        self.assertIn("gateway_survey_expected_node_count =", route)
-        self.assertIn(
-            "gateway_survey_expected_node_count_present =", route
-        )
-
-        decision = wait.index("survey_gateway_collection_decide(")
+        machine_begin = route.index("gateway_survey_machine_begin(")
         for policy_input in (
-            "gateway_survey_collection_emission_deadline_ms",
-            "gateway_survey_collection_deadline_ms",
-            "gateway_survey_context.report_count",
-            "gateway_survey_expected_node_count",
-            "gateway_survey_expected_node_count_present",
+            "emission_horizon_delay_ms",
+            "collection_delay_ms",
+            "expected_node_count",
+            "expected_node_count_present",
         ):
-            self.assertIn(policy_input, wait[decision:])
-        mismatch = wait.index(
-            "SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH", decision
+            self.assertIn(policy_input, route[machine_begin:])
+
+        decision = drive.index("survey_gateway_collection_decide(")
+        for policy_input in (
+            "emission_horizon_elapsed",
+            "safety_deadline_elapsed",
+            "report_count",
+            "machine->expected_count",
+            "machine->expected_count_present",
+        ):
+            self.assertIn(policy_input, drive[decision:])
+        self.assertIn(
+            "GATEWAY_SURVEY_MACHINE_TERMINAL_EXPECTED_COUNT_MISSING",
+            drive[decision:],
         )
-        self.assertIn("gateway_survey_auto_finish_status(", wait[mismatch:])
+        self.assertIn(
+            "GATEWAY_SURVEY_MACHINE_TERMINAL_EXPECTED_COUNT_EXCEEDED",
+            drive[decision:],
+        )
         self.assertIsNone(
-            re.search(r"gateway_survey_context\.report_count\s*=(?!=)", wait),
+            re.search(r"\breport_count\s*=(?!=)", drive),
             "an expected-count mismatch must fail explicitly, never truncate",
         )
 

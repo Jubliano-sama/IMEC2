@@ -107,7 +107,7 @@ retry_reason = finalize_retry_body.index(
 retry_pending = finalize_retry_body.index(
     "gateway_survey_finish_pending = true"
 )
-retry_schedule = finalize_retry_body.index("k_work_reschedule(")
+retry_schedule = finalize_retry_body.index("mesh_route_owner_work_reschedule(")
 retry_return = finalize_retry_body.index("return;", retry_schedule)
 assert (
     retry_status < retry_reason < retry_pending < retry_schedule < retry_return
@@ -118,7 +118,7 @@ assert "gateway_survey_begin_cleanup(" not in finalize_retry_body
 cancel_take = finish.index("gateway_survey_cancel_take_active_delivery(")
 cancel_error = finish.index("if (ret < 0)", cancel_take)
 pending = finish.index("gateway_survey_finish_pending = true", cancel_error)
-retry = finish.index("k_work_reschedule(", pending)
+retry = finish.index("mesh_route_owner_work_reschedule(", pending)
 defer_return = finish.index("return;", retry)
 terminal_observation = finish.index("gateway_observe_survey_terminal(")
 cleanup = finish.index("survey_gateway_transaction_require_cleanup(")
@@ -185,7 +185,9 @@ abandon = cleanup_service.index(
 completion_ready = cleanup_service.index(
     "cleanup->completion_ready = true", abandon
 )
-reschedule = cleanup_service.index("k_work_reschedule(", completion_ready)
+reschedule = cleanup_service.index(
+    "mesh_route_owner_work_reschedule(", completion_ready
+)
 assert (
     submitted < take_terminal < deadline_gate < abandon <
     completion_ready < reschedule

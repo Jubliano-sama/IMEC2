@@ -27,7 +27,7 @@ static void test_long_typed_records_are_complete(void)
         record, sizeof(record),
         "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu session=%u seq=%u type=%u samples=%u sequence=%u previous=%u uptime=%u\n",
         (unsigned long long)UINT64_MAX, UINT32_MAX,
-        "gateway_priority_control", "system_workqueue",
+        "gateway_priority_control", "mesh_route",
         "direct_ack_failure", UINT16_MAX, UINT16_MAX, UINT16_MAX,
         UINT16_MAX, UINT16_MAX,
         (unsigned long long)UINT64_MAX, (unsigned long long)UINT64_MAX,

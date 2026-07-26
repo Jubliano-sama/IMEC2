@@ -2877,29 +2877,19 @@ static int mesh_rx_handoff_wait_for_control(void)
     return 0;
 }
 
-static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t delay_ms)
+static int mesh_reschedule_delayable(struct k_work_delayable *work,
+                                     uint32_t delay_ms)
 {
     if (mesh_transport_paused() && work != &mesh_persistence_retry_work) {
         return -ESHUTDOWN;
     }
-#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-    return k_work_reschedule_for_queue(&mesh_route_work_q, work, K_MSEC(delay_ms));
-#else
-    /*
-     * Legacy and ML presets retain the system workqueue. Production mesh
-     * presets enable the dedicated communication queue explicitly.
-     */
-    return k_work_reschedule(work, K_MSEC(delay_ms));
-#endif
+    return mesh_route_owner_work_reschedule(work, K_MSEC(delay_ms));
 }
 
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms)
 {
-    if (work == NULL) {
-        return -EINVAL;
-    }
-
-    return mesh_reschedule_delayable(work, delay_ms);
+    return work == NULL ? -EINVAL :
+           mesh_reschedule_delayable(work, delay_ms);
 }
 
 static int mesh_submit_work(struct k_work *work)
@@ -2907,11 +2897,7 @@ static int mesh_submit_work(struct k_work *work)
     if (mesh_transport_paused()) {
         return -ESHUTDOWN;
     }
-#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-    return k_work_submit_to_queue(&mesh_route_work_q, work);
-#else
-    return k_work_submit(work);
-#endif
+    return mesh_route_owner_work_submit(work);
 }
 
 int mesh_schedule_route_request(uint64_t target_id, const char *reason)

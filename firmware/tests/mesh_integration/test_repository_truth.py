@@ -669,6 +669,28 @@ class RepositoryTruthTests(unittest.TestCase):
             issues,
         )
 
+    def test_rejects_mapped_source_rename_after_wiki_generation(self) -> None:
+        renamed = self.architecture.with_name("Renamed Architecture 1.2.1.md")
+        subprocess.run(
+            ["git", "mv", str(self.architecture), str(renamed)],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "Rename mapped source"],
+            cwd=self.root,
+            check=True,
+        )
+        issues = check_repository_truth.check_repository(self.root)
+        self.assertTrue(
+            any(
+                "mapped wiki source changed since pinned ref" in issue
+                and str(self.architecture) in issue
+                for issue in issues
+            ),
+            issues,
+        )
+
     def test_rejects_wrong_autogen_citation_commit(self) -> None:
         page_path = self.root / self.wiki_page
         page_text = page_path.read_text(encoding="utf-8").replace(

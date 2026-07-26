@@ -568,7 +568,7 @@ def _check_wiki_source_drift(
 ) -> list[str]:
     issues: list[str] = []
     changed = subprocess.run(
-        ["git", "diff", "--name-only", "-z", ref, "--"],
+        ["git", "diff", "--no-renames", "--name-only", "-z", ref, "--"],
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

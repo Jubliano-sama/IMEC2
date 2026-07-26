@@ -441,14 +441,6 @@ struct app_mesh_command_orchestrator *mesh_gateway_command_orchestrator_context(
     return app_node_comm_gateway_control_context();
 }
 
-#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-K_THREAD_STACK_DEFINE(mesh_route_work_q_stack, MESH_ROUTE_WORKQUEUE_STACK_SIZE);
-static struct k_work_q mesh_route_work_q;
-static const struct k_work_queue_config mesh_route_work_q_config = {
-    .name = "mesh_route",
-};
-#endif
-
 static const struct app_mesh_report_callbacks *mesh_report_callbacks;
 
 static struct app_mesh_ch9_ack_table mesh_ch9_ack_table;

@@ -1,0 +1,736 @@
+schema: 1
+contract: Documentation/Mesh Connected Routing Contract.md
+legacy_source:
+  path: Documentation/Mesh Connected Routing Contract.md
+  snapshot_commit: 74e0b622c8632d54cc88f36197ef4dd273702e65
+  git_blob: 938358ae83e434f71d9284e6b4ae31aca2e17264
+  sha256: e3eaf7e352a35826876f21529aa5f8d3009393474bdcde69969aba06b8b4e69d
+  line_count: 1724
+  note: Legacy ranges address this immutable blob, before stable-ID normalization.
+
+verification_levels:
+  partial: Concrete evidence covers part of the requirement, but the listed gap remains.
+  deferred: The mapping is complete, but no complete proof is claimed; the listed gap is explicit.
+  verified: Complete evidence for the stated requirement and scope. No entry uses this state in this manifest.
+
+field_semantics:
+  authoritative: Current documents that own the cited behavioral or detail boundary.
+  owners: Implementation or policy files responsible for the requirement.
+  evidence: Existing tests or evidence surfaces; their presence is not complete proof.
+
+categories:
+  GOV: {name: governance, count: 2}
+  HOST: {name: host, count: 5}
+  ROLE: {name: roles, count: 3}
+  RAD: {name: radio, count: 9}
+  PWR: {name: power, count: 4}
+  ROUTE: {name: route, count: 9}
+  EVT: {name: event, count: 3}
+  COMM: {name: communication, count: 10}
+  ARCH: {name: architecture, count: 1}
+  ACK: {name: ack, count: 7}
+  GCTL: {name: gateway_control, count: 6}
+  ASN: {name: assignment, count: 4}
+  SUR: {name: survey, count: 13}
+  FAIL: {name: failure, count: 5}
+  END: {name: teardown, count: 2}
+  SEC: {name: security, count: 1}
+  OPT: {name: optimization, count: 1}
+  VER: {name: verification, count: 2}
+
+requirements:
+  - id: GOV-01
+    category: governance
+    roles: [all]
+    legacy_lines: ["10-12"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, AGENTS.md]
+    owners: [AGENTS.md]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_agent_guidance.py], gap: "A source check cannot prove that every future review stops for permission."}
+
+  - id: GOV-02
+    category: governance
+    roles: [all]
+    legacy_lines: ["14-17", "1554-1558"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
+    owners: [AGENTS.md, firmware/scripts/agent_preflight.py]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_agent_preflight.py], gap: "The checker cannot prove the completeness of a human behavior-change proposal."}
+
+  - id: HOST-01
+    category: host
+    roles: [host, gateway]
+    legacy_lines: ["21-24"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [tools/gateway_gui/command_orchestration.py, firmware/app/src/app_gateway_command_ingress.c]
+    verification: {status: partial, evidence: [tools/gateway_gui/tests/test_command_orchestration.py], gap: "Headless and external host controllers remain separately qualified."}
+
+  - id: HOST-02
+    category: host
+    roles: [host, gateway]
+    legacy_lines: ["26-35"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [tools/gateway_gui/command_orchestration.py, tools/gateway_gui/command_telemetry.py]
+    verification: {status: partial, evidence: [tools/gateway_gui/tests/test_command_orchestration.py, tools/gateway_gui/tests/test_command_invariants.py], gap: "BLE disconnect and stale-terminal behavior still needs end-to-end hardware observation."}
+
+  - id: HOST-03
+    category: host
+    roles: [host, gateway]
+    legacy_lines: ["36-39"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [tools/gateway_gui/command_orchestration.py, firmware/app/src/app_gateway_command_ingress.c]
+    verification: {status: partial, evidence: [tools/gateway_gui/tests/test_command_orchestration.py], gap: "Recovery-command availability under every active firmware phase is not exhaustively proven."}
+
+  - id: HOST-04
+    category: host
+    roles: [host, gateway, anchor]
+    legacy_lines: ["41-51"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [tools/gateway_gui/operation_policy.py, firmware/src/operation_policy.c, firmware/app/src/app_operation_policy.c]
+    verification: {status: partial, evidence: [firmware/tests/test_operation_policy.c, tools/gateway_gui/tests/test_operation_policy.py], gap: "Exact radio airtime and guard enforcement still depends on exact-role and hardware evidence."}
+
+  - id: HOST-05
+    category: host
+    roles: [host, gateway, anchor]
+    legacy_lines: ["53-64", "582-586"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [tools/gateway_gui/operation_policy.py, firmware/app/src/app_operation_policy.c, firmware/app/src/app_gateway_command_observability.c]
+    verification: {status: partial, evidence: [firmware/tests/test_operation_policy.c, firmware/tests/mesh_integration/test_gateway_command_observability_scenarios.c], gap: "Useful-partial semantics across every mixed hardware topology remain unqualified."}
+
+  - id: ROLE-01
+    category: roles
+    roles: [clicker, anchor]
+    legacy_lines: ["634-643"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_clicker.c, firmware/src/mesh_preemption.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c, firmware/tests/test_mesh_preemption.c], gap: "The complete battery click path still requires exact clicker and multi-anchor hardware evidence."}
+
+  - id: ROLE-02
+    category: roles
+    roles: [anchor]
+    legacy_lines: ["155-159", "645-676"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_anchor.c, firmware/app/src/app_mesh_report.c, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_runtime_priority_scenarios.c, firmware/tests/mesh_integration/test_local_first_custody_source_invariants.py], gap: "All Zephyr workqueue interleavings and long-running anchor duty behavior are not exhaustively proven."}
+
+  - id: ROLE-03
+    category: roles
+    roles: [gateway, transmitter]
+    legacy_lines: ["190-194", "221-224", "678-715"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_gateway_ble.c, firmware/app/src/app_mesh_report.c, firmware/app/src/app_mesh_test.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_forcedhop_connection_scenarios.c, firmware/tests/mesh_integration/test_mesh_production_scenarios.c], gap: "Bench evidence does not qualify all production gateway and synthetic-source behaviors."}
+
+  - id: RAD-01
+    category: radio
+    roles: [clicker, anchor, gateway]
+    legacy_lines: ["68-77", "113-118"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_mesh_c5_priority.c, firmware/src/mesh_runtime.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_c5_priority.c, firmware/tests/mesh_integration/test_mesh_c5_control_lane_invariants.py], gap: "Real overlapping Channel 5 and Channel 9 ownership still needs multi-board timing evidence."}
+
+  - id: RAD-02
+    category: radio
+    roles: [anchor]
+    legacy_lines: ["78-87", "1010-1037"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_mesh_report.c, firmware/app/src/app_mesh_rx_policy.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_c5_control_lane_invariants.py, firmware/tests/mesh_integration/test_mesh_wake_scenarios.c], gap: "Continuous receive duty is modeled and source-guarded but not proven across every driver error on hardware."}
+
+  - id: RAD-03
+    category: radio
+    roles: [clicker, anchor]
+    legacy_lines: ["83-97", "1632-1638"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_mesh_rx_policy.c, firmware/app/src/dwm3000_driver.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c, firmware/tests/mesh_integration/test_mesh_wake_scenarios.c], gap: "Exact PHY transition margins remain hardware-dependent."}
+
+  - id: RAD-04
+    category: radio
+    roles: [clicker, anchor]
+    legacy_lines: ["98-109"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_wake_train_politeness.c, firmware/app/src/app_anchor.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_wake_train_politeness.c, firmware/tests/mesh_integration/test_mesh_click_collision_sweep.c], gap: "A complete click/range handoff through all anchors still needs exact hardware traces."}
+
+  - id: RAD-05
+    category: radio
+    roles: [anchor, gateway]
+    legacy_lines: ["119-126", "1113-1126"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_mesh_rx_policy.c, firmware/app/src/app_mesh_flood.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_contact_response_scenarios.c, firmware/tests/mesh_integration/test_mesh_survey_phy_scenarios.c], gap: "Maximum wake-train and inter-PHY timing remain partially hardware-qualified."}
+
+  - id: RAD-06
+    category: radio
+    roles: [anchor, gateway]
+    legacy_lines: ["131-136", "174-187"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_direct_gateway_retry.c, firmware/app/src/app_mesh_report_direct_gateway.inc]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_direct_probe_recovery_scenarios.c], gap: "Control overlap with every direct-gateway ACK failure phase is not exhaustively exercised on hardware."}
+
+  - id: RAD-07
+    category: radio
+    roles: [clicker, anchor, gateway]
+    legacy_lines: ["160-173"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_rf_retry.c, firmware/src/node_comm.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_rf_retry.c, firmware/tests/mesh_integration/test_mesh_rf_retry_source_invariants.py], gap: "Randomized retry coverage is deterministic test evidence rather than calibrated RF collision proof."}
+
+  - id: RAD-08
+    category: radio
+    roles: [clicker, anchor, gateway]
+    legacy_lines: ["195-210", "522-531"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_wake_train_politeness.c, firmware/app/src/app_mesh_flood.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_wake_train_politeness.c, firmware/tests/test_app_mesh_flood.c], gap: "Every pre-RF hardware refusal mode has not been observed across a complete four-start burst."}
+
+  - id: RAD-09
+    category: radio
+    roles: [gateway]
+    legacy_lines: ["1053-1071"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_report.c, firmware/app/src/app_mesh_tx_handoff_gate.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_tx_handoff_gate.c, firmware/tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c], gap: "Continuous gateway RX and control handoff remain unqualified for multi-month hardware operation."}
+
+  - id: PWR-01
+    category: power
+    roles: [anchor]
+    legacy_lines: ["719-721"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor.c, firmware/app/src/dwm3000_driver.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_wake_scenarios.c], gap: "Measured low-duty power and long-run wake reliability are deferred to hardware."}
+
+  - id: PWR-02
+    category: power
+    roles: [anchor]
+    legacy_lines: ["110-112", "1010-1020"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor.c, firmware/app/src/dwm3000_driver.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_production_scenarios.c], gap: "Retained-sleep exclusion between every exact role event needs hardware confirmation."}
+
+  - id: PWR-03
+    category: power
+    roles: [anchor]
+    legacy_lines: ["103-109", "218-220", "1022-1028"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor.c, firmware/src/mesh_preemption.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c], gap: "Worst-case real ranging duration and handback power state are not fully qualified."}
+
+  - id: PWR-04
+    category: power
+    roles: [anchor]
+    legacy_lines: ["1368-1383"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_report.c, firmware/app/src/app_mesh_route_wait_tx.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_multi_anchor_timing_invariants.c], gap: "Exact scheduler and radio readiness under all Zephyr interleavings remains unproven."}
+
+  - id: ROUTE-01
+    category: route
+    roles: [anchor, transmitter, gateway]
+    legacy_lines: ["174-194", "255-258", "723-739", "859-866"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_mesh_report_route_control.inc, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_direct_probe_recovery_scenarios.c, firmware/tests/mesh_integration/test_mesh_route_formation_scenarios.c], gap: "Exhaustive originate-before-route wait and resume remains partial in the coverage matrix."}
+
+  - id: ROUTE-02
+    category: route
+    roles: [anchor, transmitter]
+    legacy_lines: ["740-767", "868-872", "950-980"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_route_request_policy.c, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_route_request_policy.c, firmware/tests/mesh_integration/test_mesh_route_formation_scenarios.c], gap: "Shared-relay forwarding contention remains partial."}
+
+  - id: ROUTE-03
+    category: route
+    roles: [anchor]
+    legacy_lines: ["211-217", "671-676", "950-971"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay.c, firmware/app/src/app_mesh_rx_policy.c]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_relay.c, firmware/tests/mesh_integration/test_mesh_route_formation_scenarios.c], gap: "All connected-radio timing combinations are not hardware-qualified."}
+
+  - id: ROUTE-04
+    category: route
+    roles: [anchor]
+    legacy_lines: ["742-760", "890-900", "1592-1601"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_route_path.c, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_route_path.c, firmware/tests/mesh_integration/test_mesh_route_formation_scenarios.c], gap: "Arbitrary long-run topology churn is not exhaustively enumerated."}
+
+  - id: ROUTE-05
+    category: route
+    roles: [anchor, transmitter]
+    legacy_lines: ["761-786", "982-1006", "1586-1591"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_report_route_control.inc, firmware/app/src/app_mesh_route_reply_ack.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_contact_response_scenarios.c, firmware/tests/test_app_mesh_route_reply_ack.c], gap: "Maximum-depth reply-window and foreign-request release need broader multi-board proof."}
+
+  - id: ROUTE-06
+    category: route
+    roles: [anchor, transmitter]
+    legacy_lines: ["874-900", "1602-1607"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/mesh_route_path.c, firmware/app/src/app_mesh_report_route_control.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_route_path.c, firmware/tests/mesh_integration/test_route_control_wire_source_boundary.py], gap: "Source and native tests do not prove every relay's exact runtime buffer state."}
+
+  - id: ROUTE-07
+    category: route
+    roles: [anchor, transmitter]
+    legacy_lines: ["902-948", "1575-1582"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/mesh_relay.c, firmware/include/mesh_relay.h]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_relay.c, firmware/tests/mesh_integration/test_route_control_wire_source_boundary.py], gap: "Fresh-random collision avoidance is bounded deterministic evidence, not RF distribution qualification."}
+
+  - id: ROUTE-08
+    category: route
+    roles: [anchor, transmitter]
+    legacy_lines: ["768-798"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_route_ready_handoff.c, firmware/app/src/app_mesh_route_reply_ack.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_route_ready_handoff.c, firmware/tests/mesh_integration/test_mesh_contact_response_scenarios.c], gap: "Accepted-timing freshness under every radio-owner race is not fully proven."}
+
+  - id: ROUTE-09
+    category: route
+    roles: [anchor, gateway]
+    legacy_lines: ["309-313", "440-446", "799-807", "1402-1407"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay.c, firmware/app/src/app_mesh_report_route_control.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_downlink_capacity.c, firmware/tests/mesh_integration/test_mesh_report_role_storage.py], gap: "Fifty-descendant reverse-state behavior still lacks complete hardware topology evidence."}
+
+  - id: EVT-01
+    category: event
+    roles: [anchor, transmitter]
+    legacy_lines: ["809-825"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/mesh_event_owner.c, firmware/app/src/app_mesh_report_event_tx.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_event_owner.c, firmware/tests/mesh_integration/test_mesh_event_control_rf_scenarios.c], gap: "Queue-latency phase stability still needs exact multi-board timing proof."}
+
+  - id: EVT-02
+    category: event
+    roles: [anchor, transmitter]
+    legacy_lines: ["827-843"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/mesh_event_owner.c, firmware/app/src/app_mesh_report_event_tx.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_event_owner.c, firmware/tests/mesh_integration/test_mesh_protocol_lifecycle_scenarios.c], gap: "All stale-control interleavings under real reset and RF loss remain unqualified."}
+
+  - id: EVT-03
+    category: event
+    roles: [anchor, transmitter]
+    legacy_lines: ["845-857"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/mesh_event_owner.c, firmware/app/src/app_mesh_report_event_tx.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_event_owner.c, firmware/tests/mesh_integration/test_mesh_event_control_rf_scenarios.c], gap: "Established-event reset recovery remains explicitly unqualified by KI-RESET-001."}
+
+  - id: COMM-01
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["327-333"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
+    owners: [firmware/src/node_comm.c, firmware/include/node_comm.h]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_protocol_callers.py, firmware/tests/mesh_integration/test_node_comm_source_boundary.py], gap: "Frozen legacy callers remain architecture debt."}
+
+  - id: COMM-02
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["335-343"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
+    owners: [firmware/src/node_comm.c, firmware/src/node_transaction.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/test_node_transaction.c], gap: "The single-owner target is not yet universal across frozen legacy paths."}
+
+  - id: COMM-03
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["345-363"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_gateway_command_priority.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/test_app_mesh_gateway_command_priority.c], gap: "Every protocol profile under combined saturation has not been exhaustively tested."}
+
+  - id: COMM-04
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["365-372"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/node_comm.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c], gap: "Long-run fairness with every profile and reset boundary remains unqualified."}
+
+  - id: COMM-05
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["374-380"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
+    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_route_wait_tx.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_source_boundary.py, firmware/tests/test_app_mesh_route_wait_tx.c], gap: "Static boundaries do not prove every runtime stack and callback path."}
+
+  - id: COMM-06
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["382-388"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/node_comm.c, firmware/src/protocol.c]
+    verification: {status: partial, evidence: [firmware/tests/test_node_comm.c, firmware/tests/test_protocol.c], gap: "Every application-specific late-result path is not exhaustively enumerated."}
+
+  - id: COMM-07
+    category: communication
+    roles: [gateway, anchor]
+    legacy_lines: ["390-406"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/survey_pair_lease.c, firmware/app/src/app_gateway_command_ingress.c]
+    verification: {status: partial, evidence: [firmware/tests/test_survey_pair_lease.c, firmware/tests/mesh_integration/test_survey_pair_control_lifecycle_source_invariants.py], gap: "Remote cleanup loss still relies on the bounded lease and requires hardware qualification."}
+
+  - id: COMM-08
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["408-426"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/node_comm.c, firmware/src/node_transaction.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c], gap: "Actual-RF accounting across every vendor-driver refusal remains partially modeled."}
+
+  - id: COMM-09
+    category: communication
+    roles: [gateway, anchor]
+    legacy_lines: ["522-538"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/node_comm.c, firmware/include/mesh_capacity.h]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/mesh_integration/test_forcedhop_ram_policy.py], gap: "Exact-role static and runtime capacity gates are required for each release artifact."}
+
+  - id: COMM-10
+    category: communication
+    roles: [all_firmware]
+    legacy_lines: ["617-630"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
+    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_tx_handoff_gate.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/mesh_integration/test_mesh_watchdog_lease_scenarios.c], gap: "Frozen compatibility paths and every pause/radio race are not fully migrated or proven."}
+
+  - id: ARCH-01
+    category: architecture
+    roles: [all_firmware]
+    legacy_lines: ["625-630"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
+    owners: [firmware/architecture_boundaries.json, firmware/scripts/check_architecture_boundaries.py]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_architecture_boundaries.py], gap: "The accepted ownership migration is staged and incomplete."}
+
+  - id: ACK-01
+    category: ack
+    roles: [gateway, anchor, clicker]
+    legacy_lines: ["225-258"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Gateway BLE Streaming.md]
+    owners: [firmware/app/src/app_mesh_gateway_ack_policy.c, firmware/app/src/app_gateway_ble_stream.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_gateway_durable_accept_source_invariants.py, firmware/tests/mesh_integration/test_mesh_gateway_ble_scenarios.c], gap: "Every durable-admission interruption phase is not exhaustively power-fault tested."}
+
+  - id: ACK-02
+    category: ack
+    roles: [gateway, host]
+    legacy_lines: ["238-264", "1664-1672"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Gateway BLE Streaming.md]
+    owners: [firmware/app/src/app_gateway_ble_stream.c, tools/gateway_gui/delivery_dedup.py]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_click_ble_custody_source_invariants.py, tools/gateway_gui/tests/test_delivery_dedup.py], gap: "Host-process restart exactly-once is explicitly outside the guarantee."}
+
+  - id: ACK-03
+    category: ack
+    roles: [anchor, transmitter]
+    legacy_lines: ["265-271", "290-305", "1313-1331", "1355-1356", "1392-1400"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay_channel9.c, firmware/app/src/app_mesh_ch9_ack.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_ch9_ack.c, firmware/tests/mesh_integration/test_mesh_result_custody_rf_scenarios.c], gap: "Maximum contention and reset combinations remain partially qualified."}
+
+  - id: ACK-04
+    category: ack
+    roles: [anchor, gateway, transmitter]
+    legacy_lines: ["272-289", "1332-1352"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_report_direct_gateway.inc, firmware/src/mesh_relay_channel9.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_survey_direct_gateway_retry_scenarios.c, firmware/tests/mesh_integration/test_mesh_forcedhop_connection_scenarios.c], gap: "Exact gateway turnaround remains hardware-timing evidence."}
+
+  - id: ACK-05
+    category: ack
+    roles: [anchor, gateway]
+    legacy_lines: ["292-315", "1353-1354"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay.c, firmware/app/src/app_mesh_ch9_ack.c]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_relay.c, firmware/tests/mesh_integration/test_mesh_route_recovery_scenarios.c], gap: "All ACK-return reset boundaries are not exhaustively hardware-tested."}
+
+  - id: ACK-06
+    category: ack
+    roles: [anchor, transmitter]
+    legacy_lines: ["316-323", "1358-1390"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_report.c, firmware/src/node_comm.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_multi_anchor_timing_invariants.c, firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c], gap: "Worst-case click interruption plus repeated real ACK loss remains a hardware qualification item."}
+
+  - id: ACK-07
+    category: ack
+    roles: [gateway, anchor]
+    legacy_lines: ["250-251", "1237-1278"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_gateway_collection_eack.c, firmware/src/gateway_collection_journal.c]
+    verification: {status: partial, evidence: [firmware/tests/test_gateway_collection_eack.c, firmware/tests/mesh_integration/test_gateway_eack_retry_source_invariants.py], gap: "Every NVS interruption and RF recovery phase is not exhaustively tested."}
+
+  - id: GCTL-01
+    category: gateway_control
+    roles: [gateway, anchor]
+    legacy_lines: ["127-130", "1039-1051", "1280-1284"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_gateway_command_priority.c, firmware/app/src/app_node_comm_gateway_control.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_gateway_command_priority.c, firmware/tests/mesh_integration/test_mesh_runtime_priority_scenarios.c], gap: "Every already-started ranging safe boundary is not hardware-qualified."}
+
+  - id: GCTL-02
+    category: gateway_control
+    roles: [gateway, anchor]
+    legacy_lines: ["1073-1111"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_gateway_command_flow.c, firmware/app/src/app_mesh_flood.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_gateway_command_flow.c, firmware/tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c], gap: "Large-topology RF forwarding remains model evidence without full hardware closure."}
+
+  - id: GCTL-03
+    category: gateway_control
+    roles: [gateway, anchor]
+    legacy_lines: ["428-446"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_node_comm_gateway_control.c, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c, firmware/tests/test_mesh_downlink_capacity.c], gap: "Fifty-destination shared-relay command delivery lacks complete hardware evidence."}
+
+  - id: GCTL-04
+    category: gateway_control
+    roles: [gateway, anchor]
+    legacy_lines: ["417-426", "1113-1126"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_mesh_rx_policy.c, firmware/src/node_comm.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_contact_response_scenarios.c, firmware/tests/mesh_integration/test_mesh_assignment_control_timing_scenarios.c], gap: "Maximum-depth response timing remains partially hardware-qualified."}
+
+  - id: GCTL-05
+    category: gateway_control
+    roles: [host, gateway, anchor]
+    legacy_lines: ["137-142", "1286-1311"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [tools/gateway_gui/command_orchestration.py, firmware/app/src/app_node_comm_gateway_route_refresh.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_node_comm_gateway_route_refresh.c, firmware/tests/mesh_integration/test_route_refresh_source_boundary.py], gap: "Host and hardware liveness across every route-refresh topology remains unqualified."}
+
+  - id: GCTL-06
+    category: gateway_control
+    roles: [anchor, gateway]
+    legacy_lines: ["143-154", "799-807"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_mesh_report_route_control.inc, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_contact_response_scenarios.c], gap: "Every malformed control-evidence combination and relay path is not hardware-proven."}
+
+  - id: ASN-01
+    category: assignment
+    roles: [gateway, anchor]
+    legacy_lines: ["540-550", "564-571"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/src/discovery_assignment.c, firmware/app/src/app_gateway_assignment_publisher.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c, firmware/tests/test_app_gateway_assignment_publisher.c], gap: "The static Zephyr gateway coordinator and real NVS are not covered end to end."}
+
+  - id: ASN-02
+    category: assignment
+    roles: [gateway, anchor]
+    legacy_lines: ["552-563"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/discovery_assignment.c, firmware/app/src/app_discovery_assignment_policy.h]
+    verification: {status: partial, evidence: [firmware/tests/test_app_discovery_assignment_policy.c, firmware/tests/mesh_integration/test_mesh_assignment_control_timing_scenarios.c], gap: "Maximum-depth hardware response custody remains unqualified."}
+
+  - id: ASN-03
+    category: assignment
+    roles: [gateway, anchor, host]
+    legacy_lines: ["573-593"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_gateway_assignment_publisher.c, firmware/app/src/app_gateway_command_observability.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_assignment_publisher_source_invariants.py, firmware/tests/mesh_integration/test_gateway_command_observability_scenarios.c], gap: "Host-visible causal phase behavior still needs full GUI-plus-hardware qualification."}
+
+  - id: ASN-04
+    category: assignment
+    roles: [gateway, anchor]
+    legacy_lines: ["595-615"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/discovery_assignment.c, firmware/src/gateway_membership.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c, firmware/tests/test_gateway_membership.c], gap: "Every NVS power-loss point and the composed coordinator remain partially covered."}
+
+  - id: SUR-01
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["1128-1143"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/app/src/app_anchor_survey_discovery.c, firmware/src/survey.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_discovery_scenarios.c, firmware/tests/mesh_integration/test_mesh_survey_phy_scenarios.c], gap: "Probabilistic RF discovery realism and full multi-board topology remain deferred."}
+
+  - id: SUR-02
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["1137-1164"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/src/survey_pair_planner.c, firmware/src/gateway_survey_machine.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c], gap: "Fifty-anchor topology behavior is modeled rather than hardware-qualified."}
+
+  - id: SUR-03
+    category: survey
+    roles: [anchor]
+    legacy_lines: ["1166-1174", "1190-1203"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor_survey_runtime.c, firmware/app/src/app_anchor_survey_discovery.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_survey_delivery_source_invariants.py, firmware/tests/mesh_integration/test_mesh_survey_direct_gateway_retry_scenarios.c], gap: "Every real NVS reset and corruption boundary remains unqualified."}
+
+  - id: SUR-04
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["1176-1188"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor_survey_runtime.c, firmware/src/gateway_survey_machine.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_gateway_survey_dynamic_deadline_source_invariants.py, firmware/tests/mesh_integration/test_mesh_survey_direct_gateway_retry_scenarios.c], gap: "Late multihop report custody still needs maximum-depth hardware observation."}
+
+  - id: SUR-05
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["1205-1235"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor_gateway_survey.inc, firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c, firmware/tests/mesh_integration/test_survey_command_source_invariants.py], gap: "Fifty mixed direct and relayed reverse hints need complete hardware proof."}
+
+  - id: SUR-06
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["1151-1164"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/src/survey_pair_planner.c, firmware/src/survey_pair_round_runtime.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c, firmware/tests/test_survey_pair_round_runtime.c], gap: "Concurrent non-conflicting pairs remain primarily simulator evidence."}
+
+  - id: SUR-07
+    category: survey
+    roles: [host, gateway, anchor]
+    legacy_lines: ["1228-1232", "1703-1713"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/app/src/app_anchor_gateway_survey.inc, firmware/app/src/app_node_comm_gateway_control.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_survey_command_source_invariants.py, firmware/tests/mesh_integration/test_mesh_survey_phy_scenarios.c], gap: "Automatic and manual parity is source-guarded but not fully multi-board qualified."}
+
+  - id: SUR-08
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["417-426", "448-467"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/app/src/app_anchor_gateway_survey_round.inc, firmware/src/node_comm.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_assignment_control_timing_scenarios.c, firmware/tests/mesh_integration/test_anchor_survey_round_barrier_source_invariants.py], gap: "Maximum-depth response and duplicate-settle timing need hardware closure."}
+
+  - id: SUR-09
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["455-473", "1655-1663"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/src/survey_round_control.c, firmware/app/src/app_anchor_gateway_survey_round.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_survey_round_control.c, firmware/tests/mesh_integration/test_mesh_survey_round_adversarial_lifecycle.c], gap: "Common-GO maximum-hop timing remains simulation and exact-build evidence pending hardware."}
+
+  - id: SUR-10
+    category: survey
+    roles: [gateway, host]
+    legacy_lines: ["469-484"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/gateway_survey_machine.c, firmware/app/src/app_gateway_survey_observability.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_gateway_survey_adapter_boundaries.py, firmware/tests/mesh_integration/test_gateway_observability_source_invariants.py], gap: "BLE backpressure ordering needs full host-plus-radio hardware qualification."}
+
+  - id: SUR-11
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["486-492", "511-520"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/survey_gateway_transaction.c, firmware/app/src/app_anchor_gateway_survey_round.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_survey_gateway_transaction.c, firmware/tests/mesh_integration/test_survey_active_generation_source_invariants.py], gap: "Every delayed callback and reset interleaving remains non-exhaustive."}
+
+  - id: SUR-12
+    category: survey
+    roles: [gateway, anchor]
+    legacy_lines: ["494-509"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/survey.c, firmware/src/gateway_survey_machine.c]
+    verification: {status: partial, evidence: [firmware/tests/test_survey.c, firmware/tests/mesh_integration/test_mesh_survey_round_adversarial_lifecycle.c], gap: "Real close-range and repeated unusable geometry remain bounded hardware checks."}
+
+  - id: SUR-13
+    category: survey
+    roles: [gateway, anchor, host]
+    legacy_lines: ["390-406", "475-484", "503-509", "1142-1149"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
+    owners: [firmware/src/survey_pair_lease.c, firmware/src/gateway_survey_machine.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_survey_round_adversarial_lifecycle.c, firmware/tests/mesh_integration/test_survey_pair_control_lifecycle_source_invariants.py], gap: "Complete operation abort and cleanup under multi-board loss remains unqualified."}
+
+  - id: FAIL-01
+    category: failure
+    roles: [all_firmware]
+    legacy_lines: ["46-50", "890-929", "952-955"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/protocol.c, firmware/src/mesh_relay.c, firmware/src/operation_policy.c]
+    verification: {status: partial, evidence: [firmware/tests/test_protocol.c, firmware/tests/test_mesh_relay.c, firmware/tests/mesh_integration/test_mesh_sim_fault_scenarios.c], gap: "No finite suite proves every malformed or capacity combination."}
+
+  - id: FAIL-02
+    category: failure
+    roles: [anchor, transmitter]
+    legacy_lines: ["1409-1437"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay.c]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_relay.c, firmware/tests/mesh_integration/test_mesh_route_recovery_scenarios.c], gap: "Long-running wrap and hardware ACK-loss timing remain partially qualified."}
+
+  - id: FAIL-03
+    category: failure
+    roles: [anchor, transmitter]
+    legacy_lines: ["1439-1464"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay.c, firmware/app/src/app_mesh_report_route_control.inc]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_route_recovery_scenarios.c], gap: "Downstream invalidation propagation under every failed hop remains non-exhaustive."}
+
+  - id: FAIL-04
+    category: failure
+    roles: [anchor, gateway, transmitter]
+    legacy_lines: ["1466-1505"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_relay.c, firmware/app/src/app_mesh_direct_gateway_retry.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_route_recovery_scenarios.c, firmware/tests/mesh_integration/test_mesh_direct_probe_recovery_scenarios.c], gap: "Alternate-parent recovery and every downlink failure phase remain partially qualified."}
+
+  - id: FAIL-05
+    category: failure
+    roles: [all]
+    legacy_lines: ["540-550", "1142-1149", "1237-1243"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/node_transaction.c, firmware/app/src/app_gateway_command_lifecycle.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_post_operation_liveness_scenarios.c, firmware/tests/mesh_integration/test_gateway_command_lifecycle_invariants.c], gap: "Volatile operation reset recovery and long lossy telemetry-truncated campaigns remain unqualified."}
+
+  - id: END-01
+    category: teardown
+    roles: [anchor, transmitter]
+    legacy_lines: ["321-323", "1507-1519"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_event_owner.c, firmware/app/src/app_mesh_report.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_protocol_lifecycle_scenarios.c], gap: "Worst-case click duration plus real RF supervision loss remains a hardware test."}
+
+  - id: END-02
+    category: teardown
+    roles: [anchor, transmitter]
+    legacy_lines: ["1521-1530"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_event_owner.c, firmware/app/src/app_mesh_report_event_tx.inc]
+    verification: {status: partial, evidence: [firmware/tests/test_mesh_event_owner.c, firmware/tests/mesh_integration/test_mesh_protocol_lifecycle_scenarios.c], gap: "Established-session reset recovery remains explicitly unqualified."}
+
+  - id: SEC-01
+    category: security
+    roles: [all]
+    legacy_lines: ["259-264", "1233-1235"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
+    owners: [firmware/src/protocol.c, tools/gateway_gui/delivery_dedup.py]
+    verification: {status: deferred, evidence: [], gap: "The protocol deliberately has no keyed hostile-RF authentication or persistent host acknowledgement."}
+
+  - id: OPT-01
+    category: optimization
+    roles: [anchor, gateway, transmitter]
+    legacy_lines: ["1532-1552"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md]
+    owners: [firmware/src/mesh_route_path.c, firmware/src/mesh_relay_channel9.c]
+    verification: {status: deferred, evidence: [], gap: "Permitted future optimizations require their own requirement-preservation proof before implementation."}
+
+  - id: VER-01
+    category: verification
+    roles: [all]
+    legacy_lines: ["1554-1724"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Integration Coverage Matrix 2026-07-12.md]
+    owners: [firmware/scripts/verify_changes.py, firmware/tests/mesh_integration/README.md]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_verify_changes.py], gap: "The traceability validator proves structure only; behavior still requires the mapped tests and evidence layers."}
+
+  - id: VER-02
+    category: verification
+    roles: [all]
+    legacy_lines: ["3-6", "1554-1724"]
+    authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Development and Deployment Guide.md, Documentation/Mesh Integration Coverage Matrix 2026-07-12.md]
+    owners: [firmware/scripts/verify_changes.py, firmware/scripts/flash_verified_mesh.py, firmware/scripts/capture_stack_evidence.py]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_flash_verified_mesh.py, firmware/tests/mesh_integration/test_capture_stack_evidence.py], gap: "Each deployable preset still requires exact-artifact runtime and requested multi-board hardware evidence."}

@@ -464,8 +464,8 @@ int main(void)
     assert(workloads[9] == APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL);
     assert(owners[6] == APP_STACK_DIAG_OWNER_CLICKER_ACTION);
     assert(owners[7] == APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN);
-    assert(owners[8] == APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE);
-    assert(owners[9] == APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE);
+    assert(owners[8] == APP_STACK_DIAG_OWNER_MESH_ROUTE);
+    assert(owners[9] == APP_STACK_DIAG_OWNER_MESH_ROUTE);
     assert(end_count == 9u);
     assert(active_count == 0u);
     test_failed_diagnostic_commits_retain_only_usable_runs();

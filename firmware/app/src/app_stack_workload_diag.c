@@ -217,7 +217,7 @@ DEFINE_WORKLOAD_DIAG(anchor_survey,
                      APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN)
 DEFINE_WORKLOAD_DIAG(gateway_control,
                      APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL,
-                     APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE)
+                     APP_STACK_DIAG_OWNER_MESH_ROUTE)
 
 void app_stack_workload_diag_gateway_report_cycle(
     const struct proto_packet *packet,
@@ -231,7 +231,7 @@ void app_stack_workload_diag_gateway_report_cycle(
     stack_workload_diag_lock();
     stack_workload_diag_admit_locked(
         APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS,
-        APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE, packet, &pressure);
+        APP_STACK_DIAG_OWNER_MESH_ROUTE, packet, &pressure);
     stack_workload_diag_sample_locked(
         APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS, packet, &pressure);
     stack_workload_diag_release_locked(

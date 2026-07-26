@@ -2,6 +2,11 @@
 #define APP_MESH_REPORT_H
 
 #include "dwm3000_driver.h"
+#if defined(__ZEPHYR__)
+#include "app_mesh_route_owner_queue.h"
+#else
+struct k_work_delayable;
+#endif
 #include "app_mesh_route_wait_tx.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -13,7 +18,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct k_work_delayable;
 struct app_mesh_command_orchestrator;
 struct app_mesh_flood_progress;
 struct app_mesh_flood_result;

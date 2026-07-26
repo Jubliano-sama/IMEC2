@@ -347,7 +347,9 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
     def test_synthetic_transmitter_uses_terminal_communication_custody(self):
         source = (APP_SRC / "app_mesh_test.c").read_text(encoding="utf-8")
         header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
-        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+        owner_queue = (
+            APP_SRC / "app_mesh_route_owner_queue.c"
+        ).read_text(encoding="utf-8")
         cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn('#include "app_node_comm.h"', source)
@@ -366,9 +368,9 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertIn("#define APP_NODE_COMM_MAX_DELIVERIES 5u", header)
         self.assertIn("NODE_COMM_MAX_REQUESTS=5", cmake)
 
-        queue_definition = report[
-            report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") - 60 :
-            report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") + 120
+        queue_definition = owner_queue[
+            owner_queue.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") - 60 :
+            owner_queue.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") + 120
         ]
         self.assertIn(
             "#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)",
@@ -445,6 +447,9 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
     def test_gateway_due_kick_keeps_rf_worker_on_mesh_route_queue(self):
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
         report = read_composed_source(APP_SRC / "app_mesh_report.c")
+        owner_queue = (
+            APP_SRC / "app_mesh_route_owner_queue.c"
+        ).read_text(encoding="utf-8")
 
         schedule_start = facade.index(
             "static void app_node_comm_schedule_delivery_locked"
@@ -493,16 +498,25 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "int mesh_route_work_reschedule", helper_start
         )
         helper = report[helper_start:helper_end]
-        if (
-            "k_work_reschedule_for_queue(&mesh_route_work_q, work" not in helper
-        ):
+        if "mesh_route_owner_work_reschedule(work" not in helper:
             self.fail(
-                "mesh route rescheduler no longer targets its dedicated "
-                "workqueue"
+                "mesh route rescheduler bypasses the dedicated owner helper"
             )
+        owner_start = owner_queue.index("int mesh_route_owner_work_reschedule")
+        owner_end = owner_queue.index(
+            "int mesh_route_owner_work_submit", owner_start
+        )
+        owner_helper = owner_queue[owner_start:owner_end]
+        self.assertIn("mesh_route_owner_work_queue()", owner_helper)
+        self.assertIn("k_work_reschedule(work, delay)", owner_helper)
+        self.assertIn(
+            "k_work_reschedule_for_queue(queue, work, delay)", owner_helper
+        )
 
     def test_mesh_clicker_uses_dedicated_communication_queue(self):
-        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+        owner_queue = (
+            APP_SRC / "app_mesh_route_owner_queue.c"
+        ).read_text(encoding="utf-8")
         cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
         clicker_conf = (ROOT / "app" / "conf" / "mesh-clicker.conf").read_text(
             encoding="utf-8"
@@ -518,16 +532,25 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertNotIn("IMEC_MESH_ROUTE_TEST_BUILD ON", clicker_preset)
         self.assertIn("CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE=y", clicker_conf)
 
-        helper_start = report.index("static int mesh_reschedule_delayable")
-        helper_end = report.index(
-            "int mesh_route_work_reschedule", helper_start
+        queue_start = owner_queue.index(
+            "struct k_work_q *mesh_route_owner_work_queue"
         )
-        helper = report[helper_start:helper_end]
-        self.assertIn("CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE", helper)
+        queue_end = owner_queue.index(
+            "int mesh_route_owner_work_reschedule", queue_start
+        )
+        queue_owner = owner_queue[queue_start:queue_end]
+        helper_start = queue_end
+        helper_end = owner_queue.index(
+            "int mesh_route_owner_work_submit", helper_start
+        )
+        helper = owner_queue[helper_start:helper_end]
+        self.assertIn("CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE", queue_owner)
+        self.assertIn("return &mesh_route_work_q;", queue_owner)
+        self.assertIn("return NULL;", queue_owner)
         self.assertIn(
-            "k_work_reschedule_for_queue(&mesh_route_work_q, work", helper
+            "k_work_reschedule_for_queue(queue, work, delay)", helper
         )
-        self.assertIn("return k_work_reschedule(work", helper)
+        self.assertIn("k_work_reschedule(work, delay)", helper)
 
     def test_facade_has_no_synchronous_delivery_or_route_start_api(self):
         header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")

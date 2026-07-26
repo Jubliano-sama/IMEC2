@@ -44,7 +44,7 @@ class AgentPreflightTests(unittest.TestCase):
     def test_infers_overlapping_topics_from_paths(self) -> None:
         topics = agent_preflight.infer_topics(
             [
-                "firmware/app/src/app_gateway_survey_round.c",
+                "firmware/src/gateway_survey_machine.c",
                 "firmware/tests/mesh_integration/test_gateway_ble.c",
             ]
         )

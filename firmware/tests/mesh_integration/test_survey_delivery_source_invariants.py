@@ -139,15 +139,34 @@ assert "return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;" in duplicate_report, (
 assert gateway_accept.index("if (duplicate_report)") < gateway_accept.index(
     "if (gateway_survey_auto.running)"
 ), "an accepted report duplicate must survive orchestration phase advance"
-plan_tail = gateway_accept[
-    gateway_accept.index("ret = survey_gateway_plan_pairs(") :
-]
+assert "survey_gateway_plan_pairs(" not in gateway_accept, (
+    "report admission must not mutate a pair plan while collection is open"
+)
+survey_worker = function_body(ANCHOR, "gateway_survey_work_handler")
+collection_close = survey_worker.index(
+    "if (gateway_survey_wait_for_discovery_collection())"
+)
+orchestration_start = survey_worker.index(
+    "if (!gateway_survey_auto.running)", collection_close
+)
+plan_start = survey_worker.index(
+    "ret = survey_gateway_plan_pairs(", orchestration_start
+)
+telemetry_start = survey_worker.index(
+    "gateway_survey_emit_collection_telemetry()", plan_start
+)
+assert collection_close < orchestration_start < plan_start < telemetry_start, (
+    "the immutable pair plan must be built once after report collection closes "
+    "and before collection telemetry is published"
+)
+plan_tail = survey_worker[plan_start:telemetry_start]
 assert re.search(
-    r"if \(ret != PROTO_OK\).*?return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;",
+    r"if \(ret != PROTO_OK\).*?gateway_survey_auto_finish\(\).*?goto out;",
     plan_tail,
     re.S,
 ), (
-    "pair-planning failure after report storage must not revoke acceptance"
+    "pair-planning failure after collection must terminate orchestration without "
+    "retroactively revoking accepted reports"
 )
 
 pair_decode = function_body(CORE_SURVEY, "survey_extract_pair_tlvs")
@@ -234,7 +253,10 @@ for required_rerange_input in (
     "gateway_survey_pair_responder_unusable_mask",
 ):
     assert required_rerange_input in unusable_path
-assert "k_work_reschedule(&gateway_survey_work, K_NO_WAIT)" in unusable_path, (
+assert (
+    "mesh_route_owner_work_reschedule(&gateway_survey_work, K_NO_WAIT)"
+    in unusable_path
+), (
     "complete unusable coverage from both reporters must bypass the long window"
 )
 
@@ -756,7 +778,10 @@ accepted_result = function_body(
 close_call = accepted_result.index("ret = gateway_survey_complete_accepted_delivery()")
 eagain = accepted_result.index("if (ret == -EAGAIN)")
 abandon = accepted_result.index("gateway_survey_abandon_current(", eagain)
-assert "k_work_reschedule(&gateway_survey_work" in accepted_result[eagain:abandon], (
+assert (
+    "mesh_route_owner_work_reschedule(&gateway_survey_work"
+    in accepted_result[eagain:abandon]
+), (
     "an accepted early result must wait for an active backend call to return"
 )
 assert "memset(&gateway_survey_result_preflight" not in accepted_result[close_call:eagain], (

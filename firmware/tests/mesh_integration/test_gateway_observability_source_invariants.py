@@ -38,11 +38,15 @@ boundary_gate = survey_work.index(
 boundary_flush = survey_work.index(
     "gateway_survey_flush_boundary_event", boundary_gate
 )
-active_gate = survey_work.index("if (!gateway_survey_active)")
-deadline_gate = survey_work.index("if (uptime_deadline_reached")
+active_gate = survey_work.index("if (!gateway_survey_operation_active())")
+deadline_gate = survey_work.index("if ((uint64_t)k_uptime_get() >=")
+deadline_api = survey_work.index(
+    "gateway_survey_machine_operation_deadline_ms(", deadline_gate
+)
 deadline_exit = survey_work.index("goto out;", deadline_gate)
 deadline_close = survey_work.index("}", deadline_exit) + 1
 pair_finalize = survey_work.index("gateway_survey_finalize_pair_observation")
+assert deadline_gate < deadline_api < deadline_exit
 assert active_gate < deadline_gate < boundary_flush, (
     "pending boundaries must flush at the first safe point after the active "
     "survey and operation-deadline checks"

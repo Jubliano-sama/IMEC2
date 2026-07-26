@@ -1499,7 +1499,7 @@ static void gateway_survey_service_active_delivery(void)
     }
     if (!app_node_comm_take_delivery_event_for(
             transaction->request_delivery_handle, &event)) {
-        (void)k_work_reschedule(&gateway_survey_work,
+        (void)mesh_route_owner_work_reschedule(&gateway_survey_work,
                                 K_MSEC(GATEWAY_SURVEY_TRANSACTION_POLL_MS));
         return;
     }
@@ -1546,109 +1546,103 @@ static void gateway_survey_service_active_delivery(void)
 static bool gateway_survey_wait_for_discovery_collection(void)
 {
     struct node_comm_terminal_event event;
-    enum survey_gateway_collection_decision decision;
-    enum gateway_command_event_reason failure_reason;
-    uint32_t now_ms;
-    uint32_t operation_wait_ms;
+    struct gateway_survey_machine_drive drive;
+    enum gateway_survey_machine_phase phase;
+    uint64_t now_ms;
+    uint64_t wait_delta_ms;
     uint32_t wait_ms;
-    bool emission_horizon_elapsed;
-    bool safety_deadline_elapsed;
+    uint32_t generation;
+    uint32_t handle;
+    int ret;
 
-    if (!gateway_survey_collection_pending) {
+    phase = gateway_survey_machine_phase(&survey_machine);
+    if (phase != GATEWAY_SURVEY_MACHINE_DISCOVERY_PENDING &&
+        phase != GATEWAY_SURVEY_MACHINE_COLLECTING) {
         return false;
     }
-    if (gateway_survey_discovery_delivery_handle != 0u) {
-        uint32_t handle = gateway_survey_discovery_delivery_handle;
-
+    if (phase == GATEWAY_SURVEY_MACHINE_DISCOVERY_PENDING) {
+        handle = gateway_survey_machine_discovery_delivery_token(&survey_machine);
+        if (handle == 0u) {
+            (void)gateway_survey_machine_abort(
+                &survey_machine,
+                gateway_survey_machine_generation(&survey_machine),
+                gateway_survey_machine_survey_id(&survey_machine));
+            gateway_survey_auto_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
+        }
         if (!app_node_comm_take_delivery_event_for(handle, &event)) {
-            (void)k_work_reschedule(
+            (void)mesh_route_owner_work_reschedule(
                 &gateway_survey_work,
                 K_MSEC(GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS));
             return true;
         }
-        gateway_survey_discovery_delivery_handle = 0u;
         status_debug_printf("DBG_SURVEY_DISCOVERY_FLOOD_TERMINAL handle=%u reason=%u attempts=%u\n",
                             handle,
                             (unsigned int)event.reason,
                             event.attempts_started);
-        if (event.reason != NODE_COMM_TERMINAL_DELIVERED) {
-            gateway_survey_collection_pending = false;
-            gateway_survey_collection_deadline_ms = 0u;
-            gateway_survey_collection_duration_ms = 0u;
-            gateway_survey_collection_window_armed = false;
-            failure_reason =
-                event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ?
-                    GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
-                event.reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ?
-                    GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
-                    GATEWAY_COMMAND_EVENT_REASON_RADIO;
+        generation = gateway_survey_machine_generation(&survey_machine);
+        ret = gateway_survey_machine_note_discovery_terminal(
+            &survey_machine,
+            generation,
+            handle,
+            (uint64_t)k_uptime_get(),
+            &event);
+        if (ret != PROTO_OK) {
             gateway_survey_auto_finish_status(
-                event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ?
-                    COMMAND_TIMEOUT : COMMAND_RADIO_ERROR,
-                failure_reason);
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
         }
-        gateway_survey_collection_deadline_ms =
-            k_uptime_get_32() + gateway_survey_collection_duration_ms;
-        gateway_survey_collection_window_armed = true;
+        if (gateway_survey_machine_phase(&survey_machine) ==
+            GATEWAY_SURVEY_MACHINE_TERMINAL) {
+            gateway_survey_finish_machine_terminal();
+            return true;
+        }
     }
 
-    now_ms = k_uptime_get_32();
-    if (!gateway_survey_collection_window_armed) {
-        gateway_survey_collection_pending = false;
-        gateway_survey_collection_duration_ms = 0u;
+    now_ms = (uint64_t)k_uptime_get();
+    ret = gateway_survey_machine_collection_drive(
+        &survey_machine,
+        now_ms,
+        gateway_survey_context.report_count,
+        &drive);
+    if (ret != PROTO_OK) {
         gateway_survey_auto_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
-    emission_horizon_elapsed = uptime_deadline_reached(
-        now_ms, gateway_survey_collection_emission_deadline_ms);
-    safety_deadline_elapsed = uptime_deadline_reached(
-        now_ms, gateway_survey_collection_deadline_ms);
-    decision = survey_gateway_collection_decide(
-        emission_horizon_elapsed,
-        safety_deadline_elapsed,
-        gateway_survey_context.report_count,
-        gateway_survey_expected_node_count,
-        gateway_survey_expected_node_count_present);
-    if (decision == SURVEY_GATEWAY_COLLECTION_WAIT) {
-        wait_ms = uptime_ms_until_deadline(
-            now_ms,
-            emission_horizon_elapsed ?
-                gateway_survey_collection_deadline_ms :
-                gateway_survey_collection_emission_deadline_ms);
-        operation_wait_ms = uptime_ms_until_deadline(
-            now_ms, gateway_survey_operation_deadline_ms);
-        if (operation_wait_ms < wait_ms) {
-            wait_ms = operation_wait_ms;
-        }
-        (void)k_work_reschedule(
+    if (drive.kind == GATEWAY_SURVEY_MACHINE_DRIVE_WAIT) {
+        wait_delta_ms = drive.wake_at_ms > now_ms ?
+            drive.wake_at_ms - now_ms : 1u;
+        wait_ms = wait_delta_ms > UINT32_MAX ? UINT32_MAX :
+                  (uint32_t)wait_delta_ms;
+        (void)mesh_route_owner_work_reschedule(
             &gateway_survey_work,
             K_MSEC(wait_ms));
         return true;
     }
-    gateway_survey_collection_pending = false;
-    gateway_survey_collection_deadline_ms = 0u;
-    gateway_survey_collection_emission_deadline_ms = 0u;
-    gateway_survey_collection_duration_ms = 0u;
-    gateway_survey_collection_window_armed = false;
-    if (decision == SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH) {
-        bool missing = gateway_survey_context.report_count <
-                       gateway_survey_expected_node_count;
-
-        status_debug_printf(
-            "DBG_SURVEY_COLLECTION_COUNT_MISMATCH expected=%u observed=%u missing=%u\n",
-            gateway_survey_expected_node_count,
-            (unsigned int)gateway_survey_context.report_count,
-            missing ? 1u : 0u);
+    if (drive.kind == GATEWAY_SURVEY_MACHINE_DRIVE_TERMINAL) {
+        const uint16_t expected_count =
+            gateway_survey_machine_expected_count(
+                &survey_machine);
+        if (app_gateway_survey_terminal_is_count_mismatch(drive.reason)) {
+            status_debug_printf(
+                "DBG_SURVEY_COLLECTION_COUNT_MISMATCH expected=%u observed=%u missing=%u\n",
+                expected_count,
+                (unsigned int)gateway_survey_context.report_count,
+                gateway_survey_context.report_count < expected_count ?
+                    1u : 0u);
+        }
+        gateway_survey_finish_machine_terminal();
+        return true;
+    }
+    if (drive.kind != GATEWAY_SURVEY_MACHINE_DRIVE_START_ROUNDS) {
         gateway_survey_auto_finish_status(
-            missing ? COMMAND_TIMEOUT : COMMAND_INVALID_STATE,
-            gateway_survey_context.report_count == 0u ?
-                GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS :
-            missing ?
-                GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
-                GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
     return false;
@@ -1681,11 +1675,12 @@ static void gateway_survey_work_handler(struct k_work *work)
         return;
     }
     gateway_survey_service_cleanup();
-    if (!gateway_survey_active) {
+    if (!gateway_survey_operation_active()) {
         goto out;
     }
-    if (uptime_deadline_reached(k_uptime_get_32(),
-                                gateway_survey_operation_deadline_ms)) {
+    if ((uint64_t)k_uptime_get() >=
+        gateway_survey_machine_operation_deadline_ms(
+            &survey_machine)) {
         gateway_survey_auto_finish_status(
             COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
         goto out;
@@ -1830,7 +1825,7 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
                                            1u);
         return -EINVAL;
     }
-    if (gateway_survey_active
+    if (gateway_survey_operation_active()
 #if DEVICE_ROLE == ROLE_GATEWAY
         || gateway_survey_cleanup_pending()
 #endif
@@ -2161,9 +2156,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
 }
 
 static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
-    struct proto_packet *packet,
-    uint8_t *payload,
-    size_t payload_len)
+    struct proto_packet *packet, uint8_t *payload, size_t payload_len)
 {
     enum command_id command_id = CMD_VENDOR_BASE;
     int ret;
@@ -2249,12 +2242,18 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
         if (ret == PROTO_OK && gateway_command_uses_survey_mesh(command_id)) {
             return gateway_route_survey_command(packet, payload, payload_len, command_id);
         }
+#if DEVICE_ROLE == ROLE_GATEWAY
         if (ret == PROTO_OK &&
             command_id == CMD_SURVEY_ABORT &&
             packet->dst_id == DEVICE_ID) {
-            if (gateway_survey_active) {
+            if (gateway_survey_operation_active()) {
                 LOG_INF("gateway survey orchestration aborted by host: survey=%u",
                         gateway_survey_context.survey_id);
+                (void)gateway_survey_machine_abort(
+                    &survey_machine,
+                    gateway_survey_machine_generation(
+                        &survey_machine),
+                    gateway_survey_context.survey_id);
                 gateway_survey_auto_finish_status(
                     COMMAND_DENIED, GATEWAY_COMMAND_EVENT_REASON_ABORTED);
             }
@@ -2267,6 +2266,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                 GATEWAY_COMMAND_EVENT_REASON_NONE);
             return 0;
         }
+#endif
     }
 
     return gateway_route_mesh_host_packet(packet, payload, payload_len);
@@ -2324,8 +2324,7 @@ static int gateway_host_command_submit_priority(void *ctx)
 }
 
 static bool gateway_host_command_is_preemptive(
-    void *ctx,
-    const struct app_gateway_command_ingress_item *item)
+    void *ctx, const struct app_gateway_command_ingress_item *item)
 {
     ARG_UNUSED(ctx);
 
@@ -2335,8 +2334,7 @@ static bool gateway_host_command_is_preemptive(
 }
 
 static int gateway_host_command_submit_preemptive(
-    void *ctx,
-    const struct app_gateway_command_ingress_item *item)
+    void *ctx, const struct app_gateway_command_ingress_item *item)
 {
     int ret;
 
@@ -2358,10 +2356,12 @@ static int gateway_host_command_submit_preemptive(
         (void)k_msgq_get(&gateway_host_abort_msgq, &abandoned, K_NO_WAIT);
         return ret;
     }
-    ret = k_work_submit(&gateway_host_abort_work);
+    dwm3000_driver_request_receive_abort();
+    ret = mesh_route_owner_work_submit(&gateway_host_abort_work);
     if (ret < 0) {
         struct app_gateway_command_ingress_item abandoned;
 
+        dwm3000_driver_clear_receive_abort();
         (void)k_msgq_get(&gateway_host_abort_msgq, &abandoned, K_NO_WAIT);
         return ret;
     }
@@ -2543,11 +2543,11 @@ static void gateway_host_abort_work_handler(struct k_work *work)
     struct app_gateway_command_ingress_item item;
 
     ARG_UNUSED(work);
+    dwm3000_driver_clear_receive_abort();
     while (k_msgq_get(&gateway_host_abort_msgq, &item, K_NO_WAIT) == 0) {
         int ret;
 
-        gateway_observe_host_stage(&item.packet,
-                                   item.command_id,
+        gateway_observe_host_stage(&item.packet, item.command_id,
                                    GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING);
         (void)gateway_host_command_cancel_pending_surveys();
         ret = gateway_route_host_packet(
@@ -2694,8 +2694,8 @@ static void gateway_host_command_work_handler(struct k_work *work)
             return;
         }
         gateway_host_command_retry_pending = true;
-        ret = k_work_reschedule(&gateway_host_command_retry_work,
-                                K_MSEC(delay_ms));
+        ret = mesh_route_owner_work_reschedule(
+            &gateway_host_command_retry_work, K_MSEC(delay_ms));
         if (ret < 0) {
             gateway_host_command_retry_pending = false;
             gateway_host_command_schedule_failed(NULL, ret);

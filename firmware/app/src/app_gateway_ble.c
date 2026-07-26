@@ -2114,8 +2114,8 @@ int gateway_begin_command_result_wait_for(const struct proto_packet *command,
         return ret == PROTO_ERR_MALFORMED ? -EBUSY : mesh_errno_from_proto(ret);
     }
 
-    (void)k_work_reschedule(&gateway_command_result_timeout_work,
-                            K_MSEC(timeout_ms));
+    (void)mesh_route_owner_work_reschedule(
+        &gateway_command_result_timeout_work, K_MSEC(timeout_ms));
     return 0;
 }
 

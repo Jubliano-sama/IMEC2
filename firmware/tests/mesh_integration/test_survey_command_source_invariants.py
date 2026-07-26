@@ -185,7 +185,9 @@ assert re.search(
 ), "BLE abort ingress must bypass the safe-boundary command submitter"
 
 survey_worker = function_body(ANCHOR, "gateway_survey_work_handler")
-deadline_check = survey_worker.index("gateway_survey_operation_deadline_ms")
+deadline_check = survey_worker.index(
+    "gateway_survey_machine_operation_deadline_ms("
+)
 pair_planning = survey_worker.index("survey_gateway_plan_pairs(")
 assert deadline_check < pair_planning, (
     "the stored operation deadline must win before collection can be closed "

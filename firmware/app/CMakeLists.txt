@@ -411,7 +411,8 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
     src/app_gateway_survey_observability.c
-    src/app_gateway_survey_round.c
+    src/app_gateway_survey_terminal.c
+    ../src/gateway_survey_machine.c
     src/app_gateway_collection_eack.c
     src/app_gateway_eack_retry.c
     src/app_gateway_eack_policy.c
@@ -447,6 +448,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_event_retry.c
     src/app_mesh_route_request_policy.c
     src/app_mesh_route_wait_tx.c
+    src/app_mesh_route_owner_queue.c
     src/app_mesh_rf_retry.c
     src/app_mesh_gateway_ack_policy.c
     src/app_mesh_result_handoff.c

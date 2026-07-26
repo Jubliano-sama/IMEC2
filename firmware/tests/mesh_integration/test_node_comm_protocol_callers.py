@@ -56,6 +56,9 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         cls.report_route_control = (
             APP_SRC / "app_mesh_report_route_control.inc"
         ).read_text(encoding="utf-8")
+        cls.gateway_survey_machine = (
+            ROOT / "src" / "gateway_survey_machine.c"
+        ).read_text(encoding="utf-8")
 
     def test_protocol_callers_do_not_use_synchronous_delivery_or_path_apis(self):
         forbidden = (
@@ -344,6 +347,10 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         survey_terminal = function_body(
             self.anchor, "gateway_survey_wait_for_discovery_collection"
         )
+        survey_machine_terminal = function_body(
+            self.gateway_survey_machine,
+            "gateway_survey_machine_note_discovery_terminal",
+        )
 
         for body in (survey, submit):
             self.assertIn("app_node_comm_submit_delivery(", body)
@@ -360,14 +367,24 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         )
         self.assertIn("GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE", table)
 
-        for body in (assignment_terminal, survey_terminal):
-            self.assertIn("app_node_comm_take_delivery_event_for(", body)
-            self.assertIn("NODE_COMM_TERMINAL_DELIVERED", body)
+        self.assertIn("app_node_comm_take_delivery_event_for(", assignment_terminal)
+        self.assertIn("NODE_COMM_TERMINAL_DELIVERED", assignment_terminal)
         self.assertIn("gateway_discovery_assignment_window_ms_locked()", assignment_terminal)
-        self.assertIn("gateway_survey_collection_deadline_ms", survey_terminal)
+
+        self.assertIn("app_node_comm_take_delivery_event_for(", survey_terminal)
         self.assertIn(
-            "k_uptime_get_32() + gateway_survey_collection_duration_ms",
+            "gateway_survey_machine_note_discovery_terminal(",
             survey_terminal,
+        )
+        self.assertIn("gateway_survey_machine_collection_drive(", survey_terminal)
+        self.assertIn("NODE_COMM_TERMINAL_DELIVERED", survey_machine_terminal)
+        self.assertIn(
+            "gateway_survey_machine_add_u64(now_ms",
+            survey_machine_terminal,
+        )
+        self.assertIn(
+            "machine->collection_duration_ms",
+            survey_machine_terminal,
         )
         self.assertNotIn(
             "command_origin_ms + collection_delay_ms",
@@ -525,7 +542,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertIn("!gateway_survey_transaction.active.request_delivery_terminal",
                       finish)
         self.assertIn("if (gateway_survey_cleanup_pending())", finish)
-        self.assertIn("k_work_reschedule(", finish)
+        self.assertIn("mesh_route_owner_work_reschedule(", finish)
         self.assertIn("else {", finish)
         self.assertIn("k_work_cancel_delayable(&gateway_survey_work)", finish)
         self.assertIn("gateway_survey_cleanup_pending()", admission)
@@ -596,18 +613,20 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         finalize = bodies["gateway_survey_finalize_pair_observation"]
         finish = bodies["gateway_survey_auto_finish_status"]
         automatic = bodies["gateway_survey_auto_finish"]
+        reset = function_body(self.anchor, "gateway_survey_round_reset")
         self.assertNotIn("gateway_survey_auto_finish(", finalize)
         self.assertNotIn("gateway_survey_auto_finish_status(", finalize)
         self.assertEqual(1, automatic.count("gateway_survey_auto_finish_status("))
         self.assertEqual(1, finish.count("gateway_observe_survey_terminal("))
         self.assertLess(
-            finish.index("if (!gateway_survey_active)"),
+            finish.index("if (!gateway_survey_operation_active())"),
             finish.index("gateway_observe_survey_terminal("),
         )
         self.assertLess(
             finish.index("gateway_observe_survey_terminal("),
-            finish.index("gateway_survey_active = false"),
+            finish.index("gateway_survey_round_reset()"),
         )
+        self.assertIn("gateway_survey_machine_reset(", reset)
         self.assertIn(
             "GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL",
             bodies["gateway_survey_work_handler"],
@@ -630,8 +649,9 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             self.anchor, "gateway_survey_auto_finish_status"
         )
         deadline = re.search(
-            r"uptime_deadline_reached\s*\([^;]*?"
-            r"gateway_survey_operation_deadline_ms\s*\).*?"
+            r"if\s*\(\s*\(uint64_t\)k_uptime_get\(\)\s*>=\s*"
+            r"gateway_survey_machine_operation_deadline_ms\s*\([^)]*\)\s*\)"
+            r"\s*\{.*?"
             r"gateway_survey_auto_finish_status\s*\(\s*COMMAND_TIMEOUT\s*,\s*"
             r"GATEWAY_COMMAND_EVENT_REASON_TIMEOUT\s*\)",
             worker,
@@ -640,7 +660,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
 
         self.assertIsNotNone(deadline)
         self.assertLess(
-            worker.index("gateway_survey_operation_deadline_ms"),
+            worker.index("gateway_survey_machine_operation_deadline_ms("),
             worker.index("gateway_survey_finalize_pair_observation()"),
         )
         self.assertLess(

@@ -217,8 +217,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "ble_backpressure": "system_workqueue",
             "click_activity": "clicker_action",
             "anchor_survey_report": "anchor_uwb_scan",
-            "gateway_report_ingress": "system_workqueue",
-            "gateway_priority_control": "system_workqueue",
+            "gateway_report_ingress": "mesh_route",
+            "gateway_priority_control": "mesh_route",
         }
         lines = [f"DBG_STACK_BOOT preset={policy.preset} build={build.build_identity} epoch=1 uptime=1"]
         entries = []
@@ -297,6 +297,10 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertEqual(
             ["gateway_report_ingress", "gateway_priority_control", "ble_backpressure"],
             [item.kind for item in workload_policy["mesh_gateway"]],
+        )
+        self.assertEqual(
+            ["mesh_route", "mesh_route", "system_workqueue"],
+            [item.owner for item in workload_policy["mesh_gateway"]],
         )
         builds = [verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit) for policy in self.policies.values()]
         self.assertEqual([], [(build.preset, build.issues) for build in builds if build.issues])
@@ -781,6 +785,24 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                 {"main", "system_workqueue"},
                 roots[("dwm3000_sdk_port.c", function)],
             )
+        for source, function in (
+            ("app_anchor.c", "gateway_handle_survey_discovery_report"),
+            ("app_anchor.c", "gateway_survey_work_handler"),
+            ("app_anchor.c", "gateway_host_command_retry_work_handler"),
+            ("app_anchor.c", "gateway_host_command_work_handler"),
+            ("app_anchor.c", "gateway_host_abort_work_handler"),
+            ("app_gateway_ble.c", "gateway_command_result_timeout_handler"),
+            ("app_stack_workload_diag.c",
+             "app_stack_workload_diag_gateway_report_cycle"),
+            ("app_stack_workload_diag.c",
+             "app_stack_workload_diag_gateway_control_admit"),
+            ("app_stack_workload_diag.c",
+             "app_stack_workload_diag_gateway_control_sample"),
+            ("app_stack_workload_diag.c",
+             "app_stack_workload_diag_gateway_control_release"),
+        ):
+            with self.subTest(source=source, function=function):
+                self.assertEqual({"mesh_route"}, roots[(source, function)])
 
         policy = self.policies["mesh_gateway"]
         evidence = verifier.BuildEvidence(self.root)
@@ -1014,7 +1036,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         log = self._typed_log(policy, build)
         forged = log.read_text(encoding="utf-8").replace(
-            "kind=gateway_report_ingress owner=system_workqueue",
+            "kind=gateway_report_ingress owner=mesh_route",
             "kind=gateway_report_ingress owner=bt_rx",
         )
         _, issues = verifier.parse_typed_transcript(forged, policy, build)

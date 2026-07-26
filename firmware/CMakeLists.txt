@@ -56,6 +56,7 @@ add_library(core
     src/status.c
     src/route.c
     src/survey.c
+    src/gateway_survey_machine.c
     src/survey_pair_planner.c
     src/survey_pair_round_runtime.c
     src/survey_round_control.c
@@ -744,10 +745,16 @@ add_test(NAME anchor_survey_round_barrier_source_invariants
 set_tests_properties(anchor_survey_round_barrier_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
 
-add_test(NAME gateway_survey_round_glue_source_invariants
+add_test(NAME gateway_survey_adapter_boundaries
     COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_survey_round_glue_source_invariants.py)
-set_tests_properties(gateway_survey_round_glue_source_invariants
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_survey_adapter_boundaries.py)
+set_tests_properties(gateway_survey_adapter_boundaries
+    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
+
+add_test(NAME gateway_survey_owner_queue_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_survey_owner_queue_source_invariants.py)
+set_tests_properties(gateway_survey_owner_queue_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing;static_analysis")
 
 add_test(NAME dwm3000_receive_source_invariants
@@ -811,15 +818,23 @@ add_test(NAME survey_pair_round_runtime
 set_tests_properties(survey_pair_round_runtime
     PROPERTIES LABELS "mesh_integration;hardware_models;survey")
 
-add_executable(test_app_gateway_survey_round
-    tests/test_app_gateway_survey_round.c
-    app/src/app_gateway_survey_round.c)
-target_include_directories(test_app_gateway_survey_round PRIVATE app/src)
-target_link_libraries(test_app_gateway_survey_round PRIVATE core)
-add_test(NAME app_gateway_survey_round
-    COMMAND test_app_gateway_survey_round)
-set_tests_properties(app_gateway_survey_round
-    PROPERTIES LABELS "mesh_integration;hardware_models;survey")
+add_executable(test_gateway_survey_machine
+    tests/test_gateway_survey_machine.c)
+target_link_libraries(test_gateway_survey_machine PRIVATE core)
+add_test(NAME gateway_survey_machine
+    COMMAND test_gateway_survey_machine)
+set_tests_properties(gateway_survey_machine PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;communication;timing;state")
+
+add_executable(test_app_gateway_survey_terminal
+    tests/test_app_gateway_survey_terminal.c
+    app/src/app_gateway_survey_terminal.c)
+target_include_directories(test_app_gateway_survey_terminal PRIVATE app/src)
+target_link_libraries(test_app_gateway_survey_terminal PRIVATE core)
+add_test(NAME app_gateway_survey_terminal
+    COMMAND test_app_gateway_survey_terminal)
+set_tests_properties(app_gateway_survey_terminal PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;state")
 
 add_executable(test_survey_completion_policy
     tests/test_survey_completion_policy.c)
@@ -1421,6 +1436,12 @@ add_test(NAME repository_truth_self_test
 set_tests_properties(repository_truth_self_test
     PROPERTIES LABELS "repository;static_analysis")
 
+add_test(NAME mesh_contract_traceability
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_contract_traceability.py)
+set_tests_properties(mesh_contract_traceability
+    PROPERTIES LABELS "repository;static_analysis;documentation;protocol")
+
 add_test(NAME architecture_boundaries
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_architecture_boundaries.py)
@@ -1485,7 +1506,8 @@ set_property(TEST
     survey_active_generation_source_invariants
     survey_pair_control_lifecycle_source_invariants
     anchor_survey_round_barrier_source_invariants
-    gateway_survey_round_glue_source_invariants
+    gateway_survey_adapter_boundaries
+    gateway_survey_owner_queue_source_invariants
     survey_command_source_invariants
     app_node_comm_gateway_route_refresh
     mesh_direct_probe_recovery_scenarios
@@ -1509,7 +1531,8 @@ set_property(TEST
     survey_pair_lease
     survey_gateway_transaction
     survey_pair_round_runtime
-    app_gateway_survey_round
+    gateway_survey_machine
+    app_gateway_survey_terminal
     mesh_result_grant_retry_scenarios
     mesh_result_custody_rf_scenarios
     gateway_collection_eack

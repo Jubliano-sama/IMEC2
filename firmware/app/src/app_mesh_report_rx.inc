@@ -2250,14 +2250,9 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     atomic_set(&mesh_transport_paused_state, 0);
     app_mesh_rx_handoff_reset(&mesh_rx_handoff);
     app_mesh_paused_delivery_reset(&mesh_paused_delivery);
-#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-    k_work_queue_start(&mesh_route_work_q,
-                       mesh_route_work_q_stack,
-                       K_THREAD_STACK_SIZEOF(mesh_route_work_q_stack),
-                       MESH_ROUTE_WORKQUEUE_PRIORITY,
-                       &mesh_route_work_q_config);
-    gateway_control_config.priority_work_queue = &mesh_route_work_q;
-#endif
+    mesh_route_owner_work_queue_start();
+    gateway_control_config.priority_work_queue =
+        mesh_route_owner_work_queue();
     app_node_comm_gateway_control_init(&gateway_control_config);
     app_node_comm_gateway_route_refresh_init(&route_refresh_config,
                                              (uint32_t)DEVICE_ID);

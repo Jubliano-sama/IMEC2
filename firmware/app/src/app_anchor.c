@@ -11,8 +11,8 @@
 #include "app_discovery_assignment_stack.h"
 #include "app_gateway_ble.h"
 #include "app_gateway_assignment_publisher.h"
-#include "app_gateway_survey_round.h"
 #include "app_gateway_survey_observability.h"
+#include "app_gateway_survey_terminal.h"
 #include "app_gateway_command_ingress.h"
 #include "app_gateway_command_lifecycle.h"
 #include "app_high_debug.h"
@@ -32,6 +32,7 @@
 #include "dwm3000_driver.h"
 #include "discovery_assignment.h"
 #include "gateway_command.h"
+#include "gateway_survey_machine.h"
 #include "mesh.h"
 #include "mesh_relay.h"
 #include "protocol.h"
@@ -231,20 +232,10 @@ static bool anchor_reboot_pending;
 static uint32_t anchor_reboot_deadline_ms;
 static bool anchor_scan_recovery_gap_requested;
 static struct survey_gateway_context gateway_survey_context;
-static bool gateway_survey_active;
-static uint32_t gateway_survey_operation_deadline_ms;
-static uint32_t gateway_survey_discovery_delivery_handle;
-static uint32_t gateway_survey_collection_deadline_ms;
-static uint32_t gateway_survey_collection_emission_deadline_ms;
-static uint32_t gateway_survey_collection_duration_ms;
-static uint16_t gateway_survey_expected_node_count;
 static uint8_t gateway_survey_max_pair_reruns =
     OPERATION_POLICY_PAIR_DEFAULT_MAX_RERUNS;
 static uint8_t gateway_survey_max_parallel_pairs =
     OPERATION_POLICY_PAIR_DEFAULT_MAX_PARALLEL_PAIRS;
-static bool gateway_survey_collection_window_armed;
-static bool gateway_survey_collection_pending;
-static bool gateway_survey_expected_node_count_present;
 static struct k_work_delayable gateway_survey_work;
 static struct survey_gateway_auto_context gateway_survey_auto;
 static struct proto_packet gateway_survey_pending_command;
@@ -284,7 +275,7 @@ struct gateway_survey_result_preflight {
     bool valid;
 };
 static struct survey_gateway_transaction gateway_survey_transaction;
-static struct app_gateway_survey_round gateway_survey_round;
+static struct gateway_survey_machine survey_machine;
 static struct gateway_survey_cleanup_delivery gateway_survey_cleanup;
 static struct gateway_survey_result_preflight gateway_survey_result_preflight;
 static uint32_t gateway_survey_transaction_client_token;
@@ -293,8 +284,6 @@ static enum gateway_command_event_reason gateway_survey_finish_pending_reason;
 static bool gateway_survey_finish_pending;
 static uint32_t gateway_survey_round_go_delivery_handle;
 static uint32_t gateway_survey_round_observation_deadline_ms;
-static size_t gateway_survey_round_cleanup_lane_index;
-static bool gateway_survey_round_cleanup_lane_valid;
 #endif
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
 K_MSGQ_DEFINE(gateway_host_command_msgq,
@@ -399,7 +388,6 @@ static void gateway_survey_auto_note_command_result(const struct proto_packet *c
 static void gateway_survey_auto_note_command_timeout(const struct proto_packet *command,
                                                      enum command_id command_id);
 #if DEVICE_ROLE == ROLE_GATEWAY
-static bool gateway_survey_round_active(void);
 static bool gateway_survey_round_drive(void);
 static int gateway_survey_round_note_sample(uint64_t reporter_id,
                                             const struct survey_sample *sample);
