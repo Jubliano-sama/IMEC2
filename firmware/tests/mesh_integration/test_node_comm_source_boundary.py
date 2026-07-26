@@ -417,6 +417,31 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertNotIn("if (backend_rf_started)", report[send:complete])
         self.assertNotIn("max_attempt", report[retransmit:complete])
 
+        retransmit_action = report.rindex(
+            "bool direct_gateway_retransmit", 0, retransmit
+        )
+        direct_select = report.index(
+            "direct_gateway_retransmit =", retransmit_action
+        )
+        scheduled_select = report.index(
+            "mesh_relay_require_channel9_tx_event", direct_select
+        )
+        direct_send = report.index(
+            "mesh_send_direct_gateway_payload_and_wait_ack", retransmit
+        )
+        self.assertLess(direct_select, scheduled_select)
+        self.assertLess(direct_select, retransmit)
+        self.assertLess(retransmit, direct_send)
+        self.assertLess(direct_send, send)
+        self.assertIn(
+            "debug_next_hop == GATEWAY_ID",
+            report[direct_select:scheduled_select],
+        )
+        self.assertIn(
+            '"retransmit-direct-gateway"',
+            report[direct_send:send],
+        )
+
     def test_gateway_due_kick_keeps_rf_worker_on_mesh_route_queue(self):
         facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
         report = read_composed_source(APP_SRC / "app_mesh_report.c")

@@ -2073,6 +2073,7 @@ after_gateway_ack:
         struct mesh_outbound *retransmit = &mesh_result_action_tx;
         struct mesh_event_plan plan = {0};
         bool channel9_replanned = false;
+        bool direct_gateway_retransmit = false;
         uint32_t retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS;
         int ret = PROTO_OK;
 
@@ -2088,11 +2089,30 @@ after_gateway_ack:
                                                           &debug_next_hop);
             mesh_fill_channel5_requirements(&requirements);
             (void)mesh_expire_channel9_timings(now_ms, "retransmit");
-            ret = mesh_relay_require_channel9_tx_event(&mesh_runtime,
-                                                       retransmit->next_hop_id,
-                                                       &requirements,
-                                                       now_ms,
-                                                       &plan);
+            direct_gateway_retransmit =
+                IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+                DEVICE_ROLE != ROLE_GATEWAY &&
+                retransmit->packet.dst_id == GATEWAY_ID &&
+                debug_select_ret == PROTO_OK &&
+                debug_next_hop == GATEWAY_ID;
+            if (direct_gateway_retransmit) {
+                plan.action = MESH_EVENT_PLAN_START;
+                plan.start_ms = now_ms;
+                plan.window_ms = MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS;
+                plan.end_ms = now_ms + plan.window_ms;
+                ret = PROTO_OK;
+                status_debug_printf(
+                    "DBG_RETRANSMIT_DIRECT_GW seq=%u now=%u\n",
+                    retransmit->packet.seq,
+                    now_ms);
+            } else {
+                ret = mesh_relay_require_channel9_tx_event(
+                    &mesh_runtime,
+                    retransmit->next_hop_id,
+                    &requirements,
+                    now_ms,
+                    &plan);
+            }
             if (ret != PROTO_ERR_STALE) {
                 mesh_event_note_plan_action(&mesh_event_stats, plan.action);
             }
@@ -2104,7 +2124,7 @@ after_gateway_ack:
                                            now_ms);
             if (ret == PROTO_OK) {
                 retransmit->radio_channel = MESH_EVENT_CHANNEL;
-                channel9_replanned = true;
+                channel9_replanned = !direct_gateway_retransmit;
             } else if (ret == PROTO_ERR_BUSY) {
                 bool policy_deferred =
                     mesh_event_plan_is_policy_deferral(plan.action);
@@ -2294,11 +2314,22 @@ after_gateway_ack:
                                     mesh_runtime.pending.state);
                 send_ret = backend_ret;
             } else {
-                send_ret = mesh_send_outbound_with_release(
-                    retransmit,
-                    "retransmit",
-                    MESH_RADIO_RELEASE_STANDBY,
-                    &backend_rf_started);
+                if (direct_gateway_retransmit) {
+                    send_ret = mesh_send_direct_gateway_payload_and_wait_ack(
+                        retransmit,
+                        "retransmit-direct-gateway",
+                        &plan,
+                        plan.start_ms,
+                        plan.start_ms,
+                        false,
+                        &backend_rf_started);
+                } else {
+                    send_ret = mesh_send_outbound_with_release(
+                        retransmit,
+                        "retransmit",
+                        MESH_RADIO_RELEASE_STANDBY,
+                        &backend_rf_started);
+                }
                 account_ret = app_node_comm_complete_backend_attempt(
                     &retransmit->packet, backend_rf_started);
 

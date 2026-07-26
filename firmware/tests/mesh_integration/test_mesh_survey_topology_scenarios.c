@@ -681,6 +681,7 @@ static int test_gateway_semantic_rejection_retry_and_sticky_ack(void)
 
     REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
+    REQUIRE(world.connection_count == 0u);
     air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
     window_end_us = air_start_us + UINT64_C(50000);
     REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
@@ -699,6 +700,7 @@ static int test_gateway_semantic_rejection_retry_and_sticky_ack(void)
 
     REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
+    REQUIRE(world.connection_count == 0u);
     air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
     window_end_us = air_start_us + UINT64_C(50000);
     REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
