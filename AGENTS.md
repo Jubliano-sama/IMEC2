@@ -163,9 +163,9 @@ no-growth debt ceiling, not approval for the existing monoliths.
 `Documentation/CURRENT.json` is the machine-readable current-document source.
 Do not hardcode another current version elsewhere. Cross-reference-only edits
 may update the current file in place. Content changes to a versioned document
-create the next patch file and add a dated changelog entry; current examples
-advance `0.6.6.1` to `0.6.6.2` and `0.3.12.3` to `0.3.12.4`. A larger
-major/minor change is permitted only when the user explicitly requests it.
+create the next patch file and add a dated changelog entry; for example,
+`1.2.3` advances to `1.2.4`. A larger major/minor change is permitted only when
+the user explicitly requests it.
 
 State-machine diagrams stay reader-level: use behavioral labels, keep
 implementation names in prose, and make bounded loops clear about whether they
