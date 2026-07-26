@@ -335,7 +335,7 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             # Typed qualification records use their dedicated RTT channel;
             # keep the lossy deferred application log ring compact enough to
             # preserve the gateway's required static RAM reserve.
-            "CONFIG_LOG_BUFFER_SIZE=3072\n"
+            "CONFIG_LOG_BUFFER_SIZE=2048\n"
             # The exact compiler chain for gateway assignment-result encoding
             # is 3152 bytes; retain the required 1024-byte runtime margin plus
             # one alignment step without weakening the global RAM-headroom gate.

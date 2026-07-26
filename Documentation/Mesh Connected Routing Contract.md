@@ -1042,7 +1042,10 @@ start rejected because that handoff now owns the radio is itself a safe
 boundary: the gateway schedules the pending control there and leaves receive
 rearming to the control completion path. Retrying the receive window while the
 handoff gate remains closed would strand both the control and all later host
-commands.
+commands. The scheduled-control owner also retains a short independent
+liveness retry while it waits for scan release, because a receive window can
+end normally in the same instant that its abort is requested and therefore
+produce no aborted-receive callback.
 
 The same continuous receiver is a logical 30-second receive horizon, not a
 30-second system-workqueue lease. Each driver receive invocation is capped at a

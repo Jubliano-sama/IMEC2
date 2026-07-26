@@ -602,6 +602,7 @@ static void app_node_comm_delivery_due_kick_handler(struct k_work *work)
         return;
     }
     now_ms = app_node_comm_now_ms();
+    (void)app_node_comm_service_policy_locked(now_ms);
     if (!node_comm_backend_ready || node_comm_delivery_backend_active ||
         node_comm_state(&node_comm_policy) != NODE_COMM_RUNNING ||
         !node_comm_next_service_due_ms(&node_comm_policy, now_ms, &due_ms)) {
@@ -629,7 +630,19 @@ static void app_node_comm_delivery_due_kick_handler(struct k_work *work)
             &wait_for_scan_boundary);
     }
 
-    if (ret == 0 && !wait_for_scan_boundary) {
+    if (ret == 0 && wait_for_scan_boundary) {
+        /*
+         * The receive call can finish normally just after its abort flag is
+         * raised. In that race there is no aborted-RX callback to publish the
+         * safe boundary, while the pending gate correctly prevents scan
+         * rearm. Keep an independent liveness owner so the first retry after
+         * scan release schedules the frozen delivery.
+         */
+        keep_pending_for_retry = true;
+        (void)k_work_reschedule(
+            &node_comm_delivery_due_kick_work,
+            K_MSEC(NODE_COMM_GATEWAY_DUE_KICK_RETRY_MS));
+    } else if (ret == 0) {
         /* A host command already awaiting a boundary keeps queue priority. */
         ret = mesh_gateway_command_priority_safe_boundary();
         if (ret < 0) {

@@ -1483,6 +1483,93 @@ static void test_gateway_due_kick_aborts_active_scan_at_safe_boundary(void)
     assert(restart_scan_calls == 1u);
 }
 
+static void test_gateway_due_kick_recovers_missed_scan_boundary_callback(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(15u);
+    struct k_work_delayable *due_kick;
+    struct k_work_delayable *delivery_work;
+    uint32_t handle;
+
+    reset_fixture();
+    gateway_scan_active = true;
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        1000u,
+        80u,
+        &handle) == 0);
+    due_kick = last_rescheduled_work;
+    assert(due_kick != NULL);
+
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_pending);
+    assert(gateway_delivery_due_begin_calls == 1u);
+    assert(receive_abort_calls == 1u);
+    assert(mesh_route_reschedule_calls == 0u);
+    assert(last_rescheduled_work == due_kick);
+    assert(last_rescheduled_delay_ms == 1);
+
+    /*
+     * Model continuous RX ending normally in the request/timeout race. It
+     * releases scan ownership but never invokes the usual safe-boundary hook.
+     */
+    gateway_scan_active = false;
+    due_kick->work.handler(&due_kick->work);
+    assert(gateway_delivery_due_begin_calls == 1u);
+    assert(gateway_priority_safe_boundary_calls == 1u);
+    assert(mesh_route_reschedule_calls == 1u);
+    assert(gateway_delivery_due_pending);
+
+    delivery_work = last_rescheduled_work;
+    assert(delivery_work != due_kick);
+    delivery_work->work.handler(&delivery_work->work);
+    assert(try_flood_calls == 1u);
+    assert(!gateway_delivery_due_pending);
+    assert(restart_scan_calls == 1u);
+}
+
+static void test_gateway_due_kick_missed_boundary_stress(void)
+{
+    for (uint32_t cycle = 0u; cycle < 512u; cycle++) {
+        struct mesh_outbound envelope =
+            delivery_envelope((uint16_t)(150u + cycle));
+        struct k_work_delayable *due_kick;
+        struct k_work_delayable *delivery_work;
+        uint32_t handle;
+
+        reset_fixture();
+        gateway_scan_active = true;
+        assert(app_node_comm_submit_delivery(
+            &envelope,
+            NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+            10000u,
+            900u + cycle,
+            &handle) == 0);
+        due_kick = last_rescheduled_work;
+        assert(due_kick != NULL);
+        due_kick->work.handler(&due_kick->work);
+
+        for (uint32_t wait = 0u; wait < cycle % 9u; wait++) {
+            due_kick->work.handler(&due_kick->work);
+            assert(gateway_delivery_due_pending);
+            assert(gateway_delivery_due_begin_calls == 1u);
+            assert(receive_abort_calls == 1u);
+            assert(mesh_route_reschedule_calls == 0u);
+        }
+
+        gateway_scan_active = false;
+        due_kick->work.handler(&due_kick->work);
+        assert(gateway_priority_safe_boundary_calls == 1u);
+        assert(mesh_route_reschedule_calls == 1u);
+        delivery_work = last_rescheduled_work;
+        assert(delivery_work != due_kick);
+        delivery_work->work.handler(&delivery_work->work);
+        assert(try_flood_calls == 1u);
+        assert(!gateway_delivery_due_pending);
+        assert(restart_scan_calls == 1u);
+    }
+}
+
 static void test_gateway_due_kick_retries_behind_host_priority(void)
 {
     struct mesh_outbound envelope = delivery_envelope(14u);
@@ -2994,6 +3081,8 @@ int main(void)
     test_delivery_schedule_uses_role_queue_path();
     if (DEVICE_ROLE == ROLE_GATEWAY) {
         test_gateway_due_kick_aborts_active_scan_at_safe_boundary();
+        test_gateway_due_kick_recovers_missed_scan_boundary_callback();
+        test_gateway_due_kick_missed_boundary_stress();
         test_gateway_due_kick_retries_behind_host_priority();
         test_gateway_due_kick_retries_transient_route_queue_failure();
         test_gateway_due_gate_cancellation_releases_scan_without_rf();
