@@ -259,6 +259,26 @@ assert_ordered(
     "app_gateway_survey_round_note_control_failure(",
     "&lane_index",
     "gateway_survey_round_cleanup_lane_index = lane_index",
+    "gateway_survey_round_cleanup_lane_valid = true",
+)
+
+retire_failed_control = function_body(
+    GLUE, "gateway_survey_round_retire_failed_control_lane"
+)
+assert_ordered(
+    retire_failed_control,
+    "gateway_survey_round_cleanup_lane_valid",
+    "app_gateway_survey_round_lane(",
+    "SURVEY_PAIR_ROUND_LANE_CLEANUP",
+    "SURVEY_PAIR_ROUND_LANE_FAILED",
+    "gateway_survey_round_emit_lane_terminal(lane, false)",
+    "gateway_survey_round_cleanup_lane_valid = false",
+)
+assert_ordered(
+    drive,
+    "gateway_survey_round_retire_failed_control_lane()",
+    "gateway_survey_round_active()",
+    "gateway_survey_round_advance_completed_batch()",
 )
 
 finalize = function_body(GLUE, "gateway_survey_round_finalize_observation")

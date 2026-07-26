@@ -291,6 +291,32 @@ static void test_cleanup_completed_batch_advance_stress(void)
         assert(app_gateway_survey_round_lane_count(&round) == 1u);
         assert(app_gateway_survey_round_lane(&round, 0u)->reruns_started ==
                1u);
+        assert(app_gateway_survey_round_current_control(&round, &control) ==
+               PROTO_OK);
+        assert(app_gateway_survey_round_note_control_failure(
+                   &round,
+                   control.command_id,
+                   control.target_id,
+                   control.pair.survey_id,
+                   SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
+                   SURVEY_PAIR_ROUND_CLEANUP_RETRY,
+                   &failed_lane) == PROTO_OK);
+        assert(app_gateway_survey_round_note_cleanup_complete(
+                   &round,
+                   failed_lane,
+                   SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+        assert(app_gateway_survey_round_note_cleanup_complete(
+                   &round,
+                   failed_lane,
+                   SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
+        assert(app_gateway_survey_round_batch_complete(&round));
+        assert(app_gateway_survey_round_lane(&round, 0u)->state ==
+               SURVEY_PAIR_ROUND_LANE_FAILED);
+        assert(round.runtime.completed_success_count == 0u);
+        assert(round.runtime.completed_failure_count == 1u);
+        assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
+               PROTO_OK);
+        assert(complete);
     }
 }
 

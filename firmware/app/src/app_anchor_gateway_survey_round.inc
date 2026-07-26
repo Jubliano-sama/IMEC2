@@ -348,6 +348,33 @@ static bool gateway_survey_round_emit_lane_terminal(
     return true;
 }
 
+static bool gateway_survey_round_retire_failed_control_lane(void)
+{
+    const struct survey_pair_round_lane *lane;
+
+    if (!gateway_survey_round_cleanup_lane_valid) {
+        return true;
+    }
+    lane = app_gateway_survey_round_lane(
+        &gateway_survey_round,
+        gateway_survey_round_cleanup_lane_index);
+    if (lane == NULL) {
+        gateway_survey_auto_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return false;
+    }
+    if (lane->state == SURVEY_PAIR_ROUND_LANE_CLEANUP) {
+        return true;
+    }
+    if (lane->state == SURVEY_PAIR_ROUND_LANE_FAILED &&
+        !gateway_survey_round_emit_lane_terminal(lane, false)) {
+        return false;
+    }
+    gateway_survey_round_cleanup_lane_valid = false;
+    return true;
+}
+
 static bool gateway_survey_round_advance_completed_batch(void)
 {
     bool complete = false;
@@ -451,10 +478,9 @@ static void gateway_survey_round_fail_current_control(
         gateway_command_survey_failure_reason_merge(
             gateway_survey_terminal_failure_reason,
             failure_reason);
-    if (cleanup_mask != 0u) {
-        gateway_survey_round_cleanup_lane_index = lane_index;
-        gateway_survey_round_cleanup_lane_valid = true;
-    } else {
+    gateway_survey_round_cleanup_lane_index = lane_index;
+    gateway_survey_round_cleanup_lane_valid = true;
+    if (cleanup_mask == 0u) {
         survey_gateway_transaction_pair_complete(
             &gateway_survey_transaction,
             true,
@@ -578,15 +604,9 @@ static void gateway_survey_round_note_cleanup_peer(uint8_t peer_mask)
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return;
     }
-    {
-        const struct survey_pair_round_lane *lane =
-            app_gateway_survey_round_lane(
-                &gateway_survey_round,
-                gateway_survey_round_cleanup_lane_index);
-
-        if (lane != NULL && lane->state != SURVEY_PAIR_ROUND_LANE_CLEANUP) {
-            gateway_survey_round_cleanup_lane_valid = false;
-        }
+    if (!gateway_survey_round_retire_failed_control_lane()) {
+        (void)k_work_reschedule(&gateway_survey_work,
+                                K_MSEC(GATEWAY_BLE_TX_RETRY_MS));
     }
 }
 
@@ -597,6 +617,9 @@ static bool gateway_survey_round_drive(void)
     struct node_comm_terminal_event event;
     int ret;
 
+    if (!gateway_survey_round_retire_failed_control_lane()) {
+        return true;
+    }
     if (!gateway_survey_round_active()) {
         if (!gateway_survey_emit_collection_telemetry()) {
             return true;
