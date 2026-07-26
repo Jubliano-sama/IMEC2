@@ -12,6 +12,8 @@ test/
 tools/*
 !tools/
 !tools/mesh_ble_route_monitor.py
+!tools/gateway_gui/
+!tools/gateway_gui/**
 /zephyr/
 __pycache__/
 *.py[cod]

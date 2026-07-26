@@ -4,7 +4,7 @@ This document is the primary map for understanding and navigating the IMEC2 code
 
 **First actions for any task:**
 1. Read `AGENTS.md` (rules, role semantics, required tests, "do not edit" zones).
-2. Read the **entire `AGENT_KNOWN_ISSUES.md`** (mandatory before adding anything new, refactoring, or file ops — contains one-line tool issues and bug lessons from prior agents).
+2. Run `python3 firmware/scripts/agent_preflight.py` with every planned path and operation; it prints current rules first and bounded, non-authoritative history matches.
 3. Read the relevant section of `Documentation/Mesh Connected Routing Contract.md` (authoritative behavioral contract).
 4. Use this CODEMAP to find the right files.
 
@@ -36,7 +36,7 @@ The system is **UWB-owned**:
   - Gateway-to-PC edge only (connected GATT with COBS-framed packets).
 - No UWB traffic goes over BLE.
 
-Core invariants live in the [Mesh Connected Routing Contract](Documentation/Mesh Connected Routing Contract.md).
+Core invariants live in the [Mesh Connected Routing Contract](<Documentation/Mesh Connected Routing Contract.md>).
 
 ### Roles & Build Presets (Production vs Everything Else)
 
@@ -71,8 +71,8 @@ IMEC2/                          # West workspace root
 │   └── README.md
 ├── Documentation/              # Architecture, contracts, audits
 │   ├── Mesh Connected Routing Contract.md   # ← Authoritative behavioral contract
-│   ├── UWB+BLE Architecture 0.6.6.1.md      # Current architecture
-│   ├── UWB+BLE Protocols and Strategies 0.3.12.3.md
+│   ├── UWB+BLE Architecture 0.6.6.2.md      # Current architecture
+│   ├── UWB+BLE Protocols and Strategies 0.3.12.4.md
 │   ├── HARDWARE_BRINGUP_DEBUG.md
 │   ├── ... (various notes & requirements)
 │   └── ...                     # Superseded versions remain in Git history
@@ -164,8 +164,8 @@ ctest --test-dir firmware/build -L hardware_models --output-on-failure
 
 ### Documentation Hierarchy (Current Versions Only)
 - Contract (highest authority for mesh behavior): `Mesh Connected Routing Contract.md`
-- Architecture: `UWB+BLE Architecture 0.6.6.1.md`
-- Protocols: `UWB+BLE Protocols and Strategies 0.3.12.3.md`
+- Architecture: [UWB+BLE Architecture 0.6.6.2.md](<Documentation/UWB+BLE Architecture 0.6.6.2.md>)
+- Protocols: [UWB+BLE Protocols and Strategies 0.3.12.4.md](<Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md>)
 - Machine-readable current set: `Documentation/CURRENT.json`
 - Bring-up: `HARDWARE_BRINGUP_DEBUG.md`
 - Superseded versions remain available in Git history.
@@ -190,7 +190,7 @@ ctest --test-dir firmware/build -L hardware_models --output-on-failure
 → The test file itself + `firmware/sim/mesh_sim.c`. The simulator drives the real core modules directly.
 
 **Understand power / duty cycle assumptions**
-→ Architecture 0.6.6.1 + `firmware/README.md` (the big table) + `app_radio_low_power_policy.h`.
+→ [Architecture 0.6.6.2](<Documentation/UWB+BLE Architecture 0.6.6.2.md>) + `firmware/README.md` (the big table) + `app_radio_low_power_policy.h`.
 
 ---
 

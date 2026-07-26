@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "documents": {
-    "mesh_contract": "Documentation/Mesh Connected Routing Contract.md",
-    "architecture": "Documentation/UWB+BLE Architecture 0.6.6.1.md",
-    "protocol": "Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md",
+    "contract": "Documentation/Mesh Connected Routing Contract.md",
+    "architecture": "Documentation/UWB+BLE Architecture 0.6.6.2.md",
+    "protocol": "Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md",
     "runtime_flow": "Documentation/Mesh Connected Routing Walkthrough.md",
     "development": "Documentation/Development and Deployment Guide.md",
     "architecture_reset": "Documentation/Architecture Reset Plan.md"
@@ -33,12 +33,12 @@
   "required_cross_references": {
     "architecture": [
       "protocol",
-      "mesh_contract",
+      "contract",
       "runtime_flow"
     ],
     "protocol": [
       "architecture",
-      "mesh_contract",
+      "contract",
       "runtime_flow"
     ]
   },

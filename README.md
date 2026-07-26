@@ -34,11 +34,11 @@ The design is **UWB-first**. Channel 5 handles wake, discovery, and click/rangin
 - **[AGENTS.md](AGENTS.md)** — Concise repository safety, ownership, and verification rules. **Read this first for any code change**, then run its indexed issue preflight for the planned paths and operations.
 - **[CODEMAP.md](CODEMAP.md)** — Detailed navigation guide for the codebase (this is the map you're looking for).
 - **[firmware/README.md](firmware/README.md)** — Long-form technical description of the firmware implementation, hardware assumptions, and bring-up checklist.
-- **[Documentation/Mesh Connected Routing Contract.md](Documentation/Mesh Connected Routing Contract.md)** — The high-level behavioral contract. Changes that contradict it require explicit permission.
-- **[Documentation/UWB+BLE Architecture 0.6.6.1.md](Documentation/UWB+BLE Architecture 0.6.6.1.md)** — Current system architecture.
-- **[Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md](Documentation/UWB+BLE Protocols and Strategies 0.3.12.3.md)** — Current protocol details.
-- **[Documentation/Development and Deployment Guide.md](Documentation/Development and Deployment Guide.md)** — Executable build, verification, flashing, and RTT workflow.
-- **[Documentation/Architecture Reset Plan.md](Documentation/Architecture Reset Plan.md)** — Accepted staged orchestration replacement and simplification decision.
+- **[Documentation/Mesh Connected Routing Contract.md](<Documentation/Mesh Connected Routing Contract.md>)** — The high-level behavioral contract. Changes that contradict it require explicit permission.
+- **[Documentation/UWB+BLE Architecture 0.6.6.2.md](<Documentation/UWB+BLE Architecture 0.6.6.2.md>)** — Current system architecture.
+- **[Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md](<Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md>)** — Current protocol details.
+- **[Documentation/Development and Deployment Guide.md](<Documentation/Development and Deployment Guide.md>)** — Executable build, verification, flashing, and RTT workflow.
+- **[Documentation/Architecture Reset Plan.md](<Documentation/Architecture Reset Plan.md>)** — Accepted staged orchestration replacement and simplification decision.
 
 ## Important Notes on Current State
 

@@ -1,5 +1,10 @@
 {
   "schema": 1,
+  "ledger_guard": {
+    "prefix_lines": 523,
+    "sha256": "0f5b1fa03b50f70b58d73277cf00b8ace57aea6942ad52f39d25afdc867b6057"
+  },
+  "history_policy": "Ledger matches are non-authoritative historical context. Fixed and explicitly superseded entries are hidden unless requested.",
   "global_rules": [
     {
       "id": "RULE-ROBUSTNESS-001",
@@ -14,7 +19,7 @@
     {
       "id": "RULE-CONCURRENCY-001",
       "severity": "critical",
-      "current_rule": "One serialized owner controls each radio, operation, queue record, and terminal transition; asynchronous callbacks must carry a generation and bounded deadline."
+      "current_rule": "Every new or migrated path must give each radio, operation, queue record, and terminal transition one serialized owner; frozen legacy paths remain unaudited architecture debt until migrated."
     }
   ],
   "issues": [
@@ -63,7 +68,6 @@
       "severity": "high",
       "topics": [
         "dwm3000",
-        "deployment",
         "testing"
       ],
       "path_globs": [
@@ -72,10 +76,9 @@
         "firmware/app/src/dwm3000*"
       ],
       "operations": [
-        "flash",
-        "rtt",
         "hil"
       ],
+      "match_topics": false,
       "current_rule": "Stage 1 paired HIL still needs raw DS-TWR geometry and plausible RANGE_OK evidence before qualification.",
       "source_fingerprint": "paired HIL still lacks raw DS-TWR geometry"
     },
@@ -93,6 +96,10 @@
       "operations": [
         "sanitizer"
       ],
+      "match_topics": false,
+      "applies_to": "Linux x86_64 host toolchain used by this repository checkout",
+      "verified_at": "2026-07-26",
+      "recheck": "Build and run the node-communication ThreadSanitizer fixture; confirm whether it reaches main.",
       "current_rule": "ThreadSanitizer cannot run in this host environment; use deterministic interleavings plus ASan and UBSan and do not claim TSan evidence.",
       "source_fingerprint": "ThreadSanitizer binaries compile on this host but abort before `main`"
     },
@@ -110,6 +117,10 @@
       "operations": [
         "native_sim"
       ],
+      "match_topics": false,
+      "applies_to": "Current IMEC2 Linux host without 32-bit libc development headers",
+      "verified_at": "2026-07-26",
+      "recheck": ".venv/bin/west build --pristine=always --no-sysbuild -s firmware/app/tests/mesh_persistence -b native_sim/native",
       "current_rule": "Use native_sim/native/64 for the persistence fixture because this host lacks 32-bit libc headers.",
       "source_fingerprint": "mesh-persistence native fixture must use `native_sim/native/64`"
     },
@@ -129,6 +140,10 @@
         "rtt",
         "probe"
       ],
+      "match_topics": false,
+      "applies_to": "pyOCD installed in the repository .venv on the current IMEC2 host",
+      "verified_at": "2026-07-26",
+      "recheck": ".venv/bin/pyocd list --help",
       "current_rule": "This pyOCD has no list --json support; parse the plain probe table and match the full probe ID.",
       "source_fingerprint": "This host's pyOCD `list` command does not support `--json`"
     },
@@ -148,6 +163,10 @@
         "rtt",
         "reset"
       ],
+      "match_topics": false,
+      "applies_to": "pyOCD pre-reset behavior with the current nRF52833 probe workflow",
+      "verified_at": "2026-07-26",
+      "recheck": "Capture an already-running target with pre-reset and verify reset-reason and boot-identity evidence.",
       "current_rule": "pyOCD pre-reset selects connection behavior but does not reset an already-running target; perform and verify an explicit reset when fresh boot identity is required.",
       "source_fingerprint": "`pyocd rtt -M pre-reset` selects the connection sequence"
     },
@@ -167,6 +186,7 @@
         "survey",
         "recover"
       ],
+      "match_topics": false,
       "current_rule": "A gateway running pre-fix firmware may retain an orphaned survey; recover it with the provisioning abort-survey command.",
       "source_fingerprint": "unprobed gateway can retain a pre-fix orphaned survey indefinitely"
     },
@@ -184,28 +204,12 @@
       "operations": [
         "preflight"
       ],
+      "match_topics": false,
+      "applies_to": "Codex tool-output rendering for this repository",
+      "verified_at": "2026-07-26",
+      "recheck": "Compare one full-ledger tool read with bounded line-counted chunks and verify no middle content is omitted.",
       "current_rule": "Use indexed preflight or bounded chunks; a single large tool output can omit the middle of the issue ledger.",
       "source_fingerprint": "Concatenating hundreds of issue-ledger lines into one tool call"
-    },
-    {
-      "id": "KI-DOC-FLATTEN-001",
-      "state": "active",
-      "severity": "high",
-      "topics": [
-        "documentation",
-        "survey",
-        "routing"
-      ],
-      "path_globs": [
-        "Documentation/UWB+BLE Architecture *",
-        "Documentation/UWB+BLE Protocols and Strategies *"
-      ],
-      "operations": [
-        "documentation",
-        "architecture"
-      ],
-      "current_rule": "Treat each current changelog plus the Mesh Contract as present truth until inherited contradictory body sections are flattened in a dedicated documentation stage.",
-      "source_fingerprint": "current architecture and protocol documents still retain inherited body text"
     }
   ]
 }

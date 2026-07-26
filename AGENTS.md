@@ -25,16 +25,19 @@ Before mutation, file operations, refactoring, builds, or hardware work:
    `--list-topics` for routing help. Rerun when the scope changes.
 
 `AGENT_CURRENT_ISSUES.json` is the curated present-tense overlay.
-`AGENT_KNOWN_ISSUES.md` is append-only history; do not reread all 500+ entries
-or infer current truth from a superseded fix. Append one concise line for a new
-annoying tool behavior, active gap, correction, or fix. Add or update the
-curated overlay when the finding remains active, unqualified, or
-environment-specific.
+`AGENT_KNOWN_ISSUES.md` is append-only history; use the indexed matches as
+non-authoritative context and never infer current truth from a superseded fix.
+Append one concise line for a new annoying tool behavior, active gap,
+correction, or fix. Add or update the curated overlay when the finding remains
+active, unqualified, or environment-specific. The executable critical rule
+IDs are `RULE-ROBUSTNESS-001`, `RULE-DEPLOYMENT-001`, and
+`RULE-CONCURRENCY-001`.
 
 ## Protected scope and code placement
 
-- Project code is under `firmware/`, documentation under `Documentation/`, and
-  host tools under `tools/`.
+- Project code is under `firmware/`, documentation under `Documentation/`,
+  repository automation under `firmware/scripts/`, and operator/GUI host tools
+  under `tools/`.
 - Do not edit `zephyr/`, `nrf/`, `modules/`, `nrfxlib/`, `bootloader/`, the
   DWM3000 vendor submodule, or `archive/old-dw1000-impl/` unless the task
   explicitly targets that dependency or historical reference.
@@ -86,15 +89,18 @@ and UBSan. ThreadSanitizer and LeakSanitizer are not valid evidence on this host
 Zephyr-facing changes must also pass:
 
 ```sh
-python3 firmware/scripts/verify_changes.py --exact-roles
+python3 firmware/scripts/verify_changes.py \
+  --exact-roles --compatibility-builds
 ```
 
 That builds fresh `mesh_clicker`, `mesh_anchor`, and `mesh_gateway` artifacts,
-runs their static stack gates, and executes the real Zephyr NVS persistence
-test on `native_sim/native/64`. During focused iteration, routing, scheduling,
-click priority, retries, BLE, watchdog, radio sleep/wake, SPI, airtime, or stack
-changes must run the relevant test plus both `mesh_integration` and
-`hardware_models`; the complete final entrypoint remains mandatory.
+runs their static stack gates, executes the real Zephyr NVS persistence test on
+`native_sim/native/64`, and compiles the supported legacy, bench-traffic, and
+representative first/last ML collection lines. During focused iteration,
+routing, scheduling, click priority, retries, BLE, watchdog, radio sleep/wake,
+SPI, airtime, or stack changes must run the relevant test plus both
+`mesh_integration` and `hardware_models`; the complete final entrypoint remains
+mandatory.
 
 The simulator preserves hardware constraints: a frame decodes only when its
 complete airtime fits a matching RX window; partial overlap fails; overlapping
@@ -117,11 +123,14 @@ change preserves. A contradiction requires explicit user permission plus a
 list of changed behavior, affected roles, removed invariants, compatibility,
 tests, and hardware checks before implementation.
 
-Long-running behavior has one serialized owner, immutable identity, generation,
-64-bit absolute deadline, actual RF-attempt accounting, independent liveness
-wake, and exactly one terminal result. Callbacks carry the generation and
-cannot mutate a later operation. One logical packet has one custody owner;
-policy callers cannot start parallel retry or terminal state machines.
+Every new or migrated long-running path must have one serialized owner,
+immutable identity, generation, 64-bit absolute deadline, actual RF-attempt
+accounting, independent liveness wake, and exactly one terminal result.
+Callbacks carry the generation and cannot mutate a later operation. One
+logical packet has one custody owner; policy callers cannot start parallel
+retry or terminal state machines. Frozen legacy paths remain architecture debt
+until their ownership is explicitly audited or migrated; do not describe this
+target model as already universal.
 
 Timing, radio ownership, routes, queues, capacity, persistence, and
 success/failure accounting need a worst-case test or build-time guard before
@@ -155,7 +164,8 @@ no-growth debt ceiling, not approval for the existing monoliths.
 Do not hardcode another current version elsewhere. Cross-reference-only edits
 may update the current file in place. Content changes to a versioned document
 create the next patch file and add a dated changelog entry; current examples
-advance `0.6.6.1` to `0.6.6.2` and `0.3.12.3` to `0.3.12.4`.
+advance `0.6.6.1` to `0.6.6.2` and `0.3.12.3` to `0.3.12.4`. A larger
+major/minor change is permitted only when the user explicitly requests it.
 
 State-machine diagrams stay reader-level: use behavioral labels, keep
 implementation names in prose, and make bounded loops clear about whether they

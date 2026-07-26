@@ -364,9 +364,15 @@ def _parse_su(path: Path) -> list[StackUsage]:
 
 
 def _resolve_compiler_source(path: Path) -> Path:
-    """Resolve GCC paths after Zephyr's WEST_TOPDIR prefix remapping."""
+    """Resolve GCC paths after Zephyr's configured prefix remapping."""
     if not path.is_absolute() and path.parts[:1] == ("WEST_TOPDIR",):
         return (REPO_ROOT.joinpath(*path.parts[1:])).resolve()
+    if not path.is_absolute() and path.parts[:1] == ("CMAKE_SOURCE_DIR",):
+        return (
+            REPO_ROOT
+            .joinpath("firmware", "app", *path.parts[1:])
+            .resolve()
+        )
     return path.resolve()
 
 

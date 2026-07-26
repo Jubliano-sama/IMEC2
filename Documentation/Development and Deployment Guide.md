@@ -20,6 +20,8 @@ The production-candidate line has exactly three deployable presets:
 generators. The forced-hop image is the only valid source for an anchor-relay
 qualification because the generic transmitter may select the gateway directly.
 `ml_clicker` and `ml_anchor_1` through `ml_anchor_8` are data-collection images.
+Every `ml_anchor_<1-8>` preset has a distinct deterministic device identity and
+discovery slot; never substitute one slot's artifact for another board.
 Generic `FIRMWARE_ROLE=clicker|anchor|gateway`, staged high-debug, and other
 bring-up presets are compatibility or diagnostic images, not production truth.
 
@@ -30,7 +32,8 @@ Create the local Python environment when it is absent:
 ```sh
 UV_CACHE_DIR=$PWD/.uv-cache uv venv --clear .venv
 UV_CACHE_DIR=$PWD/.uv-cache uv pip install --python .venv/bin/python \
-  -r zephyr/scripts/requirements.txt -r nrf/scripts/requirements.txt
+  -r zephyr/scripts/requirements.txt -r nrf/scripts/requirements.txt \
+  -r firmware/tests/requirements-native.txt
 ```
 
 The default verification command starts from a fresh temporary native build,
@@ -38,21 +41,27 @@ runs all repository checks and CTest tests, then executes the deterministic
 500-seed busy-line merge gate:
 
 ```sh
-python3 firmware/scripts/verify_changes.py
+.venv/bin/python firmware/scripts/verify_changes.py
 ```
 
 Run the same gate with AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```sh
-python3 firmware/scripts/verify_changes.py --sanitizers
+.venv/bin/python firmware/scripts/verify_changes.py --sanitizers
 ```
 
 For a Zephyr-facing change, build and statically verify all three exact
 production roles as well:
 
 ```sh
-python3 firmware/scripts/verify_changes.py --exact-roles
+.venv/bin/python firmware/scripts/verify_changes.py \
+  --exact-roles --compatibility-builds
 ```
+
+The compatibility gate compiles generic clicker/anchor/gateway roles, both mesh
+traffic generators, `ml_clicker`, and the first and last deterministic ML
+anchor slots. These builds remain regression and collection safeguards; passing
+them does not make them production deployment candidates.
 
 `--checks-only` runs the fast source-of-truth, architecture, guidance, and
 deployment-policy checks. Use it for documentation-only work, but it does not
@@ -124,7 +133,8 @@ window, typed workload runs, queue/custody completion, and stack policy. A
 rejected or interrupted qualification deliberately leaves the staged candidate
 available for investigation. This is strong local provenance, not remote or
 cryptographic attestation; a malicious host owner can replace local tools and
-artifacts.
+artifacts. ISR/configuration markers are not runtime stack watermarks, and
+marker-only captures or user-authored manifests are rejected as evidence.
 
 ## Bench, legacy, and ML flashing
 

@@ -26,8 +26,8 @@ through textual `.inc` composition:
 
 | Translation unit | Composed lines | Responsibilities mixed together |
 |---|---:|---|
-| `app_mesh_report.c` | 18,668 | routing, transport, event timing, delivery, RX, gateway contact |
-| `app_anchor.c` | 10,876 | commands, survey, gateway control, radio, initialization |
+| `app_mesh_report.c` | 18,699 | routing, transport, event timing, delivery, RX, gateway contact |
+| `app_anchor.c` | 10,887 | commands, survey, gateway control, radio, initialization |
 | `mesh_relay.c` | 9,245 | routes, RX, delivery, exact custody |
 | `dwm3000_driver.c` | 4,863 | radio lifecycle, frames, I/O, DS-TWR |
 
@@ -131,10 +131,13 @@ must remove or delegate the corresponding legacy owner in the same stage.
    compiled modules with explicit context and internal APIs. Each conversion
    must reduce a composed translation unit and may not add a replacement
    monolith.
-7. **Delete compatibility paths.** Remove legacy state, aliases, tests that
-   assert obsolete source spelling, and superseded documentation only after
-   production presets, required legacy regression builds, and hardware evidence
-   show the new owner is complete.
+7. **Delete migrated internal adapters.** Remove only the legacy state,
+   aliases, and source-spelling tests superseded by the new owner, and do so
+   only after production presets, required regression builds, and hardware
+   evidence show the migration is complete. The generic legacy roles, bench
+   traffic sources, ML collection presets, and supported debug builds remain
+   required build lines unless a separate explicitly approved decision retires
+   them.
 
 Each stage is one reviewable commit series. Do not mix an ownership migration
 with a wire-format change, timing retune, power-policy change, or unrelated bug

@@ -38,6 +38,14 @@ SOURCE_CHECKS = (
     ),
 )
 MESH_PRESETS = ("mesh_clicker", "mesh_anchor", "mesh_gateway")
+COMPATIBILITY_PRESETS = (
+    "mesh_transmitter",
+    "mesh_transmitter_forcedhop",
+    "ml_clicker",
+    "ml_anchor_1",
+    "ml_anchor_8",
+)
+LEGACY_ROLES = ("clicker", "anchor", "gateway")
 
 
 def _run(
@@ -83,6 +91,7 @@ def _run_native(
         "-B",
         str(build_dir),
         "-DCMAKE_BUILD_TYPE=Debug",
+        f"-DPython3_EXECUTABLE={PYTHON}",
     ]
     if sanitizers:
         configure.append("-DIMEC_ENABLE_SANITIZERS=ON")
@@ -202,6 +211,54 @@ def _run_exact_roles(build_root: Path, jobs: int) -> None:
     _run("run Zephyr NVS persistence test", [str(persistence_binary)])
 
 
+def _run_compatibility_builds(build_root: Path, jobs: int) -> None:
+    local_west = REPO_ROOT / ".venv/bin/west"
+    west = str(local_west) if local_west.is_file() else shutil.which("west")
+    if west is None:
+        raise RuntimeError(
+            "west is missing; create the repository Python environment first"
+        )
+    environment = {**os.environ, "CMAKE_BUILD_PARALLEL_LEVEL": str(jobs)}
+    for preset in COMPATIBILITY_PRESETS:
+        _run(
+            f"build compatibility preset {preset}",
+            [
+                west,
+                "build",
+                "--pristine=always",
+                "--no-sysbuild",
+                "-s",
+                "firmware/app",
+                "-b",
+                "nrf52833dk/nrf52833",
+                "--build-dir",
+                str(build_root / preset.replace("_", "-")),
+                "--",
+                f"-DIMEC_BUILD_PRESET={preset}",
+            ],
+            env=environment,
+        )
+    for role in LEGACY_ROLES:
+        _run(
+            f"build legacy role {role}",
+            [
+                west,
+                "build",
+                "--pristine=always",
+                "--no-sysbuild",
+                "-s",
+                "firmware/app",
+                "-b",
+                "nrf52833dk/nrf52833",
+                "--build-dir",
+                str(build_root / f"legacy-{role}"),
+                "--",
+                f"-DFIRMWARE_ROLE={role}",
+            ],
+            env=environment,
+        )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -228,6 +285,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--exact-roles",
         action="store_true",
         help="Also build mesh_clicker, mesh_anchor, and mesh_gateway and run static stack gates.",
+    )
+    parser.add_argument(
+        "--compatibility-builds",
+        action="store_true",
+        help=(
+            "Also compile legacy roles, both mesh traffic sources, ml_clicker, "
+            "and the first/last deterministic ML anchor slots."
+        ),
     )
     parser.add_argument(
         "--stress-count",
@@ -302,6 +367,12 @@ def main(argv: list[str] | None = None) -> int:
                 build_root = REPO_ROOT / build_root
             build_root.mkdir(parents=True, exist_ok=True)
             _run_exact_roles(build_root, args.jobs)
+        if args.compatibility_builds:
+            build_root = args.zephyr_build_root
+            if not build_root.is_absolute():
+                build_root = REPO_ROOT / build_root
+            build_root.mkdir(parents=True, exist_ok=True)
+            _run_compatibility_builds(build_root / "compatibility", args.jobs)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"\nverification failed: {exc}", file=sys.stderr)
         return 1
@@ -311,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         scope += ", native tests"
     if args.exact_roles:
         scope += ", exact production roles"
+    if args.compatibility_builds:
+        scope += ", compatibility builds"
     print(f"\nverification passed: {scope}")
     return 0
 

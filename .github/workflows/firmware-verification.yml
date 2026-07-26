@@ -64,4 +64,5 @@ jobs:
           python3 firmware/scripts/verify_changes.py
           --checks-only
           --exact-roles
+          --compatibility-builds
           --jobs 4
