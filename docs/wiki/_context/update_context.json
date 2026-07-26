@@ -1,9 +1,9 @@
 {
   "update_mode": "incremental",
-  "base_commit": "fda75299b34b5ec207fedd387f48e3d2652b5aea",
-  "target_commit": "fda75299b34b5ec207fedd387f48e3d2652b5aea",
-  "commit_range": "fda7529..fda7529",
-  "toc_file": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/toc.yaml",
+  "base_commit": "47590ded63e99caca4461cb61f77f861bcf94b54",
+  "target_commit": "47590ded63e99caca4461cb61f77f861bcf94b54",
+  "commit_range": "47590de..47590de",
+  "toc_file": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/toc.yaml",
   "toc_updated_at": "2026-07-26",
   "changed_files": [],
   "sections_to_update": [],
@@ -12,7 +12,7 @@
   "docs_metadata": {
     "09_gateway-host-tools-and-observability.md": {
       "file": "09_gateway-host-tools-and-observability.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/09_gateway-host-tools-and-observability.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/09_gateway-host-tools-and-observability.md",
       "autogen_sections": [
         "imec2-09-host-tools-and-observability-gateway-edge",
         "imec2-09-host-tools-and-observability-gui-and-geometry",
@@ -23,7 +23,7 @@
     },
     "05_connected-routing-and-reliable-delivery.md": {
       "file": "05_connected-routing-and-reliable-delivery.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/05_connected-routing-and-reliable-delivery.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/05_connected-routing-and-reliable-delivery.md",
       "autogen_sections": [
         "imec2-05-connected-mesh-contract-invariants",
         "imec2-05-connected-mesh-route-and-connect",
@@ -34,7 +34,7 @@
     },
     "13_hardware-bring-up-and-troubleshooting.md": {
       "file": "13_hardware-bring-up-and-troubleshooting.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/13_hardware-bring-up-and-troubleshooting.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/13_hardware-bring-up-and-troubleshooting.md",
       "autogen_sections": [
         "imec2-13-bring-up-and-troubleshooting-first-principles",
         "imec2-13-bring-up-and-troubleshooting-staged-bring-up",
@@ -45,7 +45,7 @@
     },
     "08_data-custody-persistence-and-recovery.md": {
       "file": "08_data-custody-persistence-and-recovery.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/08_data-custody-persistence-and-recovery.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/08_data-custody-persistence-and-recovery.md",
       "autogen_sections": [
         "imec2-08-persistence-and-recovery-custody-owners",
         "imec2-08-persistence-and-recovery-durable-state",
@@ -56,7 +56,7 @@
     },
     "03_uwb-wake-ranging-and-power.md": {
       "file": "03_uwb-wake-ranging-and-power.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/03_uwb-wake-ranging-and-power.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/03_uwb-wake-ranging-and-power.md",
       "autogen_sections": [
         "imec2-03-uwb-ranging-and-power-channel-five-coverage",
         "imec2-03-uwb-ranging-and-power-ranging-exchange",
@@ -67,7 +67,7 @@
     },
     "02_one-click-end-to-end.md": {
       "file": "02_one-click-end-to-end.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/02_one-click-end-to-end.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/02_one-click-end-to-end.md",
       "autogen_sections": [
         "imec2-02-click-to-research-data-participant-action",
         "imec2-02-click-to-research-data-wake-discover-range",
@@ -78,7 +78,7 @@
     },
     "12_testing-simulation-and-release-evidence.md": {
       "file": "12_testing-simulation-and-release-evidence.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/12_testing-simulation-and-release-evidence.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/12_testing-simulation-and-release-evidence.md",
       "autogen_sections": [
         "imec2-12-testing-and-simulation-test-layers",
         "imec2-12-testing-and-simulation-simulator-contract",
@@ -89,7 +89,7 @@
     },
     "11_verified-deployment-and-qualification.md": {
       "file": "11_verified-deployment-and-qualification.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/11_verified-deployment-and-qualification.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/11_verified-deployment-and-qualification.md",
       "autogen_sections": [
         "imec2-11-verified-deployment-eligibility-gate",
         "imec2-11-verified-deployment-qualification-capture",
@@ -100,7 +100,7 @@
     },
     "10_build-presets-and-configuration.md": {
       "file": "10_build-presets-and-configuration.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/10_build-presets-and-configuration.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/10_build-presets-and-configuration.md",
       "autogen_sections": [
         "imec2-10-build-and-configuration-workspace-boundaries",
         "imec2-10-build-and-configuration-native-build",
@@ -111,7 +111,7 @@
     },
     "06_anchor-identity-discovery-and-assignment.md": {
       "file": "06_anchor-identity-discovery-and-assignment.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/06_anchor-identity-discovery-and-assignment.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/06_anchor-identity-discovery-and-assignment.md",
       "autogen_sections": [
         "imec2-06-anchor-identity-and-assignment-stable-hardware-identity",
         "imec2-06-anchor-identity-and-assignment-discovery-and-claims",
@@ -122,7 +122,7 @@
     },
     "01_product-roles-and-firmware-lines.md": {
       "file": "01_product-roles-and-firmware-lines.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/01_product-roles-and-firmware-lines.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/01_product-roles-and-firmware-lines.md",
       "autogen_sections": [
         "imec2-01-product-roles-production-candidate-line",
         "imec2-01-product-roles-role-ownership",
@@ -133,7 +133,7 @@
     },
     "README.md": {
       "file": "README.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/README.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/README.md",
       "autogen_sections": [
         "imec2-00-start-here-research-story",
         "imec2-00-start-here-system-response",
@@ -144,7 +144,7 @@
     },
     "04_protocol-packets-and-data-contracts.md": {
       "file": "04_protocol-packets-and-data-contracts.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/04_protocol-packets-and-data-contracts.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/04_protocol-packets-and-data-contracts.md",
       "autogen_sections": [
         "imec2-04-protocol-and-data-model-envelope-and-framing",
         "imec2-04-protocol-and-data-model-messages-and-tlvs",
@@ -155,7 +155,7 @@
     },
     "07_anchor-self-setup-survey-and-geometry.md": {
       "file": "07_anchor-self-setup-survey-and-geometry.md",
-      "path": "/tmp/imec2-architecture-integrated-20260726/docs/wiki/07_anchor-self-setup-survey-and-geometry.md",
+      "path": "/tmp/imec2-gateway-survey-machine-20260726/docs/wiki/07_anchor-self-setup-survey-and-geometry.md",
       "autogen_sections": [
         "imec2-07-anchor-self-setup-why-self-setup",
         "imec2-07-anchor-self-setup-discover-and-plan",
@@ -166,8 +166,8 @@
     }
   },
   "metadata": {
-    "ref_commit_hash": "fda75299b34b5ec207fedd387f48e3d2652b5aea",
-    "wiki_state_sha256": "072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84c89a0",
+    "ref_commit_hash": "47590ded63e99caca4461cb61f77f861bcf94b54",
+    "wiki_state_sha256": "e4acda9520331676bdfd717371b37dba1fb39df821fd758b32888e1da39d2517",
     "total_changed_files": 0,
     "total_new_files": 0,
     "total_modified_files": 0,

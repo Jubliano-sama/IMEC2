@@ -1,20 +1,23 @@
 # Wiki Documentation Summary
 
-Generated: 2026-07-26 13:55:11
+Generated: 2026-07-26 23:48:36
 Repository: IMEC2
-Commit: `fda75299b34b5ec207fedd387f48e3d2652b5aea`
-Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84c89a0`
+Commit: `47590ded63e99caca4461cb61f77f861bcf94b54`
+Wiki state SHA-256: `e4acda9520331676bdfd717371b37dba1fb39df821fd758b32888e1da39d2517`
 
 ## Generation Status
 
 **Overall Status**: ✅ Complete
 
+**Diagram validation**: ⚠️ Mermaid grammar passed for all nine diagrams, but
+SVG rendering remains pending because Chromium could not start in this sandbox.
+
 | Metric | Expected | Actual | Status |
 |--------|----------|--------|--------|
 | Pages | 14 | 14 | ✅ |
 | Sections | 56 | 56 | ✅ |
-| Citations | - | 993 | ✅ |
-| Diagrams | 9 | 9 valid | ✅ |
+| Citations | - | 1065 | ✅ |
+| Diagrams | 9 | 9 grammar-valid; SVG rendering blocked by sandbox | ⚠️ |
 
 ## Page Details
 
@@ -25,14 +28,14 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 | 02_one-click-end-to-end.md | One Click, End to End | 4/4 | 64 | 1 | ✅ |
 | 03_uwb-wake-ranging-and-power.md | UWB Wake, Ranging, and Low-Power Radio | 4/4 | 108 | 1 | ✅ |
 | 04_protocol-packets-and-data-contracts.md | Protocol, Packets, and Data Contracts | 4/4 | 125 | 0 | ✅ |
-| 05_connected-routing-and-reliable-delivery.md | Connected Routing, Priority, and Reliable Delivery | 4/4 | 53 | 2 | ✅ |
+| 05_connected-routing-and-reliable-delivery.md | Connected Routing, Priority, and Reliable Delivery | 4/4 | 76 | 2 | ✅ |
 | 06_anchor-identity-discovery-and-assignment.md | Anchor Identity, Discovery, and Assignment | 4/4 | 65 | 0 | ✅ |
-| 07_anchor-self-setup-survey-and-geometry.md | Anchor Self-Setup: Survey and Geometry | 4/4 | 76 | 1 | ✅ |
+| 07_anchor-self-setup-survey-and-geometry.md | Anchor Self-Setup: Survey and Geometry | 4/4 | 103 | 1 | ✅ |
 | 08_data-custody-persistence-and-recovery.md | Data Custody, Persistence, and Recovery | 4/4 | 75 | 1 | ✅ |
-| 09_gateway-host-tools-and-observability.md | Gateway, Host Tools, and Observability | 4/4 | 95 | 0 | ✅ |
+| 09_gateway-host-tools-and-observability.md | Gateway, Host Tools, and Observability | 4/4 | 106 | 0 | ✅ |
 | 10_build-presets-and-configuration.md | Build Presets, Configuration, and Repository Boundaries | 4/4 | 83 | 0 | ✅ |
-| 11_verified-deployment-and-qualification.md | Verified Mesh Deployment and Hardware Qualification | 4/4 | 47 | 1 | ✅ |
-| 12_testing-simulation-and-release-evidence.md | Testing, Simulation, and Release Evidence | 4/4 | 60 | 0 | ✅ |
+| 11_verified-deployment-and-qualification.md | Verified Mesh Deployment and Hardware Qualification | 4/4 | 49 | 1 | ✅ |
+| 12_testing-simulation-and-release-evidence.md | Testing, Simulation, and Release Evidence | 4/4 | 69 | 0 | ✅ |
 | 13_hardware-bring-up-and-troubleshooting.md | Hardware Bring-Up and Troubleshooting | 4/4 | 49 | 1 | ✅ |
 
 ## Source Coverage
@@ -44,7 +47,7 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `AGENTS.md` - cited in 01_product-roles-and-firmware-lines.md, 06_anchor-identity-discovery-and-assignment.md, 10_build-presets-and-configuration.md, 11_verified-deployment-and-qualification.md, 12_testing-simulation-and-release-evidence.md, 13_hardware-bring-up-and-troubleshooting.md
 - `AGENT_KNOWN_ISSUES.md` - cited in 12_testing-simulation-and-release-evidence.md, 13_hardware-bring-up-and-troubleshooting.md
 - `CODEMAP.md` - cited in 01_product-roles-and-firmware-lines.md, 10_build-presets-and-configuration.md
-- `Documentation/Architecture Reset Plan.md` - cited in 10_build-presets-and-configuration.md, 12_testing-simulation-and-release-evidence.md
+- `Documentation/Architecture Reset Plan.md` - cited in 07_anchor-self-setup-survey-and-geometry.md, 10_build-presets-and-configuration.md, 12_testing-simulation-and-release-evidence.md
 - `Documentation/Customer Needs.md` - cited in README.md
 - `Documentation/Development and Deployment Guide.md` - cited in 10_build-presets-and-configuration.md, 11_verified-deployment-and-qualification.md, 13_hardware-bring-up-and-troubleshooting.md
 - `Documentation/From Click to Ranging, Developing a Robust UWB Gated Wake up Strategy.md` - cited in 02_one-click-end-to-end.md
@@ -55,8 +58,9 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `Documentation/Mesh Connected Routing Contract.md` - cited in 05_connected-routing-and-reliable-delivery.md, 06_anchor-identity-discovery-and-assignment.md
 - `Documentation/Mesh Integration Coverage Matrix 2026-07-12.md` - cited in 12_testing-simulation-and-release-evidence.md
 - `Documentation/Stakeholder Requirements.md` - cited in README.md
-- `Documentation/UWB+BLE Architecture 0.6.6.2.md` - cited in 02_one-click-end-to-end.md, 03_uwb-wake-ranging-and-power.md
+- `Documentation/UWB+BLE Architecture 0.6.6.3.md` - cited in 02_one-click-end-to-end.md, 03_uwb-wake-ranging-and-power.md, 12_testing-simulation-and-release-evidence.md
 - `Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md` - cited in 04_protocol-packets-and-data-contracts.md, 07_anchor-self-setup-survey-and-geometry.md
+- `Documentation/mesh_contract_traceability.yaml` - cited in 05_connected-routing-and-reliable-delivery.md
 - `Documentation/narrative(user story).md` - cited in 07_anchor-self-setup-survey-and-geometry.md, README.md
 - `Documentation/user requirements.md` - cited in README.md
 - `README.md` - cited in 01_product-roles-and-firmware-lines.md, 06_anchor-identity-discovery-and-assignment.md, 07_anchor-self-setup-survey-and-geometry.md, 09_gateway-host-tools-and-observability.md, 12_testing-simulation-and-release-evidence.md, 13_hardware-bring-up-and-troubleshooting.md, README.md
@@ -72,7 +76,8 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/app/prj-gateway.conf` - cited in 10_build-presets-and-configuration.md
 - `firmware/app/prj.conf` - cited in 10_build-presets-and-configuration.md
 - `firmware/app/src/app_anchor.c` - cited in 02_one-click-end-to-end.md
-- `firmware/app/src/app_anchor_gateway_control.inc` - cited in 06_anchor-identity-discovery-and-assignment.md
+- `firmware/app/src/app_anchor_gateway_control.inc` - cited in 06_anchor-identity-discovery-and-assignment.md, 07_anchor-self-setup-survey-and-geometry.md, 09_gateway-host-tools-and-observability.md
+- `firmware/app/src/app_anchor_gateway_survey.inc` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_anchor_gateway_survey_round.inc` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_anchor_low_power_policy.h` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/app/src/app_anchor_survey_runtime.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
@@ -81,12 +86,18 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/app/src/app_device_identity.c` - cited in 06_anchor-identity-discovery-and-assignment.md
 - `firmware/app/src/app_gateway_assignment_publisher.c` - cited in 06_anchor-identity-discovery-and-assignment.md
 - `firmware/app/src/app_gateway_ble.c` - cited in 02_one-click-end-to-end.md, 08_data-custody-persistence-and-recovery.md, 09_gateway-host-tools-and-observability.md
-- `firmware/app/src/app_gateway_ble_stream.c` - cited in 02_one-click-end-to-end.md, 08_data-custody-persistence-and-recovery.md, 09_gateway-host-tools-and-observability.md
+- `firmware/app/src/app_gateway_ble_stream.c` - cited in 02_one-click-end-to-end.md, 05_connected-routing-and-reliable-delivery.md, 08_data-custody-persistence-and-recovery.md, 09_gateway-host-tools-and-observability.md
 - `firmware/app/src/app_gateway_command_observability.c` - cited in 09_gateway-host-tools-and-observability.md
-- `firmware/app/src/app_gateway_survey_round.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/app/src/app_gateway_survey_terminal.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/app/src/app_mesh_ch9_ack.c` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/app/src/app_mesh_gateway_command_flow.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/app/src/app_mesh_gateway_command_priority.c` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/app/src/app_mesh_persistence.c` - cited in 08_data-custody-persistence-and-recovery.md
 - `firmware/app/src/app_mesh_report.c` - cited in 02_one-click-end-to-end.md
+- `firmware/app/src/app_mesh_report_direct_gateway.inc` - cited in 05_connected-routing-and-reliable-delivery.md
+- `firmware/app/src/app_mesh_route_owner_queue.c` - cited in 07_anchor-self-setup-survey-and-geometry.md, 09_gateway-host-tools-and-observability.md
+- `firmware/app/src/app_mesh_route_owner_queue.h` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/app/src/app_stack_workload_diag.c` - cited in 11_verified-deployment-and-qualification.md
 - `firmware/app/src/app_watchdog.c` - cited in 08_data-custody-persistence-and-recovery.md
 - `firmware/app/src/dwm3000_driver.c` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/app/src/dwm3000_port.c` - cited in 13_hardware-bring-up-and-troubleshooting.md
@@ -96,6 +107,7 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/include/discovery_assignment.h` - cited in 06_anchor-identity-discovery-and-assignment.md
 - `firmware/include/dwm3000_runtime.h` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/include/gateway_collection_journal.h` - cited in 08_data-custody-persistence-and-recovery.md
+- `firmware/include/gateway_survey_machine.h` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/include/mesh_relay.h` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/include/node_comm.h` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/include/node_transaction.h` - cited in 08_data-custody-persistence-and-recovery.md
@@ -103,7 +115,7 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/include/report.h` - cited in 04_protocol-packets-and-data-contracts.md
 - `firmware/include/route.h` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/include/serial_frame.h` - cited in 04_protocol-packets-and-data-contracts.md
-- `firmware/include/stack_budget.h` - cited in 11_verified-deployment-and-qualification.md
+- `firmware/include/stack_budget.h` - cited in 09_gateway-host-tools-and-observability.md, 11_verified-deployment-and-qualification.md
 - `firmware/include/survey.h` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/include/survey_gateway_transaction.h` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/include/survey_pair_lease.h` - cited in 07_anchor-self-setup-survey-and-geometry.md
@@ -122,15 +134,21 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/src/dwm3000_runtime.c` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/src/gateway_collection_journal.c` - cited in 08_data-custody-persistence-and-recovery.md
 - `firmware/src/gateway_membership.c` - cited in 08_data-custody-persistence-and-recovery.md
+- `firmware/src/gateway_survey_machine.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/src/mesh_relay_custody.inc` - cited in 05_connected-routing-and-reliable-delivery.md, 08_data-custody-persistence-and-recovery.md
+- `firmware/src/mesh_relay_delivery.inc` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/src/mesh_runtime.c` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/src/node_comm.c` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/src/node_transaction.c` - cited in 08_data-custody-persistence-and-recovery.md
 - `firmware/src/protocol.c` - cited in 04_protocol-packets-and-data-contracts.md
 - `firmware/src/report.c` - cited in 02_one-click-end-to-end.md, 04_protocol-packets-and-data-contracts.md
+- `firmware/src/route.c` - cited in 05_connected-routing-and-reliable-delivery.md
 - `firmware/src/serial_frame.c` - cited in 04_protocol-packets-and-data-contracts.md
 - `firmware/src/survey.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/src/survey_gateway_transaction.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/src/survey_pair_lease.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/src/survey_pair_planner.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/src/survey_pair_round_runtime.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/src/uwb.c` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/src/uwb_session.c` - cited in 02_one-click-end-to-end.md
 - `firmware/src/watchdog_adoption.c` - cited in 08_data-custody-persistence-and-recovery.md
@@ -138,16 +156,22 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_dwm3000_models.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_gateway_ble_transport_model.c` - cited in 12_testing-simulation-and-release-evidence.md
+- `firmware/tests/mesh_integration/test_gateway_survey_adapter_boundaries.py` - cited in 12_testing-simulation-and-release-evidence.md
+- `firmware/tests/mesh_integration/test_gateway_survey_owner_queue_source_invariants.py` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c` - cited in 12_testing-simulation-and-release-evidence.md
+- `firmware/tests/mesh_integration/test_mesh_contract_traceability.py` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_production_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
-- `firmware/tests/test_app_gateway_survey_round.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/tests/test_app_gateway_survey_terminal.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `firmware/tests/test_gateway_survey_machine.c` - cited in 07_anchor-self-setup-survey-and-geometry.md, 12_testing-simulation-and-release-evidence.md
 - `firmware/west_projects.lock.json` - cited in 10_build-presets-and-configuration.md
 - `tools/gateway_gui/README.md` - cited in 01_product-roles-and-firmware-lines.md, 06_anchor-identity-discovery-and-assignment.md, 07_anchor-self-setup-survey-and-geometry.md, 09_gateway-host-tools-and-observability.md, 12_testing-simulation-and-release-evidence.md, 13_hardware-bring-up-and-troubleshooting.md, README.md
 - `tools/gateway_gui/anchor_geometry.py` - cited in 07_anchor-self-setup-survey-and-geometry.md
+- `tools/gateway_gui/anchor_geometry_visibility.py` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `tools/gateway_gui/app.py` - cited in 09_gateway-host-tools-and-observability.md
 - `tools/gateway_gui/ble_transport.py` - cited in 09_gateway-host-tools-and-observability.md
+- `tools/gateway_gui/diagnostic_models.py` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `tools/gateway_gui/protocol.py` - cited in 09_gateway-host-tools-and-observability.md
 - `tools/mesh_ble_route_monitor.py` - cited in 09_gateway-host-tools-and-observability.md, 13_hardware-bring-up-and-troubleshooting.md
 
@@ -162,7 +186,6 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/app/src/app_high_debug.c`
 - `firmware/app/src/app_mesh_coordinator.c`
 - `firmware/app/src/app_stack_diag.c`
-- `firmware/app/src/app_stack_workload_diag.c`
 - `firmware/include/dwm3000_timing.h`
 - `firmware/include/gateway_ble_transport.h`
 - `firmware/include/gateway_membership.h`
@@ -178,9 +201,7 @@ Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84
 - `firmware/src/gateway_ble_transport.c`
 - `firmware/src/mesh.c`
 - `firmware/src/mesh_relay.c`
-- `firmware/src/route.c`
 - `firmware/src/status.c`
-- `firmware/tests/mesh_integration/test_gateway_survey_round_glue_source_invariants.py`
 - `manifest/west.yml`
 
 ## Issues
@@ -191,4 +212,4 @@ None
 
 ### Recommendations
 
-- Add citations for 27 uncovered source files
+- Add citations for 24 uncovered source files

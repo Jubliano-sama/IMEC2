@@ -1,10 +1,19 @@
 {
   "metadata": {
-    "ref_commit_hash": "fda75299b34b5ec207fedd387f48e3d2652b5aea",
-    "wiki_state_sha256": "072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84c89a0"
+    "ref_commit_hash": "47590ded63e99caca4461cb61f77f861bcf94b54",
+    "wiki_state_sha256": "e4acda9520331676bdfd717371b37dba1fb39df821fd758b32888e1da39d2517"
   },
   "invalid_blocks": [],
   "total_invalid": 0,
   "total_scanned": 9,
-  "files_affected": 0
+  "files_affected": 0,
+  "validation": {
+    "renderer_status": "blocked",
+    "renderer_error": "Chromium startup is blocked by the sandbox; host escalation was unavailable because the runtime usage limit was reached.",
+    "fallback_backend": "bundled Mermaid grammar parsers without rendering",
+    "fallback_total": 9,
+    "fallback_invalid": 0,
+    "extraction_errors": 0,
+    "limitation": "Syntax was parsed, but SVG rendering was not exercised in this environment."
+  }
 }
