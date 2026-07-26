@@ -2,7 +2,7 @@ project:
   name: "IMEC2"
   description: "A robust UWB-first experience-sampling system that turns participant clicks into timestamped, spatially contextual research data through clickers, anchors, a connected-routing mesh, and a BLE gateway."
   repo_base_url: "https://github.com/Jubliano-sama/IMEC2/blob"
-  ref_commit_hash: "af15a7eb59b1ca8f75464506ffa97f980ffbfef7"
+  ref_commit_hash: "fda75299b34b5ec207fedd387f48e3d2652b5aea"
   updated_at: "2026-07-26"
 
 pages:
@@ -286,6 +286,7 @@ pages:
       - "firmware/src/device_identity.c"
       - "firmware/src/discovery_assignment.c"
       - "firmware/app/src/app_device_identity.c"
+      - "firmware/app/src/app_anchor_gateway_control.inc"
       - "firmware/app/src/app_gateway_assignment_publisher.c"
       - "firmware/app/src/app_discovery_assignment_stack.h"
       - "firmware/scripts/provision_mesh_anchor.py"
@@ -594,6 +595,8 @@ pages:
       - "firmware/tests/mesh_integration/test_mesh_production_scenarios.c"
       - "firmware/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c"
       - "firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c"
+      - "firmware/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py"
+      - "firmware/tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c"
       - "firmware/tests/mesh_integration/test_gateway_survey_round_glue_source_invariants.py"
       - "firmware/tests/mesh_integration/test_gateway_ble_transport_model.c"
       - "firmware/tests/mesh_integration/test_dwm3000_models.c"

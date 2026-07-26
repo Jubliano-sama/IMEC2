@@ -1,9 +1,9 @@
 # Wiki Documentation Summary
 
-Generated: 2026-07-26 13:34:47
+Generated: 2026-07-26 13:55:11
 Repository: IMEC2
-Commit: `af15a7eb59b1ca8f75464506ffa97f980ffbfef7`
-Wiki state SHA-256: `9518e5100f2995b4031f21ab8419eba438c3885b2a32e8650dbb5ea664b79e54`
+Commit: `fda75299b34b5ec207fedd387f48e3d2652b5aea`
+Wiki state SHA-256: `072c684cf4ac250a446a69e028f0b715ba415583ef6f7b478744ca51d84c89a0`
 
 ## Generation Status
 
@@ -13,7 +13,7 @@ Wiki state SHA-256: `9518e5100f2995b4031f21ab8419eba438c3885b2a32e8650dbb5ea664b
 |--------|----------|--------|--------|
 | Pages | 14 | 14 | ✅ |
 | Sections | 56 | 56 | ✅ |
-| Citations | - | 991 | ✅ |
+| Citations | - | 993 | ✅ |
 | Diagrams | 9 | 9 valid | ✅ |
 
 ## Page Details
@@ -32,7 +32,7 @@ Wiki state SHA-256: `9518e5100f2995b4031f21ab8419eba438c3885b2a32e8650dbb5ea664b
 | 09_gateway-host-tools-and-observability.md | Gateway, Host Tools, and Observability | 4/4 | 95 | 0 | ✅ |
 | 10_build-presets-and-configuration.md | Build Presets, Configuration, and Repository Boundaries | 4/4 | 83 | 0 | ✅ |
 | 11_verified-deployment-and-qualification.md | Verified Mesh Deployment and Hardware Qualification | 4/4 | 47 | 1 | ✅ |
-| 12_testing-simulation-and-release-evidence.md | Testing, Simulation, and Release Evidence | 4/4 | 58 | 0 | ✅ |
+| 12_testing-simulation-and-release-evidence.md | Testing, Simulation, and Release Evidence | 4/4 | 60 | 0 | ✅ |
 | 13_hardware-bring-up-and-troubleshooting.md | Hardware Bring-Up and Troubleshooting | 4/4 | 49 | 1 | ✅ |
 
 ## Source Coverage
@@ -72,6 +72,7 @@ Wiki state SHA-256: `9518e5100f2995b4031f21ab8419eba438c3885b2a32e8650dbb5ea664b
 - `firmware/app/prj-gateway.conf` - cited in 10_build-presets-and-configuration.md
 - `firmware/app/prj.conf` - cited in 10_build-presets-and-configuration.md
 - `firmware/app/src/app_anchor.c` - cited in 02_one-click-end-to-end.md
+- `firmware/app/src/app_anchor_gateway_control.inc` - cited in 06_anchor-identity-discovery-and-assignment.md
 - `firmware/app/src/app_anchor_gateway_survey_round.inc` - cited in 07_anchor-self-setup-survey-and-geometry.md
 - `firmware/app/src/app_anchor_low_power_policy.h` - cited in 03_uwb-wake-ranging-and-power.md
 - `firmware/app/src/app_anchor_survey_runtime.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
@@ -134,9 +135,11 @@ Wiki state SHA-256: `9518e5100f2995b4031f21ab8419eba438c3885b2a32e8650dbb5ea664b
 - `firmware/src/uwb_session.c` - cited in 02_one-click-end-to-end.md
 - `firmware/src/watchdog_adoption.c` - cited in 08_data-custody-persistence-and-recovery.md
 - `firmware/tests/mesh_integration/README.md` - cited in 01_product-roles-and-firmware-lines.md, 06_anchor-identity-discovery-and-assignment.md, 07_anchor-self-setup-survey-and-geometry.md, 09_gateway-host-tools-and-observability.md, 12_testing-simulation-and-release-evidence.md, 13_hardware-bring-up-and-troubleshooting.md, README.md
+- `firmware/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_dwm3000_models.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_gateway_ble_transport_model.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_click_report_delivery_sweep.c` - cited in 12_testing-simulation-and-release-evidence.md
+- `firmware/tests/mesh_integration/test_mesh_discovery_assignment_adversarial_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_production_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/mesh_integration/test_mesh_survey_topology_scenarios.c` - cited in 12_testing-simulation-and-release-evidence.md
 - `firmware/tests/test_app_gateway_survey_round.c` - cited in 07_anchor-self-setup-survey-and-geometry.md
