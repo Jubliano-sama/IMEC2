@@ -1,0 +1,7 @@
+#ifndef APP_NODE_COMM_GATEWAY_ABORT_H
+#define APP_NODE_COMM_GATEWAY_ABORT_H
+
+int app_node_comm_gateway_control_preemptive_abort_request(void);
+void app_node_comm_gateway_control_preemptive_abort_release(void);
+
+#endif

@@ -3,7 +3,6 @@
 #include "app_anchor_ranging.h"
 #include "app_anchor_survey_discovery.h"
 #include "app_anchor_survey_runtime.h"
-
 #include "app_radio_low_power_policy.h"
 #include "app_board.h"
 #include "app_config.h"
@@ -21,6 +20,7 @@
 #include "app_mesh_report.h"
 #include "app_ml.h"
 #include "app_node_comm.h"
+#include "app_node_comm_gateway_abort.h"
 #include "app_node_comm_gateway_route_refresh.h"
 #include "app_operation_policy.h"
 #include "app_state.h"

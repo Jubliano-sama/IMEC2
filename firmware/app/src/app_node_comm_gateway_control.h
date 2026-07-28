@@ -1,6 +1,7 @@
 #ifndef APP_NODE_COMM_GATEWAY_CONTROL_H
 #define APP_NODE_COMM_GATEWAY_CONTROL_H
 
+#include "app_node_comm_gateway_abort.h"
 #include "app_mesh_radio_client.h"
 
 #include <stdbool.h>
@@ -43,8 +44,6 @@ int app_node_comm_gateway_control_radio_handoff_begin(
     struct k_work_delayable *work);
 int app_node_comm_gateway_control_radio_handoff_cancel(
     struct k_work_delayable *work);
-int app_node_comm_gateway_control_preemptive_abort_request(void);
-void app_node_comm_gateway_control_preemptive_abort_release(void);
 int app_node_comm_gateway_control_safe_boundary_schedule(void *ctx);
 
 #endif

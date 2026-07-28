@@ -6,7 +6,15 @@ from source_text import read_composed_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
+ANCHOR_OWNER_PATH = ROOT / "app/src/app_anchor.c"
+ANCHOR_OWNER = ANCHOR_OWNER_PATH.read_text(encoding="utf-8")
+ANCHOR = read_composed_source(ANCHOR_OWNER_PATH)
+GATEWAY_CONTROL_FRAGMENT = (
+    ROOT / "app/src/app_anchor_gateway_control.inc"
+).read_text(encoding="utf-8")
+GATEWAY_ABORT_HEADER = (
+    ROOT / "app/src/app_node_comm_gateway_abort.h"
+).read_text(encoding="utf-8")
 BLE = (ROOT / "app/src/app_gateway_ble.c").read_text(encoding="utf-8")
 OWNER = (ROOT / "app/src/app_mesh_route_owner_queue.c").read_text(
     encoding="utf-8"
@@ -51,6 +59,49 @@ def braced_block(source: str, open_brace: int) -> str:
         if depth == 0:
             return source[open_brace : index + 1]
     raise AssertionError("unterminated braced block")
+
+
+def local_include_offset(source: str, name: str) -> int:
+    matches = list(
+        re.finditer(
+            rf'^\s*#\s*include\s+"{re.escape(name)}"\s*$',
+            source,
+            re.MULTILINE,
+        )
+    )
+    assert len(matches) == 1, f"{name} must be included exactly once"
+    return matches[0].start()
+
+
+gateway_control_calls = set(
+    re.findall(
+        r"\b(app_node_comm_gateway_control_[A-Za-z0-9_]+)\s*\(",
+        GATEWAY_CONTROL_FRAGMENT,
+    )
+)
+gateway_abort_declarations = set(
+    re.findall(
+        r"\b(app_node_comm_gateway_control_[A-Za-z0-9_]+)\s*\(",
+        GATEWAY_ABORT_HEADER,
+    )
+)
+assert gateway_control_calls, (
+    "the composed gateway-control fragment must exercise its public API boundary"
+)
+undeclared_gateway_control_calls = (
+    gateway_control_calls - gateway_abort_declarations
+)
+assert not undeclared_gateway_control_calls, (
+    "the gateway-control fragment calls APIs missing from its narrow abort "
+    "header: "
+    f"{sorted(undeclared_gateway_control_calls)}"
+)
+assert local_include_offset(
+    ANCHOR_OWNER, "app_node_comm_gateway_abort.h"
+) < local_include_offset(ANCHOR_OWNER, "app_anchor_gateway_control.inc"), (
+    "app_anchor.c must include the narrow gateway-abort API before composing "
+    "the fragment that calls it"
+)
 
 
 queue_owner = function_body(OWNER, "mesh_route_owner_work_queue")
