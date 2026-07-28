@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
+#include "app_mesh_radio_owner.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
 #include "gateway_command.h"
@@ -488,7 +489,6 @@ int ml_clicker_relax_range_schedule(struct uwb_range_schedule_frame *schedule,
 }
 #endif
 
-
 #if defined(CONFIG_IMEC_ML_CLICKER)
 uint8_t ml_clicker_discovery_slot_count_override(void)
 {
@@ -747,6 +747,7 @@ static int ml_clicker_send_anchor_pair_schedule(
     const struct uwb_anchor_pair_schedule_frame *schedule,
     int64_t *schedule_tx_ms)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t frame[UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN];
     size_t frame_len = 0u;
     int ret;
@@ -760,7 +761,7 @@ static int ml_clicker_send_anchor_pair_schedule(
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB ANCHOR_PAIR_SCHEDULE");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_ML, "clicker UWB ANCHOR_PAIR_SCHEDULE", &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -769,7 +770,7 @@ static int ml_clicker_send_anchor_pair_schedule(
         ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
     }
     (void)dwm3000_driver_idle();
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     if (ret < 0) {
         LOG_WRN("clicker anchor-pair schedule TX failed: survey=%u ret=%d",
                 schedule->survey_id,
@@ -835,6 +836,7 @@ static int ml_clicker_receive_anchor_pair_results(
     int64_t schedule_tx_ms,
     int64_t click_deadline_ms)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t frame[UWB_ANCHOR_PAIR_RESULT_LEN];
     size_t frame_len = 0u;
     uint16_t received_count = 0u;
@@ -856,13 +858,13 @@ static int ml_clicker_receive_anchor_pair_results(
         return -ETIMEDOUT;
     }
 
-    ret = radio_guard_uwb_start("clicker anchor-pair result RX");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_ML, "clicker anchor-pair result RX", &radio_lease);
     if (ret < 0) {
         return ret;
     }
     ret = dwm3000_driver_configure_range_mode();
     if (ret < 0) {
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         return ret;
     }
 
@@ -879,7 +881,7 @@ static int ml_clicker_receive_anchor_pair_results(
                                                       NULL,
                                                       NULL,
                                                       NULL);
-        if (ret == -ETIMEDOUT) {
+        if (ret == -ETIMEDOUT || ret == -ECANCELED) {
             break;
         }
         if (ret < 0) {
@@ -916,8 +918,9 @@ static int ml_clicker_receive_anchor_pair_results(
     }
 
     (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
-    return received_count == schedule->pair_count ? 0 : -ETIMEDOUT;
+    (void)app_mesh_radio_owner_release(&radio_lease);
+    return ret == -ECANCELED ? ret :
+           received_count == schedule->pair_count ? 0 : -ETIMEDOUT;
 }
 
 static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session,
@@ -1955,11 +1958,9 @@ static int ml_clicker_emit_post_burst_diagnostic_if_active(
                                                       timestamp_ms);
 }
 
-void ml_clicker_run_post_burst_diagnostics(
-    const struct uwb_clicker_session *session,
+void ml_clicker_run_post_burst_diagnostics(const struct uwb_clicker_session *session,
     const struct uwb_range_schedule_frame *schedule,
-    int64_t schedule_tx_ms,
-    int64_t click_deadline_ms)
+    int64_t schedule_tx_ms, int64_t click_deadline_ms)
 {
     size_t total_samples;
     bool quiet_owned = false;
@@ -2022,11 +2023,11 @@ void ml_clicker_run_post_burst_diagnostics(
         range_request.anchor_full_cir = stored->anchor_full_cir;
         range_request.anchor_full_cir_cap = sizeof(stored->anchor_full_cir);
 
-        for (uint8_t diag_attempt = 0u; diag_attempt < UWB_POST_BURST_DIAG_ATTEMPTS;
-             diag_attempt++) {
-            int64_t attempt_target_us =
-                target_us + ((int64_t)diag_attempt * UWB_POST_BURST_DIAG_RETRY_DELAY_MS *
-                             1000);
+        for (uint8_t diag_attempt = 0u;
+             diag_attempt < UWB_POST_BURST_DIAG_ATTEMPTS; diag_attempt++) {
+            struct app_mesh_radio_owner_lease radio_lease = {0};
+            int64_t attempt_target_us = target_us +
+                ((int64_t)diag_attempt * UWB_POST_BURST_DIAG_RETRY_DELAY_MS * 1000);
             int64_t remaining_ms;
 
             sleep_until_us(attempt_target_us);
@@ -2039,21 +2040,22 @@ void ml_clicker_run_post_burst_diagnostics(
                         (long long)remaining_ms);
                 break;
             }
-            range_request.timeout_ms = MIN(UWB_POST_BURST_DIAG_TIMEOUT_MS,
-                                           (uint32_t)(remaining_ms -
-                                                      CLICK_REPORT_BUILD_GUARD_MS));
-
+            range_request.timeout_ms = MIN(
+                UWB_POST_BURST_DIAG_TIMEOUT_MS,
+                (uint32_t)(remaining_ms - CLICK_REPORT_BUILD_GUARD_MS));
             memset(&range_result, 0, sizeof(range_result));
             range_result.status = RANGE_RX_TIMEOUT;
             memset(stored->anchor_full_cir, 0, sizeof(stored->anchor_full_cir));
-
-            ret = radio_guard_uwb_start("clicker post-burst diagnostic");
+            ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_ML, "clicker post-burst diagnostic", &radio_lease);
             if (ret < 0) {
-                LOG_WRN("ML post-burst diagnostic not started: reason=radio_guard anchor=0x%016llx entry=%u attempt=%u ret=%d",
+                LOG_WRN("ML post-burst diagnostic not started: reason=radio_owner anchor=0x%016llx entry=%u attempt=%u ret=%d",
                         (unsigned long long)entry->anchor_id,
                         entry_index,
                         diag_attempt + 1u,
                         ret);
+                if (ret == -ECANCELED || ret == -ESHUTDOWN) {
+                    goto out;
+                }
                 continue;
             }
 
@@ -2078,7 +2080,10 @@ void ml_clicker_run_post_burst_diagnostics(
 
             ret = dwm3000_driver_range_initiator(&range_request, &range_result);
             (void)dwm3000_driver_idle();
-            radio_guard_uwb_stop();
+            (void)app_mesh_radio_owner_release(&radio_lease);
+            if (ret == -ECANCELED) {
+                goto out;
+            }
 
             if (range_result.exchange_started) {
                 LOG_INF("ML post-burst diagnostic complete: anchor=0x%016llx entry=%u attempt=%u seq=%u ret=%d status=%s(%u) rsl_present=%u cir_present=%u anchor_full_cir=%u clicker_diag=%u",
@@ -2148,6 +2153,7 @@ void ml_clicker_run_post_burst_diagnostics(
         }
     }
 
+out:
     if (quiet_owned && gateway_ble_uwb_quiet_active()) {
         gateway_ble_exit_uwb_quiet("ml-clicker-post-burst-diagnostic-uwb");
     }
@@ -2618,7 +2624,6 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
     atomic_clear(&ml_clicker_busy);
 }
 #endif
-
 
 int app_ml_init(void)
 {

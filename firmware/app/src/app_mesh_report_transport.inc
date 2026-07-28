@@ -11,20 +11,6 @@ static bool mesh_pending_tx_blocks_uwb_rx(void)
                  mesh_relay_tx_active(&mesh_runtime)));
 }
 
-static uint32_t mesh_uwb_rx_window_ms(void)
-{
-    return DEVICE_ROLE == ROLE_GATEWAY ?
-           UWB_MESH_GATEWAY_RX_WINDOW_MS :
-           UWB_MESH_ANCHOR_RX_WINDOW_MS;
-}
-
-static uint32_t mesh_uwb_rx_idle_delay_ms(void)
-{
-    return DEVICE_ROLE == ROLE_GATEWAY ?
-           UWB_MESH_GATEWAY_RX_IDLE_MS :
-           UWB_MESH_ANCHOR_RX_INTERVAL_MS;
-}
-
 static size_t mesh_node_comm_reliable_tx_peers(uint64_t *peer_ids,
                                                size_t peer_cap)
 {
@@ -463,7 +449,7 @@ static void mesh_uwb_rx_rearm_work_handler(struct k_work *work)
     ARG_UNUSED(work);
 
     if (mesh_transport_paused() ||
-        !mesh_rx_handoff_scan_rearm_allowed()) {
+        !app_mesh_radio_owner_rx_scan_rearm_allowed()) {
         return;
     }
 
@@ -498,7 +484,7 @@ static int mesh_schedule_uwb_rx(uint32_t delay_ms)
     if (!mesh_role_uses_uwb_rx()) {
         return -EINVAL;
     }
-    if (!mesh_rx_handoff_scan_rearm_allowed()) {
+    if (!app_mesh_radio_owner_rx_scan_rearm_allowed()) {
         mesh_uwb_rx_active = false;
         return -EAGAIN;
     }
@@ -583,7 +569,7 @@ void mesh_restart_role_scan(void)
     int ret;
 
     if (mesh_transport_paused() ||
-        !mesh_rx_handoff_scan_rearm_allowed()) {
+        !app_mesh_radio_owner_rx_scan_rearm_allowed()) {
         return;
     }
 
@@ -602,8 +588,11 @@ void mesh_restart_role_scan(void)
 
 int mesh_transport_pause_preserving_queued(void)
 {
-    radio_guard_uwb_admission_pause();
-    atomic_set(&mesh_transport_paused_state, 1);
+    int ret = app_mesh_transport_gate_pause();
+
+    if (ret < 0) {
+        return ret;
+    }
     mesh_stop_role_scan();
     (void)k_work_cancel(&mesh_rx_work);
     (void)mesh_cancel_delayable(&mesh_tx_timeout_work);
@@ -614,26 +603,33 @@ int mesh_transport_pause_preserving_queued(void)
     (void)mesh_cancel_delayable(&report_tx_work);
     (void)mesh_cancel_delayable(&mesh_route_request_action_work);
 #endif
-    return 0;
+    if (app_mesh_radio_owner_busy() || mesh_rx_response_active() ||
+        atomic_get(&mesh_rx_handler_active_state) != 0) {
+        ret = app_mesh_transport_gate_request_abort();
+    }
+    return ret;
 }
 
 bool mesh_transport_quiesced(void)
 {
     return mesh_transport_paused() &&
-           !radio_guard_uwb_busy() &&
+           !app_mesh_radio_owner_busy() &&
            !mesh_rx_response_active() &&
            atomic_get(&mesh_rx_handler_active_state) == 0;
 }
 
-void mesh_transport_resume(void)
+int mesh_transport_resume(void)
 {
     bool route_discovery_pending_now;
+    int ret;
 
     if (!mesh_transport_paused()) {
-        return;
+        return 0;
     }
-    atomic_set(&mesh_transport_paused_state, 0);
-    radio_guard_uwb_admission_resume();
+    ret = app_mesh_transport_gate_resume();
+    if (ret < 0) {
+        return ret;
+    }
 
     if (k_msgq_num_used_get(&mesh_rx_msgq) > 0u) {
         (void)mesh_submit_work(&mesh_rx_work);
@@ -671,6 +667,7 @@ void mesh_transport_resume(void)
         (void)mesh_reschedule_delayable(&mesh_route_discovery_work, 0u);
     }
     mesh_restart_role_scan();
+    return 0;
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -686,7 +683,8 @@ static int mesh_ch9_slot_tx_begin(struct mesh_ch9_slot_tx_context *ctx)
     }
 
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh channel9 batch TX");
+    ret = mesh_transport_tx_start(
+        "mesh channel9 batch TX", &ctx->radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         return ret;
@@ -703,7 +701,7 @@ static int mesh_ch9_slot_tx_begin(struct mesh_ch9_slot_tx_context *ctx)
     if (ret < 0) {
         (void)dwm3000_driver_standby();
         mesh_report_note_anchor_uwb_awake_since(ctx->uwb_window_start_ms, 0u);
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&ctx->radio_lease);
         mesh_restart_role_scan();
         ctx->uwb_window_start_ms = -1;
         return ret;
@@ -721,7 +719,7 @@ static void mesh_ch9_slot_tx_end(struct mesh_ch9_slot_tx_context *ctx)
 
     mesh_release_radio_after_mesh_turn(true, "ch9-slot-tx");
     mesh_report_note_anchor_uwb_awake_since(ctx->uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&ctx->radio_lease);
     mesh_restart_role_scan();
     ctx->active = false;
     ctx->uwb_window_start_ms = -1;
@@ -841,6 +839,7 @@ static int mesh_send_outbound_with_release_on_channel(
     bool *rf_started_out,
     uint8_t forced_radio_channel)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     struct mesh_outbound *tx = &mesh_send_scratch_tx;
     uint8_t *frame = mesh_send_scratch_frame;
     size_t frame_len = 0u;
@@ -915,7 +914,7 @@ static int mesh_send_outbound_with_release_on_channel(
             MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN);
 
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh UWB TX");
+    ret = mesh_transport_tx_start("mesh UWB TX", &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         goto out_unlock;
@@ -977,7 +976,7 @@ static int mesh_send_outbound_with_release_on_channel(
         (void)dwm3000_driver_standby();
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     mesh_restart_role_scan();
     if (ret < 0) {
         HIGH_DEBUG_COUNTER_INC(mesh_drop);
@@ -1215,6 +1214,7 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
         uint32_t listen_ms = MIN(remaining_ms, MESH_C5_FLOOD_DELAY_LISTEN_SLICE_MS);
         enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
         bool valid_mesh_frame = false;
+        struct app_mesh_radio_owner_lease radio_lease = {0};
         size_t frame_len = 0u;
         uint8_t quality = 0u;
         int ret;
@@ -1224,7 +1224,8 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
         }
 
         mesh_stop_role_scan();
-        ret = mesh_transport_radio_start("mesh C5 flood delay listen");
+        ret = mesh_transport_rx_start(
+            "mesh C5 flood delay listen", &radio_lease);
         if (ret < 0) {
             mesh_restart_role_scan();
             mesh_wait_until_ms(due_ms);
@@ -1243,9 +1244,12 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
         }
         (void)dwm3000_driver_standby();
         mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         mesh_restart_role_scan();
 
+        if (ret == -ECANCELED) {
+            break;
+        }
         if (ret == 0) {
             (void)mesh_queue_from_frame_at_internal(mesh_uwb_rx_frame,
                                                     frame_len,
@@ -1299,6 +1303,7 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
 
 static bool mesh_c5_flood_quiet_cb(uint32_t sniff_ms, void *ctx)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     size_t frame_len = 0u;
     int64_t uwb_window_start_ms = -1;
     int ret;
@@ -1306,7 +1311,8 @@ static bool mesh_c5_flood_quiet_cb(uint32_t sniff_ms, void *ctx)
     ARG_UNUSED(ctx);
 
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh C5 flood politeness");
+    ret = mesh_transport_rx_start(
+        "mesh C5 flood politeness", &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         return false;
@@ -1323,7 +1329,7 @@ static bool mesh_c5_flood_quiet_cb(uint32_t sniff_ms, void *ctx)
     }
     (void)dwm3000_driver_standby();
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     mesh_restart_role_scan();
 
     return ret == -ETIMEDOUT;
@@ -1349,17 +1355,6 @@ static int mesh_c5_flood_send_cb(const struct mesh_outbound *out, void *ctx)
         *flood_ctx->rf_started_out = true;
     }
     return ret;
-}
-
-static bool mesh_c5_flood_same_packet(const struct mesh_outbound *left,
-                                      const struct mesh_outbound *right)
-{
-    return left != NULL && right != NULL &&
-           left->packet.msg_type == right->packet.msg_type &&
-           left->packet.src_id == right->packet.src_id &&
-           left->packet.dst_id == right->packet.dst_id &&
-           left->packet.session_id == right->packet.session_id &&
-           left->packet.seq == right->packet.seq;
 }
 
 static uint32_t mesh_c5_flood_deferred_retry_ms(
@@ -1388,7 +1383,8 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
         return -EINVAL;
     }
     if (mesh_c5_flood_deferred.valid) {
-        if (mesh_c5_flood_same_packet(&mesh_c5_flood_deferred.outbound, out)) {
+        if (app_mesh_flood_same_packet(
+                &mesh_c5_flood_deferred.outbound, out)) {
             return 0;
         }
         if (!response_priority || mesh_c5_flood_deferred.response_priority) {
@@ -1692,20 +1688,17 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
         return -EBUSY;
     }
     if (DEVICE_ROLE == ROLE_GATEWAY) {
-        control_handoff_started = mesh_rx_handoff_begin_control(&abort_scan);
-        if (!control_handoff_started) {
-            ret = -EBUSY;
+        ret = app_mesh_radio_owner_inline_control_begin(&abort_scan);
+        if (ret < 0) {
             goto out_unlock;
         }
+        control_handoff_started = true;
         mesh_stop_role_scan();
-        if (abort_scan) {
-            dwm3000_driver_request_receive_abort();
-        }
         ret = mesh_rx_handoff_wait_for_control();
         if (ret < 0) {
             status_debug_printf("DBG_CONTROL_RX_HANDOFF_TIMEOUT abort=%u busy=%u\n",
                                 abort_scan ? 1u : 0u,
-                                radio_guard_uwb_busy() ? 1u : 0u);
+                                app_mesh_radio_owner_busy() ? 1u : 0u);
             goto out_unlock;
         }
         status_debug_printf("DBG_CONTROL_RX_HANDOFF_READY abort=%u\n",
@@ -1734,7 +1727,7 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
 
 out_unlock:
     if (control_handoff_started) {
-        mesh_rx_handoff_end_control();
+        app_mesh_radio_owner_inline_control_end();
         mesh_restart_role_scan();
     }
     k_mutex_unlock(&mesh_c5_control_scratch_lock);
@@ -1768,20 +1761,17 @@ int mesh_try_send_control_response_view(
         return -EBUSY;
     }
     if (DEVICE_ROLE == ROLE_GATEWAY) {
-        control_handoff_started = mesh_rx_handoff_begin_control(&abort_scan);
-        if (!control_handoff_started) {
-            ret = -EBUSY;
+        ret = app_mesh_radio_owner_inline_control_begin(&abort_scan);
+        if (ret < 0) {
             goto out_unlock;
         }
+        control_handoff_started = true;
         mesh_stop_role_scan();
-        if (abort_scan) {
-            dwm3000_driver_request_receive_abort();
-        }
         ret = mesh_rx_handoff_wait_for_control();
         if (ret < 0) {
             status_debug_printf("DBG_RESPONSE_RX_HANDOFF_TIMEOUT abort=%u busy=%u\n",
                                 abort_scan ? 1u : 0u,
-                                radio_guard_uwb_busy() ? 1u : 0u);
+                                app_mesh_radio_owner_busy() ? 1u : 0u);
             goto out_unlock;
         }
         status_debug_printf("DBG_RESPONSE_RX_HANDOFF_READY abort=%u\n",
@@ -1804,7 +1794,7 @@ int mesh_try_send_control_response_view(
 
 out_unlock:
     if (control_handoff_started) {
-        mesh_rx_handoff_end_control();
+        app_mesh_radio_owner_inline_control_end();
         mesh_restart_role_scan();
     }
     k_mutex_unlock(&mesh_c5_control_scratch_lock);

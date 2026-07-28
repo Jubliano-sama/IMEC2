@@ -164,6 +164,25 @@ Blind Channel 5 flooding is reserved for broad discovery, gateway-originated
 commands, and Here-I-Am reachability. Ordinary route acquisition MUST use the
 typed reactive request/reply exchange.
 
+Every application-side DWM3000 driver or port operation MUST first acquire one
+nonzero radio-owner client/generation lease and MUST release that exact lease.
+A stale, nested, wrong-client, or wrong-generation claim or release MUST fail
+without changing the live owner. Application code MUST NOT bypass that lease
+with a direct DWM3000 operation.
+
+The lease boundary MUST cover the complete logical radio operation. Temporary
+idle between steps is not a terminal boundary, and cleanup MUST NOT release and
+later reacquire merely to park the radio because pause or abort deliberately
+closes new claims. A multi-step operation MUST park the DWM3000 while its
+original lease remains live, then release that exact lease.
+
+Raw receive-abort request and clear calls MUST exist only at the radio-owner
+platform binding seam. Each logical abort claimant MUST hold an exact abort
+lease, and the physical abort level MUST remain asserted until every live abort
+lease has released. A driver `-ECANCELED` result MUST terminate and unwind the
+whole logical radio operation; that operation MUST NOT clear the abort, retry
+the receive, or rearm another receive before returning.
+
 ### RAD-02 — Connected rhythm and full receive windows
 
 A connected anchor MUST alternate bounded Channel 9 work with recurring
@@ -269,6 +288,20 @@ owner MUST retain an independent liveness retry because a normal RX completion
 can race the abort request. This design MUST preserve survey, BLE, watchdog,
 and delayed-work progress without a material Channel 9 gap.
 
+An admitted gateway command MUST carry its exact frozen work identity through
+the safe-boundary request, radio-owner generation grant, scheduled worker, and
+terminal callback. A submission result MUST NOT orphan that admission. Retryable
+pressure MUST retain and rearm the same command. A stale or invalid handoff,
+grant-consumption failure, or worker-scheduling failure MUST either preserve an
+independent retry owner or fail closed through the watchdog; it MUST NOT report
+success or silently discard the command.
+
+A failed handoff MAY retire only the exact affected admission or the explicit
+failure cutoff. Commands admitted after that cutoff MUST remain queued and
+rearmed. Every terminal, canceled, or failed-grant path MUST restore the
+gateway scan, and the scheduled control worker MUST consume the exact grant
+before the abort lease that created the safe boundary is released.
+
 ## Power-state contract
 
 ### PWR-01 — Idle anchor
@@ -282,11 +315,31 @@ A connected anchor SHOULD NOT enter retained or deep DWM3000 sleep between
 back-to-back Channel 9 and Channel 5 windows. It MAY keep the radio idle and
 ready to retune; the connected rhythm SHOULD have no meaningful sleep gap.
 
-### PWR-03 — Click interruption
+### PWR-03 — Click interruption and clicker idle handoff
 
 A click MUST mark relay work interrupted rather than disconnected. Timers MUST
 include the worst-case click duration, and the anchor SHOULD resume the existing
 Channel 9 rhythm when it remains valid.
+
+A scheduled clicker DS-TWR burst MUST hold one exact radio lease from the first
+scheduled wait through all samples and final DWM3000 standby. Intermediate idle
+MUST NOT release the lease. Pause or abort MUST unwind through standby and exact
+release using that already-live lease, and a standby or release failure MUST
+propagate even when ranging itself reached a successful state.
+
+For retained System-ON idle, the clicker MUST acquire its exact radio lease,
+complete DWM3000 standby, release that lease, and only then arm button wake. A
+failed claim or standby transition MUST schedule bounded retry and MUST NOT
+pretend that idle handoff completed.
+
+When the configured terminal idle policy is System-OFF, the clicker MUST acquire
+one final exact radio lease before DWM3000 wake/reset/probe, standby, and pin
+parking. It MUST retain that lease through `sys_poweroff`, because releasing it
+would permit another radio operation during the terminal transition. Failure
+to acquire the terminal lease MUST retain awake ownership and schedule bounded
+retry rather than enter System-OFF. After acquisition, wake/reset/probe,
+standby, and pin parking are best-effort preparation: failures MUST be logged,
+and terminal power-off MUST continue with the lease held.
 
 ### PWR-04 — Scheduled-owner protection
 
@@ -550,6 +603,14 @@ relative retry delays resume from their remainder. If the radio does not
 quiesce after the lease, bounded recovery MUST abort it and deliberately allow
 the watchdog to reset rather than remain paused forever.
 
+The owner transition MUST occur in the exact order
+`pause -> abort request -> abort release -> resume`. Pause MUST close new radio
+claims, preserve cancelable and runnable work, and request level-triggered abort
+when a radio generation is active. Resume MUST occur only after the matching
+abort lease releases. Failure at any owner step MUST leave custody, identities,
+and absolute deadlines owned, keep transport fail-closed, and stop feeding the
+watchdog rather than expose a partially resumed service.
+
 The current mesh-report runtime is a compatibility backend. New or migrated
 protocols MUST enter through the facade and MUST NOT create another route,
 queue, flood, retry, radio-owner, or terminal path.
@@ -567,6 +628,16 @@ same stage and MUST NOT change wire format, timing, power policy, or runtime
 semantics as an unreviewed side effect. Frozen legacy paths remain explicit
 architecture debt until migrated; this target model MUST NOT be described as
 already universal.
+
+Stage 4 is implemented in source for the current audited application DWM3000
+paths: exact generation leases, level-triggered abort, whole-operation
+cancellation, gateway handoff, and COMM-10 gating use the application radio
+owner. The focused clicker BLE-courtesy and radio/power boundaries are also
+extracted. This source status MUST NOT be represented as completion of the
+architecture reset or as exact-role hardware, stack, power, reset, or
+multi-month qualification. The migration changes internal ownership only;
+external wire behavior, radio timing, role behavior, and power policy remain
+unchanged.
 
 ## Delivery and ACKs
 
@@ -696,6 +767,11 @@ mesh control at the first safe radio boundary. They MUST precede local click
 report delivery, transit, retries, route maintenance, and background work.
 Already-started timing-critical ranging MAY run until its defined safe abort
 point. Priority derives from gateway origin, not a command allowlist.
+
+Priority MUST be realized as the exact RAD-09 radio-owner handoff, not a second
+gateway-command owner. Once admitted, a command MUST retain that exact identity
+and an independent liveness edge across every submission failure until it runs,
+reaches one explicit terminal, or deliberately fails closed.
 
 ### GCTL-02 — Broad flood propagation
 

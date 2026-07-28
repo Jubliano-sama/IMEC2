@@ -114,7 +114,7 @@ preemptive_submit = function_body(
     ANCHOR, "gateway_host_command_submit_preemptive"
 )
 abort_request = preemptive_submit.index(
-    "dwm3000_driver_request_receive_abort()"
+    "app_node_comm_gateway_control_preemptive_abort_request()"
 )
 owner_submit = preemptive_submit.index(
     "mesh_route_owner_work_submit(&gateway_host_abort_work)"
@@ -126,16 +126,29 @@ assert abort_request < owner_submit, (
 submit_failure = preemptive_submit.index("if (ret < 0)", owner_submit)
 failure_open = preemptive_submit.index("{", submit_failure)
 failure_body = braced_block(preemptive_submit, failure_open)
-clear_failure = failure_body.index("dwm3000_driver_clear_receive_abort()")
+clear_failure = failure_body.index(
+    "app_node_comm_gateway_control_preemptive_abort_release()"
+)
 release_failure = failure_body.index("k_msgq_get(")
 assert clear_failure < release_failure < failure_body.index("return ret;"), (
-    "a failed owner submit must clear the RX-abort request before releasing "
+    "a failed owner submit must release its RX-abort lease before releasing "
     "preemptive command custody"
 )
+assert "dwm3000_driver_request_receive_abort" not in preemptive_submit
+assert "dwm3000_driver_clear_receive_abort" not in preemptive_submit
 
 abort_handler = function_body(ANCHOR, "gateway_host_abort_work_handler")
-assert abort_handler.index("dwm3000_driver_clear_receive_abort()") < (
-    abort_handler.index("while (k_msgq_get(")
-), "the mesh-route abort handler must consume the RX-abort request on entry"
+first_release = abort_handler.index(
+    "app_node_comm_gateway_control_preemptive_abort_release()"
+)
+loop = abort_handler.index("while (k_msgq_get(")
+final_release = abort_handler.rindex(
+    "app_node_comm_gateway_control_preemptive_abort_release()"
+)
+assert first_release < loop < final_release, (
+    "the mesh-route abort handler must release the exact RX-abort lease on "
+    "entry and leave it released after draining custody"
+)
+assert "dwm3000_driver_clear_receive_abort" not in abort_handler
 
 print("gateway survey owner-queue source invariants passed")

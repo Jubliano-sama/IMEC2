@@ -1,24 +1,4 @@
 #line 14825 __BASE_FILE__
-static void mesh_rx_handler_lock_note_owner(const char *owner)
-{
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        return;
-    }
-
-    mesh_rx_handler_lock_owner = owner == NULL ? "rx" : owner;
-    mesh_rx_handler_lock_since_ms = k_uptime_get_32();
-}
-
-static void mesh_rx_handler_lock_clear_owner(void)
-{
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        return;
-    }
-
-    mesh_rx_handler_lock_owner = NULL;
-    mesh_rx_handler_lock_since_ms = 0u;
-}
-
 static void mesh_rx_work_handler(struct k_work *work)
 {
     uint32_t handled_count;
@@ -77,7 +57,8 @@ bool mesh_process_queued_rx_now(const char *reason)
     if (pending_count == 0u) {
         return false;
     }
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && radio_guard_uwb_busy()) {
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+        app_mesh_radio_owner_busy()) {
         submit_ret = mesh_submit_work(&mesh_rx_work);
         status_debug_printf("DBG_MESH_RX_DIRECT_RF_BUSY submit=%d q=%u reason=%s\n",
                             submit_ret,
@@ -1229,6 +1210,7 @@ static bool mesh_process_received_frame(const uint8_t *frame,
 
 static void mesh_uwb_rx_work_handler(struct k_work *work)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t *frame = mesh_uwb_rx_frame;
     size_t frame_len = 0u;
     uint8_t quality = 0u;
@@ -1259,7 +1241,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
     if (mesh_transport_paused() ||
-        !mesh_rx_handoff_scan_rearm_allowed()) {
+        !app_mesh_radio_owner_rx_scan_rearm_allowed()) {
         mesh_uwb_rx_active = false;
         return;
     }
@@ -1396,12 +1378,14 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 break;
             }
 
-            ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX");
+            ret = mesh_rx_radio_start(
+                "mesh gateway continuous channel9 RX", &radio_lease);
             if (ret < 0) {
                 if (ret == -ECANCELED) {
                     int priority_ret =
                         app_node_comm_gateway_delivery_safe_boundary();
 
+                    mesh_uwb_rx_active = false;
                     status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_START_HANDOFF ret=%d\n",
                                         priority_ret);
                     if (priority_ret < 0) {
@@ -1465,7 +1449,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 (void)dwm3000_driver_standby();
             }
             mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-            mesh_rx_radio_stop();
+            mesh_rx_radio_stop(&radio_lease);
             app_watchdog_note_radio_progress();
 
             if (ret != 0) {
@@ -1508,7 +1492,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 break;
             }
 
-            if (dwm3000_driver_receive_abort_pending()) {
+            if (app_mesh_radio_owner_abort_pending()) {
                 bool valid_mesh_frame = false;
 
                 (void)mesh_queue_from_frame_deferred(frame,
@@ -1560,6 +1544,10 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                             (unsigned int)rx_failure,
                             channel9_frames_seen,
                             gateway_ch9_recoverable_rx_errors);
+        if (ret == -ECANCELED) {
+            mesh_uwb_rx_active = false;
+            return;
+        }
         if (app_node_comm_gateway_route_refresh_due(k_uptime_get_32())) {
             status_debug_printf("DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=%u due=%u\n",
                                 k_uptime_get_32(),
@@ -1652,10 +1640,17 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         channel5_gap_scan = true;
     }
 
-    ret = mesh_rx_radio_start(channel9_event ?
-                              "mesh channel9 UWB RX" :
-                              "mesh UWB RX");
+    ret = mesh_rx_radio_start(
+        channel9_event ? "mesh channel9 UWB RX" : "mesh UWB RX",
+        &radio_lease);
     if (ret < 0) {
+        if (ret == -ECANCELED) {
+            mesh_uwb_rx_active = false;
+            if (DEVICE_ROLE == ROLE_GATEWAY) {
+                (void)app_node_comm_gateway_delivery_safe_boundary();
+            }
+            return;
+        }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && DEVICE_ROLE == ROLE_GATEWAY) {
             status_debug_printf("DBG_RX_GUARD_FAIL mode=%u ret=%d\n",
                                 channel9_event ? 9u : 5u,
@@ -1760,7 +1755,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                                                 NULL,
                                                                 &rx_failure,
                                                                 &rx_timing);
-            if (ret == -ETIMEDOUT) {
+            if (ret == -ETIMEDOUT || ret == -ECANCELED) {
                 break;
             }
             if (ret != 0) {
@@ -1832,7 +1827,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 &quality,
                 NULL,
                 &rx_failure);
-            if (ret == -ETIMEDOUT) {
+            if (ret == -ETIMEDOUT || ret == -ECANCELED) {
                 break;
             }
             if (ret < 0) {
@@ -1897,7 +1892,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 break;
             }
         }
-        if (frame_processed_inline) {
+        if (frame_processed_inline && ret != -ECANCELED) {
             ret = -ETIMEDOUT;
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -1931,7 +1926,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                            channel9_event ? "ch9-rx" : "mesh-rx");
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    mesh_rx_radio_stop();
+    mesh_rx_radio_stop(&radio_lease);
 
     if (route_control_handoff) {
         frame_processed_inline =
@@ -2018,6 +2013,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         }
     }
 
+    if (ret == -ECANCELED) {
+        mesh_uwb_rx_active = false;
+        if (DEVICE_ROLE == ROLE_GATEWAY) {
+            (void)app_node_comm_gateway_delivery_safe_boundary();
+        }
+        return;
+    }
     if (channel5_gap_scan) {
         uint32_t next_delay_ms = mesh_next_channel9_rx_delay_ms(k_uptime_get_32());
 
@@ -2077,38 +2079,6 @@ int mesh_start_uwb_rx(const char *reason)
     return 0;
 }
 
-
-static bool mesh_route_refresh_allowed(void *ctx)
-{
-    ARG_UNUSED(ctx);
-    return app_mesh_c5_gateway_route_adv_allowed(
-        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST));
-}
-
-static bool mesh_route_refresh_policy_running(void *ctx)
-{
-    ARG_UNUSED(ctx);
-    return app_node_comm_policy_running();
-}
-
-static bool mesh_route_refresh_response_active(uint32_t now_ms, void *ctx)
-{
-    ARG_UNUSED(ctx);
-    if (!mesh_gateway_route_test_role() ||
-        mesh_gateway_route_preempt_peer_id == 0u ||
-        !mesh_gateway_route_test_preempt_active(now_ms)) {
-        return false;
-    }
-    return mesh_c5_contact_active(mesh_gateway_route_preempt_peer_id,
-                                  C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
-                                  now_ms);
-}
-
-static uint32_t mesh_route_refresh_now(void *ctx)
-{
-    ARG_UNUSED(ctx);
-    return k_uptime_get_32();
-}
 
 static int mesh_route_refresh_build(void *ctx,
                                     uint32_t sequence,
@@ -2247,8 +2217,6 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
 
     mesh_report_callbacks = callbacks;
     app_mesh_report_encode_init(&report_encode_config);
-    atomic_set(&mesh_transport_paused_state, 0);
-    app_mesh_rx_handoff_reset(&mesh_rx_handoff);
     app_mesh_paused_delivery_reset(&mesh_paused_delivery);
     mesh_route_owner_work_queue_start();
     gateway_control_config.priority_work_queue =
@@ -2304,16 +2272,32 @@ void mesh_delivery_health_get(struct mesh_delivery_health *health)
     }
 }
 
-int mesh_gateway_command_priority_submit(struct k_work_delayable *work)
+int mesh_gateway_radio_handoff_submit(
+    struct k_work_delayable *work,
+    app_mesh_radio_owner_schedule_failure_fn schedule_failure,
+    void *schedule_failure_ctx,
+    uint32_t schedule_failure_token)
 {
-    return app_node_comm_gateway_control_priority_submit(work);
+    return app_node_comm_gateway_control_radio_handoff_submit(
+        work, schedule_failure, schedule_failure_ctx,
+        schedule_failure_token);
 }
 
-int mesh_gateway_command_priority_safe_boundary(void)
+int mesh_gateway_radio_handoff_begin(struct k_work_delayable *work)
+{
+    return app_node_comm_gateway_control_radio_handoff_begin(work);
+}
+
+int mesh_gateway_radio_handoff_cancel(struct k_work_delayable *work)
+{
+    return app_node_comm_gateway_control_radio_handoff_cancel(work);
+}
+
+int mesh_gateway_radio_handoff_safe_boundary(void)
 {
     return app_mesh_command_orchestrator_safe_boundary(
         app_node_comm_gateway_control_context(),
-        radio_guard_uwb_busy(),
+        app_mesh_radio_owner_busy(),
         app_node_comm_gateway_control_safe_boundary_schedule,
         NULL);
 }

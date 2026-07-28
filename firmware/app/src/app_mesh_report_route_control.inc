@@ -104,71 +104,10 @@ static int mesh_probe_standard_click_claim(
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
-static bool mesh_same_tlv_value(const uint8_t *lhs,
-                                size_t lhs_len,
-                                const uint8_t *rhs,
-                                size_t rhs_len,
-                                uint8_t type)
-{
-    const uint8_t *lhs_value = NULL;
-    const uint8_t *rhs_value = NULL;
-    uint8_t lhs_value_len = 0u;
-    uint8_t rhs_value_len = 0u;
-
-    if (tlv_find(lhs, lhs_len, type, &lhs_value, &lhs_value_len) != PROTO_OK ||
-        tlv_find(rhs, rhs_len, type, &rhs_value, &rhs_value_len) != PROTO_OK ||
-        lhs_value_len != rhs_value_len) {
-        return false;
-    }
-
-    return memcmp(lhs_value, rhs_value, lhs_value_len) == 0;
-}
-
-static bool mesh_route_reply_ack_matches(const struct mesh_outbound *route_reply,
-                                         const struct mesh_frame_parse_context *parsed)
-{
-    if (route_reply == NULL ||
-        parsed == NULL ||
-        parsed->packet.msg_type != MSG_ROUTE_REPLY_ACK ||
-        parsed->packet.src_id != route_reply->next_hop_id ||
-        parsed->packet.dst_id != DEVICE_ID ||
-        parsed->previous_hop_id != route_reply->next_hop_id ||
-        parsed->packet.session_id != route_reply->packet.session_id) {
-        return false;
-    }
-
-    return mesh_same_tlv_value(route_reply->payload,
-                               route_reply->payload_len,
-                               parsed->payload,
-                               parsed->payload_len,
-                               TLV_INITIATOR_ID) &&
-           mesh_same_tlv_value(route_reply->payload,
-                               route_reply->payload_len,
-                               parsed->payload,
-                               parsed->payload_len,
-                               TLV_RESPONDER_ID) &&
-           mesh_same_tlv_value(route_reply->payload,
-                               route_reply->payload_len,
-                               parsed->payload,
-                               parsed->payload_len,
-                               TLV_FLOOD_EPOCH_ID) &&
-           mesh_same_tlv_value(route_reply->payload,
-                               route_reply->payload_len,
-                               parsed->payload,
-                               parsed->payload_len,
-                               TLV_REPLY_NONCE) &&
-           mesh_same_tlv_value(route_reply->payload,
-                               route_reply->payload_len,
-                               parsed->payload,
-                               parsed->payload_len,
-                               TLV_METRIC_CRC);
-}
-#endif
-
-#if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_reply,
                                            uint8_t attempt)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t *frame = mesh_route_reply_ack_frame;
     struct mesh_frame_parse_context *parsed = &mesh_route_reply_ack_parsed;
     int64_t uwb_window_start_ms = -1;
@@ -202,7 +141,10 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                              k_uptime_get_32() + RREP_ACK_TIMEOUT_MS,
                              "route-reply-ack-listen");
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh route reply ACK RX");
+    ret = mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_RX,
+        "mesh route reply ACK RX",
+        &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         goto out_unlock;
@@ -245,7 +187,7 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                                                           NULL,
                                                           &rx_failure);
             last_ret = ret;
-            if (ret == -ETIMEDOUT) {
+            if (ret == -ETIMEDOUT || ret == -ECANCELED) {
                 break;
             }
             if (ret < 0) {
@@ -328,7 +270,13 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                 continue;
             }
 
-            if (!mesh_route_reply_ack_matches(route_reply, parsed)) {
+            if (!app_mesh_route_reply_ack_matches(
+                    route_reply,
+                    &parsed->packet,
+                    parsed->payload,
+                    parsed->payload_len,
+                    parsed->previous_hop_id,
+                    DEVICE_ID)) {
                 LOG_INF("mesh route reply ACK listen ignored unrelated mesh frame: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u",
                         parsed->packet.msg_type,
                         (unsigned long long)parsed->packet.src_id,
@@ -363,7 +311,7 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
 
     (void)dwm3000_driver_standby();
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
 
     if (click_captured) {
         bool handled;
@@ -1914,6 +1862,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
                                       uint8_t purpose,
                                       const char *reason)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     struct uwb_clicker_session *session = &mesh_route_wake_session_scratch;
     struct uwb_clicker_config *config = &mesh_route_wake_config_scratch;
     const struct app_clicker_wake_train_config wake_train_config = {
@@ -2049,7 +1998,10 @@ wake_train_attempt:
                          wake_train_config.post_wake_claimed_duration_ms,
                          reason);
 
-    ret = mesh_transport_radio_start("mesh route WAKE_CLAIM train");
+    ret = mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_TX,
+        "mesh route WAKE_CLAIM train",
+        &radio_lease);
     if (ret < 0) {
         status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
         LOG_WRN("mesh route UWB WAKE_CLAIM guard failed: target=0x%016llx ret=%d",
@@ -2254,7 +2206,7 @@ wake_train_attempt:
 
 out:
     (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
 
     if (click_captured) {
         mesh_c5_contact_clear("click-preempt");
@@ -2452,6 +2404,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                        const struct mesh_route_capture_identity *identity,
                                        bool *route_reply_captured)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t *frame = mesh_uwb_rx_frame;
     size_t capture_count = 0u;
     bool captured_route_reply = false;
@@ -2495,7 +2448,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                              reason);
 
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh route reply RX");
+    ret = mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_RX,
+        "mesh route reply RX",
+        &radio_lease);
     if (ret < 0) {
         mesh_c5_contact_clear("reply-listen-guard-fail");
         mesh_restart_role_scan();
@@ -2557,6 +2513,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                                           NULL,
                                                           &rx_failure);
             last_ret = ret;
+            if (ret == -ECANCELED) {
+                break;
+            }
             if (ret == -ETIMEDOUT) {
                 continue;
             }
@@ -3057,7 +3016,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
 
     (void)dwm3000_driver_standby();
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
 
     if (click_captured) {
         bool handled;

@@ -2,12 +2,11 @@
 #include "app_mesh_ch9_ack.h"
 #include "app_mesh_coordinator_runtime.h"
 #include "app_mesh_command_orchestrator.h"
-#include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_flood.h"
 #include "app_mesh_gateway_command_flow.h"
 #include "app_gateway_command_ingress.h"
-#include "app_mesh_gateway_command_priority.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_radio_owner.h"
 #include "mesh_preemption.h"
 #include "route.h"
 #include "serial_frame.h"
@@ -48,6 +47,7 @@ struct ingress_scenario_fixture {
     struct app_gateway_command_identity cancelled;
     struct k_work_delayable work;
     struct k_work_q priority_work_queue;
+    struct app_mesh_radio_owner_handoff_lease radio_handoff;
     struct app_mesh_command_orchestrator orchestrator;
     struct mesh_outbound anchor_result;
     uint8_t admission_count;
@@ -64,6 +64,33 @@ struct ingress_scenario_fixture {
 static uint8_t receive_abort_requests;
 static uint8_t receive_abort_clears;
 
+struct schedule_failure_capture {
+    uint8_t calls;
+    int error;
+    uint32_t token;
+    const struct app_mesh_radio_owner_gateway_ops *reentrant_ops;
+    struct k_work_delayable *reentrant_work;
+    struct app_mesh_radio_owner_handoff_lease *reentrant_handoff;
+    int reentrant_result;
+};
+
+static void capture_schedule_failure(void *ctx, int error, uint32_t token)
+{
+    struct schedule_failure_capture *capture = ctx;
+
+    assert(capture != NULL);
+    capture->calls++;
+    capture->error = error;
+    capture->token = token;
+    if (capture->reentrant_ops != NULL) {
+        capture->reentrant_result =
+            app_mesh_radio_owner_gateway_command_submit(
+                capture->reentrant_ops,
+                capture->reentrant_work,
+                capture->reentrant_handoff);
+    }
+}
+
 void dwm3000_driver_request_receive_abort(void)
 {
     receive_abort_requests++;
@@ -72,6 +99,23 @@ void dwm3000_driver_request_receive_abort(void)
 void dwm3000_driver_clear_receive_abort(void)
 {
     receive_abort_clears++;
+}
+
+int64_t k_uptime_get(void)
+{
+    return 0;
+}
+
+static void radio_owner_test_init(void)
+{
+    const struct app_mesh_radio_owner_platform_ops ops = {
+        .request_receive_abort = dwm3000_driver_request_receive_abort,
+        .clear_receive_abort = dwm3000_driver_clear_receive_abort,
+    };
+
+    assert(app_mesh_radio_owner_init(&ops) == 0);
+    receive_abort_requests = 0u;
+    receive_abort_clears = 0u;
 }
 
 static struct route_candidate direct_gateway_route(void)
@@ -255,13 +299,13 @@ static int ingress_admit(void *ctx, struct app_gateway_command_ingress_item *ite
 static int ingress_submit_priority(void *ctx)
 {
     struct ingress_scenario_fixture *fixture = ctx;
-    const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
+    const struct app_mesh_radio_owner_gateway_ops ops = {
         .gateway_role = true,
         .priority_work_queue = &fixture->priority_work_queue,
     };
 
-    return app_mesh_arbitration_zephyr_gateway_command_submit(&ops,
-                                                               &fixture->work);
+    return app_mesh_radio_owner_gateway_command_submit(
+        &ops, &fixture->work, &fixture->radio_handoff);
 }
 
 static int ingress_cancel(void *ctx,
@@ -381,8 +425,10 @@ static int gatt_result_boundary(void *ctx,
 
 static int gateway_safe_boundary_schedule(void *ctx)
 {
-    (void)ctx;
-    return app_mesh_arbitration_zephyr_gateway_receive_abort_observed();
+    struct ingress_scenario_fixture *fixture = ctx;
+
+    return app_mesh_radio_owner_gateway_safe_boundary(
+        &fixture->radio_handoff);
 }
 
 static void run_scheduled_gateway_command(struct ingress_scenario_fixture *fixture)
@@ -399,6 +445,8 @@ static void run_scheduled_gateway_command(struct ingress_scenario_fixture *fixtu
     struct app_mesh_flood_result flood_result;
 
     assert(fixture->work.reschedule_calls == 1u);
+    assert(app_mesh_radio_owner_gateway_command_begin(
+               &fixture->work, &fixture->radio_handoff) == 0);
     assert(fixture->queued_valid);
     assert(app_mesh_command_orchestrator_prepare_flood(
                &fixture->orchestrator,
@@ -466,7 +514,8 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
     struct mesh_outbound ack = pending_hop_ack();
     struct k_work_delayable command_work = {0};
     struct k_work_q priority_work_queue = {0};
-    const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
+    struct app_mesh_radio_owner_handoff_lease radio_handoff = {0};
+    const struct app_mesh_radio_owner_gateway_ops ops = {
         .gateway_role = true,
         .priority_work_queue = &priority_work_queue,
     };
@@ -477,6 +526,7 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
     bool state_changed;
     receive_abort_requests = 0u;
     receive_abort_clears = 0u;
+    radio_owner_test_init();
 
     start_gateway_bound_tx(&relay, MSG_MESH_DATA, TRANSIT_ID, 7u, NULL, 0u);
     app_mesh_ch9_ack_table_init(&ack_table);
@@ -505,14 +555,79 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
     assert(!decision.route_wait_allowed);
     assert(!decision.report_tx_allowed);
 
-    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
-               &ops, &command_work) == 0);
+    assert(app_mesh_radio_owner_gateway_command_submit(
+               &ops, &command_work, &radio_handoff) == 0);
     assert(receive_abort_requests == 1u);
     assert(command_work.reschedule_calls == 0u);
-    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() == 0);
+    assert(app_mesh_radio_owner_gateway_safe_boundary(&radio_handoff) == 0);
     assert(command_work.reschedule_calls == 1u);
     assert(command_work.last_queue == &priority_work_queue);
     assert(receive_abort_clears == 0u);
+    assert(app_mesh_radio_owner_gateway_command_begin(
+               &command_work, &radio_handoff) == 0);
+    assert(receive_abort_clears == 1u);
+}
+
+static void test_gateway_schedule_failure_stays_bound_to_submitter(void)
+{
+    struct schedule_failure_capture discovery_failure = {0};
+    struct schedule_failure_capture host_failure = {0};
+    struct schedule_failure_capture reentrant_failure = {0};
+    struct k_work_delayable discovery_work = {
+        .reschedule_result = -EIO,
+    };
+    struct k_work_delayable host_work = {
+        .reschedule_result = -ENOMEM,
+    };
+    struct app_mesh_radio_owner_handoff_lease discovery_handoff = {0};
+    struct app_mesh_radio_owner_handoff_lease host_handoff = {0};
+    const struct app_mesh_radio_owner_gateway_ops discovery_ops = {
+        .gateway_role = true,
+        .schedule_failure = capture_schedule_failure,
+        .schedule_failure_ctx = &discovery_failure,
+        .schedule_failure_token = 41u,
+    };
+    const struct app_mesh_radio_owner_gateway_ops host_ops = {
+        .gateway_role = true,
+        .schedule_failure = capture_schedule_failure,
+        .schedule_failure_ctx = &host_failure,
+        .schedule_failure_token = 42u,
+    };
+    struct k_work_delayable reentrant_work = {0};
+    struct app_mesh_radio_owner_handoff_lease reentrant_handoff = {0};
+    const struct app_mesh_radio_owner_gateway_ops reentrant_ops = {
+        .gateway_role = true,
+        .schedule_failure = capture_schedule_failure,
+        .schedule_failure_ctx = &reentrant_failure,
+        .schedule_failure_token = 43u,
+    };
+
+    radio_owner_test_init();
+    discovery_failure.reentrant_ops = &reentrant_ops;
+    discovery_failure.reentrant_work = &reentrant_work;
+    discovery_failure.reentrant_handoff = &reentrant_handoff;
+    assert(app_mesh_radio_owner_gateway_command_submit(
+               &discovery_ops, &discovery_work, &discovery_handoff) == 0);
+    assert(app_mesh_radio_owner_gateway_safe_boundary(
+               &discovery_handoff) == -EIO);
+    assert(discovery_failure.calls == 1u);
+    assert(discovery_failure.error == -EIO);
+    assert(discovery_failure.token == 41u);
+    assert(discovery_failure.reentrant_result == -EAGAIN);
+    assert(host_failure.calls == 0u);
+
+    assert(app_mesh_radio_owner_gateway_command_submit(
+               &reentrant_ops, &reentrant_work, &reentrant_handoff) == 0);
+    assert(app_mesh_radio_owner_gateway_command_cancel(
+               &reentrant_work, &reentrant_handoff) == 0);
+    assert(app_mesh_radio_owner_gateway_command_submit(
+               &host_ops, &host_work, &host_handoff) == 0);
+    assert(app_mesh_radio_owner_gateway_safe_boundary(&host_handoff) ==
+           -ENOMEM);
+    assert(discovery_failure.calls == 1u);
+    assert(host_failure.calls == 1u);
+    assert(host_failure.error == -ENOMEM);
+    assert(host_failure.token == 42u);
 }
 
 static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_result_identity(void)
@@ -545,6 +660,7 @@ static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_resu
 
     receive_abort_requests = 0u;
     receive_abort_clears = 0u;
+    radio_owner_test_init();
     fixture.now_ms = 100u;
     fixture.ranging_active = true;
     ingress_ops.ctx = &fixture;
@@ -968,6 +1084,7 @@ static void test_click_survey_and_transit_order_defers_command_during_ranging(vo
 int main(void)
 {
     test_gateway_command_aborts_receive_before_priority_scheduling();
+    test_gateway_schedule_failure_stays_bound_to_submitter();
     test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_result_identity();
     test_gateway_ingress_preserves_a_valid_non_command_frame();
     test_click_claim_requeues_one_local_report_without_corruption();

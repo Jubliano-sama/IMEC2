@@ -147,6 +147,44 @@ retry or terminal state machines. Frozen legacy paths remain architecture debt
 until their ownership is explicitly audited or migrated; do not describe this
 target model as already universal.
 
+The Stage 4 radio-owner source migration is the current boundary for all
+audited application-side DWM3000 operations. Every application DWM3000 driver
+or port operation must hold a nonzero client/generation lease from
+`app_mesh_radio_owner` and release that exact lease; nested, stale, wrong-client,
+and wrong-generation use fails closed. Raw receive-abort request/clear calls
+belong only at the radio-owner platform binding seam. Logical callers acquire
+level-triggered abort leases, so physical abort remains asserted until the last
+exact lease is released. Observing `-ECANCELED` ends and unwinds the complete
+logical radio operation; the same call must not clear, retry, or rearm around
+that cancellation.
+
+An exact lease covers the whole logical operation, not one driver call.
+Temporary idle between scheduled samples is not a release boundary. Park the
+DWM3000 under the already-live lease before exact release; never release and
+reacquire for cleanup because pause and abort intentionally reject new claims.
+Propagate park or release failures even if the protocol state already says the
+operation succeeded.
+
+Gateway control handoff carries the exact admitted command identity into an
+exact radio-owner generation grant. No submit failure may orphan that
+admission: retryable pressure retains and rearms the same command, while an
+invalid grant or scheduling failure retires only the affected admission range,
+preserves newer admissions, restores gateway scanning, and fails closed through
+the watchdog when liveness cannot be retained. The COMM-10 transport gate
+orders recovery as `pause -> abort request -> abort release -> resume`; any
+owner error leaves custody and deadlines owned, keeps transport closed, and
+stops feeding the watchdog instead of reporting a false resume.
+
+Clicker idle power transitions use the same exact owner. System-on idle enters
+retained DWM3000 standby under a lease, releases it, and only then arms button
+wake. Terminal System-OFF holds its final radio lease through pin parking and
+`sys_poweroff`. Failure to acquire that terminal lease rearms bounded retry;
+once acquired, standby and pin parking are best-effort, logged preparation and
+power-off proceeds with the lease held. BLE courtesy and clicker radio/power
+ownership now live in `app_clicker_ble_courtesy.c` and
+`app_clicker_radio_power.c`; click-session and button-policy extraction remain
+later architecture work.
+
 Timing, radio ownership, routes, queues, capacity, persistence, and
 success/failure accounting need a worst-case test or build-time guard before
 use. When a bug escapes existing tests, understand the cause first, delegate a

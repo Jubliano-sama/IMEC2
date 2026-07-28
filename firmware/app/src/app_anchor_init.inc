@@ -73,8 +73,6 @@ int app_anchor_init(void)
     k_work_init_delayable(&gateway_host_command_retry_work,
                           gateway_host_command_retry_work_handler);
     k_work_init(&gateway_host_abort_work, gateway_host_abort_work_handler);
-    app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
-        gateway_host_command_schedule_failed, NULL);
 #endif
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);

@@ -10,6 +10,9 @@ ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 BLE = (ROOT / "app/src/app_gateway_ble.c").read_text()
 STREAM = (ROOT / "app/src/app_gateway_ble_stream.h").read_text()
 PUBLISHER = (ROOT / "app/src/app_gateway_assignment_publisher.c").read_text()
+ANCHOR_ASSIGNMENT_POLICY = (
+    ROOT / "app/src/app_anchor_assignment_policy.c"
+).read_text()
 ASSIGNMENT = (ROOT / "include/discovery_assignment.h").read_text()
 ASSIGNMENT_DEFINES = re.sub(r"\\\s*\n\s*", " ", ASSIGNMENT)
 ANCHOR_DEFINES = re.sub(r"\\\s*\n\s*", " ", ANCHOR)
@@ -158,7 +161,7 @@ assert "app_gateway_assignment_publisher_stage_sorted_ids(" not in publish
 assert "app_gateway_assignment_publisher_stage_table_ready(" not in publish
 assert "gateway_observe_command_event(&event, false)" not in publish
 delivery = function_body(
-    ANCHOR, "gateway_discovery_assignment_service_delivery"
+    ANCHOR, "gateway_discovery_assignment_service_delivery_locked"
 )
 assert "event.reason == NODE_COMM_TERMINAL_DELIVERED" in delivery
 assert "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE" in delivery
@@ -224,10 +227,15 @@ assert re.search(r"claim\w*_settle_deadline_ms\s*=", arm_claim_settle)
 claim_settle_remaining = function_body(
     ANCHOR, "gateway_discovery_assignment_claim_ack_settle_remaining_locked"
 )
-assert "discovery_assignment_response_ack_settle_pending(" in (
-    claim_settle_remaining
+assert "app_anchor_assignment_settle_remaining_ms(" in claim_settle_remaining
+claim_settle_policy = function_body(
+    ANCHOR_ASSIGNMENT_POLICY,
+    "app_anchor_assignment_settle_remaining_ms",
 )
-assert re.search(r"claim\w*_settle_deadline_ms", claim_settle_remaining)
+assert "discovery_assignment_response_ack_settle_pending(" in (
+    claim_settle_policy
+)
+assert "deadline_ms" in claim_settle_policy
 duplicate_claim = note_claim.index("if (anchor_index != SIZE_MAX)")
 new_claim = note_claim.index(
     "gateway_discovery_assignment_state.anchor_ids[", duplicate_claim

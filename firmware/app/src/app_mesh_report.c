@@ -19,7 +19,11 @@
 #include "app_mesh_gateway_ack_policy.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_radio_handoff.h"
+#include "app_mesh_radio_owner.h"
+#include "app_mesh_transport_gate.h"
 #include "app_mesh_route_reply_ack.h"
+#include "app_mesh_route_reply_match.h"
 #include "app_mesh_route_ready_handoff.h"
 #include "app_mesh_route_request_policy.h"
 #include "app_mesh_route_wait_tx.h"
@@ -422,7 +426,6 @@ static struct app_mesh_rf_retry_bank mesh_report_rf_retry_bank = {
 #endif
 static atomic_t mesh_rx_response_active_state;
 static atomic_t mesh_rx_handler_active_state;
-static atomic_t mesh_transport_paused_state;
 static atomic_t mesh_route_ready_generation;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static struct app_mesh_c5_control_route_history
@@ -557,6 +560,7 @@ static uint8_t mesh_ch9_batch_payload_scratch[UWB_MESH_MAX_PAYLOAD_LEN];
 static uint32_t mesh_ch9_batch_next_id;
 
 struct mesh_ch9_slot_tx_context {
+    struct app_mesh_radio_owner_lease radio_lease;
     int64_t uwb_window_start_ms;
     bool active;
 };
@@ -599,8 +603,6 @@ static struct app_mesh_paused_delivery_state mesh_paused_delivery;
 static K_MUTEX_DEFINE(report_tx_queue_overflow_lock);
 #endif
 static K_MUTEX_DEFINE(mesh_c5_control_scratch_lock);
-static struct k_spinlock mesh_rx_handoff_lock;
-static struct app_mesh_rx_handoff_state mesh_rx_handoff;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static K_MUTEX_DEFINE(mesh_route_reply_scratch_lock);
 static struct mesh_outbound mesh_route_reply_backup_scratch;
@@ -811,7 +813,10 @@ static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t del
 static int mesh_cancel_delayable(struct k_work_delayable *work);
 static int mesh_submit_work(struct k_work *work);
 static bool mesh_transport_paused(void);
-static int mesh_transport_radio_start(const char *owner);
+static int mesh_transport_radio_start(
+    enum app_mesh_radio_client client,
+    const char *owner,
+    struct app_mesh_radio_owner_lease *lease_out);
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
 static void mesh_persistence_retry_work_handler(struct k_work *work);
 static bool mesh_queue_from_frame_at(const uint8_t *frame,

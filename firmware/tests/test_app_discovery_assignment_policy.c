@@ -1,8 +1,17 @@
+#include "app_anchor_assignment_command.h"
+#include "app_anchor_assignment_policy.h"
+#include "app_anchor_host_command_policy.h"
+#include "app_anchor_radio_policy.h"
 #include "app_discovery_assignment_policy.h"
 #include "app_radio_low_power_policy.h"
+#include "discovery_assignment.h"
+#include "gateway_command.h"
+#include "mesh_relay.h"
+#include "operation_policy.h"
 
 #include <assert.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -522,6 +531,206 @@ static void test_low_power_recovery_failure_does_not_retry(void)
     assert(policy.transition_attempts == 1u);
 }
 
+static void test_anchor_assignment_state_arithmetic(void)
+{
+    assert(app_anchor_assignment_normalize_epoch(0u) == 1u);
+    assert(app_anchor_assignment_normalize_epoch(42u) == 42u);
+    assert(app_anchor_assignment_next_nonzero(0u) == 1u);
+    assert(app_anchor_assignment_next_nonzero(41u) == 42u);
+    assert(app_anchor_assignment_next_nonzero(UINT32_MAX) == 1u);
+
+    assert(app_anchor_assignment_missing_ack_count(0u, 0u) == 0u);
+    assert(app_anchor_assignment_missing_ack_count(4u, UINT64_C(0x5)) == 2u);
+    assert(app_anchor_assignment_missing_ack_count(4u, UINT64_MAX) == 0u);
+    assert(app_anchor_assignment_missing_ack_count(
+               64u, UINT64_MAX ^ (UINT64_C(1) << 63)) == 1u);
+
+    assert(!app_anchor_assignment_claims_complete(0u, 3u));
+    assert(!app_anchor_assignment_claims_complete(3u, 2u));
+    assert(app_anchor_assignment_claims_complete(3u, 3u));
+    assert(app_anchor_assignment_claims_complete(3u, 4u));
+}
+
+static void test_anchor_assignment_settle_remaining_is_bounded(void)
+{
+    assert(app_anchor_assignment_settle_remaining_ms(false, 100u, 200u) ==
+           0u);
+    assert(app_anchor_assignment_settle_remaining_ms(true, 100u, 0u) == 0u);
+    assert(app_anchor_assignment_settle_remaining_ms(true, 200u, 200u) ==
+           0u);
+    assert(app_anchor_assignment_settle_remaining_ms(true, 100u, 250u) ==
+           150u);
+    assert(app_anchor_assignment_settle_remaining_ms(
+               true, 0u, UINT64_MAX) == UINT32_MAX);
+}
+
+static void test_anchor_assignment_collects_only_acked_claims(void)
+{
+    const uint64_t anchor_ids[] = {11u, 22u, 33u, 44u};
+    struct discovery_assignment_entry entries[4] = {0};
+    uint64_t committed_anchor_ids[4] = {0};
+    size_t count;
+
+    count = app_anchor_assignment_collect_committed(
+        anchor_ids,
+        4u,
+        UINT64_C(0xa),
+        entries,
+        committed_anchor_ids,
+        4u);
+    assert(count == 2u);
+    assert(committed_anchor_ids[0] == 22u);
+    assert(entries[0].anchor_id == 22u);
+    assert(entries[0].hash == discovery_assignment_hash(22u));
+    assert(entries[0].slot == 1u);
+    assert(committed_anchor_ids[1] == 44u);
+    assert(entries[1].anchor_id == 44u);
+    assert(entries[1].hash == discovery_assignment_hash(44u));
+    assert(entries[1].slot == 3u);
+
+    memset(entries, 0, sizeof(entries));
+    memset(committed_anchor_ids, 0, sizeof(committed_anchor_ids));
+    count = app_anchor_assignment_collect_committed(
+        anchor_ids,
+        4u,
+        UINT64_MAX,
+        entries,
+        committed_anchor_ids,
+        1u);
+    assert(count == 1u);
+    assert(committed_anchor_ids[0] == 11u);
+    assert(entries[0].slot == 0u);
+    assert(app_anchor_assignment_collect_committed(
+               NULL, 4u, UINT64_MAX, entries, committed_anchor_ids, 4u) ==
+           0u);
+}
+
+static void test_anchor_assignment_command_encoding(void)
+{
+    const struct app_anchor_assignment_command_params params = {
+        .phase = DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+        .epoch = 77u,
+        .command_seq = 88u,
+        .operation_budget_ms = 90000u,
+        .response_spread_ms = 1500u,
+        .source_id = 99u,
+        .expected_anchor_count = 4u,
+        .command_expiry_s = 120u,
+        .ttl = 7u,
+        .radio_channel = 5u,
+    };
+    struct operation_policy_set policy;
+    struct mesh_outbound outbound;
+    enum discovery_assignment_phase phase;
+    enum command_id command_id;
+    uint32_t epoch;
+
+    assert(app_anchor_assignment_command_prepare(&outbound, &params) ==
+           PROTO_OK);
+    assert(gateway_command_extract_id(
+               outbound.payload, outbound.payload_len, &command_id) ==
+           PROTO_OK);
+    assert(command_id == CMD_ASSIGN_DISCOVERY_SLOTS);
+    assert(discovery_assignment_extract_control_tlvs(
+               outbound.payload, outbound.payload_len, &phase, &epoch) ==
+           PROTO_OK);
+    assert(phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM);
+    assert(epoch == 77u);
+    assert(operation_policy_set_from_tlvs(
+               outbound.payload, outbound.payload_len, &policy) == PROTO_OK);
+    assert(policy.assignment_present);
+    assert(policy.assignment.expected_anchor_count == 4u);
+    assert(policy.assignment.operation_budget_ms == 90000u);
+    assert(policy.assignment.response_spread_ms == 1500u);
+    assert(outbound.packet.msg_type == MSG_COMMAND);
+    assert(outbound.packet.src_id == 99u);
+    assert(outbound.packet.dst_id == MESH_BROADCAST_ID);
+    assert(outbound.packet.session_id == 88u);
+    assert(outbound.packet.seq == 0u);
+    assert(outbound.packet.ttl == 7u);
+    assert(outbound.packet.payload_len == outbound.payload_len);
+    assert(outbound.next_hop_id == MESH_BROADCAST_ID);
+    assert(outbound.radio_channel == 5u);
+    assert(app_anchor_assignment_command_prepare(NULL, &params) ==
+           PROTO_ERR_ARG);
+}
+
+static void test_host_failure_cutoff_is_wrap_safe(void)
+{
+    assert(app_anchor_host_command_within_failure_cutoff(4u, 4u));
+    assert(app_anchor_host_command_within_failure_cutoff(3u, 4u));
+    assert(!app_anchor_host_command_within_failure_cutoff(5u, 4u));
+    assert(app_anchor_host_command_within_failure_cutoff(UINT32_MAX, 1u));
+    assert(!app_anchor_host_command_within_failure_cutoff(1u, UINT32_MAX));
+    assert(!app_anchor_host_command_within_failure_cutoff(0u, 4u));
+    assert(!app_anchor_host_command_within_failure_cutoff(4u, 0u));
+}
+
+static void test_host_handoff_contention_retains_queued_admissions(void)
+{
+    const uint32_t failed_cutoff = 7u;
+    const uint32_t newer_admission = 8u;
+    const uint32_t second_admission = 9u;
+
+    /* The failure callback observed an empty queue before this admission. */
+    assert(!app_anchor_host_command_within_failure_cutoff(
+        newer_admission, failed_cutoff));
+    assert(!app_anchor_host_command_within_failure_cutoff(
+        second_admission, failed_cutoff));
+
+    /* WAIT and GRANTED owner contention retain both depth-two admissions. */
+    assert(app_anchor_host_command_submit_needs_retry(-EAGAIN));
+    assert(app_anchor_host_command_submit_needs_retry(-EBUSY));
+    assert(app_anchor_host_command_submit_needs_retry(-ENOSPC));
+    assert(app_anchor_host_command_submit_needs_retry(-EINVAL));
+    assert(app_anchor_host_command_submit_needs_retry(-ESTALE));
+    assert(app_anchor_host_command_submit_needs_retry(-EIO));
+    assert(!app_anchor_host_command_submit_needs_retry(0));
+    assert(!app_anchor_host_command_submit_is_contract_failure(-EAGAIN));
+    assert(!app_anchor_host_command_submit_is_contract_failure(-EBUSY));
+    assert(!app_anchor_host_command_submit_is_contract_failure(-ENOSPC));
+    assert(app_anchor_host_command_submit_is_contract_failure(-EINVAL));
+    assert(app_anchor_host_command_submit_is_contract_failure(-ESTALE));
+    assert(app_anchor_host_command_submit_is_contract_failure(-EIO));
+    assert(app_anchor_host_command_ingress_result(-EAGAIN) == -EAGAIN);
+    assert(app_anchor_host_command_ingress_result(-EBUSY) == -EAGAIN);
+    assert(app_anchor_host_command_ingress_result(-ENOSPC) == -EAGAIN);
+    assert(app_anchor_host_command_ingress_result(-EINVAL) == -EAGAIN);
+    assert(app_anchor_host_command_ingress_result(-ESTALE) == -EAGAIN);
+    assert(app_anchor_host_command_ingress_result(-EIO) == -EAGAIN);
+    assert(app_anchor_host_command_ingress_result(0) == 0);
+}
+
+static void test_anchor_radio_policy(void)
+{
+    struct uwb_anchor_pair_schedule_frame schedule = {
+        .network_id = 10u,
+        .clicker_id = 20u,
+        .survey_id = 30u,
+        .attempt_index = 2u,
+        .nonce = 40u,
+        .flags = FLAG_DIAGNOSTIC,
+    };
+    struct uwb_anchor_epoch epoch = {
+        .active = true,
+        .network_id = 10u,
+        .clicker_id = 20u,
+        .click_event_id = 30u,
+        .attempt_index = 2u,
+        .nonce = 40u,
+        .flags = FLAG_DIAGNOSTIC,
+    };
+
+    assert(app_anchor_radio_blocked_retry_ms(true, 7u, 100u) == 7u);
+    assert(app_anchor_radio_blocked_retry_ms(false, 7u, 100u) == 100u);
+    assert(app_anchor_radio_blocked_retry_ms(true, 0u, 100u) == 0u);
+    assert(app_anchor_radio_blocked_retry_ms(false, 7u, 0u) == 0u);
+    assert(app_anchor_radio_pair_schedule_matches_epoch(&schedule, &epoch));
+    epoch.attempt_index++;
+    assert(!app_anchor_radio_pair_schedule_matches_epoch(&schedule, &epoch));
+    assert(!app_anchor_radio_pair_schedule_matches_epoch(NULL, &epoch));
+}
+
 int main(void)
 {
     test_rebooted_assignment_late_claims_new_epoch();
@@ -545,6 +754,13 @@ int main(void)
     test_low_power_failure_recovers_and_retries_once();
     test_low_power_recovery_retry_can_complete();
     test_low_power_recovery_failure_does_not_retry();
+    test_anchor_assignment_state_arithmetic();
+    test_anchor_assignment_settle_remaining_is_bounded();
+    test_anchor_assignment_collects_only_acked_claims();
+    test_anchor_assignment_command_encoding();
+    test_host_failure_cutoff_is_wrap_safe();
+    test_host_handoff_contention_retains_queued_admissions();
+    test_anchor_radio_policy();
     puts("app discovery assignment policy tests passed");
     return 0;
 }

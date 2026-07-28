@@ -24,8 +24,6 @@
  */
 
 extern uint32_t next_event_seq;
-extern bool uwb_rf_active;
-extern struct k_spinlock uwb_rf_lock;
 extern struct k_spinlock anchor_uwb_lock;
 extern bool anchor_uwb_busy;
 extern bool anchor_click_window_busy;
@@ -42,15 +40,10 @@ const char *command_status_name(enum command_status status);
 const char *claim_decision_name(enum uwb_anchor_claim_decision decision);
 const char *range_status_name(enum range_status status);
 bool range_status_valid(enum range_status status);
+int app_state_radio_owner_init(void);
 bool mesh_id_is_unicast(uint64_t node_id);
 bool gateway_ble_transport_enabled(void);
 int mesh_errno_from_proto(int ret);
-int radio_guard_uwb_start(const char *reason);
-void radio_guard_uwb_stop(void);
-bool radio_guard_uwb_busy(void);
-void radio_guard_uwb_admission_pause(void);
-void radio_guard_uwb_admission_resume(void);
-bool radio_guard_uwb_admission_paused(void);
 bool anchor_uwb_window_active(void);
 bool anchor_click_window_active(void);
 void anchor_click_window_set_active(bool active);

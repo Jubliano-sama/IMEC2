@@ -641,10 +641,14 @@ assert "discovery_ops.seed_sequence(outbound->packet.seq)" in discovery_restore,
 )
 
 bounded_control = function_body(REPORT, "mesh_try_send_c5_flood_view")
-handoff_begin = bounded_control.index("mesh_rx_handoff_begin_control(")
+handoff_begin = bounded_control.index(
+    "app_mesh_radio_owner_inline_control_begin("
+)
 handoff_wait = bounded_control.index("mesh_rx_handoff_wait_for_control(")
 control_send = bounded_control.index("mesh_send_c5_flood_now(")
-handoff_end = bounded_control.index("mesh_rx_handoff_end_control(")
+handoff_end = bounded_control.index(
+    "app_mesh_radio_owner_inline_control_end("
+)
 scan_restart = bounded_control.index("mesh_restart_role_scan(")
 assert handoff_begin < handoff_wait < control_send < handoff_end < scan_restart, (
     "bounded gateway control must own the RX handoff through its complete send"
@@ -716,7 +720,7 @@ for required_slice_boundary in (
 assert continuous_slice.index(
     "app_mesh_rx_policy_gateway_ch9_work_slice_ms("
 ) < continuous_slice.index(
-    'mesh_rx_radio_start("mesh gateway continuous channel9 RX")'
+    '"mesh gateway continuous channel9 RX"'
 ), "each driver receive must be clipped to the current workqueue slice"
 assert continuous_slice.index(
     "recoverable_errors_in_slice++"
@@ -739,7 +743,7 @@ assert "recovery_yield ?" not in post_slice_done, (
 )
 
 continuous_start = gateway_rx_worker.index(
-    'ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX")'
+    '"mesh gateway continuous channel9 RX"'
 )
 continuous_guard_start = gateway_rx_worker.index(
     "if (ret < 0)", continuous_start
@@ -768,7 +772,7 @@ assert cancel_boundary.index(
 )
 
 rx_schedule = function_body(REPORT, "mesh_schedule_uwb_rx")
-assert "mesh_rx_handoff_scan_rearm_allowed()" in rx_schedule, (
+assert "app_mesh_radio_owner_rx_scan_rearm_allowed()" in rx_schedule, (
     "continuous RX must not rearm while bounded control owns the radio"
 )
 

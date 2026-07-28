@@ -20,6 +20,17 @@ static void flood_count_saturating_increment(uint8_t *count)
     }
 }
 
+bool app_mesh_flood_same_packet(const struct mesh_outbound *left,
+                                const struct mesh_outbound *right)
+{
+    return left != NULL && right != NULL &&
+           left->packet.msg_type == right->packet.msg_type &&
+           left->packet.src_id == right->packet.src_id &&
+           left->packet.dst_id == right->packet.dst_id &&
+           left->packet.session_id == right->packet.session_id &&
+           left->packet.seq == right->packet.seq;
+}
+
 static bool flood_progress_timed_out(
     const struct app_mesh_flood_progress *progress,
     uint32_t now_ms)

@@ -40,6 +40,8 @@ struct app_mesh_flood_progress {
 
 uint8_t app_mesh_flood_repeat_limit(void);
 uint32_t app_mesh_flood_backoff_ms(uint8_t retry_index, uint32_t random_value);
+bool app_mesh_flood_same_packet(const struct mesh_outbound *left,
+                                const struct mesh_outbound *right);
 int app_mesh_flood_send_bounded(const struct mesh_outbound *out,
                                 const struct app_mesh_flood_ops *ops,
                                 struct app_mesh_flood_result *result);

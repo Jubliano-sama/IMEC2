@@ -417,6 +417,8 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_eack_retry.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
+    src/app_clicker_ble_courtesy.c
+    src/app_clicker_radio_power.c
     src/app_ml.c
     src/app_mesh_test.c
     src/app_mesh_smoke_fast.c
@@ -424,7 +426,9 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_coordinator.c
     src/app_mesh_coordinator_runtime.c
     src/app_mesh_command_orchestrator.c
-    src/app_mesh_arbitration_zephyr.c
+    src/app_mesh_radio_owner.c
+    src/app_mesh_radio_owner_policy.c
+    src/app_mesh_transport_gate.c
     src/app_node_comm_gateway_control.c
     src/app_node_comm_sync.c
     src/app_node_comm_gateway_route_refresh.c
@@ -440,10 +444,10 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_ch9_ack.c
     src/app_mesh_direct_probe_diag.c
     src/app_mesh_direct_gateway_retry.c
-    src/app_mesh_gateway_command_priority.c
     src/app_mesh_collection_deferral.c
     src/app_mesh_tx_handoff_gate.c
     src/app_mesh_route_reply_ack.c
+    src/app_mesh_route_reply_match.c
     src/app_mesh_route_ready_handoff.c
     src/app_mesh_event_retry.c
     src/app_mesh_route_request_policy.c
@@ -460,8 +464,12 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_stack_diag.c
     src/app_stack_workload_diag.c
     src/app_anchor.c
+    src/app_anchor_assignment_command.c
+    src/app_anchor_assignment_policy.c
     src/app_anchor_command_completion.c
+    src/app_anchor_host_command_policy.c
     src/app_anchor_ranging.c
+    src/app_anchor_radio_policy.c
     src/app_anchor_survey_discovery.c
     src/app_anchor_survey_runtime.c
     src/app_high_debug.c

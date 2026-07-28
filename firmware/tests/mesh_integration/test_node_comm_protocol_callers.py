@@ -188,7 +188,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             "anchor_run_mesh_click_wake_claim(",
             "anchor_handle_uwb_claim(",
             "mesh_preempt_for_click_event(",
-            "radio_guard_uwb_start(",
+            "app_mesh_radio_owner_try_claim(",
             "dwm3000_driver_",
         ):
             with self.subTest(forbidden=forbidden):
@@ -342,7 +342,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             self.anchor, "gateway_discovery_assignment_publish_table"
         )
         assignment_terminal = function_body(
-            self.anchor, "gateway_discovery_assignment_service_delivery"
+            self.anchor, "gateway_discovery_assignment_service_delivery_locked"
         )
         survey_terminal = function_body(
             self.anchor, "gateway_survey_wait_for_discovery_collection"
@@ -400,7 +400,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             self.anchor, "gateway_discovery_assignment_publish_table"
         )
         terminal = function_body(
-            self.anchor, "gateway_discovery_assignment_service_delivery"
+            self.anchor, "gateway_discovery_assignment_service_delivery_locked"
         )
         failure = function_body(
             self.anchor, "gateway_discovery_assignment_fail_locked"

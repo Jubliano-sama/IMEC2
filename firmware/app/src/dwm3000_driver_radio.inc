@@ -751,7 +751,7 @@ static int wait_status_internal(uint32_t mask,
         }
 
         if (atomic_get(&receive_abort_enabled) != 0 &&
-            atomic_cas(&receive_abort_requested, 1, 0)) {
+            atomic_get(&receive_abort_requested) != 0) {
             uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
                 (uint32_t)(k_cycle_get_32() - start_cycles));
 

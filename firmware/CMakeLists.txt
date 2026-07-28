@@ -374,6 +374,38 @@ add_test(NAME node_comm_source_boundary
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_source_boundary.py)
 set_tests_properties(node_comm_source_boundary
     PROPERTIES LABELS "mesh_integration;hardware_models;communication")
+add_test(NAME radio_owner_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_radio_owner_source_invariants.py)
+set_tests_properties(radio_owner_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;priority;static_analysis")
+add_executable(test_radio_abort_lifetime_scenarios
+    tests/mesh_integration/test_radio_abort_lifetime_scenarios.c
+    app/src/app_mesh_radio_owner.c
+    app/src/app_mesh_radio_owner_policy.c
+)
+target_include_directories(test_radio_abort_lifetime_scenarios PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src
+)
+target_link_libraries(test_radio_abort_lifetime_scenarios PRIVATE core)
+add_test(NAME radio_abort_lifetime_scenarios
+    COMMAND test_radio_abort_lifetime_scenarios)
+set_tests_properties(radio_abort_lifetime_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;priority")
+add_executable(test_clicker_radio_power_scenarios
+    tests/mesh_integration/test_clicker_radio_power_scenarios.c
+    app/src/app_clicker_radio_power.c
+)
+target_include_directories(test_clicker_radio_power_scenarios PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src
+)
+target_link_libraries(test_clicker_radio_power_scenarios PRIVATE core)
+add_test(NAME clicker_radio_power_scenarios
+    COMMAND test_clicker_radio_power_scenarios)
+set_tests_properties(clicker_radio_power_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;clicker;power")
 add_test(NAME route_refresh_source_boundary
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_route_refresh_source_boundary.py)
@@ -486,14 +518,14 @@ target_include_directories(test_app_mesh_coordinator_runtime PRIVATE app/src)
 target_link_libraries(test_app_mesh_coordinator_runtime PRIVATE core)
 add_test(NAME app_mesh_coordinator_runtime COMMAND test_app_mesh_coordinator_runtime)
 
-add_executable(test_app_mesh_gateway_command_priority
-    tests/test_app_mesh_gateway_command_priority.c
-    app/src/app_mesh_gateway_command_priority.c
+add_executable(test_app_mesh_radio_owner_policy
+    tests/test_app_mesh_radio_owner_policy.c
+    app/src/app_mesh_radio_owner_policy.c
 )
-target_include_directories(test_app_mesh_gateway_command_priority PRIVATE app/src)
-target_link_libraries(test_app_mesh_gateway_command_priority PRIVATE core)
-add_test(NAME app_mesh_gateway_command_priority
-    COMMAND test_app_mesh_gateway_command_priority)
+target_include_directories(test_app_mesh_radio_owner_policy PRIVATE app/src)
+target_link_libraries(test_app_mesh_radio_owner_policy PRIVATE core)
+add_test(NAME app_mesh_radio_owner_policy
+    COMMAND test_app_mesh_radio_owner_policy)
 
 add_executable(test_app_gateway_command_ingress
     tests/test_app_gateway_command_ingress.c
@@ -582,8 +614,13 @@ add_test(NAME app_mesh_rx_policy COMMAND test_app_mesh_rx_policy)
 
 add_executable(test_app_discovery_assignment_policy
     tests/test_app_discovery_assignment_policy.c
+    app/src/app_anchor_assignment_command.c
+    app/src/app_anchor_assignment_policy.c
+    app/src/app_anchor_host_command_policy.c
+    app/src/app_anchor_radio_policy.c
 )
 target_include_directories(test_app_discovery_assignment_policy PRIVATE app/src)
+target_link_libraries(test_app_discovery_assignment_policy PRIVATE core)
 add_test(NAME app_discovery_assignment_policy
     COMMAND test_app_discovery_assignment_policy)
 
@@ -667,10 +704,25 @@ add_test(NAME app_mesh_route_ready_handoff COMMAND test_app_mesh_route_ready_han
 add_executable(test_app_mesh_route_reply_ack
     tests/test_app_mesh_route_reply_ack.c
     app/src/app_mesh_route_reply_ack.c
+    app/src/app_mesh_route_reply_match.c
 )
 target_include_directories(test_app_mesh_route_reply_ack PRIVATE app/src)
 target_link_libraries(test_app_mesh_route_reply_ack PRIVATE core)
 add_test(NAME app_mesh_route_reply_ack COMMAND test_app_mesh_route_reply_ack)
+
+add_executable(test_mesh_transport_gate_scenarios
+    tests/mesh_integration/test_mesh_transport_gate_scenarios.c
+    app/src/app_mesh_transport_gate.c
+)
+target_include_directories(test_mesh_transport_gate_scenarios PRIVATE
+    tests/mesh_integration/zephyr_shim
+    app/src
+)
+target_link_libraries(test_mesh_transport_gate_scenarios PRIVATE core)
+add_test(NAME mesh_transport_gate_scenarios
+    COMMAND test_mesh_transport_gate_scenarios)
+set_tests_properties(mesh_transport_gate_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;priority")
 
 add_executable(test_app_mesh_route_wait_tx
     tests/test_app_mesh_route_wait_tx.c
@@ -1059,6 +1111,7 @@ add_executable(test_mesh_gateway_control_stress_scenarios
     app/src/app_gateway_command_lifecycle.c
     app/src/app_gateway_command_observability.c
     app/src/app_mesh_flood.c
+    app/src/app_mesh_radio_owner_policy.c
     app/src/app_mesh_rx_policy.c
 )
 target_include_directories(test_mesh_gateway_control_stress_scenarios
@@ -1080,7 +1133,7 @@ set_tests_properties(node_comm_delivery_stress_scenarios
 add_executable(test_mesh_survey_phy_scenarios
     tests/mesh_integration/test_mesh_survey_phy_scenarios.c
     app/src/app_mesh_c5_priority.c
-    app/src/app_mesh_gateway_command_priority.c
+    app/src/app_mesh_radio_owner_policy.c
 )
 target_include_directories(test_mesh_survey_phy_scenarios PRIVATE app/src)
 target_link_libraries(test_mesh_survey_phy_scenarios PRIVATE mesh_sim)
@@ -1238,11 +1291,11 @@ add_executable(test_mesh_app_arbitration_scenarios
     app/src/app_mesh_coordinator.c
     app/src/app_mesh_coordinator_runtime.c
     app/src/app_mesh_command_orchestrator.c
-    app/src/app_mesh_arbitration_zephyr.c
+    app/src/app_mesh_radio_owner.c
+    app/src/app_mesh_radio_owner_policy.c
     app/src/app_gateway_command_ingress.c
     app/src/app_gateway_command_lifecycle.c
     app/src/app_mesh_gateway_command_flow.c
-    app/src/app_mesh_gateway_command_priority.c
     app/src/app_mesh_preemption.c
     app/src/app_mesh_flood.c
 )

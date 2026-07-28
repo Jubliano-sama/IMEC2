@@ -3,6 +3,7 @@
 #include "app_anchor_survey_discovery.h"
 #include "app_board.h"
 #include "app_config.h"
+#include "app_mesh_radio_client.h"
 #include "app_node_comm.h"
 #include "app_operation_policy.h"
 #include "app_state.h"
@@ -458,6 +459,9 @@ static int run_pair_initiator(const struct survey_pair *pair,
                 pair->sample_count,
                 request.seq);
         ret = dwm3000_driver_range_initiator(&request, &result);
+        if (ret == -ECANCELED) {
+            return ret;
+        }
         if (result.initiator_id == 0u) {
             result.initiator_id = pair->initiator_id;
         }
@@ -564,6 +568,9 @@ static int run_pair_responder(const struct survey_pair *pair,
             break;
         }
 
+        if (ret == -ECANCELED) {
+            return ret;
+        }
         if (ret == 0 && result.status == RANGE_OK) {
             LOG_INF("survey DS-TWR responder sample complete: survey=%u initiator=0x%016llx sample=%u/%u distance_mm=%d quality=%u rsl=%d rsl_present=%u clock=%d clock_present=%u carrier=%d carrier_present=%u",
                     pair->survey_id,
@@ -715,6 +722,7 @@ static void finish_discovery_without_radio(
 
 static void survey_work_handler(struct k_work *work)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     struct survey_pair pair;
     struct survey_pair_control_id pair_control_id = {0};
     struct survey_discovery_config pending_discovery = {0};
@@ -782,7 +790,10 @@ static void survey_work_handler(struct k_work *work)
             return;
         }
         app_node_comm_stop_role_scan();
-        ret = radio_guard_uwb_start("survey discovery");
+        ret = app_mesh_radio_owner_try_claim(
+            APP_MESH_RADIO_CLIENT_SURVEY,
+            "survey discovery",
+            &radio_lease);
         if (ret < 0) {
             int retry_ret;
 
@@ -845,7 +856,7 @@ static void survey_work_handler(struct k_work *work)
         }
         runtime_ops.note_uwb_awake_since(uwb_window_start_ms, 0u);
         runtime_ops.set_uwb_busy(false);
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         app_node_comm_restart_role_scan();
         (void)runtime_ops.start_uwb_scan();
         (void)app_anchor_survey_discovery_retry_report();
@@ -903,7 +914,10 @@ static void survey_work_handler(struct k_work *work)
     }
 
     app_node_comm_stop_role_scan();
-    ret = radio_guard_uwb_start("survey pair DS-TWR");
+    ret = app_mesh_radio_owner_try_claim(
+        APP_MESH_RADIO_CLIENT_SURVEY,
+        "survey pair DS-TWR",
+        &radio_lease);
     if (ret < 0) {
         bool reschedule;
 
@@ -934,7 +948,7 @@ static void survey_work_handler(struct k_work *work)
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
         k_spin_unlock(&survey_lock, key);
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         app_node_comm_restart_role_scan();
         return;
     }
@@ -961,7 +975,7 @@ static void survey_work_handler(struct k_work *work)
     }
     runtime_ops.note_uwb_awake_since(uwb_window_start_ms, 0u);
     runtime_ops.set_uwb_busy(false);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     app_node_comm_restart_role_scan();
     runtime_ops.report_schedule(0u);
     key = k_spin_lock(&survey_lock);

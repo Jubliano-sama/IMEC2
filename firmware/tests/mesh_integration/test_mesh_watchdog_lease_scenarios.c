@@ -145,7 +145,8 @@ static void run_next_connection(struct watchdog_fixture *fixture)
 
 /*
  * Production progression predicate: the gateway's bounded channel-9 RX worker
- * reaches radio_guard_uwb_stop(), then calls app_watchdog_note_radio_progress().
+ * releases its exact radio-owner lease, then calls
+ * app_watchdog_note_radio_progress().
  * app_mesh_rx_policy_gateway_ch9_rx_error_recoverable() permits an SFD timeout
  * to continue that bounded worker loop. This is not a packet-delivery predicate.
  */

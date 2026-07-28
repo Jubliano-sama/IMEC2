@@ -100,8 +100,8 @@ requirements:
     roles: [clicker, anchor]
     legacy_lines: ["634-643"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
-    owners: [firmware/app/src/app_clicker.c, firmware/src/mesh_preemption.c]
-    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c, firmware/tests/test_mesh_preemption.c], gap: "The complete battery click path still requires exact clicker and multi-anchor hardware evidence."}
+    owners: [firmware/app/src/app_clicker.c, firmware/app/src/app_clicker_ble_courtesy.c, firmware/app/src/app_clicker_radio_power.c, firmware/src/mesh_preemption.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c, firmware/tests/mesh_integration/test_clicker_radio_power_scenarios.c, firmware/tests/test_uwb_ble_courtesy.c, firmware/tests/test_mesh_preemption.c], gap: "The complete battery click path and retained/System-OFF transitions still require exact clicker and multi-anchor hardware evidence."}
 
   - id: ROLE-02
     category: roles
@@ -124,8 +124,8 @@ requirements:
     roles: [clicker, anchor, gateway]
     legacy_lines: ["68-77", "113-118"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/UWB+BLE Protocols and Strategies 0.3.12.4.md]
-    owners: [firmware/app/src/app_mesh_c5_priority.c, firmware/src/mesh_runtime.c]
-    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_c5_priority.c, firmware/tests/mesh_integration/test_mesh_c5_control_lane_invariants.py], gap: "Real overlapping Channel 5 and Channel 9 ownership still needs multi-board timing evidence."}
+    owners: [firmware/app/src/app_mesh_radio_owner.c, firmware/app/src/app_mesh_radio_owner_policy.c, firmware/app/src/app_mesh_c5_priority.c, firmware/src/mesh_runtime.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_radio_owner_policy.c, firmware/tests/mesh_integration/test_radio_owner_source_invariants.py, firmware/tests/mesh_integration/test_radio_abort_lifetime_scenarios.c, firmware/tests/test_app_mesh_c5_priority.c, firmware/tests/mesh_integration/test_mesh_c5_control_lane_invariants.py], gap: "Exact lease and abort invariants are source-guarded and natively modeled; real overlapping Channel 5 and Channel 9 ownership still needs multi-board timing evidence."}
 
   - id: RAD-02
     category: radio
@@ -148,8 +148,8 @@ requirements:
     roles: [clicker, anchor]
     legacy_lines: ["98-109"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Mesh Connected Routing Walkthrough.md]
-    owners: [firmware/app/src/app_wake_train_politeness.c, firmware/app/src/app_anchor.c]
-    verification: {status: partial, evidence: [firmware/tests/test_app_wake_train_politeness.c, firmware/tests/mesh_integration/test_mesh_click_collision_sweep.c], gap: "A complete click/range handoff through all anchors still needs exact hardware traces."}
+    owners: [firmware/app/src/app_clicker_ble_courtesy.c, firmware/app/src/app_wake_train_politeness.c, firmware/app/src/app_anchor.c]
+    verification: {status: partial, evidence: [firmware/tests/test_uwb_ble_courtesy.c, firmware/tests/test_app_wake_train_politeness.c, firmware/tests/mesh_integration/test_mesh_click_collision_sweep.c], gap: "A complete click/range handoff through all anchors still needs exact hardware traces."}
 
   - id: RAD-05
     category: radio
@@ -188,8 +188,8 @@ requirements:
     roles: [gateway]
     legacy_lines: ["1053-1071"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md]
-    owners: [firmware/app/src/app_mesh_report.c, firmware/app/src/app_mesh_tx_handoff_gate.c]
-    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_tx_handoff_gate.c, firmware/tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c], gap: "Continuous gateway RX and control handoff remain unqualified for multi-month hardware operation."}
+    owners: [firmware/app/src/app_mesh_report.c, firmware/app/src/app_mesh_radio_owner.c, firmware/app/src/app_mesh_radio_owner_policy.c, firmware/app/src/app_node_comm_gateway_control.c, firmware/app/src/app_mesh_tx_handoff_gate.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_radio_owner_policy.c, firmware/tests/mesh_integration/test_radio_owner_source_invariants.py, firmware/tests/mesh_integration/test_radio_abort_lifetime_scenarios.c, firmware/tests/test_app_mesh_tx_handoff_gate.c, firmware/tests/mesh_integration/test_mesh_gateway_control_stress_scenarios.c], gap: "Exact handoff identity and failure liveness are source-guarded and natively modeled; continuous gateway RX remains unqualified for multi-month hardware operation."}
 
   - id: PWR-01
     category: power
@@ -209,11 +209,11 @@ requirements:
 
   - id: PWR-03
     category: power
-    roles: [anchor]
+    roles: [clicker, anchor]
     legacy_lines: ["103-109", "218-220", "1022-1028"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md]
-    owners: [firmware/app/src/app_anchor.c, firmware/src/mesh_preemption.c]
-    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c], gap: "Worst-case real ranging duration and handback power state are not fully qualified."}
+    owners: [firmware/app/src/app_clicker_radio_power.c, firmware/app/src/app_clicker.c, firmware/app/src/app_anchor.c, firmware/src/mesh_preemption.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_clicker_radio_power_scenarios.c, firmware/tests/mesh_integration/test_radio_owner_source_invariants.py, firmware/tests/mesh_integration/test_mesh_click_protocol_chain_scenarios.c], gap: "Worst-case real ranging duration and retained/System-OFF handback power states are not fully hardware-qualified."}
 
   - id: PWR-04
     category: power
@@ -340,8 +340,8 @@ requirements:
     roles: [all_firmware]
     legacy_lines: ["345-363"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md]
-    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_gateway_command_priority.c]
-    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/test_app_mesh_gateway_command_priority.c], gap: "Every protocol profile under combined saturation has not been exhaustively tested."}
+    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_radio_owner.c, firmware/app/src/app_node_comm_gateway_control.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/test_app_mesh_radio_owner_policy.c, firmware/tests/mesh_integration/test_mesh_runtime_priority_scenarios.c], gap: "Every protocol profile under combined saturation has not been exhaustively tested."}
 
   - id: COMM-04
     category: communication
@@ -396,16 +396,16 @@ requirements:
     roles: [all_firmware]
     legacy_lines: ["617-630"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
-    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_tx_handoff_gate.c]
-    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/mesh_integration/test_mesh_watchdog_lease_scenarios.c], gap: "Frozen compatibility paths and every pause/radio race are not fully migrated or proven."}
+    owners: [firmware/src/node_comm.c, firmware/app/src/app_mesh_transport_gate.c, firmware/app/src/app_mesh_radio_owner.c, firmware/app/src/app_mesh_tx_handoff_gate.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_mesh_transport_gate_scenarios.c, firmware/tests/mesh_integration/test_radio_abort_lifetime_scenarios.c, firmware/tests/mesh_integration/test_radio_owner_source_invariants.py, firmware/tests/mesh_integration/test_node_comm_delivery_stress_scenarios.c, firmware/tests/mesh_integration/test_mesh_watchdog_lease_scenarios.c], gap: "The exact pause/abort/release/resume failures are modeled, but frozen compatibility paths and every runtime race are not fully migrated or proven."}
 
   - id: ARCH-01
     category: architecture
     roles: [all_firmware]
     legacy_lines: ["625-630"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md, Documentation/Architecture Reset Plan.md]
-    owners: [firmware/architecture_boundaries.json, firmware/scripts/check_architecture_boundaries.py]
-    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_architecture_boundaries.py], gap: "The accepted ownership migration is staged and incomplete."}
+    owners: [firmware/architecture_boundaries.json, firmware/scripts/check_architecture_boundaries.py, firmware/app/src/app_mesh_radio_owner.c, firmware/app/src/app_mesh_radio_owner_policy.c, firmware/app/src/app_clicker_ble_courtesy.c, firmware/app/src/app_clicker_radio_power.c]
+    verification: {status: partial, evidence: [firmware/tests/mesh_integration/test_architecture_boundaries.py, firmware/tests/test_app_mesh_radio_owner_policy.c, firmware/tests/mesh_integration/test_radio_owner_source_invariants.py, firmware/tests/mesh_integration/test_clicker_radio_power_scenarios.c], gap: "Stage 4 is implemented for audited application radio paths, but delivery custody, remaining file splits, and exact-role hardware qualification are incomplete."}
 
   - id: ACK-01
     category: ack
@@ -468,8 +468,8 @@ requirements:
     roles: [gateway, anchor]
     legacy_lines: ["127-130", "1039-1051", "1280-1284"]
     authoritative: [Documentation/Mesh Connected Routing Contract.md]
-    owners: [firmware/app/src/app_mesh_gateway_command_priority.c, firmware/app/src/app_node_comm_gateway_control.c]
-    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_gateway_command_priority.c, firmware/tests/mesh_integration/test_mesh_runtime_priority_scenarios.c], gap: "Every already-started ranging safe boundary is not hardware-qualified."}
+    owners: [firmware/app/src/app_mesh_radio_owner.c, firmware/app/src/app_node_comm_gateway_control.c, firmware/app/src/app_anchor_host_command_policy.c]
+    verification: {status: partial, evidence: [firmware/tests/test_app_mesh_radio_owner_policy.c, firmware/tests/mesh_integration/test_radio_owner_source_invariants.py, firmware/tests/mesh_integration/test_mesh_runtime_priority_scenarios.c], gap: "Exact admission liveness is source-guarded and natively modeled; every already-started ranging safe boundary is not hardware-qualified."}
 
   - id: GCTL-02
     category: gateway_control

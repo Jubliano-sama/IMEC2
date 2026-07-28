@@ -103,6 +103,10 @@ int app_gateway_command_ingress_handle_frame(
         return ret;
     }
     ret = ops->submit_priority(ops->ctx);
+    if (ret == -EAGAIN) {
+        /* The backend retained admission and owns the bounded resubmit. */
+        return 0;
+    }
     if (ret < 0) {
         /* Dispatch must honor the identity tombstone even if removal failed. */
         (void)ops->cancel_admitted(ops->ctx, &identity);

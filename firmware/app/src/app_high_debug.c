@@ -3,6 +3,7 @@
 #include "app_board.h"
 #include "app_clicker.h"
 #include "app_config.h"
+#include "app_mesh_radio_owner.h"
 #include "app_state.h"
 #include "debug_log.h"
 #include "dwm3000_driver.h"
@@ -769,7 +770,7 @@ void high_debug_boot_banner(void)
                          (unsigned int)IMEC_HIGH_DEBUG_ANCHOR_SLOT);
 }
 
-int high_debug_probe_dwm3000(void)
+static int high_debug_probe_dwm3000_owned(void)
 {
     uint32_t dev_id = 0u;
     int ret;
@@ -812,6 +813,24 @@ int high_debug_probe_dwm3000(void)
     high_debug_log_event("DWM_SPI_SPEED_SET", "ret=%d spi_hz=%u",
                          ret,
                          (unsigned int)dwm3000_port_current_spi_hz());
+    return ret;
+}
+
+int high_debug_probe_dwm3000(void)
+{
+    struct app_mesh_radio_owner_lease radio_lease = {0};
+    int ret;
+
+    ret = app_mesh_radio_owner_try_claim(
+        APP_MESH_RADIO_CLIENT_HIGH_DEBUG,
+        "high-debug DWM3000 probe",
+        &radio_lease);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = high_debug_probe_dwm3000_owned();
+    (void)dwm3000_driver_standby();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     return ret;
 }
 
@@ -886,17 +905,25 @@ int high_debug_stage0_ble_advertise_test(uint32_t event_seq,
 
 int high_debug_stage0_hardware_self_test(void)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     int ret;
 
-    ret = high_debug_probe_dwm3000();
+    ret = app_mesh_radio_owner_try_claim(
+        APP_MESH_RADIO_CLIENT_HIGH_DEBUG,
+        "high-debug stage-0 hardware self-test",
+        &radio_lease);
     if (ret < 0) {
         return ret;
+    }
+    ret = high_debug_probe_dwm3000_owned();
+    if (ret < 0) {
+        goto out;
     }
 
     ret = dwm3000_driver_standby();
     high_debug_log_event("UWB_SLEEP", "phase=stage0_self_test ret=%d", ret);
     if (ret < 0) {
-        return ret;
+        goto out;
     }
 
     k_msleep(10);
@@ -906,12 +933,33 @@ int high_debug_stage0_hardware_self_test(void)
                          (unsigned int)dwm3000_port_current_spi_hz());
     (void)dwm3000_driver_standby();
     high_debug_log_event("UWB_SLEEP", "phase=stage0_self_test_complete");
+out:
+    (void)dwm3000_driver_standby();
+    (void)app_mesh_radio_owner_release(&radio_lease);
+    return ret;
+}
+
+static int high_debug_radio_power_command(bool wake)
+{
+    struct app_mesh_radio_owner_lease radio_lease = {0};
+    int ret = app_mesh_radio_owner_try_claim(
+        APP_MESH_RADIO_CLIENT_HIGH_DEBUG,
+        wake ? "high-debug UWB wake" : "high-debug UWB sleep",
+        &radio_lease);
+
+    if (ret < 0) {
+        return ret;
+    }
+    ret = wake ? dwm3000_driver_configure_default() :
+                 dwm3000_driver_standby();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     return ret;
 }
 
 static int high_debug_send_wake_claim_once(void)
 {
     struct uwb_clicker_session session;
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     struct uwb_wake_claim_frame claim;
     uint32_t event_seq = next_click_event_seq();
     struct uwb_clicker_config config = {
@@ -953,7 +1001,10 @@ static int high_debug_send_wake_claim_once(void)
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("high-debug WAKE_CLAIM once");
+    ret = app_mesh_radio_owner_try_claim(
+        APP_MESH_RADIO_CLIENT_HIGH_DEBUG,
+        "high-debug WAKE_CLAIM once",
+        &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -966,7 +1017,7 @@ static int high_debug_send_wake_claim_once(void)
         ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
     }
     (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     if (ret == 0) {
         HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
     }
@@ -1034,12 +1085,11 @@ int high_debug_handle_command(const char *command)
         ret = 0;
     } else if (strcmp(command, "uwb_probe") == 0) {
         ret = high_debug_probe_dwm3000();
-        (void)dwm3000_driver_standby();
     } else if (strcmp(command, "uwb_sleep") == 0) {
-        ret = dwm3000_driver_standby();
+        ret = high_debug_radio_power_command(false);
         high_debug_log_event("UWB_SLEEP", "command=uwb_sleep ret=%d", ret);
     } else if (strcmp(command, "uwb_wake") == 0) {
-        ret = dwm3000_driver_configure_default();
+        ret = high_debug_radio_power_command(true);
         high_debug_log_event("UWB_WAKE", "command=uwb_wake ret=%d", ret);
     } else if (strcmp(command, "send_wake_claim_once") == 0) {
         ret = high_debug_send_wake_claim_once();

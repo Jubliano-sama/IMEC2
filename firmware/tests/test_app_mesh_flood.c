@@ -521,6 +521,29 @@ static void test_resumable_continuous_busy_times_out_across_rollover(void)
     assert(ctx.quiet_count == 2u);
 }
 
+static void test_packet_identity_ignores_mutable_transport_fields(void)
+{
+    struct mesh_outbound first = {
+        .packet = {
+            .msg_type = MSG_COMMAND,
+            .src_id = 10u,
+            .dst_id = 20u,
+            .session_id = 30u,
+            .seq = 40u,
+        },
+        .next_hop_id = 50u,
+        .queued_at_ms = 60u,
+    };
+    struct mesh_outbound second = first;
+
+    second.next_hop_id = 70u;
+    second.queued_at_ms = 80u;
+    assert(app_mesh_flood_same_packet(&first, &second));
+    second.packet.seq++;
+    assert(!app_mesh_flood_same_packet(&first, &second));
+    assert(!app_mesh_flood_same_packet(NULL, &second));
+}
+
 int main(void)
 {
     test_survey_start_repeats_age_from_one_origin();
@@ -532,5 +555,6 @@ int main(void)
     test_one_shot_continuous_busy_returns_boundedly();
     test_scheduler_owned_opportunity_sends_exactly_once();
     test_resumable_continuous_busy_times_out_across_rollover();
+    test_packet_identity_ignores_mutable_transport_fields();
     return 0;
 }

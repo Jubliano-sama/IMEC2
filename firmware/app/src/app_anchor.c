@@ -12,13 +12,10 @@
 #include "app_gateway_ble.h"
 #include "app_gateway_assignment_publisher.h"
 #include "app_gateway_survey_observability.h"
-#include "app_gateway_survey_terminal.h"
 #include "app_gateway_command_ingress.h"
 #include "app_gateway_command_lifecycle.h"
 #include "app_high_debug.h"
-#include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_c5_priority.h"
-#include "app_mesh_gateway_command_flow.h"
 #include "app_mesh_command_orchestrator.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
@@ -302,6 +299,9 @@ static uint32_t gateway_host_command_retry_started_ms;
 static bool gateway_host_command_retry_pending;
 static uint32_t gateway_host_command_next_admission_id;
 static struct app_gateway_command_lifecycle gateway_host_command_lifecycle;
+static void gateway_host_command_resubmit_after_failure_callback(void);
+static void gateway_host_command_schedule_failed(
+    void *ctx, int error, uint32_t cutoff_id);
 BUILD_ASSERT(GATEWAY_HOST_COMMAND_QUEUE_DEPTH <=
              APP_GATEWAY_COMMAND_LIFECYCLE_MAX_ITEMS,
              "gateway command lifecycle must cover every queue slot");

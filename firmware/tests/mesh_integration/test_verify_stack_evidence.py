@@ -1070,7 +1070,9 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertIn("app_stack_workload_diag_gateway_report_cycle", gateway)
         self.assertIn("app_node_comm_submit_delivery", gateway)
         self.assertIn("gateway_survey_wait_for_discovery_collection", gateway)
-        self.assertIn("gateway_discovery_assignment_service_delivery", gateway)
+        self.assertIn(
+            "gateway_discovery_assignment_service_delivery_locked", gateway
+        )
         self.assertIn("app_stack_workload_diag_gateway_control_sample", gateway)
         self.assertIn("app_stack_workload_diag_ble_admit_with_pressure", ble)
         self.assertIn("app_stack_workload_diag_ble_terminal_with_pressure", ble)

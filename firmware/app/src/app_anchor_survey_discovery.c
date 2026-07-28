@@ -1030,7 +1030,7 @@ static void survey_add_reach_entry(struct survey_reachability_entry *entries,
     (*entry_count)++;
 }
 
-static void receive_survey_probes_until(
+static int receive_survey_probes_until(
     const struct survey_discovery_config *config,
     uint32_t deadline_ms,
     struct survey_reachability_entry *entries,
@@ -1056,6 +1056,9 @@ static void receive_survey_probes_until(
         ret = dwm3000_driver_receive_frame_continuous(
             remaining_ms, frame, sizeof(frame), &frame_len, &quality,
             &rsl_dbm, &rx_failure);
+        if (ret == -ECANCELED) {
+            return ret;
+        }
         if (ret == -ETIMEDOUT) {
             break;
         }
@@ -1088,6 +1091,7 @@ static void receive_survey_probes_until(
                              probe.anchor_slot, quality, rsl_dbm,
                              (unsigned int)*entry_count);
     }
+    return 0;
 }
 
 static int send_local_survey_probe(
@@ -1188,9 +1192,12 @@ int app_anchor_survey_discovery_run(
             }
             if (!uptime_deadline_reached(k_uptime_get_32(),
                                          opportunity_tx_ms)) {
-                receive_survey_probes_until(
+                ret = receive_survey_probes_until(
                     config, opportunity_tx_ms, entries,
                     ARRAY_SIZE(entries), &entry_count);
+                if (ret < 0) {
+                    return ret;
+                }
             }
             relative_now_ms = k_uptime_get_32() - start_ms;
             if (relative_now_ms <= nominal.latest_tx_start_ms) {
@@ -1216,9 +1223,12 @@ int app_anchor_survey_discovery_run(
                 LOG_WRN("survey discovery probe slot elapsed before TX: survey=%u round=%u rounds=%u",
                         config->survey_id, opportunity, config->round_count);
             }
-            receive_survey_probes_until(
+            ret = receive_survey_probes_until(
                 config, opportunity_end_ms, entries,
                 ARRAY_SIZE(entries), &entry_count);
+            if (ret < 0) {
+                return ret;
+            }
         }
 
         if (abort_requested()) {
@@ -1226,9 +1236,12 @@ int app_anchor_survey_discovery_run(
         }
         if (!uptime_deadline_reached(k_uptime_get_32(),
                                      discovery_deadline_ms)) {
-            receive_survey_probes_until(
+            ret = receive_survey_probes_until(
                 config, discovery_deadline_ms, entries,
                 ARRAY_SIZE(entries), &entry_count);
+            if (ret < 0) {
+                return ret;
+            }
         }
     }
 

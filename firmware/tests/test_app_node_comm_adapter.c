@@ -59,7 +59,9 @@ static uint32_t legacy_queue_depth;
 static atomic_bool receive_abort_pending;
 static atomic_bool transport_paused;
 static uint32_t transport_pause_calls;
+static int transport_pause_result;
 static uint32_t transport_resume_calls;
+static int transport_resume_result;
 static uint32_t route_refresh_pause_calls;
 static uint32_t route_refresh_resume_calls;
 static uint32_t watchdog_stop_calls;
@@ -184,7 +186,7 @@ int mesh_route_work_reschedule(struct k_work_delayable *work,
            mesh_route_reschedule_result : ret;
 }
 
-int mesh_gateway_command_priority_safe_boundary(void)
+int mesh_gateway_radio_handoff_safe_boundary(void)
 {
     uint32_t index = gateway_priority_safe_boundary_calls;
 
@@ -226,6 +228,7 @@ bool mesh_node_comm_gateway_delivery_due_end(void)
 
     gateway_delivery_due_end_calls++;
     gateway_delivery_due_pending = false;
+    atomic_store(&receive_abort_pending, false);
     return was_pending;
 }
 
@@ -282,7 +285,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     return 0;
 }
 
-bool radio_guard_uwb_busy(void)
+bool app_mesh_radio_owner_busy(void)
 {
     return atomic_load(&radio_busy);
 }
@@ -306,8 +309,15 @@ bool dwm3000_driver_receive_abort_pending(void)
 int mesh_transport_pause_preserving_queued(void)
 {
     transport_pause_calls++;
+    if (transport_pause_result != 0) {
+        watchdog_stop_calls++;
+        return transport_pause_result;
+    }
     stop_scan_calls++;
     atomic_store(&transport_paused, true);
+    if (atomic_load(&radio_busy) || atomic_load(&rx_response_active)) {
+        dwm3000_driver_request_receive_abort();
+    }
     return 0;
 }
 
@@ -318,7 +328,7 @@ bool mesh_transport_quiesced(void)
            !atomic_load(&rx_response_active);
 }
 
-void mesh_transport_resume(void)
+int mesh_transport_resume(void)
 {
     transport_resume_calls++;
     assert(pthread_mutex_lock(&interleave_lock) == 0);
@@ -331,8 +341,13 @@ void mesh_transport_resume(void)
         }
     }
     assert(pthread_mutex_unlock(&interleave_lock) == 0);
+    if (transport_resume_result != 0) {
+        watchdog_stop_calls++;
+        return transport_resume_result;
+    }
     restart_scan_calls++;
     atomic_store(&transport_paused, false);
+    return 0;
 }
 
 void mesh_stop_role_scan(void)
@@ -648,7 +663,9 @@ static void reset_fixture(void)
     atomic_store(&receive_abort_pending, false);
     atomic_store(&transport_paused, false);
     transport_pause_calls = 0u;
+    transport_pause_result = 0;
     transport_resume_calls = 0u;
+    transport_resume_result = 0;
     route_refresh_pause_calls = 0u;
     route_refresh_resume_calls = 0u;
     watchdog_stop_calls = 0u;
@@ -1013,6 +1030,61 @@ static void test_send_stays_closed_until_backend_resume_is_ready(void)
     assert(resume_result.result == 0);
     assert(app_node_comm_send(NULL, "resume-backend-ready") == 17);
     assert(send_calls == sends_before_resume + 1u);
+}
+
+static void test_resume_failure_stays_closed_and_rolls_back_to_stopped(void)
+{
+    struct node_comm_pause_lease lease;
+    uint32_t sends_before_resume;
+
+    reset_fixture();
+    assert(app_node_comm_pause_request(10u, 1000u, &lease) == 0);
+    assert(app_node_comm_pause_note_quiesced(&lease) == 0);
+    assert(app_node_comm_resume_begin(&lease) == 0);
+    sends_before_resume = send_calls;
+    transport_resume_result = -ESTALE;
+    assert(app_node_comm_resume_complete(&lease) == -ESTALE);
+    assert(atomic_load(&transport_paused));
+    assert(!app_node_comm_policy_running());
+    assert(route_refresh_resume_calls == 0u);
+    assert(watchdog_stop_calls == 1u);
+    assert(app_node_comm_send(NULL, "failed-resume") == -ESHUTDOWN);
+    assert(send_calls == sends_before_resume);
+
+    transport_resume_result = 0;
+    assert(app_node_comm_start() == 0);
+    assert(app_node_comm_policy_running());
+    assert(app_node_comm_send(NULL, "explicit-restart") == 17);
+}
+
+static void test_pause_failure_propagates_and_stays_closed(void)
+{
+    struct node_comm_pause_lease lease;
+
+    reset_fixture();
+    transport_pause_result = -ESTALE;
+    assert(app_node_comm_pause_request(11u, 1000u, &lease) == -ESTALE);
+    assert(!atomic_load(&transport_paused));
+    assert(!app_node_comm_policy_running());
+    assert(watchdog_stop_calls == 1u);
+    assert(app_node_comm_send(NULL, "failed-pause") == -ESHUTDOWN);
+}
+
+static void test_start_resume_failure_rolls_back_to_stopped(void)
+{
+    reset_fixture();
+    assert(app_node_comm_stop_preserving_queued() == 0);
+    transport_resume_result = -ESTALE;
+    assert(app_node_comm_start() == -ESTALE);
+    assert(atomic_load(&transport_paused));
+    assert(!app_node_comm_policy_running());
+    assert(route_refresh_resume_calls == 0u);
+    assert(watchdog_stop_calls == 1u);
+    assert(app_node_comm_send(NULL, "failed-start") == -ESHUTDOWN);
+
+    transport_resume_result = 0;
+    assert(app_node_comm_start() == 0);
+    assert(app_node_comm_policy_running());
 }
 
 static struct mesh_outbound delivery_envelope(uint16_t seq)
@@ -1704,12 +1776,10 @@ static void test_gateway_due_gate_pause_and_stop_clear_without_rf(void)
     due_kick = last_rescheduled_work;
     due_kick->work.handler(&due_kick->work);
     assert(gateway_delivery_due_pending);
-    assert(app_node_comm_stop_preserving_queued() == -EINPROGRESS);
-    assert(!gateway_delivery_due_pending);
-    assert(try_flood_calls == 0u);
-    gateway_scan_active = false;
-    atomic_store(&receive_abort_pending, false);
     assert(app_node_comm_stop_preserving_queued() == 0);
+    assert(!gateway_delivery_due_pending);
+    assert(!atomic_load(&receive_abort_pending));
+    assert(try_flood_calls == 0u);
 }
 
 static void test_delivery_pre_rf_busy_defers_without_consuming_attempts(void)
@@ -3071,6 +3141,9 @@ int main(void)
     test_stop_completes_while_backend_send_is_blocked();
     test_pause_expiry_preserves_full_64_bit_uptime();
     test_send_stays_closed_until_backend_resume_is_ready();
+    test_resume_failure_stays_closed_and_rolls_back_to_stopped();
+    test_pause_failure_propagates_and_stays_closed();
+    test_start_resume_failure_rolls_back_to_stopped();
     test_delivery_copies_envelope_and_wakes_once_per_flood();
     test_assignment_sized_control_payload_admission();
     if (DEVICE_ROLE == ROLE_GATEWAY) {

@@ -46,6 +46,12 @@ LEGACY_TRANSPORT_CLIENTS = {
     "app_state.h",
     "main.c",
 }
+TRANSPORT_IMPLEMENTATION = {
+    # Assignment command encoding fills the shared transport envelope but
+    # never schedules, sends, retries, or owns transport state.
+    "app_anchor_assignment_command.c",
+    "app_mesh_route_reply_match.c",
+}
 
 
 class NodeCommSourceBoundaryTests(unittest.TestCase):
@@ -76,7 +82,11 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         service_internals = {
             path.name for path in APP_SRC.glob("app_node_comm*.[ch]")
         }
-        allowed = LEGACY_TRANSPORT_CLIENTS | service_internals
+        allowed = (
+            LEGACY_TRANSPORT_CLIENTS |
+            TRANSPORT_IMPLEMENTATION |
+            service_internals
+        )
         self.assertEqual(set(), direct_clients - allowed)
 
     def test_facade_is_exact_compatibility_forwarder(self):
@@ -115,7 +125,10 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             report,
         )
         self.assertIn(
-            "return app_node_comm_gateway_control_priority_submit(work);", report
+            "return app_node_comm_gateway_control_radio_handoff_submit(\n"
+            "        work, schedule_failure, schedule_failure_ctx,\n"
+            "        schedule_failure_token);",
+            report,
         )
 
     def test_anchor_command_tracking_reuses_the_communication_context(self):
@@ -607,43 +620,92 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
     def test_global_radio_admission_gate_closes_legacy_role_bypasses(self):
         state_header = (APP_SRC / "app_state.h").read_text(encoding="utf-8")
         state_source = (APP_SRC / "app_state.c").read_text(encoding="utf-8")
+        owner_header = (
+            APP_SRC / "app_mesh_radio_owner.h"
+        ).read_text(encoding="utf-8")
+        client_header = (
+            APP_SRC / "app_mesh_radio_client.h"
+        ).read_text(encoding="utf-8")
+        owner_source = (
+            APP_SRC / "app_mesh_radio_owner.c"
+        ).read_text(encoding="utf-8")
         report_source = read_composed_source(APP_SRC / "app_mesh_report.c")
 
+        self.assertNotIn("radio_guard_uwb", state_header)
+        self.assertNotIn("radio_guard_uwb", state_source)
+        self.assertNotIn("uwb_rf_admission_paused", state_source)
+        self.assertNotIn("uwb_rf_active", state_source)
+        self.assertIn("int app_state_radio_owner_init(void);", state_header)
+        self.assertIn("app_mesh_radio_owner_init(&ops)", state_source)
+
         for declaration in (
-            "void radio_guard_uwb_admission_pause(void);",
-            "void radio_guard_uwb_admission_resume(void);",
-            "bool radio_guard_uwb_admission_paused(void);",
+            "int app_mesh_radio_owner_try_claim(",
+            "int app_mesh_radio_owner_release(",
+            "int app_mesh_radio_owner_abort_request(",
+            "int app_mesh_radio_owner_abort_release(",
         ):
-            self.assertIn(declaration, state_header)
+            self.assertIn(declaration, client_header)
+        for declaration in (
+            "int app_mesh_radio_owner_pause(",
+            "int app_mesh_radio_owner_resume(",
+        ):
+            self.assertIn(declaration, owner_header)
 
-        start = re.search(
-            r"int radio_guard_uwb_start\([^)]*\)\s*\{(?P<body>.*?)\n\}",
-            state_source,
-            re.DOTALL,
+        claim_start = owner_source.index(
+            "static int radio_try_claim("
         )
-        self.assertIsNotNone(start)
-        body = start.group("body")
-        pause_check = body.index("if (uwb_rf_admission_paused)")
-        owner_claim = body.index("uwb_rf_active = true")
-        self.assertLess(pause_check, owner_claim)
-        self.assertIn("return -ESHUTDOWN", body[pause_check:owner_claim])
+        claim_end = owner_source.index(
+            "\nint app_mesh_radio_owner_try_claim(", claim_start
+        )
+        claim = owner_source[claim_start:claim_end]
+        pause_check = claim.index(
+            "app_mesh_radio_owner_policy_paused(&radio_policy)"
+        )
+        abort_check = claim.index(
+            "app_mesh_radio_owner_policy_abort_pending(&radio_policy)"
+        )
+        owner_claim = claim.index(
+            "app_mesh_radio_owner_policy_try_claim("
+        )
+        self.assertLess(pause_check, abort_check)
+        self.assertLess(abort_check, owner_claim)
+        self.assertIn("ret = -ESHUTDOWN", claim[pause_check:abort_check])
+        self.assertIn("ret = -ECANCELED", claim[abort_check:owner_claim])
 
-        pause = re.search(
-            r"void radio_guard_uwb_admission_pause\(void\)\s*\{(?P<body>.*?)\n\}",
-            state_source,
-            re.DOTALL,
+        release_start = claim_end
+        release_end = owner_source.index(
+            "\nbool app_mesh_radio_owner_busy(", release_start
         )
-        resume = re.search(
-            r"void radio_guard_uwb_admission_resume\(void\)\s*\{(?P<body>.*?)\n\}",
-            state_source,
-            re.DOTALL,
+        release = owner_source[release_start:release_end]
+        release_begin = release.index(
+            "app_mesh_radio_owner_policy_release_begin("
         )
-        self.assertIsNotNone(pause)
-        self.assertIsNotNone(resume)
-        self.assertIn("uwb_rf_admission_paused = true", pause.group("body"))
-        self.assertIn("uwb_rf_admission_paused = false", resume.group("body"))
-        self.assertIn("radio_guard_uwb_admission_pause();", report_source)
-        self.assertIn("radio_guard_uwb_admission_resume();", report_source)
+        quiet_exit = release.index("platform_ops.exit_uwb_quiet(", release_begin)
+        release_complete = release.index(
+            "app_mesh_radio_owner_policy_release_complete(", quiet_exit
+        )
+        self.assertLess(release_begin, quiet_exit)
+        self.assertLess(quiet_exit, release_complete)
+
+        gate_source = (
+            APP_SRC / "app_mesh_transport_gate.c"
+        ).read_text(encoding="utf-8")
+        pause_call = gate_source.index(
+            "app_mesh_radio_owner_pause(&pause_lease)"
+        )
+        abort_call = gate_source.index(
+            "app_mesh_radio_owner_abort_request(", pause_call
+        )
+        resume_abort_release = gate_source.index(
+            "app_mesh_radio_owner_abort_release(", abort_call
+        )
+        resume_call = gate_source.index(
+            "app_mesh_radio_owner_resume(&pause_lease)",
+            resume_abort_release,
+        )
+        self.assertLess(pause_call, abort_call)
+        self.assertLess(abort_call, resume_abort_release)
+        self.assertLess(resume_abort_release, resume_call)
 
 
 if __name__ == "__main__":

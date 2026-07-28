@@ -1,30 +1,19 @@
 #include "app_clicker.h"
 
 #include "app_board.h"
+#include "app_clicker_ble_courtesy.h"
+#include "app_clicker_radio_power.h"
 #include "app_config.h"
 #include "app_high_debug.h"
-#include "app_radio_low_power_policy.h"
+#include "app_mesh_radio_owner.h"
 #include "app_stack_workload_diag.h"
 #include "app_state.h"
 #include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
-#include "dwm3000_port.h"
 #include "mesh_relay.h"
 #include "report.h"
 #include "uwb.h"
-#include "uwb_ble_courtesy.h"
 #include "uwb_session.h"
-
-#if defined(CONFIG_BT)
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/gap.h>
-#include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/gatt.h>
-#include <zephyr/net_buf.h>
-#if defined(CONFIG_BT_LL_SOFTDEVICE_HEADERS_INCLUDE)
-#include <bluetooth/hci_vs_sdc.h>
-#endif
-#endif
 #include <hal/nrf_gpio.h>
 #include <hal/nrf_power.h>
 
@@ -46,8 +35,6 @@
 LOG_MODULE_REGISTER(app_clicker, LOG_LEVEL_DBG);
 
 #define CLICKER_POLITENESS_UWB_RESTART 1
-#define BLE_COURTESY_STOP_RETRY_COUNT 3u
-#define BLE_COURTESY_STOP_RETRY_DELAY_MS 5u
 #define STAGE1_CLICK_SPAM_MAX_DELAY_MS 5000u
 
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
@@ -80,12 +67,6 @@ static struct app_clicker_continuous_click_sessions_config stage1_click_spam_con
 static void stage1_click_spam_work_handler(struct k_work *work);
 #endif
 
-int app_clicker_ble_courtesy_start(uint32_t event_seq,
-                                   uint8_t attempt_index,
-                                   uint64_t priority_id,
-                                   uint32_t peer_finish_ms);
-uint32_t app_clicker_ble_courtesy_higher_wait_ms(void);
-void app_clicker_ble_courtesy_stop(void);
 void app_clicker_arm_self_test_timeout(void);
 void app_clicker_cancel_self_test_timeout(void);
 
@@ -189,6 +170,9 @@ static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
                                                 NULL,
                                                 NULL,
                                                 &rx_failure);
+    if (ret == -ECANCELED) {
+        return ret;
+    }
     if (ret == 0) {
         int decode_ret = uwb_clicker_decode_politeness_wait(
             session,
@@ -257,6 +241,7 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                     uint32_t *ble_defer_wait_ms,
                                     const struct app_clicker_attempt_gate_config *config)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     int64_t deadline_ms = k_uptime_get() + config->max_politeness_wait_ms;
     uint8_t quiet_samples = 0u;
     uint32_t sample_count = 0u;
@@ -264,7 +249,6 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
     bool ble_started = false;
     int64_t ble_courtesy_until_ms = 0;
     int ret;
-
     if (session == NULL || config == NULL) {
         return -EINVAL;
     }
@@ -290,7 +274,7 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         }
     }
 
-    ret = radio_guard_uwb_start("clicker politeness sniff");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_CLICKER, "clicker politeness sniff", &radio_lease);
     if (ret < 0) {
         if (ble_started) {
             app_clicker_ble_courtesy_stop();
@@ -299,7 +283,7 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
     }
     ret = dwm3000_driver_configure_range_mode();
     if (ret < 0) {
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         if (ble_started) {
             app_clicker_ble_courtesy_stop();
         }
@@ -328,6 +312,9 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                       &activity_count,
                                       &quiet_samples,
                                       config);
+        if (ret == -ECANCELED) {
+            break;
+        }
         if (ret == CLICKER_POLITENESS_UWB_RESTART) {
             break;
         }
@@ -356,9 +343,12 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
     }
 
     (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     if (ble_started) {
         app_clicker_ble_courtesy_stop();
+    }
+    if (ret == -ECANCELED) {
+        return ret;
     }
     if (ret == -EAGAIN) {
         LOG_INF("clicker BLE courtesy deferred attempt=%u event_seq=%u priority=%llx peer_wait_ms=%u",
@@ -545,13 +535,13 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
     }
 
     while (polite_retry <= APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
+        struct app_mesh_radio_owner_lease radio_lease = {0};
         size_t frame_len = 0u;
         int64_t close_ms;
         uint16_t sent_count = 0u;
         bool c5_activity = false;
         const char *activity_phase = NULL;
-
-        ret = radio_guard_uwb_start("clicker UWB WAKE_CLAIM train");
+        ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_CLICKER, "clicker UWB WAKE_CLAIM train", &radio_lease);
         if (ret < 0) {
             status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
             LOG_WRN("clicker UWB WAKE_CLAIM guard failed: ret=%d", ret);
@@ -670,7 +660,7 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
 
 attempt_out:
         (void)dwm3000_driver_standby();
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         if (ret == -EAGAIN && c5_activity &&
             polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
             clicker_wake_train_backoff(session, activity_phase, polite_retry);
@@ -732,10 +722,10 @@ static void clicker_log_range_schedule_entries(const struct uwb_range_schedule_f
 int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *schedule,
                                     const struct app_clicker_range_tx_config *config)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t frame[UWB_RANGE_SCHEDULE_MAX_LEN];
     size_t frame_len = 0u;
     int ret;
-
     if (schedule == NULL || config == NULL) {
         return -EINVAL;
     }
@@ -745,7 +735,7 @@ int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *sched
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB RANGE_SCHEDULE");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_CLICKER, "clicker UWB RANGE_SCHEDULE", &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -769,7 +759,7 @@ int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *sched
     } else {
         (void)dwm3000_driver_standby();
     }
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
 
     if (ret < 0) {
         stage1_led_result(STAGE1_LED_RESULT_ERROR);
@@ -802,11 +792,11 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
                                    uint8_t reason,
                                    const struct app_clicker_range_tx_config *config)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     struct uwb_range_release_frame release;
     uint8_t frame[UWB_RANGE_RELEASE_LEN];
     size_t frame_len = 0u;
     int ret;
-
     if (session == NULL || config == NULL) {
         return -EINVAL;
     }
@@ -820,7 +810,7 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB RANGE_RELEASE");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_CLICKER, "clicker UWB RANGE_RELEASE", &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -831,7 +821,7 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
                                         config->control_tx_timeout_ms);
     }
     (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
 
     if (ret < 0) {
         LOG_WRN("clicker UWB RANGE_RELEASE TX failed: ret=%d", ret);
@@ -1009,6 +999,7 @@ int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_start_continuous_click_sessions(
 
 int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     struct uwb_discover_frame discover;
     uint8_t frame[UWB_DISCOVERY_REPLY_LEN];
     size_t frame_len = 0u;
@@ -1020,7 +1011,6 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     uint16_t rejected_replies = 0u;
     int ret;
     int last_ret = -ETIMEDOUT;
-
     ret = uwb_clicker_build_discover(session, &discover);
     if (ret != PROTO_OK) {
         return -EINVAL;
@@ -1041,7 +1031,7 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB DISCOVER");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_CLICKER, "clicker UWB DISCOVER", &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -1076,6 +1066,10 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
                                                       &quality,
                                                       NULL,
                                                       NULL);
+        if (ret == -ECANCELED) {
+            last_ret = ret;
+            break;
+        }
         if (ret == -ETIMEDOUT) {
             break;
         }
@@ -1138,7 +1132,8 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
         }
     }
 
-    ret = session->candidate_count > 0u ? (int)session->candidate_count : last_ret;
+    ret = last_ret == -ECANCELED ? last_ret :
+          session->candidate_count > 0u ? (int)session->candidate_count : last_ret;
     LOG_INF("clicker UWB discovery complete: rx_frames=%u decoded_replies=%u candidates=%u malformed_frames=%u rejected_replies=%u window_ms=%u ret=%d",
             rx_frames,
             decoded_replies,
@@ -1150,7 +1145,7 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
 
 out:
     (void)dwm3000_driver_standby();
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     if (ret < 0) {
         stage1_led_result(ret == -ETIMEDOUT ?
                           STAGE1_LED_RESULT_TIMEOUT :
@@ -1279,24 +1274,28 @@ static void clicker_release_scheduled_range_radio(void)
     }
 }
 
-static void clicker_finish_scheduled_range_radio_burst(void)
-{
-    int ret = dwm3000_driver_standby();
-
-    if (ret < 0) {
-        LOG_WRN("clicker DW3000 standby after scheduled burst failed: %d", ret);
-    }
-}
-
 int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                         const struct uwb_range_schedule_frame *schedule,
                                         int64_t click_deadline_ms,
                                         uint8_t *attempted_count)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     int64_t schedule_tx_ms = k_uptime_get();
     size_t total_samples = uwb_range_schedule_total_samples(schedule);
     int last_ret = -ETIMEDOUT;
+    int finish_ret;
+    int ret;
 
+    ret = app_mesh_radio_owner_try_claim(
+        APP_MESH_RADIO_CLIENT_CLICKER,
+        "clicker scheduled UWB range burst",
+        &radio_lease);
+    if (ret < 0) {
+        (void)uwb_clicker_abort_attempt(session);
+        LOG_WRN("scheduled click DS-TWR burst not started: reason=radio_owner ret=%d attempt=%u",
+                ret, session->attempt_index);
+        return ret;
+    }
     while (session->state == UWB_CLICKER_RANGING) {
         struct uwb_range_step step;
         struct dwm3000_range_request range_request;
@@ -1305,19 +1304,28 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         int64_t target_us;
         int64_t remaining_ms;
         uint32_t slot_timeout_ms = CLICK_UWB_TIMEOUT_MS;
-        int ret;
 
+        if (app_mesh_radio_owner_abort_pending()) {
+            (void)uwb_clicker_abort_attempt(session);
+            last_ret = -ECANCELED;
+            break;
+        }
         ret = uwb_clicker_next_range_step(session, &step);
         if (ret == PROTO_ERR_NOT_FOUND) {
             break;
         }
         if (ret != PROTO_OK) {
-            clicker_finish_scheduled_range_radio_burst();
-            return -EINVAL;
+            last_ret = -EINVAL;
+            break;
         }
 
         target_us = scheduled_range_sample_target_us(schedule_tx_ms, schedule, step.sample_index);
         sleep_until_us(target_us);
+        if (app_mesh_radio_owner_abort_pending()) {
+            (void)uwb_clicker_abort_attempt(session);
+            last_ret = -ECANCELED;
+            break;
+        }
         stage1_led_phase(STAGE1_LED_PHASE_RANGE);
         stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
@@ -1368,24 +1376,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         click_activity_packet.seq = range_request.seq;
         click_activity_packet.msg_type = MSG_UWB_POLL;
 
-        ret = radio_guard_uwb_start("clicker scheduled UWB range");
-        if (ret < 0) {
-            (void)uwb_clicker_record_range_result(session, &step, RANGE_INTERNAL_ERROR);
-            (void)uwb_clicker_abort_attempt(session);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            LOG_WRN("scheduled click DS-TWR not started: reason=radio_guard anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d attempt=%u ds_fail=%u",
-                    (unsigned long long)step.anchor_id,
-                    step.anchor_index,
-                    (unsigned int)(step.sample_index + 1u),
-                    (unsigned int)total_samples,
-                    step.round_index,
-                    step.seq,
-                    ret,
-                    session->attempt_index,
-                    session->diagnostics.ds_twr_failures);
-            clicker_finish_scheduled_range_radio_burst();
-            return ret;
-        }
         LOG_INF("scheduled click DS-TWR start: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u timeout_ms=%u",
                 (unsigned long long)step.anchor_id,
                 step.anchor_index,
@@ -1422,7 +1412,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                                       1u, 0u);
         ret = dwm3000_driver_range_initiator(&range_request, &range_result);
         clicker_release_scheduled_range_radio();
-        radio_guard_uwb_stop();
 #if defined(CONFIG_IMEC_ML_CLICKER)
         if (clicker_callbacks.ml_exit_range_quiet != NULL) {
             clicker_callbacks.ml_exit_range_quiet();
@@ -1437,6 +1426,11 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                 range_result.status == RANGE_OK ? 0 : -EIO,
             0u, 0u);
 
+        if (ret == -ECANCELED) {
+            (void)uwb_clicker_abort_attempt(session);
+            last_ret = ret;
+            break;
+        }
         if (!range_result.exchange_started) {
             enum range_status status = range_result.status;
 
@@ -1500,8 +1494,8 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                         (unsigned long long)step.anchor_id,
                         step.seq,
                         record_ret);
-                clicker_finish_scheduled_range_radio_burst();
-                return -EINVAL;
+                last_ret = -EINVAL;
+                break;
             }
             LOG_INF("scheduled click DS-TWR complete: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u",
                     (unsigned long long)range_result.responder_id,
@@ -1559,8 +1553,8 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                         record_ret,
                         range_status_name(status),
                         status);
-                clicker_finish_scheduled_range_radio_burst();
-                return -EINVAL;
+                last_ret = -EINVAL;
+                break;
             }
             LOG_WRN("scheduled click DS-TWR failed: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
                     (unsigned long long)step.anchor_id,
@@ -1613,6 +1607,10 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         }
     }
 
+    finish_ret = app_clicker_radio_finish_scheduled_burst(&radio_lease);
+    if (finish_ret < 0) {
+        return finish_ret;
+    }
 #if defined(CONFIG_IMEC_ML_CLICKER)
     if (session->state == UWB_CLICKER_SUCCEEDED &&
         schedule->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED &&
@@ -1623,7 +1621,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                                         click_deadline_ms);
     }
 #endif
-    clicker_finish_scheduled_range_radio_burst();
     return session->state == UWB_CLICKER_SUCCEEDED ? 0 : last_ret;
 }
 
@@ -1859,9 +1856,13 @@ int app_clicker_run_normal_click(void)
                                   session.successful_unique_count,
                                   session.config.min_anchor_count);
             }
+            if (ret < 0 && session.state == UWB_CLICKER_SUCCEEDED) {
+                stage1_led_result(STAGE1_LED_RESULT_ERROR);
+                return ret;
+            }
         }
 
-        if (session.state == UWB_CLICKER_SUCCEEDED) {
+        if (ret >= 0 && session.state == UWB_CLICKER_SUCCEEDED) {
             high_debug_log_event("CLICK_TRACE",
                                  "point=success_state event_seq=%u attempt=%u unique=%u/%u",
                                  event_seq,
@@ -2011,45 +2012,13 @@ int app_clicker_run_uwb_diagnostic_click(uint32_t event_seq)
 
 static enum self_test_failure app_clicker_run_self_test(uint32_t event_seq)
 {
-    uint32_t dev_id;
     int ret;
 
     LOG_INF("self-test started on UWB wake path");
-
-    ret = dwm3000_port_init();
+    ret = app_clicker_radio_self_test_preflight();
     if (ret < 0) {
-        LOG_ERR("self-test DWM3000 port init failed: %d", ret);
         return SELF_TEST_FAILURE_DWM3000;
     }
-
-    ret = dwm3000_port_wakeup();
-    if (ret < 0) {
-        LOG_ERR("self-test DWM3000 wake failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
-    }
-
-    ret = dwm3000_port_hw_reset();
-    if (ret < 0) {
-        LOG_ERR("self-test DWM3000 reset failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
-    }
-
-    ret = dwm3000_driver_probe(&dev_id);
-    if (ret < 0) {
-        LOG_ERR("self-test DWM3000 decadriver DEV_ID probe failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
-    }
-
-    ret = dwm3000_port_set_fast_spi();
-    if (ret < 0) {
-        LOG_ERR("self-test DWM3000 fast SPI config failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
-    }
-
-    LOG_INF("self-test DWM3000 decadriver DEV_ID=0x%08x; fast SPI config checked at %u Hz",
-            dev_id,
-            (unsigned int)dwm3000_port_current_spi_hz());
-    (void)dwm3000_driver_standby();
 
     ret = app_clicker_run_uwb_diagnostic_click(event_seq);
     if (ret == 0) {
@@ -2128,375 +2097,6 @@ static int app_clicker_emit_self_test_report(uint32_t event_seq,
     return 0;
 }
 
-#if defined(CONFIG_BT) && DEVICE_ROLE == ROLE_CLICKER
-static bool ble_courtesy_init_attempted;
-static bool ble_courtesy_available;
-static bool ble_courtesy_adv_active;
-static bool ble_courtesy_scan_active;
-static struct k_spinlock ble_courtesy_lock;
-static uint32_t ble_courtesy_higher_wait_ms;
-static uint8_t ble_courtesy_adv_data[UWB_BLE_COURTESY_MANUFACTURER_DATA_LEN];
-static struct uwb_ble_courtesy_frame ble_courtesy_local;
-
-static int clicker_ble_courtesy_set_scan_channel(void)
-{
-#if defined(CONFIG_BT_LL_SOFTDEVICE_HEADERS_INCLUDE)
-    const sdc_hci_cmd_vs_scan_channel_map_set_t params = {
-        .channel_map = {0xffu, 0xffu, 0xffu, 0xffu, 0x3fu},
-    };
-
-    return hci_vs_sdc_scan_channel_map_set(&params);
-#else
-    return -ENOTSUP;
-#endif
-}
-
-static void clicker_ble_courtesy_note_higher_peer(uint32_t wait_ms)
-{
-    k_spinlock_key_t key = k_spin_lock(&ble_courtesy_lock);
-
-    if (wait_ms > ble_courtesy_higher_wait_ms) {
-        ble_courtesy_higher_wait_ms = wait_ms;
-    }
-    k_spin_unlock(&ble_courtesy_lock, key);
-}
-
-static void clicker_ble_courtesy_clear_higher_peer(void)
-{
-    k_spinlock_key_t key = k_spin_lock(&ble_courtesy_lock);
-
-    ble_courtesy_higher_wait_ms = 0u;
-    k_spin_unlock(&ble_courtesy_lock, key);
-}
-
-static bool clicker_ble_courtesy_parse_ad(struct bt_data *data, void *user_data)
-{
-    struct uwb_ble_courtesy_frame peer;
-    int cmp;
-
-    ARG_UNUSED(user_data);
-
-    if (data->type != BT_DATA_MANUFACTURER_DATA) {
-        return true;
-    }
-    if (uwb_ble_courtesy_decode(data->data, data->data_len, &peer) != PROTO_OK) {
-        return true;
-    }
-    if (peer.network_id != NETWORK_ID || peer.clicker_id == ble_courtesy_local.clicker_id) {
-        return false;
-    }
-
-    cmp = uwb_claim_precedence_compare(peer.attempt_index,
-                                       peer.priority_id,
-                                       peer.clicker_id,
-                                       peer.click_event_id,
-                                       ble_courtesy_local.attempt_index,
-                                       ble_courtesy_local.priority_id,
-                                       ble_courtesy_local.clicker_id,
-                                       ble_courtesy_local.click_event_id);
-    if (cmp > 0) {
-        uint32_t wait_ms = uwb_ble_courtesy_duration_ms(peer.defer_duration_units);
-
-        clicker_ble_courtesy_note_higher_peer(wait_ms);
-        LOG_INF("BLE courtesy saw higher-precedence clicker: peer=%llx event=%u attempt=%u priority=%llx wait_ms=%u",
-                (unsigned long long)peer.clicker_id,
-                peer.click_event_id,
-                peer.attempt_index,
-                (unsigned long long)peer.priority_id,
-                wait_ms);
-    }
-    return false;
-}
-
-static void clicker_ble_courtesy_scan_cb(const bt_addr_le_t *addr,
-                                         int8_t rssi,
-                                         uint8_t adv_type,
-                                         struct net_buf_simple *buf)
-{
-    ARG_UNUSED(addr);
-    ARG_UNUSED(rssi);
-    ARG_UNUSED(adv_type);
-
-    if (!ble_courtesy_scan_active) {
-        return;
-    }
-    bt_data_parse(buf, clicker_ble_courtesy_parse_ad, NULL);
-}
-
-static int clicker_ble_courtesy_init_once(void)
-{
-    int disable_ret;
-    int ret;
-
-    if (ble_courtesy_available) {
-        return 0;
-    }
-    if (ble_courtesy_init_attempted) {
-        return -ENOTSUP;
-    }
-
-    ble_courtesy_init_attempted = true;
-    ret = bt_enable(NULL);
-    if (ret != 0 && ret != -EALREADY) {
-        LOG_WRN("BLE courtesy disabled: bt_enable failed: %d", ret);
-        ble_courtesy_init_attempted = false;
-        return ret;
-    }
-
-    ret = clicker_ble_courtesy_set_scan_channel();
-    if (ret != 0) {
-        LOG_WRN("BLE courtesy disabled: scan channel 37 map failed: %d", ret);
-        disable_ret = bt_disable();
-        if (disable_ret == 0 || disable_ret == -EALREADY) {
-            ble_courtesy_init_attempted = false;
-        } else {
-            LOG_WRN("BLE courtesy initialization rollback failed: %d",
-                    disable_ret);
-        }
-        return ret;
-    }
-
-    ble_courtesy_available = true;
-    LOG_INF("BLE courtesy enabled on advertising/scanning channel 37");
-    return 0;
-}
-
-int app_clicker_ble_courtesy_start(uint32_t event_seq,
-                                   uint8_t attempt_index,
-                                   uint64_t priority_id,
-                                   uint32_t peer_finish_ms)
-{
-    const struct bt_le_scan_param scan_param = {
-        .type = BT_LE_SCAN_TYPE_PASSIVE,
-        .options = BT_LE_SCAN_OPT_NONE,
-        .interval = BLE_COURTESY_SCAN_INTERVAL_UNITS,
-        .window = BLE_COURTESY_SCAN_WINDOW_UNITS,
-        .timeout = 0u,
-        .interval_coded = 0u,
-        .window_coded = 0u,
-    };
-    const struct bt_le_adv_param adv_param = {
-        .id = BT_ID_DEFAULT,
-        .sid = 0u,
-        .secondary_max_skip = 0u,
-        .options = BT_LE_ADV_OPT_USE_IDENTITY |
-                   BT_LE_ADV_OPT_DISABLE_CHAN_38 |
-                   BT_LE_ADV_OPT_DISABLE_CHAN_39,
-        .interval_min = BLE_COURTESY_ADV_INTERVAL_MIN_UNITS,
-        .interval_max = BLE_COURTESY_ADV_INTERVAL_MAX_UNITS,
-        .peer = NULL,
-    };
-    const struct bt_data ad[] = {
-        BT_DATA(BT_DATA_MANUFACTURER_DATA,
-                ble_courtesy_adv_data,
-                sizeof(ble_courtesy_adv_data)),
-    };
-    size_t written = 0u;
-    int ret;
-
-    ret = clicker_ble_courtesy_init_once();
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=init ret=%d", ret);
-#endif
-    if (ret < 0) {
-        return ret;
-    }
-
-    ble_courtesy_local.network_id = NETWORK_ID;
-    ble_courtesy_local.clicker_id = DEVICE_ID;
-    ble_courtesy_local.click_event_id = event_seq;
-    ble_courtesy_local.attempt_index = attempt_index;
-    ble_courtesy_local.priority_id = priority_id;
-    ble_courtesy_local.defer_duration_units =
-        uwb_ble_courtesy_duration_units_from_ms(peer_finish_ms);
-    ret = uwb_ble_courtesy_encode(&ble_courtesy_local,
-                                  ble_courtesy_adv_data,
-                                  sizeof(ble_courtesy_adv_data),
-                                  &written);
-    if (ret != PROTO_OK || written != sizeof(ble_courtesy_adv_data)) {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-        high_debug_log_event("BLE_TEST",
-                             "phase=encode ret=%d written=%u expected=%u duration_units=%u",
-                             ret,
-                             (unsigned int)written,
-                             (unsigned int)sizeof(ble_courtesy_adv_data),
-                             ble_courtesy_local.defer_duration_units);
-#endif
-        return -EINVAL;
-    }
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST",
-                         "phase=encode ret=0 written=%u duration_units=%u",
-                         (unsigned int)written,
-                         ble_courtesy_local.defer_duration_units);
-#endif
-
-    clicker_ble_courtesy_clear_higher_peer();
-    /* Legacy scan and advertising share the random-address state. Start the
-     * identity advertiser before identity scanning so Zephyr accepts both.
-     */
-    ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=adv_start ret=%d", ret);
-#endif
-    if (ret != 0) {
-        LOG_WRN("BLE courtesy advertising start failed: %d", ret);
-        return ret;
-    }
-    ble_courtesy_adv_active = true;
-
-    ble_courtesy_scan_active = true;
-    ret = bt_le_scan_start(&scan_param, clicker_ble_courtesy_scan_cb);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=scan_start ret=%d", ret);
-#endif
-    if (ret != 0) {
-        int stop_ret;
-
-        LOG_WRN("BLE courtesy scan start failed: %d", ret);
-        ble_courtesy_scan_active = false;
-        stop_ret = bt_le_adv_stop();
-        if (stop_ret == 0 || stop_ret == -EALREADY) {
-            ble_courtesy_adv_active = false;
-        } else {
-            LOG_WRN("BLE courtesy advertising rollback failed: %d", stop_ret);
-        }
-        return ret;
-    }
-    return 0;
-}
-
-uint32_t app_clicker_ble_courtesy_higher_wait_ms(void)
-{
-    k_spinlock_key_t key = k_spin_lock(&ble_courtesy_lock);
-    uint32_t wait_ms = ble_courtesy_higher_wait_ms;
-
-    k_spin_unlock(&ble_courtesy_lock, key);
-    return wait_ms;
-}
-
-static int clicker_ble_courtesy_stop_advertising(void)
-{
-    int ret = 0;
-
-    for (uint8_t attempt = 0u;
-         ble_courtesy_adv_active && attempt < BLE_COURTESY_STOP_RETRY_COUNT;
-         attempt++) {
-        ret = bt_le_adv_stop();
-        if (ret == 0 || ret == -EALREADY) {
-            ble_courtesy_adv_active = false;
-            return 0;
-        }
-        if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
-            k_msleep(BLE_COURTESY_STOP_RETRY_DELAY_MS);
-        }
-    }
-    if (ble_courtesy_adv_active) {
-        LOG_WRN("BLE courtesy advertising stop failed after %u attempts: %d",
-                BLE_COURTESY_STOP_RETRY_COUNT,
-                ret);
-    }
-    return ret;
-}
-
-static int clicker_ble_courtesy_stop_scanning(void)
-{
-    int ret = 0;
-
-    for (uint8_t attempt = 0u;
-         ble_courtesy_scan_active && attempt < BLE_COURTESY_STOP_RETRY_COUNT;
-         attempt++) {
-        ret = bt_le_scan_stop();
-        if (ret == 0 || ret == -EALREADY) {
-            ble_courtesy_scan_active = false;
-            return 0;
-        }
-        if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
-            k_msleep(BLE_COURTESY_STOP_RETRY_DELAY_MS);
-        }
-    }
-    if (ble_courtesy_scan_active) {
-        LOG_WRN("BLE courtesy scan stop failed after %u attempts: %d",
-                BLE_COURTESY_STOP_RETRY_COUNT,
-                ret);
-    }
-    return ret;
-}
-
-void app_clicker_ble_courtesy_stop(void)
-{
-    (void)clicker_ble_courtesy_stop_advertising();
-    (void)clicker_ble_courtesy_stop_scanning();
-}
-
-int app_clicker_ble_courtesy_low_power_stop(void)
-{
-    int ret = 0;
-
-    app_clicker_ble_courtesy_stop();
-    if (!ble_courtesy_init_attempted) {
-        return 0;
-    }
-
-    for (uint8_t attempt = 0u; attempt < BLE_COURTESY_STOP_RETRY_COUNT; attempt++) {
-        ret = bt_disable();
-        if (ret == 0 || ret == -EALREADY) {
-            ble_courtesy_init_attempted = false;
-            ble_courtesy_available = false;
-            ble_courtesy_adv_active = false;
-            ble_courtesy_scan_active = false;
-            clicker_ble_courtesy_clear_higher_peer();
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-            high_debug_log_event("BLE_TEST",
-                                 "phase=low_power_stop ret=0 attempts=%u",
-                                 (unsigned int)(attempt + 1u));
-#endif
-            return 0;
-        }
-        if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
-            k_msleep(BLE_COURTESY_STOP_RETRY_DELAY_MS);
-        }
-    }
-    LOG_WRN("BLE courtesy disable before retained idle failed after %u attempts: %d",
-            BLE_COURTESY_STOP_RETRY_COUNT,
-            ret);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST",
-                         "phase=low_power_stop ret=%d attempts=%u",
-                         ret,
-                         BLE_COURTESY_STOP_RETRY_COUNT);
-#endif
-    return ret;
-}
-#else
-int app_clicker_ble_courtesy_start(uint32_t event_seq,
-                                   uint8_t attempt_index,
-                                   uint64_t priority_id,
-                                   uint32_t peer_finish_ms)
-{
-    ARG_UNUSED(event_seq);
-    ARG_UNUSED(attempt_index);
-    ARG_UNUSED(priority_id);
-    ARG_UNUSED(peer_finish_ms);
-
-    return -ENOTSUP;
-}
-
-uint32_t app_clicker_ble_courtesy_higher_wait_ms(void)
-{
-    return 0u;
-}
-
-void app_clicker_ble_courtesy_stop(void)
-{
-}
-
-int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_ble_courtesy_low_power_stop(void)
-{
-    return 0;
-}
-#endif
-
 #if DT_NODE_HAS_STATUS(CLICK_BUTTON_NODE, okay) && \
     !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) && \
     !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
@@ -2505,9 +2105,11 @@ static struct gpio_callback click_button_cb;
 static struct k_work click_button_work;
 static struct k_work_delayable click_button_release_work;
 static struct k_work_delayable self_test_arm_timeout_work;
+static struct k_work_delayable clicker_idle_retry_work;
 static struct k_work clicker_action_work;
 #define CLICK_BUTTON_PORT_NUM DT_PROP(DT_GPIO_CTLR(CLICK_BUTTON_NODE, gpios), port)
 #define CLICK_BUTTON_PIN_NUM DT_GPIO_PIN(CLICK_BUTTON_NODE, gpios)
+#define CLICKER_IDLE_RETRY_MS 100u
 #define HAS_CLICK_BUTTON 1
 #else
 #define HAS_CLICK_BUTTON 0
@@ -2539,7 +2141,7 @@ static bool clicker_action_work_q_started;
 #if HAS_CLICK_BUTTON
 static atomic_t clicker_action_active;
 static enum button_action clicker_pending_action;
-static uint32_t clicker_low_power_transition_failures;
+static bool clicker_idle_retry_initialized;
 #endif
 
 int app_clicker_init(const struct app_clicker_callbacks *callbacks)
@@ -2939,51 +2541,6 @@ static bool clicker_capture_systemoff_button_action(enum button_action *action)
     return ret == PROTO_OK;
 }
 
-static void clicker_prepare_radio_systemoff(void)
-{
-    uint32_t dev_id;
-    int ret;
-
-    ret = dwm3000_port_init();
-    if (ret < 0) {
-        LOG_WRN("DWM3000 port init before system-off failed: %d", ret);
-        (void)dwm3000_port_prepare_systemoff();
-        return;
-    }
-    ret = dwm3000_port_wakeup();
-    if (ret < 0) {
-        LOG_WRN("DWM3000 wake before system-off failed: %d", ret);
-        (void)dwm3000_port_prepare_systemoff();
-        return;
-    }
-    ret = dwm3000_port_hw_reset();
-    if (ret < 0) {
-        LOG_WRN("DWM3000 reset before system-off failed: %d", ret);
-        (void)dwm3000_port_prepare_systemoff();
-        return;
-    }
-    ret = dwm3000_driver_probe(&dev_id);
-    if (ret < 0) {
-        LOG_WRN("DWM3000 probe before system-off failed: %d", ret);
-        (void)dwm3000_port_prepare_systemoff();
-        return;
-    }
-    ret = dwm3000_driver_configure_default();
-    if (ret < 0) {
-        LOG_WRN("DWM3000 config before system-off failed: %d", ret);
-        (void)dwm3000_port_prepare_systemoff();
-        return;
-    }
-    ret = dwm3000_driver_standby();
-    if (ret < 0) {
-        LOG_WRN("DWM3000 standby before system-off failed: %d", ret);
-    }
-    ret = dwm3000_port_prepare_systemoff();
-    if (ret < 0) {
-        LOG_WRN("DWM3000 pin park before system-off failed: %d", ret);
-    }
-}
-
 static void clicker_systemoff_now(void)
 {
     clicker_request_systemoff_ram_retention();
@@ -2993,6 +2550,7 @@ static void clicker_systemoff_now(void)
 
 void app_clicker_enter_systemoff_idle(void)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     int ret;
 
     if (!IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE) ||
@@ -3000,8 +2558,19 @@ void app_clicker_enter_systemoff_idle(void)
         return;
     }
 
+    ret = app_clicker_radio_prepare_systemoff(&radio_lease);
+    if (ret < 0) {
+        LOG_WRN("clicker system-off radio preparation incomplete: %d", ret);
+        if (radio_lease.generation == 0u) {
+            if (clicker_idle_retry_initialized) {
+                (void)k_work_reschedule(
+                    &clicker_idle_retry_work,
+                    K_MSEC(CLICKER_IDLE_RETRY_MS));
+            }
+            return;
+        }
+    }
     (void)battery_adc_divider_disable();
-    clicker_prepare_radio_systemoff();
     status_leds_set(false, false, false);
     status_leds_disconnect();
 
@@ -3038,57 +2607,8 @@ void app_clicker_enter_systemoff_idle(void)
     clicker_systemoff_now();
 }
 
-static int clicker_radio_retained_standby_transition(void)
-{
-    int ret = dwm3000_driver_configure_wake_mode();
-
-    if (ret < 0) {
-        return ret;
-    }
-    return dwm3000_driver_standby();
-}
-
-static int clicker_enter_radio_retained_standby(void)
-{
-    struct app_radio_low_power_policy policy;
-    enum app_radio_low_power_action action;
-    int first_ret;
-    int recovery_ret;
-    int retry_ret = 0;
-
-    app_radio_low_power_policy_init(&policy, APP_RADIO_LOW_POWER_STANDBY);
-    first_ret = clicker_radio_retained_standby_transition();
-    action = app_radio_low_power_policy_note_transition(&policy, first_ret);
-    if (action == APP_RADIO_LOW_POWER_COMPLETE) {
-        return 0;
-    }
-
-    recovery_ret = dwm3000_driver_force_recovery();
-    action = app_radio_low_power_policy_note_recovery(&policy, recovery_ret);
-    if (action == APP_RADIO_LOW_POWER_RETRY) {
-        retry_ret = clicker_radio_retained_standby_transition();
-        action = app_radio_low_power_policy_note_transition(&policy, retry_ret);
-        if (action == APP_RADIO_LOW_POWER_COMPLETE) {
-            LOG_WRN("clicker DWM3000 retained standby recovered: first_ret=%d",
-                    first_ret);
-            return 0;
-        }
-    }
-
-    if (clicker_low_power_transition_failures != UINT32_MAX) {
-        clicker_low_power_transition_failures++;
-    }
-    LOG_ERR("clicker DWM3000 retained standby failed after bounded recovery: first_ret=%d recovery_ret=%d retry_ret=%d failures=%u",
-            first_ret,
-            recovery_ret,
-            retry_ret,
-            clicker_low_power_transition_failures);
-    return recovery_ret < 0 ? recovery_ret : retry_ret;
-}
-
 static void clicker_enter_systemon_retained_idle(void)
 {
-    bool pins_floated = false;
     bool radio_retained = false;
     int ret;
 
@@ -3105,23 +2625,16 @@ static void clicker_enter_systemon_retained_idle(void)
     if (ret < 0) {
         LOG_WRN("BLE cleanup before retained idle incomplete: %d", ret);
     }
-    ret = clicker_enter_radio_retained_standby();
+    ret = app_clicker_radio_enter_retained_standby();
     if (ret == 0) {
         radio_retained = true;
-        for (uint8_t attempt = 0u; attempt < 2u; attempt++) {
-            ret = dwm3000_port_float_pins();
-            if (ret == 0) {
-                pins_floated = true;
-                break;
-            }
-            if (attempt == 0u) {
-                k_busy_wait(100u);
-            }
+    } else {
+        LOG_WRN("DWM3000 retained-idle ownership deferred: %d", ret);
+        if (clicker_idle_retry_initialized) {
+            (void)k_work_reschedule(&clicker_idle_retry_work,
+                                    K_MSEC(CLICKER_IDLE_RETRY_MS));
         }
-        if (!pins_floated) {
-            LOG_WRN("DWM3000 retained-idle pin float failed after retry: %d",
-                    ret);
-        }
+        return;
     }
 
     ret = click_button_arm_idle_interrupt();
@@ -3129,10 +2642,9 @@ static void clicker_enter_systemon_retained_idle(void)
         LOG_WRN("click button retained-idle wake arm failed: %d", ret);
     }
     high_debug_log_event("CLICKER_IDLE",
-                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=%s",
+                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=driven",
                          (unsigned int)CLICK_BUTTON_PIN_NUM,
-                         radio_retained ? 1u : 0u,
-                         pins_floated ? "float" : "driven");
+                         radio_retained ? 1u : 0u);
     LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",
             (unsigned int)CLICK_BUTTON_PIN_NUM);
     status_leds_set(false, false, false);
@@ -3147,6 +2659,12 @@ void app_clicker_enter_idle(void)
     }
 
     app_clicker_enter_systemoff_idle();
+}
+
+static void clicker_idle_retry_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    app_clicker_enter_idle();
 }
 
 static void clicker_action_work_handler(struct k_work *work)
@@ -3173,6 +2691,7 @@ void app_clicker_submit_button_action(enum button_action action)
     if (action == BUTTON_ACTION_NONE) {
         return;
     }
+    (void)k_work_cancel_delayable(&clicker_idle_retry_work);
     if (!atomic_cas(&clicker_action_active, 0, 1)) {
         high_debug_log_event("BUTTON_ACTION",
                              "point=action_drop reason=busy action=%u",
@@ -3333,6 +2852,9 @@ int ML_CLICKER_BUTTON_UNUSED app_clicker_button_init(void)
     k_work_init_delayable(&click_button_release_work, click_button_release_work_handler);
     k_work_init(&clicker_action_work, clicker_action_work_handler);
     k_work_init_delayable(&self_test_arm_timeout_work, self_test_arm_timeout_handler);
+    k_work_init_delayable(&clicker_idle_retry_work,
+                          clicker_idle_retry_work_handler);
+    clicker_idle_retry_initialized = true;
     gpio_init_callback(&click_button_cb, click_button_isr, BIT(click_button.pin));
     ret = gpio_add_callback(click_button.port, &click_button_cb);
     if (ret < 0) {

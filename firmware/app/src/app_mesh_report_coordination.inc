@@ -1,4 +1,36 @@
 #line 673 __BASE_FILE__
+static void mesh_rx_handler_lock_note_owner(const char *owner)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+    mesh_rx_handler_lock_owner = owner == NULL ? "rx" : owner;
+    mesh_rx_handler_lock_since_ms = k_uptime_get_32();
+}
+
+static void mesh_rx_handler_lock_clear_owner(void)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        return;
+    }
+    mesh_rx_handler_lock_owner = NULL;
+    mesh_rx_handler_lock_since_ms = 0u;
+}
+
+static uint32_t mesh_uwb_rx_window_ms(void)
+{
+    return DEVICE_ROLE == ROLE_GATEWAY ?
+           UWB_MESH_GATEWAY_RX_WINDOW_MS :
+           UWB_MESH_ANCHOR_RX_WINDOW_MS;
+}
+
+static uint32_t mesh_uwb_rx_idle_delay_ms(void)
+{
+    return DEVICE_ROLE == ROLE_GATEWAY ?
+           UWB_MESH_GATEWAY_RX_IDLE_MS :
+           UWB_MESH_ANCHOR_RX_INTERVAL_MS;
+}
+
 static bool mesh_report_anchor_survey_discovery_is_pending(void)
 {
     return mesh_report_callbacks != NULL &&
@@ -79,6 +111,42 @@ static bool mesh_gateway_route_test_preempt_active(uint32_t now_ms)
         return false;
     }
     return true;
+}
+
+static bool mesh_route_refresh_allowed(void *ctx)
+{
+    ARG_UNUSED(ctx);
+    return app_mesh_c5_gateway_route_adv_allowed(
+        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST));
+}
+
+static bool mesh_route_refresh_policy_running(void *ctx)
+{
+    ARG_UNUSED(ctx);
+    return app_node_comm_policy_running();
+}
+
+static bool mesh_c5_contact_active(uint64_t peer_id,
+                                   uint8_t purpose,
+                                   uint32_t now_ms);
+
+static bool mesh_route_refresh_response_active(uint32_t now_ms, void *ctx)
+{
+    ARG_UNUSED(ctx);
+    if (!mesh_gateway_route_test_role() ||
+        mesh_gateway_route_preempt_peer_id == 0u ||
+        !mesh_gateway_route_test_preempt_active(now_ms)) {
+        return false;
+    }
+    return mesh_c5_contact_active(mesh_gateway_route_preempt_peer_id,
+                                  C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
+                                  now_ms);
+}
+
+static uint32_t mesh_route_refresh_now(void *ctx)
+{
+    ARG_UNUSED(ctx);
+    return k_uptime_get_32();
 }
 
 static uint32_t mesh_gateway_route_test_preempt_window_ms(uint32_t now_ms)
@@ -2711,40 +2779,47 @@ static bool mesh_role_uses_uwb_rx(void)
 
 static bool mesh_transport_paused(void)
 {
-    return atomic_get(&mesh_transport_paused_state) != 0;
+    return app_mesh_transport_gate_paused();
 }
 
-static int mesh_transport_radio_start(const char *owner)
+static int mesh_transport_radio_start(
+    enum app_mesh_radio_client client,
+    const char *owner,
+    struct app_mesh_radio_owner_lease *lease_out)
 {
     int ret;
 
+    if (lease_out == NULL) {
+        return -EINVAL;
+    }
     if (mesh_transport_paused()) {
         return -ESHUTDOWN;
     }
-    ret = radio_guard_uwb_start(owner);
+    ret = app_mesh_radio_owner_try_claim(client, owner, lease_out);
     if (ret == 0 && mesh_transport_paused()) {
         /* Pause won the admission race before any PHY operation began. */
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(lease_out);
         return -ESHUTDOWN;
     }
     return ret;
 }
 
-static bool mesh_rx_handoff_scan_rearm_allowed(void)
+static int mesh_transport_tx_start(
+    const char *owner, struct app_mesh_radio_owner_lease *lease_out)
 {
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-    bool allowed = app_mesh_rx_handoff_scan_rearm_allowed(&mesh_rx_handoff);
+    return mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_TX, owner, lease_out);
+}
 
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    return allowed;
+static int mesh_transport_rx_start(
+    const char *owner, struct app_mesh_radio_owner_lease *lease_out)
+{
+    return mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_RX, owner, lease_out);
 }
 
 int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary)
 {
-    k_spinlock_key_t key;
-    bool abort_scan = false;
-    bool accepted;
-
     if (wait_for_scan_boundary == NULL) {
         return -EINVAL;
     }
@@ -2752,115 +2827,46 @@ int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary)
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -ENOTSUP;
     }
-
-    key = k_spin_lock(&mesh_rx_handoff_lock);
-    accepted = app_mesh_rx_handoff_request_scheduled_control(
-        &mesh_rx_handoff, &abort_scan);
-    if (accepted && abort_scan) {
-        /*
-         * Request abort only while this lock proves a scan owns the radio.
-         * The pending gate prevents rearm; this path never clears the shared
-         * abort bit, so it cannot consume a concurrent host-command request.
-         */
-        dwm3000_driver_request_receive_abort();
-    }
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    if (!accepted) {
-        return -EINVAL;
-    }
-    *wait_for_scan_boundary = abort_scan;
-    return 0;
+    return app_mesh_radio_owner_scheduled_control_begin(
+        wait_for_scan_boundary);
 }
 
 bool mesh_node_comm_gateway_delivery_due_pending(void)
 {
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-    bool pending = app_mesh_rx_handoff_scheduled_control_pending(
-        &mesh_rx_handoff);
-
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    return pending;
+    return app_mesh_radio_owner_scheduled_control_pending();
 }
 
 bool mesh_node_comm_gateway_delivery_due_ready(void)
 {
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-    bool ready = app_mesh_rx_handoff_scheduled_control_ready(
-        &mesh_rx_handoff);
-
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    return ready;
+    return app_mesh_radio_owner_scheduled_control_ready();
 }
 
 bool mesh_node_comm_gateway_delivery_due_end(void)
 {
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-    bool was_pending = app_mesh_rx_handoff_end_scheduled_control(
-        &mesh_rx_handoff);
-
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    return was_pending;
+    return app_mesh_radio_owner_scheduled_control_end();
 }
 
-static bool mesh_rx_handoff_begin_control(bool *abort_scan)
+static int mesh_rx_radio_start(
+    const char *owner,
+    struct app_mesh_radio_owner_lease *lease_out)
 {
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-    bool started = app_mesh_rx_handoff_begin_control(&mesh_rx_handoff,
-                                                      abort_scan);
-
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    return started;
-}
-
-static bool mesh_rx_handoff_control_ready(void)
-{
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-    bool ready = app_mesh_rx_handoff_control_ready(&mesh_rx_handoff);
-
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    return ready;
-}
-
-static void mesh_rx_handoff_end_control(void)
-{
-    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
-
-    app_mesh_rx_handoff_end_control(&mesh_rx_handoff);
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-}
-
-static int mesh_rx_radio_start(const char *owner)
-{
-    k_spinlock_key_t key;
-    bool accepted;
     int ret;
 
-    if (!mesh_rx_handoff_scan_rearm_allowed()) {
-        return -ECANCELED;
+    if (mesh_transport_paused()) {
+        return -ESHUTDOWN;
     }
-    ret = mesh_transport_radio_start(owner);
-    if (ret < 0) {
-        return ret;
+    ret = app_mesh_radio_owner_rx_scan_try_claim(owner, lease_out);
+    if (ret == 0 && mesh_transport_paused()) {
+        (void)app_mesh_radio_owner_rx_scan_release(lease_out);
+        ret = -ESHUTDOWN;
     }
-
-    key = k_spin_lock(&mesh_rx_handoff_lock);
-    accepted = app_mesh_rx_handoff_try_begin_scan(&mesh_rx_handoff);
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
-    if (!accepted) {
-        radio_guard_uwb_stop();
-        return -ECANCELED;
-    }
-    return 0;
+    return ret;
 }
 
-static void mesh_rx_radio_stop(void)
+static void mesh_rx_radio_stop(
+    struct app_mesh_radio_owner_lease *lease)
 {
-    k_spinlock_key_t key;
-
-    radio_guard_uwb_stop();
-    key = k_spin_lock(&mesh_rx_handoff_lock);
-    app_mesh_rx_handoff_end_scan(&mesh_rx_handoff);
-    k_spin_unlock(&mesh_rx_handoff_lock, key);
+    (void)app_mesh_radio_owner_rx_scan_release(lease);
 }
 
 static int mesh_rx_handoff_wait_for_control(void)
@@ -2868,7 +2874,8 @@ static int mesh_rx_handoff_wait_for_control(void)
     uint32_t deadline_ms = k_uptime_get_32() +
                            MESH_CONTROL_RX_HANDOFF_TIMEOUT_MS;
 
-    while (!mesh_rx_handoff_control_ready() || radio_guard_uwb_busy()) {
+    while (!app_mesh_radio_owner_inline_control_ready() ||
+           app_mesh_radio_owner_busy()) {
         if (uptime_deadline_reached(k_uptime_get_32(), deadline_ms)) {
             return -EBUSY;
         }

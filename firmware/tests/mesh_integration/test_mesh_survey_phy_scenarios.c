@@ -1,7 +1,7 @@
 #include "mesh_sim.h"
 #include "mesh_sim_invariants.h"
 #include "app_mesh_c5_priority.h"
-#include "app_mesh_gateway_command_priority.h"
+#include "app_mesh_radio_owner_policy.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "protocol.h"
@@ -79,42 +79,40 @@ static int survey_schedule_after_safe_boundary(void *ctx, void *work)
     return 0;
 }
 
-static void survey_clear_ch9_abort(void *ctx)
-{
-    struct gateway_priority_fixture *fixture = ctx;
-
-    fixture->abort_requested = false;
-}
-
 static void preempt_ch9_for_survey(void *survey_work)
 {
     struct gateway_priority_fixture fixture = {
         .ch9_rx_active = true,
     };
-    const struct app_mesh_gateway_command_priority_ops ops = {
-        .gateway_role = true,
-        .request_receive_abort = survey_request_ch9_abort,
-        .reschedule_now = survey_schedule_after_safe_boundary,
-        .clear_receive_abort = survey_clear_ch9_abort,
-        .ctx = &fixture,
-    };
-    struct app_mesh_gateway_command_priority priority = {0};
+    struct app_mesh_radio_owner_handoff_lease handoff = {0};
+    struct app_mesh_radio_owner_policy owner = {0};
 
-    CHECK(app_mesh_gateway_command_priority_request(
-              &priority, &ops, survey_work) == 0,
+    app_mesh_radio_owner_policy_reset(&owner);
+    CHECK(app_mesh_radio_owner_policy_handoff_request(
+              &owner, (uintptr_t)survey_work, &handoff) == 0,
           "three-sample survey priority request failed");
+    survey_request_ch9_abort(&fixture);
     CHECK(fixture.event_count == 1u &&
               fixture.events[0] == GATEWAY_PRIORITY_ABORT_RX &&
               fixture.scheduled_work == NULL,
           "survey work ran before channel-9 reached a safe boundary");
-    CHECK(app_mesh_gateway_command_priority_waiting_for_safe_boundary(&priority),
+    CHECK(app_mesh_radio_owner_policy_handoff_waiting(&owner),
           "survey priority state did not wait for channel-9 completion");
 
     /* Models dwm3000_driver_receive_frame_continuous() returning -ECANCELED. */
     fixture.ch9_rx_active = false;
-    CHECK(app_mesh_gateway_command_priority_acknowledge_safe_boundary(
-              &priority, &ops) == 0,
+    CHECK(app_mesh_radio_owner_policy_handoff_begin(
+              &owner, &handoff) == 0,
           "three-sample survey did not resume at the channel-9 safe boundary");
+    CHECK(survey_schedule_after_safe_boundary(
+              &fixture, survey_work) == 0,
+          "three-sample survey scheduling failed at the safe boundary");
+    CHECK(app_mesh_radio_owner_policy_handoff_schedule_complete(
+              &owner, &handoff, true) == 0,
+          "three-sample survey grant did not preserve scheduling identity");
+    CHECK(app_mesh_radio_owner_policy_handoff_take_grant(
+              &owner, &handoff) == 0,
+          "three-sample survey worker did not consume its exact grant");
     CHECK(fixture.event_count == 2u &&
               fixture.events[1] == GATEWAY_PRIORITY_SCHEDULE_SURVEY &&
               fixture.scheduled_work == survey_work,

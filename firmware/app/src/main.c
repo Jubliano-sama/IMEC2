@@ -299,6 +299,7 @@ int main(void)
     enum button_action boot_button_action STAGE1_WAKE_SPAM_UNUSED = BUTTON_ACTION_NONE;
 #endif
     int ret;
+    int dwm_port_ret;
     int battery_adc_ret;
 #if IMEC_RETAIN_FATAL_BREADCRUMB
     bool fatal_recovery_boot = false;
@@ -344,6 +345,22 @@ int main(void)
     gateway_ble_connectivity_test_run();
     return 0;
 #endif
+
+    dwm_port_ret = dwm3000_port_init();
+#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+    stage1_click_spam_boot_marker("after_dwm_port_init");
+#endif
+    if (dwm_port_ret < 0) {
+        LOG_WRN("DWM3000 reset/wake setup failed: %d", dwm_port_ret);
+    } else {
+        LOG_INF("DWM3000 wake pin parked inactive; SYS_STATUS polling ready; radio init waits for UWB wake windows");
+    }
+
+    ret = app_state_radio_owner_init();
+    if (ret < 0) {
+        printk("fatal: radio owner initialization failed: %d\n", ret);
+        k_panic();
+    }
 
     battery_adc_ret = battery_adc_divider_disable();
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
@@ -470,17 +487,8 @@ int main(void)
     high_debug_stage0_rainbow_led_test();
 #endif
 
-    ret = dwm3000_port_init();
-#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
-    stage1_click_spam_boot_marker("after_dwm_port_init");
-#endif
-    if (ret < 0) {
-        LOG_WRN("DWM3000 reset/wake setup failed: %d", ret);
-    } else {
-        LOG_INF("DWM3000 wake pin parked inactive; SYS_STATUS polling ready; radio init waits for UWB wake windows");
-    }
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (ret == 0) {
+    if (dwm_port_ret == 0) {
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
         stage1_click_spam_boot_marker("before_dwm_probe");
 #endif
@@ -491,7 +499,6 @@ int main(void)
         if (ret < 0) {
             LOG_WRN("high-debug DWM3000 boot probe failed: %d", ret);
         }
-        (void)dwm3000_driver_standby();
     }
 #endif
 

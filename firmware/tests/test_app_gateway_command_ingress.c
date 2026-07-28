@@ -325,6 +325,25 @@ static void test_queue_admission_failure_reports_once_without_priority_submit(vo
     assert(fixture.result_status == COMMAND_BUSY);
 }
 
+static void test_transient_handoff_failure_retains_exact_admission(void)
+{
+    struct ingress_fixture fixture = {.submit_ret = -EAGAIN};
+    struct app_gateway_command_ingress_ops ops = ops_for(&fixture);
+    struct app_gateway_command_ingress_item item;
+    bool command_handled;
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    size_t frame_len = command_frame(45u, frame, sizeof(frame));
+
+    assert(app_gateway_command_ingress_handle_frame(
+               &ops, frame, frame_len, &item, &command_handled) == 0);
+    assert(command_handled);
+    assert(fixture.admit_count == 1u);
+    assert(fixture.submit_count == 1u);
+    assert(fixture.cancel_count == 0u);
+    assert(fixture.result_count == 0u);
+    assert(!fixture.cancelled[0]);
+}
+
 static void test_non_command_decodes_for_normal_gateway_routing(void)
 {
     struct proto_packet packet = {
@@ -364,6 +383,7 @@ int main(void)
     test_priority_failure_cancels_exact_admitted_command_before_one_error();
     test_cancel_failure_still_reports_one_terminal_result();
     test_queue_admission_failure_reports_once_without_priority_submit();
+    test_transient_handoff_failure_retains_exact_admission();
     test_non_command_decodes_for_normal_gateway_routing();
     return 0;
 }

@@ -1,3 +1,4 @@
+#include "app_gateway_survey_terminal.h"
 #line 2118 __BASE_FILE__
 static bool gateway_command_uses_survey_mesh(enum command_id command_id)
 {

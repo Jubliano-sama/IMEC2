@@ -34,27 +34,6 @@ static void mesh_debug_log_direct_gateway_ack_result(
                         reason == NULL ? "route" : reason);
 }
 
-static bool mesh_direct_gateway_ack_matches_packet(const struct mesh_outbound *probe,
-                                                   const struct proto_packet *packet,
-                                                   const uint8_t *payload,
-                                                   size_t payload_len,
-                                                   uint64_t previous_hop_id,
-                                                   uint8_t quality)
-{
-    ARG_UNUSED(quality);
-
-    if (probe == NULL || packet == NULL) {
-        return false;
-    }
-
-    return app_mesh_direct_gateway_ack_matches(probe,
-                                               packet,
-                                               payload,
-                                               payload_len,
-                                               previous_hop_id,
-                                               GATEWAY_ID);
-}
-
 static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outbound *probe,
                                                        const char *reason,
                                                        bool apply_tracked_ack,
@@ -133,12 +112,12 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                                   payload,
                                   MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP,
                                   &payload_len) == PROTO_OK &&
-            mesh_direct_gateway_ack_matches_packet(probe,
-                                                   packet,
-                                                   payload,
-                                                   payload_len,
-                                                   previous_hop_id,
-                                                   quality)) {
+            app_mesh_direct_gateway_ack_matches(probe,
+                                                packet,
+                                                payload,
+                                                payload_len,
+                                                previous_hop_id,
+                                                GATEWAY_ID)) {
             bool local_ack = packet->dst_id == DEVICE_ID;
 
             if (debug != NULL) {
@@ -210,6 +189,7 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     bool channel9_report_latency_pending,
     bool *rf_sent)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
     uint32_t ack_deadline_ms;
@@ -230,7 +210,10 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
 
     k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh direct gateway payload");
+    ret = mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_TX,
+        "mesh direct gateway payload",
+        &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         k_mutex_unlock(&mesh_send_scratch_lock);
@@ -334,7 +317,7 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         mesh_release_radio_after_mesh_turn(true, "direct-gateway-payload");
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     mesh_restart_role_scan();
     k_mutex_unlock(&mesh_send_scratch_lock);
 
@@ -830,6 +813,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
                                                    uint8_t attempt,
                                                    bool bounded_scratch_acquire)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
     bool c5_activity = false;
@@ -857,7 +841,10 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
         attempt,
         probe->packet.seq);
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh direct gateway route probe");
+    ret = mesh_transport_radio_start(
+        APP_MESH_RADIO_CLIENT_MESH_TX,
+        "mesh direct gateway route probe",
+        &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         k_mutex_unlock(&mesh_send_scratch_lock);
@@ -885,7 +872,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
                             attempt);
         mesh_release_radio_after_mesh_turn(true,
                                            "direct-gateway-probe-c5-yield");
-        radio_guard_uwb_stop();
+        (void)app_mesh_radio_owner_release(&radio_lease);
         mesh_restart_role_scan();
         k_mutex_unlock(&mesh_send_scratch_lock);
         return ret;
@@ -937,7 +924,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
         mesh_release_radio_after_mesh_turn(true, "direct-gateway-probe");
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     mesh_restart_role_scan();
     k_mutex_unlock(&mesh_send_scratch_lock);
     if (ack_wait_ran) {

@@ -1,10 +1,10 @@
 # Architecture Reset Plan
 
-Status: In progress; gateway survey ownership stage implemented
-Date: 2026-07-26  
-Behavioral effect of the completed stage: Internal ownership and scheduling
-only. Wire format, role behavior, radio timing, retry policy, LEDs, and power
-policy are unchanged.
+Status: In progress; Stage 4 radio-owner source migration implemented
+Date: 2026-07-28
+Behavioral effect of the implemented stages: Internal ownership, scheduling,
+and focused file boundaries only. Wire format, role behavior, radio timing,
+retry policy, LEDs, and power policy are unchanged.
 
 ## Decision
 
@@ -130,14 +130,42 @@ The extraction boundaries are:
 These names are targets, not permission to create parallel owners. A new module
 must remove or delegate the corresponding legacy owner in the same stage.
 
-The physical files `app_gateway_ble.c` and `app_clicker.c` also exceed 3,000
-lines. After the three ownership machines above establish the pattern, split
-gateway host admission and collection state into
-`app_gateway_host_admission.c/.h` and `app_gateway_collection_owner.c/.h`;
-split click-session policy, button/power transitions, and BLE courtesy into
-`app_clicker_session.c/.h`, `app_clicker_power.c/.h`, and
-`app_clicker_ble_courtesy.c/.h`. These are secondary migrations with the same
-one-owner-and-deletion rule, not mechanical file moves.
+Stage 4 gives every audited application-side DWM3000 driver or port operation
+one nonzero client/generation lease and requires release of that exact lease.
+Raw receive-abort request and clear calls exist only in the radio-owner platform
+binding. Logical abort is a level held by one or more exact abort leases; the
+physical level clears only after the final lease releases. A driver
+`-ECANCELED` ends and unwinds the complete logical operation rather than being
+cleared or retried inside a receive loop.
+
+The lease spans a complete logical operation rather than one driver call. The
+scheduled clicker DS-TWR burst now keeps one lease across its bounded sample
+gaps, parks the DWM3000 before exact release, and only then runs optional
+post-burst diagnostics under their own leases. Pause or abort therefore cannot
+declare quiescence while the clicker radio remains awake-idle.
+
+Gateway control uses the same owner for an exact admitted-command handoff. The
+safe-boundary grant carries the frozen work identity and owner generation into
+the scheduled worker. Every submit failure retains a liveness edge for that
+admission or fails closed; a grant or schedule failure retires only the
+affected admission range, preserves newer admitted work, and restores the
+gateway scan. Transport quiescence follows the COMM-10 sequence
+`pause -> abort request -> abort release -> resume`; an error at any owner step
+keeps custody and deadlines owned, leaves transport closed, and deliberately
+stops feeding the watchdog.
+
+The focused clicker BLE-courtesy and radio/power boundaries are now
+`app_clicker_ble_courtesy.c/.h` and `app_clicker_radio_power.c/.h`.
+System-on idle enters retained standby under an exact lease and releases before
+button wake is armed; terminal System-OFF retains its final lease through pin
+parking and `sys_poweroff`. A terminal-lease claim failure retries; after claim,
+standby and pin parking are best-effort logged preparation and power-off
+continues with the lease held. Click-session and button policy remain in
+`app_clicker.c` and are a later extraction target. Gateway host admission and
+collection state still need the planned
+`app_gateway_host_admission.c/.h` and
+`app_gateway_collection_owner.c/.h` boundaries. These secondary migrations use
+the same one-owner-and-deletion rule and are not mechanical file moves.
 
 ## Migration stages
 
@@ -158,8 +186,10 @@ one-owner-and-deletion rule, not mechanical file moves.
 2. **Characterize ownership.** Add contract-level tests for every survey
    terminal, cancellation, stale generation, zero-RF deadline, BLE pressure,
    reset boundary, and radio-owner handoff. Survey lifecycle, queue, deadline,
-   stale-generation, cleanup, rerun, and terminal cases are covered; broader
-   radio-owner and reset qualification remains open.
+   stale-generation, cleanup, rerun, and terminal cases are covered. Exact
+   radio leases, stale release, abort lifetime, whole-operation cancellation,
+   gateway handoff, and transport-gate failure scenarios are source-guarded and
+   natively exercised; reset and hardware qualification remain open.
 3. **Extract the gateway survey machine.** Route one survey operation through
    the pure machine while the legacy coordinator remains an adapter. Prove
    event/action trace equivalence across success, rerun, abort, capacity,
@@ -170,10 +200,17 @@ one-owner-and-deletion rule, not mechanical file moves.
    mesh-integration, hardware-model, and exact-role compile gates pass.
    Multi-board RF, stack, reset, and power qualification remains required
    before deployment.
-4. **Centralize radio ownership.** Move admission and safe-boundary handoff
-   behind `app_mesh_radio_owner`. Preserve click priority, the connected
-   Channel 5/9 rhythm, bounded continuous gateway RX slices, and watchdog
-   leases. Delete direct radio starts outside approved driver/owner seams.
+4. **Centralize radio ownership.** **Implemented in source for the current
+   audited application DWM3000 paths:** admission, exact generation leases,
+   level-triggered receive abort, whole-operation cancellation, gateway
+   safe-boundary handoff, and transport pause/abort/resume now pass through
+   `app_mesh_radio_owner` and its policy. The old gateway-priority owner modules
+   are deleted; the remaining radio-handoff adapters delegate to the exact
+   owner rather than owning state. Click priority, the connected Channel 5/9 rhythm,
+   bounded continuous gateway RX slices, watchdog leases, external wire
+   behavior, and timing are unchanged. Native and source-invariant coverage
+   exists, but exact-role hardware, stack, power, and long-running deployment
+   qualification remain required.
 5. **Extract delivery custody.** Make packet identity, persistence, RF starts,
    local ACK, gateway ACK, caller terminal, pause, and cancel one state machine.
    Remove duplicate retry and terminal accounting from callers.
@@ -225,7 +262,8 @@ explicit debt record, all long-running operations expose one owner and terminal
 state, clean CI runs the complete native and stress gates, and exact-role plus
 hardware evidence passes without legacy fallback paths.
 
-The completed survey stage demonstrates the intended pattern but does not
-complete the reset. Gateway survey policy has one owner; radio admission,
-general delivery custody, and the remaining composed translation units still
-need their own staged deletions.
+The survey and radio-owner stages demonstrate the intended pattern but do not
+complete the reset. Gateway survey policy and the audited application radio
+boundary now have exact owners. General delivery custody, the remaining
+click-session/button policy, gateway host admission, and the composed
+translation units still need their own staged deletions.

@@ -123,10 +123,13 @@ assert "uptime_deadline_reached(now_ms, absolute_deadline_ms)" in retry_helper
 assert "uptime_ms_until_deadline(now_ms, absolute_deadline_ms)" in retry_helper
 assert "*delay_ms_out = remaining_ms" in retry_helper
 
-discovery_guard_index = worker.index(
-    'radio_guard_uwb_start("survey discovery")'
-)
-discovery_defer_index = worker.index("if (ret < 0)", discovery_guard_index)
+discovery_claim_index = worker.index("app_mesh_radio_owner_try_claim(")
+discovery_claim_end = worker.index("if (ret < 0)", discovery_claim_index)
+discovery_claim = worker[discovery_claim_index:discovery_claim_end]
+assert "APP_MESH_RADIO_CLIENT_SURVEY" in discovery_claim
+assert '"survey discovery"' in discovery_claim
+assert "&radio_lease" in discovery_claim
+discovery_defer_index = discovery_claim_end
 discovery_defer_block = braced_block_at(worker, discovery_defer_index)
 assert "survey_rf_retry_delay_ms(" in discovery_defer_block
 assert "app_node_comm_restart_role_scan()" in discovery_defer_block
@@ -142,10 +145,15 @@ report_queue_block = braced_block_at(worker, report_queue_index)
 assert "SURVEY_NON_RF_SERVICE_POLL_MS" in report_queue_block
 assert "schedule_pair_rf_retry(" not in report_queue_block
 
-pair_guard_index = worker.index(
-    'radio_guard_uwb_start("survey pair DS-TWR")'
+pair_claim_index = worker.index(
+    "app_mesh_radio_owner_try_claim(", discovery_claim_end
 )
-pair_defer_index = worker.index("if (ret < 0)", pair_guard_index)
+pair_claim_end = worker.index("if (ret < 0)", pair_claim_index)
+pair_claim = worker[pair_claim_index:pair_claim_end]
+assert "APP_MESH_RADIO_CLIENT_SURVEY" in pair_claim
+assert '"survey pair DS-TWR"' in pair_claim
+assert "&radio_lease" in pair_claim
+pair_defer_index = pair_claim_end
 pair_defer_block = braced_block_at(worker, pair_defer_index)
 assert "schedule_pair_rf_retry(" in pair_defer_block
 assert "REPORT_TX_RETRY_DELAY_MS" not in pair_defer_block
@@ -158,8 +166,8 @@ assert claim is not None, (
     "RUNNING must atomically return the final pair and synchronized round"
 )
 role_index = worker.index("as_responder = pair.responder_id == DEVICE_ID")
-assert pair_guard_index < pair_defer_index < claim.start() < role_index
-assert "as_responder =" not in worker[pair_guard_index : claim.start()], (
+assert pair_claim_index < pair_defer_index < claim.start() < role_index
+assert "as_responder =" not in worker[pair_claim_index : claim.start()], (
     "the RF role must not be derived from a pre-claim lease snapshot"
 )
 assert "pair_round_id = pair_lease.round_id" not in worker, (

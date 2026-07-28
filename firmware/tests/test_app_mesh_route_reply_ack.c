@@ -1,7 +1,101 @@
 #include "app_mesh_route_reply_ack.h"
+#include "app_mesh_route_reply_match.h"
+#include "mesh_relay.h"
+#include "protocol.h"
 
 #include <assert.h>
 #include <errno.h>
+#include <string.h>
+
+#define LOCAL_ID UINT64_C(0x1001)
+#define NEXT_HOP_ID UINT64_C(0x1002)
+
+static size_t route_reply_identity_payload(uint8_t *payload,
+                                           size_t payload_cap)
+{
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u64(payload, payload_cap, &payload_len,
+                          TLV_INITIATOR_ID, UINT64_C(0x2001)) == PROTO_OK);
+    assert(tlv_append_u64(payload, payload_cap, &payload_len,
+                          TLV_RESPONDER_ID, UINT64_C(0x2002)) == PROTO_OK);
+    assert(tlv_append_u32(payload, payload_cap, &payload_len,
+                          TLV_FLOOD_EPOCH_ID, UINT32_C(0x3001)) == PROTO_OK);
+    assert(tlv_append_u32(payload, payload_cap, &payload_len,
+                          TLV_REPLY_NONCE, UINT32_C(0x3002)) == PROTO_OK);
+    assert(tlv_append_u16(payload, payload_cap, &payload_len,
+                          TLV_METRIC_CRC, UINT16_C(0x4001)) == PROTO_OK);
+    return payload_len;
+}
+
+static void test_route_reply_ack_requires_exact_peer_and_identity(void)
+{
+    struct mesh_outbound route_reply = {
+        .packet = {
+            .session_id = 17u,
+        },
+        .next_hop_id = NEXT_HOP_ID,
+    };
+    struct proto_packet ack = {
+        .msg_type = MSG_ROUTE_REPLY_ACK,
+        .src_id = NEXT_HOP_ID,
+        .dst_id = LOCAL_ID,
+        .session_id = 17u,
+    };
+    uint8_t ack_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t ack_payload_len;
+
+    route_reply.payload_len = (uint16_t)route_reply_identity_payload(
+        route_reply.payload, sizeof(route_reply.payload));
+    ack_payload_len = route_reply_identity_payload(
+        ack_payload, sizeof(ack_payload));
+    assert(app_mesh_route_reply_ack_matches(
+        &route_reply, &ack, ack_payload, ack_payload_len,
+        NEXT_HOP_ID, LOCAL_ID));
+
+    ack.src_id++;
+    assert(!app_mesh_route_reply_ack_matches(
+        &route_reply, &ack, ack_payload, ack_payload_len,
+        NEXT_HOP_ID, LOCAL_ID));
+    ack.src_id = NEXT_HOP_ID;
+    ack.session_id++;
+    assert(!app_mesh_route_reply_ack_matches(
+        &route_reply, &ack, ack_payload, ack_payload_len,
+        NEXT_HOP_ID, LOCAL_ID));
+}
+
+static void test_route_reply_ack_rejects_missing_or_changed_identity_tlv(void)
+{
+    struct mesh_outbound route_reply = {
+        .packet = {
+            .session_id = 18u,
+        },
+        .next_hop_id = NEXT_HOP_ID,
+    };
+    const struct proto_packet ack = {
+        .msg_type = MSG_ROUTE_REPLY_ACK,
+        .src_id = NEXT_HOP_ID,
+        .dst_id = LOCAL_ID,
+        .session_id = 18u,
+    };
+    uint8_t ack_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t ack_payload_len;
+
+    route_reply.payload_len = (uint16_t)route_reply_identity_payload(
+        route_reply.payload, sizeof(route_reply.payload));
+    ack_payload_len = route_reply_identity_payload(
+        ack_payload, sizeof(ack_payload));
+    assert(ack_payload_len > 0u);
+    assert(!app_mesh_route_reply_ack_matches(
+        &route_reply, &ack, ack_payload, ack_payload_len - 1u,
+        NEXT_HOP_ID, LOCAL_ID));
+
+    memcpy(ack_payload, route_reply.payload, route_reply.payload_len);
+    ack_payload[ack_payload_len - 1u] ^= 0x01u;
+    assert(!app_mesh_route_reply_ack_matches(
+        &route_reply, &ack, ack_payload, ack_payload_len,
+        NEXT_HOP_ID, LOCAL_ID));
+}
 
 static void test_successful_listen_completes_attempt(void)
 {
@@ -124,6 +218,8 @@ static void test_c5_preemption_deadline_is_capped_by_attempt_budget(void)
 
 int main(void)
 {
+    test_route_reply_ack_requires_exact_peer_and_identity();
+    test_route_reply_ack_rejects_missing_or_changed_identity_tlv();
     test_successful_listen_completes_attempt();
     test_send_failure_retries_until_limit();
     test_listen_timeout_retries_until_limit();

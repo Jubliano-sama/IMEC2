@@ -545,7 +545,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_route_reply_listener_hands_event_control_to_the_worker(self):
         body = function_body(REPORT, "mesh_listen_for_route_reply")
-        radio_stop = body.index("radio_guard_uwb_stop()")
+        radio_stop = body.index(
+            "app_mesh_radio_owner_release(&radio_lease)"
+        )
         submit = body.index("mesh_submit_work(&mesh_rx_work)", radio_stop)
 
         self.assertLess(radio_stop, submit)
@@ -561,8 +563,10 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "atomic_get(&mesh_route_ready_generation)"
         )
         radio_start = listener.index(
-            'mesh_transport_radio_start("mesh route reply RX")', snapshot
+            "mesh_transport_radio_start(", snapshot
         )
+        radio_claim_end = listener.index("if (ret < 0)", radio_start)
+        radio_claim = listener[radio_start:radio_claim_end]
         ready_check = listener.index(
             "if (atomic_get(&mesh_route_ready_generation) !=", radio_start
         )
@@ -575,10 +579,15 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         standby = listener.index(
             "(void)dwm3000_driver_standby()", timeout_continue
         )
-        radio_stop = listener.index("radio_guard_uwb_stop()", standby)
+        radio_stop = listener.index(
+            "app_mesh_radio_owner_release(&radio_lease)", standby
+        )
 
         self.assertLess(snapshot, radio_start)
         self.assertLess(radio_start, ready_check)
+        self.assertIn("APP_MESH_RADIO_CLIENT_MESH_RX", radio_claim)
+        self.assertIn('"mesh route reply RX"', radio_claim)
+        self.assertIn("&radio_lease", radio_claim)
         self.assertLess(ready_check, receive)
         self.assertIn("captured_route_reply = true", ready_branch)
         self.assertIn("last_ret = 0", ready_branch)
@@ -610,7 +619,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         ack_listener = function_body(
             REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply_ack"
         )
-        ack_guard_stop = ack_listener.index("radio_guard_uwb_stop()")
+        ack_guard_stop = ack_listener.index(
+            "app_mesh_radio_owner_release(&radio_lease)"
+        )
         ack_click = ack_listener.index("if (click_captured)", ack_guard_stop)
         ack_clear = ack_listener.index(
             'mesh_c5_contact_clear("click-preempt")', ack_click
@@ -632,7 +643,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         listener = function_body(
             REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply"
         )
-        guard_stop = listener.index("radio_guard_uwb_stop()")
+        guard_stop = listener.index(
+            "app_mesh_radio_owner_release(&radio_lease)"
+        )
         click = listener.index("if (click_captured)", guard_stop)
         clear = listener.index(
             'mesh_c5_contact_clear("click-preempt")', click
@@ -942,7 +955,10 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertNotIn("mesh_relay_clear_channel9_timing", clear)
 
     def test_pending_accept_preempts_background_receive_owners(self):
-        active = function_body(REPORT, "mesh_rx_response_active")
+        active_source = REPORT[
+            REPORT.index("bool mesh_rx_response_active(void)") :
+        ]
+        active = function_body(active_source, "mesh_rx_response_active")
         worker_source = REPORT[
             REPORT.rindex("static void mesh_uwb_rx_work_handler") :
         ]

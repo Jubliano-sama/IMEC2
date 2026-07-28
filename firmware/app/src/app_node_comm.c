@@ -2,11 +2,11 @@
 
 #include "app_board.h"
 #include "app_mesh_report.h"
+#include "app_mesh_radio_owner.h"
 #include "app_node_comm_gateway_route_refresh.h"
 #include "app_node_comm_sync.h"
 #include "app_state.h"
 #include "app_watchdog.h"
-#include "dwm3000_driver.h"
 #include "node_comm.h"
 
 #include <zephyr/kernel.h>
@@ -105,8 +105,7 @@ static uint64_t app_node_comm_now_ms(void)
 static bool app_node_comm_transport_quiesced(void)
 {
     return mesh_transport_quiesced() &&
-           !radio_guard_uwb_busy() && !mesh_rx_response_active() &&
-           !dwm3000_driver_receive_abort_pending();
+           !app_mesh_radio_owner_busy() && !mesh_rx_response_active();
 }
 
 static bool app_node_comm_lifecycle_service_locked(void);
@@ -644,7 +643,7 @@ static void app_node_comm_delivery_due_kick_handler(struct k_work *work)
             K_MSEC(NODE_COMM_GATEWAY_DUE_KICK_RETRY_MS));
     } else if (ret == 0) {
         /* A host command already awaiting a boundary keeps queue priority. */
-        ret = mesh_gateway_command_priority_safe_boundary();
+        ret = mesh_gateway_radio_handoff_safe_boundary();
         if (ret < 0) {
             /* Keep the gate and retry without starting an RF opportunity. */
             keep_pending_for_retry = true;
@@ -680,7 +679,7 @@ int app_node_comm_gateway_delivery_safe_boundary(void)
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return 0;
     }
-    ret = mesh_gateway_command_priority_safe_boundary();
+    ret = mesh_gateway_radio_handoff_safe_boundary();
 
     if (ret < 0) {
         if (mesh_node_comm_gateway_delivery_due_ready()) {
@@ -731,9 +730,6 @@ static void app_node_comm_begin_recovery(void)
     (void)k_work_cancel_delayable(&node_comm_delivery_work);
     app_node_comm_gateway_route_refresh_pause(now_ms);
     (void)mesh_transport_pause_preserving_queued();
-    if (!app_node_comm_transport_quiesced()) {
-        dwm3000_driver_request_receive_abort();
-    }
     (void)k_work_reschedule(&node_comm_lifecycle_watchdog_work, K_NO_WAIT);
 }
 
@@ -1936,6 +1932,7 @@ int app_node_comm_pause_request(uint32_t owner,
                                 struct node_comm_pause_lease *lease_out)
 {
     uint64_t now_ms;
+    int transport_ret;
     int ret = app_node_comm_sync_lock();
 
     if (ret < 0) {
@@ -1959,9 +1956,9 @@ int app_node_comm_pause_request(uint32_t owner,
         }
         (void)k_work_cancel_delayable(&node_comm_delivery_work);
         app_node_comm_gateway_route_refresh_pause((uint32_t)now_ms);
-        (void)mesh_transport_pause_preserving_queued();
-        if (!app_node_comm_transport_quiesced()) {
-            dwm3000_driver_request_receive_abort();
+        transport_ret = mesh_transport_pause_preserving_queued();
+        if (transport_ret < 0) {
+            return transport_ret;
         }
         (void)k_work_reschedule(
             &node_comm_lifecycle_watchdog_work,
@@ -2017,7 +2014,19 @@ int app_node_comm_resume_complete(const struct node_comm_pause_lease *lease)
         uint64_t completion_now_ms;
 
         (void)k_work_cancel_delayable(&node_comm_lifecycle_watchdog_work);
-        mesh_transport_resume();
+        ret = mesh_transport_resume();
+        if (ret < 0) {
+            if (app_node_comm_sync_lock() == 0) {
+                (void)node_comm_stop(
+                    &node_comm_policy,
+                    NODE_COMM_STOP_PRESERVE_QUEUED,
+                    app_node_comm_now_ms());
+                node_comm_lifecycle_recovery_deadline_ms = 0u;
+                node_comm_backend_ready = false;
+                app_node_comm_sync_unlock();
+            }
+            return ret;
+        }
         completion_now_ms = app_node_comm_now_ms();
         ret = app_node_comm_sync_lock();
         if (ret < 0) {
@@ -2064,6 +2073,7 @@ int app_node_comm_stop_preserving_queued(void)
 {
     uint64_t now_ms = app_node_comm_now_ms();
     enum node_comm_lifecycle_state state;
+    int transport_ret;
     int ret = app_node_comm_sync_lock();
 
     if (ret < 0) {
@@ -2096,11 +2106,13 @@ int app_node_comm_stop_preserving_queued(void)
     }
     (void)k_work_cancel_delayable(&node_comm_delivery_work);
     app_node_comm_gateway_route_refresh_pause((uint32_t)now_ms);
-    (void)mesh_transport_pause_preserving_queued();
+    transport_ret = mesh_transport_pause_preserving_queued();
+    if (transport_ret < 0) {
+        return transport_ret;
+    }
     if (app_node_comm_transport_quiesced()) {
         return ret == -EINPROGRESS ? -EINPROGRESS : 0;
     }
-    dwm3000_driver_request_receive_abort();
     return -EINPROGRESS;
 }
 
@@ -2129,7 +2141,18 @@ int app_node_comm_start(void)
 
     if (ret == 0) {
         (void)k_work_cancel_delayable(&node_comm_lifecycle_watchdog_work);
-        mesh_transport_resume();
+        ret = mesh_transport_resume();
+        if (ret < 0) {
+            if (app_node_comm_sync_lock() == 0) {
+                (void)node_comm_stop(
+                    &node_comm_policy,
+                    NODE_COMM_STOP_PRESERVE_QUEUED,
+                    app_node_comm_now_ms());
+                node_comm_backend_ready = false;
+                app_node_comm_sync_unlock();
+            }
+            return ret;
+        }
         if (app_node_comm_sync_lock() < 0) {
             (void)mesh_transport_pause_preserving_queued();
             app_node_comm_gateway_route_refresh_pause((uint32_t)now_ms);

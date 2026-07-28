@@ -2,6 +2,7 @@
 #include "app_gateway_command_lifecycle.h"
 #include "app_gateway_command_observability.h"
 #include "app_mesh_flood.h"
+#include "app_mesh_radio_owner_policy.h"
 #include "app_mesh_rx_policy.h"
 #include "gateway_command.h"
 #include "mesh_relay.h"
@@ -1026,11 +1027,10 @@ static void test_gateway_control_click_and_busy_deferral(void)
 
 static void test_gateway_control_rx_handoff_stress_sweep(void)
 {
-    struct app_mesh_rx_handoff_state handoff;
+    struct app_mesh_radio_owner_policy owner = {0};
     uint32_t real_attempts = 0u;
 
-    app_mesh_rx_handoff_reset(&handoff);
-    CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+    CHECK(app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
 
     for (uint32_t cycle = 0u; cycle < 512u; cycle++) {
         const uint32_t abort_delay_ms = cycle % 25u;
@@ -1038,38 +1038,40 @@ static void test_gateway_control_rx_handoff_stress_sweep(void)
         bool attempted = false;
 
         if ((cycle % 11u) == 0u) {
-            app_mesh_rx_handoff_end_scan(&handoff);
+            app_mesh_radio_owner_policy_rx_scan_end(&owner);
         }
-        CHECK(app_mesh_rx_handoff_begin_control(&handoff, &abort_scan));
+        CHECK(app_mesh_radio_owner_policy_rx_inline_control_begin(
+            &owner, &abort_scan));
         CHECK(abort_scan == ((cycle % 11u) != 0u));
-        CHECK(!app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
-        CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+        CHECK(!app_mesh_radio_owner_policy_rx_scan_rearm_allowed(&owner));
+        CHECK(!app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
 
         for (uint32_t elapsed_ms = 0u; elapsed_ms <= 25u; elapsed_ms++) {
             if (abort_scan && elapsed_ms == abort_delay_ms) {
-                app_mesh_rx_handoff_end_scan(&handoff);
+                app_mesh_radio_owner_policy_rx_scan_end(&owner);
             }
-            if (app_mesh_rx_handoff_control_ready(&handoff)) {
+            if (app_mesh_radio_owner_policy_rx_inline_control_ready(
+                    &owner)) {
                 real_attempts++;
                 attempted = true;
                 break;
             }
-            CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+            CHECK(!app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
         }
 
         CHECK(attempted);
-        app_mesh_rx_handoff_end_control(&handoff);
-        CHECK(app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
-        CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+        app_mesh_radio_owner_policy_rx_inline_control_end(&owner);
+        CHECK(app_mesh_radio_owner_policy_rx_scan_rearm_allowed(&owner));
+        CHECK(app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
     }
 
     CHECK(real_attempts == 512u);
-    app_mesh_rx_handoff_end_scan(&handoff);
+    app_mesh_radio_owner_policy_rx_scan_end(&owner);
 }
 
 static void test_gateway_scheduled_delivery_due_handoff_sweep(void)
 {
-    struct app_mesh_rx_handoff_state handoff;
+    struct app_mesh_radio_owner_policy owner = {0};
     uint32_t completed = 0u;
     uint32_t cancelled = 0u;
 
@@ -1080,54 +1082,62 @@ static void test_gateway_scheduled_delivery_due_handoff_sweep(void)
         const uint32_t abort_latency_ms = cycle % 25u;
         bool abort_scan = false;
 
-        app_mesh_rx_handoff_reset(&handoff);
+        app_mesh_radio_owner_policy_reset(&owner);
         if (scan_active) {
-            CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
+            CHECK(app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
         }
-        CHECK(app_mesh_rx_handoff_request_scheduled_control(
-            &handoff, &abort_scan));
+        CHECK(app_mesh_radio_owner_policy_rx_scheduled_control_request(
+            &owner, &abort_scan));
         CHECK(abort_scan == scan_active);
-        CHECK(!app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
+        CHECK(!app_mesh_radio_owner_policy_rx_scan_rearm_allowed(&owner));
 
         /* Repeated due notifications coalesce behind the same gate. */
-        CHECK(app_mesh_rx_handoff_request_scheduled_control(
-            &handoff, &abort_scan));
+        CHECK(app_mesh_radio_owner_policy_rx_scheduled_control_request(
+            &owner, &abort_scan));
         CHECK(abort_scan == scan_active);
         if (scan_active) {
             for (uint32_t elapsed_ms = 0u; elapsed_ms <= 25u;
                  elapsed_ms++) {
-                CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+                CHECK(!app_mesh_radio_owner_policy_rx_scan_try_begin(
+                    &owner));
                 if (elapsed_ms == abort_latency_ms) {
-                    app_mesh_rx_handoff_end_scan(&handoff);
+                    app_mesh_radio_owner_policy_rx_scan_end(&owner);
                     break;
                 }
             }
         }
-        CHECK(app_mesh_rx_handoff_scheduled_control_ready(&handoff));
+        CHECK(app_mesh_radio_owner_policy_rx_scheduled_control_ready(
+            &owner));
 
         if (host_control_first) {
             /* Host work may run first, but it cannot release the due gate. */
-            CHECK(app_mesh_rx_handoff_begin_control(&handoff, &abort_scan));
+            CHECK(app_mesh_radio_owner_policy_rx_inline_control_begin(
+                &owner, &abort_scan));
             CHECK(!abort_scan);
-            app_mesh_rx_handoff_end_control(&handoff);
-            CHECK(app_mesh_rx_handoff_scheduled_control_pending(&handoff));
-            CHECK(!app_mesh_rx_handoff_try_begin_scan(&handoff));
+            app_mesh_radio_owner_policy_rx_inline_control_end(&owner);
+            CHECK(app_mesh_radio_owner_policy_rx_scheduled_control_pending(
+                &owner));
+            CHECK(!app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
         }
 
         if (cancel_before_delivery) {
-            CHECK(app_mesh_rx_handoff_end_scheduled_control(&handoff));
+            CHECK(app_mesh_radio_owner_policy_rx_scheduled_control_end(
+                &owner));
             cancelled++;
         } else {
-            CHECK(app_mesh_rx_handoff_begin_control(&handoff, &abort_scan));
+            CHECK(app_mesh_radio_owner_policy_rx_inline_control_begin(
+                &owner, &abort_scan));
             CHECK(!abort_scan);
-            app_mesh_rx_handoff_end_control(&handoff);
-            CHECK(!app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
-            CHECK(app_mesh_rx_handoff_end_scheduled_control(&handoff));
+            app_mesh_radio_owner_policy_rx_inline_control_end(&owner);
+            CHECK(!app_mesh_radio_owner_policy_rx_scan_rearm_allowed(
+                &owner));
+            CHECK(app_mesh_radio_owner_policy_rx_scheduled_control_end(
+                &owner));
             completed++;
         }
-        CHECK(app_mesh_rx_handoff_scan_rearm_allowed(&handoff));
-        CHECK(app_mesh_rx_handoff_try_begin_scan(&handoff));
-        app_mesh_rx_handoff_end_scan(&handoff);
+        CHECK(app_mesh_radio_owner_policy_rx_scan_rearm_allowed(&owner));
+        CHECK(app_mesh_radio_owner_policy_rx_scan_try_begin(&owner));
+        app_mesh_radio_owner_policy_rx_scan_end(&owner);
     }
 
     CHECK(completed + cancelled == 4096u);

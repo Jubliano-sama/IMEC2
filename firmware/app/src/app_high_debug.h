@@ -2,6 +2,7 @@
 #define APP_HIGH_DEBUG_H
 
 #include "app_clicker.h"
+#include "app_high_debug_log.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -74,7 +75,6 @@ enum high_debug_counter_field {
 #define HIGH_DEBUG_COUNTER_INC(field) high_debug_counter_inc(HIGH_DEBUG_COUNTER_##field)
 
 void high_debug_counter_inc(enum high_debug_counter_field field);
-void high_debug_log_event(const char *event, const char *fmt, ...);
 void high_debug_dump_counters(const char *event);
 void high_debug_boot_banner(void);
 int high_debug_request_bootloader(void);
@@ -106,12 +106,6 @@ void stage1_led_hold_click_result(int ret, uint32_t hold_ms);
 void high_debug_clicker_early_led(enum app_clicker_early_led_event event);
 #else
 #define HIGH_DEBUG_COUNTER_INC(field) do { } while (0)
-
-static inline void high_debug_log_event(const char *event, const char *fmt, ...)
-{
-    (void)event;
-    (void)fmt;
-}
 
 static inline void high_debug_dump_counters(const char *event)
 {

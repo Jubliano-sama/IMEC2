@@ -1,3 +1,6 @@
+#include "app_anchor_radio_policy.h"
+#include "app_mesh_radio_client.h"
+
 #line 6569 __BASE_FILE__
 static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
 {
@@ -15,14 +18,6 @@ static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
 #else
     ARG_UNUSED(delay_ms);
 #endif
-}
-
-static uint32_t anchor_uwb_scan_blocked_retry_ms(void)
-{
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        return ANCHOR_UWB_SCAN_BUSY_RETRY_MS;
-    }
-    return anchor_uwb_scan_interval_ms;
 }
 
 static int anchor_queue_survey_sample_result(
@@ -267,7 +262,7 @@ static void anchor_hold_channel5_rx_until_ms(int64_t deadline_ms,
                                                       &quality,
                                                       NULL,
                                                       NULL);
-        if (ret == -ETIMEDOUT) {
+        if (ret == -ETIMEDOUT || ret == -ECANCELED) {
             break;
         }
         if (ret < 0) {
@@ -521,6 +516,9 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             }
             break;
         }
+        if (ret == -ECANCELED) {
+            goto scheduled_range_cancelled;
+        }
         if (range_result.exchange_started) {
             poll_received = true;
         }
@@ -679,6 +677,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                                           schedule->flags,
                                           &window_report);
 #endif
+scheduled_range_cancelled:
 #if defined(CONFIG_IMEC_ML_ANCHOR) && defined(CONFIG_IMEC_GATEWAY_BLE)
     gateway_ble_exit_uwb_quiet("ml-anchor-scheduled-uwb");
 #endif
@@ -686,19 +685,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
 }
 
 #if defined(CONFIG_IMEC_ML_ANCHOR)
-static bool anchor_pair_schedule_matches_epoch(
-    const struct uwb_anchor_pair_schedule_frame *schedule)
-{
-    return schedule != NULL &&
-           anchor_uwb_session.epoch.active &&
-           schedule->network_id == anchor_uwb_session.epoch.network_id &&
-           schedule->clicker_id == anchor_uwb_session.epoch.clicker_id &&
-           schedule->survey_id == anchor_uwb_session.epoch.click_event_id &&
-           schedule->attempt_index == anchor_uwb_session.epoch.attempt_index &&
-           schedule->nonce == anchor_uwb_session.epoch.nonce &&
-           schedule->flags == anchor_uwb_session.epoch.flags;
-}
-
 static int anchor_send_pair_survey_result(
     const struct uwb_anchor_pair_schedule_frame *schedule,
     uint8_t pair_index,
@@ -765,7 +751,8 @@ static uint32_t anchor_run_clicker_pair_survey(
     uint16_t local_start_delay_ms = 0u;
     bool local_listed = false;
 
-    if (!anchor_pair_schedule_matches_epoch(schedule)) {
+    if (!app_anchor_radio_pair_schedule_matches_epoch(
+            schedule, &anchor_uwb_session.epoch)) {
         LOG_WRN("anchor rejected pair-survey schedule identity");
         return 0u;
     }
@@ -834,6 +821,9 @@ static uint32_t anchor_run_clicker_pair_survey(
             ret = dwm3000_driver_range_initiator(&request, &range_result);
             low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
                                                    "pair-survey-initiator");
+            if (ret == -ECANCELED) {
+                return retained_sleep_us;
+            }
             if (ret < 0 && !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_INTERNAL_ERROR;
             }
@@ -867,6 +857,9 @@ static uint32_t anchor_run_clicker_pair_survey(
             }
             low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
                                                    "pair-survey-responder");
+            if (ret == -ECANCELED) {
+                return retained_sleep_us;
+            }
         }
         if (low_power_ret < 0) {
             break;
@@ -994,7 +987,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                                                       &quality,
                                                       NULL,
                                                       NULL);
-        if (ret == -ETIMEDOUT) {
+        if (ret == -ETIMEDOUT || ret == -ECANCELED) {
             break;
         }
         if (ret < 0) {
@@ -1064,6 +1057,9 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                                  claim_decision_name(decision),
                                  ret);
         }
+    }
+    if (ret == -ECANCELED) {
+        return false;
     }
 
     LOG_INF("anchor selected UWB claim: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx decision=%u",
@@ -1148,7 +1144,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                                                       &quality,
                                                       NULL,
                                                       &rx_failure);
-        if (ret == -ETIMEDOUT) {
+        if (ret == -ETIMEDOUT || ret == -ECANCELED) {
             last_discovery_ret = ret;
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_ANCHOR_DISC_RX_TIMEOUT now=%u rem=%lld fail=%u\n",
@@ -1404,7 +1400,7 @@ discovery_miss:
                                                           NULL,
                                                           NULL,
                                                           NULL);
-            if (ret == -ETIMEDOUT) {
+            if (ret == -ETIMEDOUT || ret == -ECANCELED) {
                 break;
             }
             if (ret < 0) {
@@ -1483,7 +1479,8 @@ discovery_miss:
                 LOG_WRN("anchor pair-survey schedule decode failed: %d", ret);
                 return true;
             }
-            if (!anchor_pair_schedule_matches_epoch(&pair_schedule)) {
+            if (!app_anchor_radio_pair_schedule_matches_epoch(
+                    &pair_schedule, &anchor_uwb_session.epoch)) {
                 stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 LOG_WRN("anchor rejected pair-survey schedule identity: survey=%u",
                         pair_schedule.survey_id);
@@ -1578,6 +1575,7 @@ static bool anchor_run_mesh_click_wake_claim(
     uint8_t link_quality,
     int64_t received_at_ms)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint32_t retained_sleep_us = 0u;
     uint32_t next_scan_delay_ms = anchor_uwb_scan_interval_ms;
     bool deferred_mesh_rx_queued = false;
@@ -1585,7 +1583,6 @@ static bool anchor_run_mesh_click_wake_claim(
     int64_t uwb_window_start_ms = -1;
     int low_power_ret;
     int ret;
-
     if (DEVICE_ROLE != ROLE_ANCHOR || claim == NULL ||
         !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
         LOG_ERR("invalid anchor click handoff request");
@@ -1598,7 +1595,7 @@ static bool anchor_run_mesh_click_wake_claim(
         LOG_ERR("anchor click handoff deferred because mesh custody preemption failed");
         return false;
     }
-    ret = radio_guard_uwb_start("anchor mesh click handoff");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_ANCHOR_CLICK, "anchor mesh click handoff", &radio_lease);
     if (ret < 0) {
         LOG_ERR("anchor click handoff could not acquire UWB radio: ret=%d", ret);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -1643,7 +1640,7 @@ release_radio:
         anchor_scan_recovery_gap_requested = true;
     }
     anchor_note_uwb_awake_since(uwb_window_start_ms, retained_sleep_us);
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     anchor_set_uwb_busy(false);
 
 complete:
@@ -1754,6 +1751,7 @@ static void anchor_click_handoff_work_handler(struct k_work *work)
 
 static void anchor_uwb_scan_work_handler(struct k_work *work)
 {
+    struct app_mesh_radio_owner_lease radio_lease = {0};
     uint8_t *frame = anchor_uwb_scan_frame;
     size_t frame_len = 0u;
     uint8_t quality = 0u;
@@ -1779,13 +1777,14 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint32_t ch9_retry_ms = 0u;
     uint32_t mesh_rx_queue_depth = 0u;
     bool mesh_rx_response_busy = false;
-    uint32_t blocked_retry_ms = anchor_uwb_scan_blocked_retry_ms();
+    uint32_t blocked_retry_ms = app_anchor_radio_blocked_retry_ms(
+        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST), ANCHOR_UWB_SCAN_BUSY_RETRY_MS,
+        anchor_uwb_scan_interval_ms);
     uint32_t scan_rx_start_cycles = 0u;
     uint32_t scan_rx_elapsed_us = ANCHOR_UWB_SCAN_RX_US;
     uint32_t scan_extra_awake_us = 0u;
     int low_power_ret;
     int ret;
-
     ARG_UNUSED(work);
     app_watchdog_note_radio_progress();
 
@@ -1806,7 +1805,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     ch9_rx_conflict = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                       mesh_anchor_low_duty_scan_should_defer(&ch9_retry_ms);
     uwb_radio_busy = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                     radio_guard_uwb_busy();
+                     app_mesh_radio_owner_busy();
     if (anchor_uwb_window_active() ||
         app_anchor_survey_runtime_discovery_is_pending() ||
         relay_tx_active ||
@@ -1836,7 +1835,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         return;
     }
 
-    ret = radio_guard_uwb_start("anchor low-duty UWB wake scan");
+    ret = app_mesh_radio_owner_try_claim(APP_MESH_RADIO_CLIENT_ANCHOR_SCAN, "anchor low-duty UWB wake scan", &radio_lease);
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && ret == -EBUSY) {
             blocked_retry_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
@@ -2089,6 +2088,7 @@ focused_scan_attempt:
 
     if (focused_logs &&
         ret != 0 &&
+        ret != -ECANCELED &&
         focused_spin_deadline_ms > 0 &&
         k_uptime_get() < focused_spin_deadline_ms &&
         !anchor_uwb_window_active() &&
@@ -2113,7 +2113,7 @@ scan_complete:
         u32_saturating_add(
             u32_saturating_add(ANCHOR_UWB_IDLE_SCAN_AWAKE_US, scan_extra_awake_us),
             retained_sleep_us));
-    radio_guard_uwb_stop();
+    (void)app_mesh_radio_owner_release(&radio_lease);
     anchor_set_uwb_busy(false);
     anchor_click_window_set_active(false);
     if (route_wake_handoff) {
@@ -2142,7 +2142,7 @@ scan_complete:
             status_debug_printf("DBG_ANCHOR_MESH_RX_HANDOFF_DEFERRED q=%u delay=%u rf=%u\n",
                                 mesh_rx_pending_count(),
                                 next_scan_delay_ms,
-                                radio_guard_uwb_busy() ? 1u : 0u);
+                                app_mesh_radio_owner_busy() ? 1u : 0u);
         }
         mesh_stop_role_scan();
         mesh_submit_queued_rx();

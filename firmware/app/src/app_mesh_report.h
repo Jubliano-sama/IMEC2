@@ -1,6 +1,7 @@
 #ifndef APP_MESH_REPORT_H
 #define APP_MESH_REPORT_H
 
+#include "app_mesh_radio_client.h"
 #include "dwm3000_driver.h"
 #if defined(__ZEPHYR__)
 #include "app_mesh_route_owner_queue.h"
@@ -126,7 +127,7 @@ void mesh_stop_role_scan(void);
 void mesh_restart_role_scan(void);
 int mesh_transport_pause_preserving_queued(void);
 bool mesh_transport_quiesced(void);
-void mesh_transport_resume(void);
+int mesh_transport_resume(void);
 int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 int mesh_send_c5_control(const struct mesh_outbound *out,
                          uint8_t purpose,
@@ -214,8 +215,14 @@ uint32_t mesh_rx_pending_count(void);
 bool mesh_rx_response_active(void);
 bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
 bool mesh_anchor_connected_radio_active(void);
-int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
-int mesh_gateway_command_priority_safe_boundary(void);
+int mesh_gateway_radio_handoff_submit(
+    struct k_work_delayable *work,
+    app_mesh_radio_owner_schedule_failure_fn schedule_failure,
+    void *schedule_failure_ctx,
+    uint32_t schedule_failure_token);
+int mesh_gateway_radio_handoff_begin(struct k_work_delayable *work);
+int mesh_gateway_radio_handoff_cancel(struct k_work_delayable *work);
+int mesh_gateway_radio_handoff_safe_boundary(void);
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms);
 int mesh_schedule_route_request(uint64_t target_id, const char *reason);
 int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary);
