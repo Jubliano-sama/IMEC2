@@ -43,7 +43,7 @@ Sources: [README.md:5-14](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b5
 
 The portable [clicker](01_product-roles-and-firmware-lines.md) wakes on a button press, ranges against fixed anchors, and starts the report path. [Anchors](01_product-roles-and-firmware-lines.md) provide spatial measurements, relay mesh traffic, and give their own local click reports priority; the [gateway](01_product-roles-and-firmware-lines.md) is the mesh root and the connected Bluetooth edge to the PC ([README.md:24-30](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/README.md#L24-L30)).
 
-The radio design separates first contact from sustained delivery. UWB channel 5 covers wake, discovery, and click/ranging preemption, while channel 9 carries connected routing, reports, transit traffic, and acknowledgements; BLE is limited to courtesy hints and the gateway-to-PC edge ([README.md:30](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/README.md#L30)). This division lets the participant-facing action stay immediate while the system handles ranging and reliable transfer behind it.
+The radio design separates first contact from sustained delivery. UWB channel 5 covers wake, discovery, and click/ranging preemption and some gateway originated commands, while channel 9 carries connected routing, reports, transit traffic, and acknowledgements; BLE is limited to courtesy hints and the gateway-to-PC edge ([README.md:30](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/README.md#L30)).
 
 ```mermaid
 graph TD
@@ -103,17 +103,6 @@ Sources: [README.md:10-20](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b
 11. **[Verified Mesh Deployment and Hardware Qualification](11_verified-deployment-and-qualification.md)** — Bind an exact artifact to qualification evidence and deploy it through the repository-owned gate.
 12. **[Testing, Simulation, and Release Evidence](12_testing-simulation-and-release-evidence.md)** — Combine native tests, integration scenarios, hardware models, exact role builds, and bench proof.
 13. **[Hardware Bring-Up and Troubleshooting](13_hardware-bring-up-and-troubleshooting.md)** — Diagnose identity, SPI, UWB, mesh, persistence, BLE, RTT, USB, watchdog, and stack symptoms from evidence.
-
-### Choose a shorter route
-
-| If you are… | Follow this path |
-|---|---|
-| A researcher or product stakeholder | [One Click, End to End](02_one-click-end-to-end.md) → [Anchor Self-Setup](07_anchor-self-setup-survey-and-geometry.md) → [Host Tools and Observability](09_gateway-host-tools-and-observability.md) → [Data Custody and Recovery](08_data-custody-persistence-and-recovery.md) |
-| A firmware or protocol developer | [Product Roles](01_product-roles-and-firmware-lines.md) → [UWB and Power](03_uwb-wake-ranging-and-power.md) → [Protocol Contracts](04_protocol-packets-and-data-contracts.md) → [Connected Routing](05_connected-routing-and-reliable-delivery.md) → [Persistence](08_data-custody-persistence-and-recovery.md) → [Testing](12_testing-simulation-and-release-evidence.md) |
-| A build or bench operator | [Build and Configuration](10_build-presets-and-configuration.md) → [Testing and Release Evidence](12_testing-simulation-and-release-evidence.md) → [Verified Deployment](11_verified-deployment-and-qualification.md) → [Bring-Up and Troubleshooting](13_hardware-bring-up-and-troubleshooting.md) |
-| Investigating one failed click | [One Click, End to End](02_one-click-end-to-end.md) → [Connected Routing](05_connected-routing-and-reliable-delivery.md) → [Host Observability](09_gateway-host-tools-and-observability.md) → [Troubleshooting](13_hardware-bring-up-and-troubleshooting.md) |
-
-The repository’s own quick links direct contributors first to the authoritative repository rules, code map, firmware guide, mesh contract, current architecture, and protocol documentation ([README.md:32-51](https://github.com/Jubliano-sama/IMEC2/blob/f6594e41b57f5fd612aba182e0bd13cbbdd0c621/README.md#L32-L51)). The numbered wiki path wraps those references in the participant-to-research story; use the source links on each page when you need the precise implementation or contract.
 
 ### Continue
 

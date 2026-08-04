@@ -32,11 +32,11 @@ The [user story](README.md#the-research-story) starts with one participant press
 
 The connected-routing `mesh_` line is the current source of truth for product behavior. Its prefix is transitional: `mesh_clicker`, `mesh_anchor`, and `mesh_gateway` are the production-candidate artifacts, while the similarly named transmitter presets are bench tools ([AGENTS.md:31-53](../../AGENTS.md#L31-L53)).
 
-| Exact preset | Product device | Meaning in the participant journey |
-|---|---|---|
-| `mesh_clicker` | Clicker | The participant's battery device sleeps normally, wakes for a physical click and range sequence, then sends the event through the connected-routing path; it is not a continuous traffic source ([AGENTS.md:38-40](../../AGENTS.md#L38-L40)). |
-| `mesh_anchor` | Anchor | One common production image identifies each physical anchor from hardware, ranges local clicks, relays traffic, and gives its own click reports priority over transit work ([AGENTS.md:41-45](../../AGENTS.md#L41-L45)). |
-| `mesh_gateway` | Gateway | The mesh root owns the connected BLE edge to the PC and the highest-priority gateway commands ([AGENTS.md:46-47](../../AGENTS.md#L46-L47)). |
+| Exact preset   | Product device | Meaning in the participant journey                                                                                                                                                                                                            |
+| -------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mesh_clicker` | Clicker        | The participant's battery device sleeps normally, wakes for a physical click and range sequence, then sends the event through the connected-routing path; it is not a continuous traffic source ([AGENTS.md:38-40](../../AGENTS.md#L38-L40)). |
+| `mesh_anchor`  | Anchor         | One common production image identifies each physical anchor from hardware, ranges local clicks, relays traffic, and gives its own click reports priority over transit work ([AGENTS.md:41-45](../../AGENTS.md#L41-L45)).                      |
+| `mesh_gateway` | Gateway        | The mesh root owns the connected BLE edge to the PC and the highest-priority gateway commands ([AGENTS.md:46-47](../../AGENTS.md#L46-L47)).                                                                                                   |
 
 Use the exact preset name whenever you build, discuss, or qualify hardware. A generic label such as “anchor firmware” is ambiguous because production, ML, transmitter, staged-debug, and legacy images can all compile with an anchor role; the repository therefore requires the preset and probe-to-board mapping to be verified before flashing ([AGENTS.md:62-64](../../AGENTS.md#L62-L64)). The exact commands and configuration layers are on [Build Presets and Configuration](10_build-presets-and-configuration.md).
 
